@@ -102,9 +102,11 @@ extension ChatViewModel {
                     }
                 }
 
-                // 工具分级：L3（高风险写）执行前需用户确认（队首起 180s 超时视为拒绝）
+                // 工具分级：要不要弹确认条由等级决定，规则集中在 `ToolConfirmPolicy`（别在这里加判据）——
+                // L4 高危必弹红色（shell 写/执行、browser 写盘与注入系统事件）、fs 的 L3（写文件 / 读未授权路径）必弹，
+                // 其余 L3（如 browser open）与 L2 免确认直接执行。
                 // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
-                // forcedL3 标记"敏感上下文升的级"，任何信任档都不跳过（防注入最后一道）。
+                // forcedL3 标记"敏感上下文升的级"，防注入最后一道，任何情况下都必须确认。
                 var level = LocalToolRegistry.shared.riskLevel(for: toolName, arguments: args)
                 var forcedL3 = false
                 if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName, arguments: args) {
@@ -118,7 +120,7 @@ extension ChatViewModel {
                 let needsUserTabGrant = isBrowser
                     && BrowserToolProvider.shared.needsUserTabGrant(tool: toolName, arguments: args, owner: owner)
                 if needsUserTabGrant {
-                    level = 3
+                    level = max(level, 3) // 只升不降：L4 工具不因标签授权被降成普通确认
                     forcedL3 = true
                     LogBuffer.shared.warning("clientToolCall: \(toolName) needs user-tab grant (owner=\(owner ?? "nil"))")
                 }
@@ -134,9 +136,10 @@ extension ChatViewModel {
                     confirmArgs["跨域下载"] = dlHost
                 }
 
-                if level >= 3 {
-                    // shell L4：命令级高危，红色确认条 + 信任档不跳过（完全信任可跳过）
-                    let shellHardened = shellScope == .full && level >= 4
+                let isFsWrite = toolName == "fs__write" || toolName == "fs__edit"    // 改用户文件：确认条出 diff
+                var need = ToolConfirmPolicy.requirement(level: level, isFileSystemTool: isFS)
+                if forcedL3, need == .none { need = .confirm } // 敏感上下文升的级：本来免确认的也要弹
+                if need != .none {
                     // shell：生成人话解释（用户不读原始命令，只看这句判断意图）
                     var shellExplain: String?
                     if shellScope == .full, let cmd = args["command"] as? String {
@@ -149,7 +152,7 @@ extension ChatViewModel {
                     var additions: Int?
                     var deletions: Int?
                     var fsPath: String?
-                    if isFS, toolName == "fs__write" || toolName == "fs__edit" {
+                    if isFsWrite {
                         let pathArg = args["path"] as? String
                         let contentArg = args["content"] as? String
                         let modeArg = args["mode"] as? String
@@ -176,8 +179,7 @@ extension ChatViewModel {
                     let confirmed = await self.awaitToolConfirmation(
                         toolName: toolName,
                         arguments: confirmArgs,
-                        elevated: forcedL3,
-                        hardened: shellHardened,
+                        hardened: need == .hardened,
                         browserArgsSummary: isBrowser,
                         diffText: diffText,
                         additions: additions,

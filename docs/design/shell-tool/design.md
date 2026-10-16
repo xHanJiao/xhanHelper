@@ -1,9 +1,10 @@
 # 计划：macOS 本地 Shell 命令执行工具（shell__run）
 
 > 日期：2026-09-16
-> 状态：已开发；**2026-09-22 降档**——工作区内 L2（免确认）/ 区外 L3（常规确认、信任模式可跳）
+> 状态：已开发；**2026-09-22 降档**——只读 L2（免确认）、写/执行 L4（红色必弹）；其中「工作区内降 L3」已被 [`readonly-free-and-peek.md`](./readonly-free-and-peek.md) 取代
 > **2026-09-22 扩容**：放开一批只读文本处理 / 文件写删 / git 写命令（写/执行类恒 L4）+ 严格参数守卫，
 > 见同目录 [`command-expansion.md`](./command-expansion.md)。本文的「v1 冻结」白名单已经是历史值。
+> **2026-10-16 起**：信任模式三档移除；确认规则改为「L4（shell 写/执行、browser 写盘/注入系统事件）、fs 写 / fs 读未授权路径、forcedL3 必弹，其余 L2/L3 直接执行」，规则集中在 `ToolConfirmPolicy`，见 `../mac-apps/trust-mode-three-state/design.md` 的「后续变更」。
 > 架构：纯 macOS 客户端工具（与 `fs__` / `browser__` 同链路），服务端零改动
 > 分支：`feature/shell-tool`
 
@@ -29,7 +30,7 @@ opencode 有两份实现：`packages/core/src/tool/bash.ts`（V2 精简内核）
 | 命令解析 | tree-sitter-bash/PowerShell 解析 AST，枚举所有命令节点（含 `$( )`、管道、子 shell） | **偏离**：no-shell 执行器自行切分（见四） |
 | 权限 | 每条命令 `ctx.ask(permission:"bash", patterns, always)`；BashArity 生成 `"<前缀> *"` 白名单 | 借 arity 思路做代码内置三档白名单 |
 | 目录 | 文件类命令解析路径参数，项目根外 → `external_directory` 许可 | 复用 `DirectoryAuthorizationManager` 授权目录 |
-| 审批 | 交互式权限弹窗（每次询问/永远允许），无限等待 | 复用现有确认条；工作区内 L2 免确认、区外 L3（信任模式可跳）；**偏离**：确认队首 180s 自动拒绝 |
+| 审批 | 交互式权限弹窗（每次询问/永远允许），无限等待 | 复用现有确认条；工作区内 L2 免确认、区外 L3（常规确认）；**偏离**：确认队首 180s 自动拒绝 |
 
 ## 三、目标 / 非目标
 
@@ -75,19 +76,23 @@ opencode 必须用 tree-sitter 精确解析，是因为它**把原始字符串�
 
 ### 3. 为什么 L4 复用客户端工具审批机制（而非新开通道）
 
-**先澄清：普通 L3 是可以被跳过的。** 决定"能不能跳"的不是等级数字，而是 `awaitToolConfirmation` 里的 `force` 标志（`ChatViewModel.swift:391`）：
+**先澄清：只有三类会弹确认条，其余 L3 直接放行。** 判据集中在 `ToolConfirmPolicy`（`awaitToolConfirmation` 内部已无「跳过」分支）：
 
 ```swift
-// 信任模式：跳过确认直接放行（force 时不跳过）
-if trustedMode && !force { return true }
+// ToolConfirmPolicy.requirement(level:isFileSystemTool:) → 等级到「弹不弹」的唯一映射
+if level >= 4 { return .hardened }                  // 红色必弹
+if level == 3, isFileSystemTool { return .confirm } // fs 的 3 = 写文件 / 读未授权路径
+return .none                                        // 其余直接执行
 ```
 
-| 情况 | force | 信任模式 |
+| 情况 | 判据 | 行为 |
 |------|-------|----------|
-| 普通 L3（`riskLevels` 表的 `browser__open/download/cgclick/drag`、`fs__write/edit`） | `false` | **跳过，直接执行** |
-| 强制确认（代码里的 `forcedL3`：高敏域 / http 明文页 / 用户标签授权） | `true` | **跳不过** |
+| 普通 L3（`riskLevels` 表的 `browser__open`） | `.none` | **直接执行**（等价于原「信任档」语义） |
+| 强制确认（代码里的 `forcedL3`：高敏域 / http 明文页 / 用户标签授权） | 调用方只升不降 | **必弹** |
+| fs 写 / fs 读未授权路径 | `.confirm` | **必弹**（批准后该路径临时授权 1h） |
+| L4（shell 写/执行、browser download/cgclick/drag） | `.hardened` | **必弹**，红色 |
 
-也就是说，代码里**已经存在"不可跳的确认"**，只是它表现为 L3 上的一个 `force` 开关，而非独立等级。
+也就是说，代码里**已经存在"不可跳的确认"**，只是它表现为 L3 上的一个 `forcedL3` 开关，而非独立等级。
 
 **L4 既不是新通道也不是新机制**，而是「等级判定返回 4 → 强制 `force=true` → 加红色 UI」。确认机制本身建在**客户端工具已有的 RPC 通道**上（服务端 `client_tool_call` → Mac 执行 → `POST /api/chat/tool-result` 回传，`ClientToolBridge` 按 `call_id` 阻塞等待）。确认只是 Mac 在**执行该 call 之前**加的闸门，与结果共用一次往返；`ui__ask_user` 已是同款先例。因此无需新接口、新事件类型。
 
@@ -99,7 +104,7 @@ namespace: shell
 display: 执行命令
 description:
   在用户 Mac 上执行一条终端命令。只用于"运行命令"，不要用它读文件/找文件（那些用 fs__ 系列）。
-  - 命令在本地运行，与用户同名权限；危险命令会请求用户确认，信任模式也无法跳过。
+  - 命令在本地运行，与用户同名权限；写/执行类命令必弹红色确认（无免确认档）。
   - 支持管道与串联： |  &&  ||  ;
   - 不支持：变量展开（$VAR）、通配符（* ? ~）、重定向（> <）、cd、后台（&）。
     需要切换目录请用 workdir 参数；需要找文件用 fs__glob。
@@ -256,7 +261,7 @@ L4 改四处：
    - `shortNames` 加 `shell__run: "执行命令"`。
 2. `ChatViewModel+ClientTools.swift`：shell 拒绝前置；确认 force 条件改为 `forcedL3 || level >= 4`。
 3. `ChatViewModel.swift`：`awaitToolConfirmation(hardened:)` 增加参数；`ToolConfirmation` 增 `hardened: Bool`。
-4. `ChatView.swift`：`toolConfirmationBar` 对 `hardened` 显示红色 + "此操作不可跳过（信任模式无效）"，并展示**完整命令**（不复用现有 `argsSummary` 的 `prefix(80)` 截断）。
+4. `ChatView.swift`：`toolConfirmationBar` 对 `hardened` 显示红色 + "请求执行高危操作"，并展示**完整命令**（不复用现有 `argsSummary` 的 `prefix(80)` 截断）。
 
 超时（队首 180s）视为拒绝（fail-safe，用户已定）。
 
@@ -283,7 +288,7 @@ L4 改四处：
 1. **allow 直跑**：`ls -la`、`git status`、`head <授权目录文件>` → 无确认直接返回；退出码正确。
 2. **管道**：`git log | head -5`、`ls | wc -l` → 正常。
 3. **L4 确认**：`ls -la`（shell 全部命令都要确认）→ 弹红色确认条；允许后执行，拒绝后返回"用户拒绝执行"。
-4. **L4 不可跳**：开启信任模式后跑任意 shell 命令 → 仍弹确认条（`force=true` 生效）。
+4. **L4 必经确认**：跑写/执行类 shell 命令（如 `rm x`）→ 弹红色确认条，无任何开关能跳过。
 5. **未命中拒绝**：`sudo ls`、`rm -rf x`、`git commit -m x`、`curl https://x`、`node -e 'x'`、`python3 x.py`、`npm install`、`make`、`wget`、`ssh`、`osascript -e 1` → 直接拒绝，不弹确认。
 6. **拒绝项组合**：`ls && sudo rm -rf /` → 整条拒绝（含未命中段）。
 7. **越权 workdir**：`workdir=/etc` → 直接拒绝（不走 L4），返回信息列出当前已授权目录。
@@ -342,7 +347,7 @@ shell 的结果要进上下文，进程又跑在用户 Mac 上，边界处理是
 - 白名单为代码内置；后续若要用户可编辑，再引入 `UserConfigStore` + macOS 设置页（`SettingsCard`，遵循 `docs/design/mac-apps/settings-sheet-style.md`）。
 - 不做任何"代码藏在文件里"的构建/运行链，因此 Agent 无法在 Mac 上编译运行项目（如 `go build` / `npm test`）；这类验证需用户在终端自行完成。
 - 客户端工具串行 → 长 shell 会阻塞同一轮的其他客户端工具（浏览器等）。
-- **brew 目录在受信 PATH 内**：`/opt/homebrew/bin`、`/usr/local/bin` 归当前用户所有，理论上可被 `fs__write` 写入同名程序冒充白名单命令（再被 allow 档自动执行）。信任模式下 `fs__write` 可跳过确认 → 构成"写→执行"提权路径。当前接受（要找到 brew 的 git/rg/gh 就必须信任这两个目录），彻底封堵需给 fs 写加不可跳确认或引入独立校验。
+- **brew 目录在受信 PATH 内**：`/opt/homebrew/bin`、`/usr/local/bin` 归当前用户所有，理论上可被 `fs__write` 写入同名程序冒充白名单命令（再被 allow 档自动执行）。`fs__write` 现为**必弹确认**（2026-10-16 起无免确认档），这条"写→执行"提权路径需要用户在确认条上点允许才走得通，风险已大幅收窄；彻底封堵仍需给 fs 写加独立校验。
 - **实现落地**：`FsPath.swift` 抽出路径解析供 fs / shell 复用；解析与白名单判定的单测在 `client/xHelper/Tests/FsCoreTests/ShellCommandParserTests.swift`（`cd client/xHelper && swift test`，纳入既有 FsCore SPM 测试包）。
 
 ## 十三、归属变更（2026-09-16）：shell 收进 file_explore 子任务
@@ -364,8 +369,8 @@ shell 的结果要进上下文，进程又跑在用户 Mac 上，边界处理是
 
 ### 工作区内降 L3（同一批）
 
-子任务在 Agent 工作区里随手 `ls` / `git status` 每条都弹红色 L4 太吵。决策：**命令完全落在 Agent 工作区内 → L3**（常规确认、信任模式可跳）；工作区外（含用户手动授权目录）维持 L4。
+子任务在 Agent 工作区里随手 `ls` / `git status` 每条都弹红色 L4 太吵。决策：**命令完全落在 Agent 工作区内 → L3**（常规确认）；工作区外（含用户手动授权目录）维持 L4。
 
 - 判定 `ShellCommandParser.isScopedToAgentWorkspace`：workdir ∈ workspace **且**所有**实际存在**的显式路径参数 ∈ workspace。只统计存在的路径，避免 `grep '/api/v1' .` 这类正则被误判为越界。
-- `LocalToolRegistry.riskLevel(shell__:)` 据此返回 3 / 4；`ChatViewModel` 的 `shellHardened = isShell && level >= 4` 无需改动（L3 自然走常规确认条）。
-- 让步：工作区内的不可信仓库 git 现在可被信任模式一键跳过（已做 `GIT_*`/hooksPath 加固）。`tool_output` 仍只对 fs 开只读例外、shell 不可读；`fs__write/edit` 写工作区仍为 L3，均不下调。
+- 该降档**后来被 `readonly-free-and-peek.md` 取代**：shell 只读恒 2、写/执行恒 4，不再按工作区内/外分档（`isScopedToAgentWorkspace` 因此无调用方）。确认与否由 `ToolConfirmPolicy` 按等级判定（`need == .hardened` 出红色条），本小节只作历史记录。
+- 让步：`tool_output` 仍只对 fs 开只读例外、shell 不可读；`fs__write/edit` 为必弹确认，不再存在"一键跳过"。

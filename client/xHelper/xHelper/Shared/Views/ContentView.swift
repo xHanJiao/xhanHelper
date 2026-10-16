@@ -245,7 +245,7 @@ struct ContentView: View {
               !tab.isBlank,
               let cid = tab.conversationId, !cid.isEmpty else { return }
         LogBuffer.shared.debug("sync conversation \(cid) after scene active (macOS)")
-        await tab.viewModel.loadConversation(id: cid, title: tab.title, mode: tab.viewModel.mode, preserveTrustedMode: true) // scene 激活刷新：保持当前模式/信任模式
+        await tab.viewModel.loadConversation(id: cid, title: tab.title, mode: tab.viewModel.mode, preserveTransientState: true) // scene 激活刷新：保持当前模式/临时态
         #else
         guard let conv = deviceManager.defaultConversation else { return }
         LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")

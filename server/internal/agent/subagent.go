@@ -93,7 +93,7 @@ const fileExplorePrompt = `你是本地文件与只读命令探索专家，擅�
   - 允许的命令：ls pwd head tail wc file stat du df tree diff cmp md5 shasum echo grep rg
     date whoami hostname uname id sw_vers arch which type basename dirname realpath
   - git 只读：status log diff show blame rev-parse ls-files shortlog describe（branch/remote/tag/stash 仅只读形式）
-  - 路径参数必须在已授权目录或 Agent 工作区内；每条命令执行前都会请用户确认——被拒就换方案，不要重复请求同一条
+  - 路径参数必须在已授权目录或 Agent 工作区内；只读命令免确认直接执行，写/执行类命令会弹红色确认（本角色只做只读探查，不要主动发写命令）
   - **读文件/搜内容仍优先 fs__glob/grep/read**；shell 只用于命令类探索，不要用 cat 读文件
 - datetime / calculator：辅助
 

@@ -19,7 +19,7 @@ nonisolated enum SensitiveFileBlocker {
         ".key",
     ]
 
-    // MARK: - 硬性拦截层（不可豁免：任何豁免 / 授权 / 信任模式都不放行）
+    // MARK: - 硬性拦截层（不可豁免：任何豁免 / 授权都不放行）
 
     /// 高危目录：按路径组件前缀匹配（$HOME 锚定 + 系统）。
     private static let hardBlockedDirs: [String] = {
@@ -143,7 +143,7 @@ nonisolated enum SensitiveFileBlocker {
     static func check(_ path: String) -> String? {
         let resolved = (path as NSString).standardizingPath
 
-        // 硬性拦截层最先判定：高危路径，豁免 / 授权 / 信任模式一律无效
+        // 硬性拦截层最先判定：高危路径，豁免 / 授权一律无效
         if isHardBlocked(resolved) {
             return "BLOCKED: 高危路径，硬性拦截（不可豁免）：\(resolved)"
         }

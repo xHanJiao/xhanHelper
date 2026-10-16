@@ -54,7 +54,7 @@
 
 - 高危目录（路径组件前缀）：`$HOME/.ssh`、`.gnupg`、`.aws`、`.kube`、`.docker`、`$HOME/Library/Keychains`、`/etc/sudoers.d`。
 - 高危文件（精确，`$HOME` 锚定 + 系统）：`.zshrc/.zshenv/.zprofile/.zlogin/.zlogout/.zsh_history`、`.bashrc/.bash_profile/.bash_login/.bash_history`、`.profile/.inputrc`、`.netrc/.npmrc/.pypirc/.git-credentials/.wgetrc/.curlrc`、`.config/fish/config.fish`、`.config/gh/hosts.yml`、`/etc/passwd|shadow|master.passwd|sudoers`。
-- 读写都拦；豁免 / 授权目录 / 信任模式一律无效（`addExemption` 对硬路径直接忽略，设置页弹提示）。
+- 读写都拦；豁免 / 授权目录一律无效（`addExemption` 对硬路径直接忽略，设置页弹提示）。
 - `isAncestorOfHardPath` 供 shell 递归命令（`grep -r`、`rg`）判定根目录。
 - 收口不变：fs read/write/edit/glob/grep 走 `check`，shell 走 `pathBlockedReason`，均无"确认放行"通道。
 

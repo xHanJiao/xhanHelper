@@ -105,7 +105,12 @@ func riskLevel(for flatName: String) -> Int { riskLevels[flatName] ?? 2 }   // �
 
 ### 4.2 执行拦截（ChatViewModel+ClientTools.swift handleClientToolCall）
 
+> **本文此处已过时（2026-10-16）**：确认闸门现在是 `need != .none`，等级 → 是否确认的映射在
+> `client/xHelper/xHelper/Shared/Tools/ToolConfirmPolicy.swift`（`L4 → 红色必弹`、`fs 的 L3 → 必弹`、
+> 其余 L3/L2 免确认）；本文没有 L4 / shell / forcedL3 的概念，仅作历史记录。
+
 ```swift
+// 历史写法（已不适用）：
 let level = LocalToolRegistry.shared.riskLevel(for: toolName)
 if level >= 3 {
     let confirmed = await viewModel.pendingToolConfirmation(toolName: toolName, arguments: args)

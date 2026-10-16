@@ -52,6 +52,29 @@ enum ThumbRowLayout {
         return (cap, true)
     }
 
+    /// 折叠态排布，**尾格可与格子不同宽**（卡片条的「＋N」窄格用它；缩略图行走上面那个同宽重载）。
+    ///
+    /// 关键约定：**至少露一张卡**。卡片（240pt）比缩略图大得多，按「塞不下就 0 张」算会在窄窗口
+    /// 退化成「只有一个＋N 格、一张卡都没有」（踩过）。所以放不下时先保一张卡，尾格吃剩下的宽度
+    /// （可以被压窄；连尾格都放不下就是 0 宽）。
+    ///
+    /// 恒不溢出只在 `available ≥ cell + spacing` 时成立——比一张卡还窄就无从谈排布了。
+    static func collapsed(
+        available: CGFloat,
+        cell: CGFloat,
+        spacing: CGFloat,
+        trailingCell: CGFloat,
+        count: Int
+    ) -> (visible: Int, overflow: Bool) {
+        // 宽度还没测出来时先不折叠（同上面的重载）
+        guard available > 0, count > 1 else { return (count, false) }
+        // 全部塞得下（此时没有尾格）：count*cell + (count-1)*spacing ≤ available
+        if CGFloat(count) * (cell + spacing) - spacing <= available { return (count, false) }
+        let tail = max(0, min(trailingCell, available - cell - spacing))
+        let k = Int((available - tail) / (cell + spacing))
+        return (min(max(k, 1), count - 1), true)
+    }
+
     /// 折叠态一行占多宽（测试用它断言"塞得进可用宽"，也就是界面不溢出）
     static func collapsedWidth(
         available: CGFloat,

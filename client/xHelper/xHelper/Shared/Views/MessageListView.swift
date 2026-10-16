@@ -34,6 +34,8 @@ struct MessageListView: View {
     @State private var menuFrames: [String: CGRect] = [:]
     @State private var menuDismissTask: Task<Void, Never>? = nil
     @State private var menuShownAt: Date = .distantPast
+    /// 展开了的横向卡片条（键＝该组第一条消息 id）
+    @State private var expandedCardStrips: Set<String> = []
     @State private var viewHeight: CGFloat = 0
     @Binding var scrollPosition: ScrollPosition
     @Binding var showScrollToBottom: Bool
@@ -100,6 +102,7 @@ struct MessageListView: View {
         }
         .onChange(of: conversationId) { _, _ in
             initialLoadDone = false
+            expandedCardStrips.removeAll()
             if isShareSelectMode {
                 exitShareSelectMode()
             }
@@ -207,87 +210,15 @@ struct MessageListView: View {
                     .scaleEffect(y: -1)
                 }
 
-                ForEach(messages.reversed()) { msg in
-                    let base = messageRow(msg)
-                        .scaleEffect(y: -1)
-                        .overlay {
-                            if isShareSelectMode, selectedShareIds.contains(msg.id), msg.role == "user" || msg.role == "assistant" {
-                                Color.blue.opacity(0.06)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-
-                    if isShareSelectMode {
-                        base.onTapGesture { toggleRound(for: msg) }
-                    } else {
-                        #if os(macOS)
-                        // 用户消息：无划词（无 NSTextView），右键整行任意位置弹我们的菜单；
-                        // 助手消息：纯原生划词 + 原生编辑菜单，不挂右键菜单（见 ChatBubble）
-                        if msg.role == "user" {
-                            base.contextMenu {
-                                if !msg.content.isEmpty {
-                                    Button {
-                                        debugTarget = MessageDebugTarget(id: msg.id)
-                                    } label: {
-                                        Label("调试", systemImage: "ladybug.fill")
-                                    }
-                                    Button {
-                                        copyToPasteboard(msg.content)
-                                    } label: {
-                                        Label("拷贝", systemImage: "doc.on.doc")
-                                    }
-                                    Button {
-                                        enterShareSelectMode()
-                                    } label: {
-                                        Label("分享", systemImage: "square.and.arrow.up")
-                                    }
-                                }
-                            }
-                        } else {
-                            base
-                        }
-                        #else
-                        base
-                            .background(
-                                GeometryReader { geo in
-                                    Color.clear.onAppear {
-                                        menuFrames[msg.id] = geo.frame(in: .global)
-                                    }
-                                    .onChange(of: geo.frame(in: .global)) { _, f in
-                                        menuFrames[msg.id] = f
-                                    }
-                                }
-                            )
-                            .simultaneousGesture(
-                                LongPressGesture(minimumDuration: 0.5)
-                                    .onEnded { _ in
-                                        if !msg.content.isEmpty {
-                                            if menuMessageId == msg.id {
-                                                dismissMenu()
-                                                return
-                                            }
-                                            if let frame = menuFrames[msg.id], viewHeight > 0 {
-                                                let screenW = UIScreen.main.bounds.width
-                                                let menuX = min(max(frame.midX, 80), screenW - 80)
-                                                let gap: CGFloat = 8
-                                                if frame.midY > viewHeight * 0.5 {
-                                                    menuPoint = CGPoint(x: menuX, y: max(frame.minY - gap, 50))
-                                                } else {
-                                                    menuPoint = CGPoint(x: menuX, y: min(frame.maxY + gap, viewHeight - 50))
-                                                }
-                                            } else {
-                                                menuPoint = CGPoint(x: UIScreen.main.bounds.midX, y: viewHeight * 0.35)
-                                            }
-                                            menuShownAt = Date()
-                                            menuMessageId = msg.id
-                                            startMenuDismissTimer()
-                                        }
-                                    }
-                            )
-                        #endif
+                ForEach(displayRows.reversed()) { row in
+                    switch row {
+                    case .message(let msg):
+                        messageRowWithGestures(msg)
+                    case .cardStrip(let group):
+                        cardStripRow(group)
+                            .scaleEffect(y: -1)
                     }
                 }
-
                 loadMoreHeader
                     .scaleEffect(y: -1)
             }
@@ -322,6 +253,149 @@ struct MessageListView: View {
     }
 
     // MARK: Message row
+
+    /// 显示行：普通消息一行；**相邻的卡片类本地产物**并成一行（横向卡片条）。
+    /// 分享选择模式逐条（每张卡各自一条，跟分享那套指示器对齐），不分组。
+    private enum DisplayRow: Identifiable {
+        case message(Message)
+        case cardStrip([Message])
+
+        var id: String {
+            switch self {
+            case .message(let m): return m.id
+            case .cardStrip(let g): return "strip_\(g.first?.id ?? "")"
+            }
+        }
+    }
+
+    private var displayRows: [DisplayRow] {
+        guard !isShareSelectMode else { return messages.map { DisplayRow.message($0) } }
+        return LocalArtifactGrouping.rows(messages) { $0.localArtifact?.isCardArtifact == true }.map { group in
+            group.count == 1 ? .message(group[0]) : .cardStrip(group)
+        }
+    }
+
+    /// 单条消息一行：分享态的选择圈 + 各端各自的菜单手势（原样，从滚动区里提出来）
+    @ViewBuilder
+    private func messageRowWithGestures(_ msg: Message) -> some View {
+        let base = messageRow(msg)
+            .scaleEffect(y: -1)
+            .overlay {
+                if isShareSelectMode, selectedShareIds.contains(msg.id), msg.role == "user" || msg.role == "assistant" {
+                    Color.blue.opacity(0.06)
+                        .allowsHitTesting(false)
+                }
+            }
+
+        if isShareSelectMode {
+            base.onTapGesture { toggleRound(for: msg) }
+        } else {
+            #if os(macOS)
+            // 用户消息：无划词（无 NSTextView），右键整行任意位置弹我们的菜单；
+            // 助手消息：纯原生划词 + 原生编辑菜单，不挂右键菜单（见 ChatBubble）
+            if msg.role == "user" {
+                base.contextMenu {
+                    if !msg.content.isEmpty {
+                        Button {
+                            debugTarget = MessageDebugTarget(id: msg.id)
+                        } label: {
+                            Label("调试", systemImage: "ladybug.fill")
+                        }
+                        Button {
+                            copyToPasteboard(msg.content)
+                        } label: {
+                            Label("拷贝", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            enterShareSelectMode()
+                        } label: {
+                            Label("分享", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                }
+            } else {
+                base
+            }
+            #else
+            base
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.onAppear {
+                            menuFrames[msg.id] = geo.frame(in: .global)
+                        }
+                        .onChange(of: geo.frame(in: .global)) { _, f in
+                            menuFrames[msg.id] = f
+                        }
+                    }
+                )
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5)
+                        .onEnded { _ in
+                            if !msg.content.isEmpty {
+                                if menuMessageId == msg.id {
+                                    dismissMenu()
+                                    return
+                                }
+                                if let frame = menuFrames[msg.id], viewHeight > 0 {
+                                    let screenW = UIScreen.main.bounds.width
+                                    let menuX = min(max(frame.midX, 80), screenW - 80)
+                                    let gap: CGFloat = 8
+                                    if frame.midY > viewHeight * 0.5 {
+                                        menuPoint = CGPoint(x: menuX, y: max(frame.minY - gap, 50))
+                                    } else {
+                                        menuPoint = CGPoint(x: menuX, y: min(frame.maxY + gap, viewHeight - 50))
+                                    }
+                                } else {
+                                    menuPoint = CGPoint(x: UIScreen.main.bounds.midX, y: viewHeight * 0.35)
+                                }
+                                menuShownAt = Date()
+                                menuMessageId = msg.id
+                                startMenuDismissTimer()
+                            }
+                        }
+                )
+            #endif
+        }
+    }
+
+    /// 一行的横向卡片条（≥2 张卡片类产物）。单张不进这里——走原来的 `localArtifactView`。
+    private func cardStripRow(_ group: [Message]) -> some View {
+        ArtifactCardStrip(items: group, expanded: cardStripExpandedBinding(group)) { msg in
+            artifactCard(msg.localArtifact)
+        }
+        .padding(.horizontal, Layout.chatHorizontalPadding + 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 展开态按「这一组的第一条消息 id」记，卡片增减/流式替换都不丢
+    private func cardStripExpandedBinding(_ group: [Message]) -> Binding<Bool> {
+        let key = group.first?.id ?? ""
+        return Binding(
+            get: { expandedCardStrips.contains(key) },
+            set: { on in
+                if on { expandedCardStrips.insert(key) } else { expandedCardStrips.remove(key) }
+            }
+        )
+    }
+
+    /// 卡片条里单张卡的渲染：尺寸必须与条子的 `cardWidth`/`cardHeight` 一致（条子按固定卡宽算排布）。
+    /// 穷尽 switch —— 新增卡片类产物时编译器会在这里提醒补渲染。
+    @ViewBuilder
+    private func artifactCard(_ artifact: LocalArtifact?) -> some View {
+        if let artifact {
+            switch artifact {
+            case .docRefs(let refs):
+                if let ref = refs.first {
+                    DocumentRefCard(ref: ref, width: ArtifactCardMetrics.width, height: ArtifactCardMetrics.height) {
+                        onOpenDocument(ref.id)
+                    }
+                }
+            case .chart:
+                // chart 是 `isCardArtifact == false` 的全宽图表，永远不进条子
+                EmptyView()
+            }
+        }
+    }
 
     /// 只发图不写字时 content 为空：此时不渲染空气泡，只显示缩略图条。
     private func hasVisibleContent(_ msg: Message) -> Bool {
@@ -897,38 +971,3 @@ private struct GlassCapsuleModifier: ViewModifier {
             .background(.regularMaterial, in: Capsule())
     }
 }
-
-#if os(macOS)
-/// 聊天里的文档入口卡片：整卡可点，点了把右栏切到文档面板并定位。
-/// 只展示标题 + 摘要（其余元素按观感迭代裁掉）。
-private struct DocumentRefCard: View {
-    let ref: DocumentRef
-    let onOpen: () -> Void
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(ref.title)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundColor(Color("assistantText"))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                if let preview = ref.preview, !preview.isEmpty {
-                    Text(preview)
-                        .font(.system(size: 11.5))
-                        .foregroundColor(Color("assistantText").opacity(0.6))
-                        .lineLimit(3)
-                        .truncationMode(.tail)
-                }
-            }
-            .frame(maxWidth: 240, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color("surfaceInput"), in: RoundedRectangle(cornerRadius: 11))
-        }
-        .buttonStyle(.plain)
-        .help("在右侧栏打开《\(ref.title)》")
-    }
-}
-#endif

@@ -105,7 +105,7 @@ private struct Shot {
 }
 
 @MainActor
-private func render(_ shot: Shot, to dir: URL) {
+private func render(_ shot: Shot, to dir: URL) -> Bool {
     let content = ChatShot(refs: shot.refs, width: shot.width, expanded: shot.expanded)
         .environment(\.colorScheme, shot.dark ? .dark : .light)
 
@@ -117,38 +117,42 @@ private func render(_ shot: Shot, to dir: URL) {
 
     // 2x 位图：默认 cacheDisplay 的 rep 是 1x，字会糊
     let scale: CGFloat = 2
-    guard let rep = NSBitmapImageRep(
+    guard size.width > 0, size.height > 0, let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
         pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
     ) else {
         FileHandle.standardError.write(Data("建位图失败：\(shot.name)\n".utf8))
-        return
+        return false
     }
     rep.size = size
     host.cacheDisplay(in: host.bounds, to: rep)
 
     guard let png = rep.representation(using: .png, properties: [:]) else {
         FileHandle.standardError.write(Data("编码失败：\(shot.name)\n".utf8))
-        return
+        return false
     }
     let url = dir.appendingPathComponent("\(shot.name).png")
     do {
         try png.write(to: url)
         print("✓ \(url.path)  \(Int(size.width))×\(Int(size.height))")
+        return true
     } catch {
         FileHandle.standardError.write(Data("写盘失败 \(shot.name): \(error)\n".utf8))
+        return false
     }
 }
 
+private let validModes: Set<String> = ["light", "dark", "both"]
+
 @MainActor
-private func run(outDir: URL, mode: String) {
+private func run(outDir: URL, mode: String) -> Bool {
     do {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
     } catch {
         FileHandle.standardError.write(Data("建目录失败: \(error)\n".utf8))
-        return
+        return false
     }
 
     let three = Array(mockRefs.prefix(3))
@@ -176,7 +180,14 @@ private func run(outDir: URL, mode: String) {
         ]
     }
 
-    for shot in shots { render(shot, to: outDir) }
+    var ok = true
+    for shot in shots where !render(shot, to: outDir) { ok = false }
+
+    if shots.isEmpty {
+        FileHandle.standardError.write(Data("没有任何镜头——mode=\(mode) 是不是写错了？可用：\(validModes.sorted())\n".utf8))
+        return false
+    }
+    return ok
 }
 
 // MARK: - main
@@ -184,4 +195,9 @@ private func run(outDir: URL, mode: String) {
 let args = CommandLine.arguments
 let outDir = URL(fileURLWithPath: args.count > 1 ? args[1] : (NSTemporaryDirectory() + "cardstrip-snapshot"))
 let mode = args.count > 2 ? args[2] : "both"
-MainActor.assumeIsolated { run(outDir: outDir, mode: mode) }
+guard validModes.contains(mode) else {
+    FileHandle.standardError.write(Data("未知 mode '\(mode)'，可用：\(validModes.sorted())\n".utf8))
+    exit(2)
+}
+// 退出码要真的反映成败：否则渲不出图脚本也返回 0，自检就成了假绿（踩过这种坑）
+exit(MainActor.assumeIsolated { run(outDir: outDir, mode: mode) } ? 0 : 1)

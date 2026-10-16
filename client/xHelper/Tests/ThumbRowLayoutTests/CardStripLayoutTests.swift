@@ -4,6 +4,8 @@ import XCTest
 /// 卡片条（ArtifactCardStrip）的折叠排布：格子（卡片）统一宽、**尾格（「＋N」）可以更窄**，
 /// 而且**至少露一张卡**（卡片 240pt 比缩略图大得多，按「塞不下就 0 张」算会在窄窗口退化成
 /// 只剩一个「＋N」格、一张卡都没有）。这里钉住三条：不溢出、不白藏、至少一张。
+///
+/// 尾格宽度**用返回值里那个**，不在这里复刻钳制公式——否则改了实现忘了改测试，两边一起错也能绿。
 final class CardStripLayoutTests: XCTestCase {
     private let spacing: CGFloat = 10
     private let card: CGFloat = 240
@@ -11,14 +13,13 @@ final class CardStripLayoutTests: XCTestCase {
     /// 恒不溢出的下界：比「一张卡 + 间距」还窄就无从谈排布
     private let narrowest: CGFloat = 250
 
-    /// 排出来的一行占多宽（尾格跟 `ThumbRowLayout.collapsed` 同一处钳制）
-    private func rowWidth(visible: Int, trailingCell: CGFloat, available: CGFloat) -> CGFloat {
-        let tail = max(0, min(trailingCell, available - card - spacing))
-        guard visible > 0 else { return tail }
-        return CGFloat(visible) * card + CGFloat(visible - 1) * spacing + spacing + tail
+    /// 一行的实际占宽（尾格用实现算出来的那个宽度）
+    private func rowWidth(visible: Int, trailing: CGFloat) -> CGFloat {
+        guard visible > 0 else { return trailing }
+        return CGFloat(visible) * card + CGFloat(visible - 1) * spacing + spacing + trailing
     }
 
-    private func layout(_ available: CGFloat, _ count: Int, trailingCell: CGFloat = 72) -> (visible: Int, overflow: Bool) {
+    private func layout(_ available: CGFloat, _ count: Int, trailingCell: CGFloat = 72) -> (visible: Int, overflow: Bool, trailing: CGFloat) {
         ThumbRowLayout.collapsed(
             available: available, cell: card, spacing: spacing,
             trailingCell: trailingCell, count: count
@@ -31,7 +32,7 @@ final class CardStripLayoutTests: XCTestCase {
                 for count in 2...20 {
                     let r = layout(available, count, trailingCell: trailingCell)
                     guard r.overflow else { continue }
-                    let width = rowWidth(visible: r.visible, trailingCell: trailingCell, available: available)
+                    let width = rowWidth(visible: r.visible, trailing: r.trailing)
                     XCTAssertLessThanOrEqual(
                         width, available + 0.001,
                         "尾格=\(trailingCell) 溢出：count=\(count) available=\(available) visible=\(r.visible) 占宽=\(width)"
@@ -60,7 +61,7 @@ final class CardStripLayoutTests: XCTestCase {
                 for count in 3...20 {
                     let r = layout(available, count, trailingCell: trailingCell)
                     guard r.overflow, r.visible < count - 1 else { continue }
-                    let wider = rowWidth(visible: r.visible + 1, trailingCell: trailingCell, available: available)
+                    let wider = rowWidth(visible: r.visible + 1, trailing: r.trailing)
                     XCTAssertGreaterThan(
                         wider, available,
                         "尾格=\(trailingCell) 白藏了：count=\(count) available=\(available) visible=\(r.visible)"
@@ -70,11 +71,22 @@ final class CardStripLayoutTests: XCTestCase {
         }
     }
 
+    /// 尾格宽度不能超过给的宽、也不能是负的；放得下时就是原宽
+    func testTrailingWidthShape() {
+        for available in stride(from: narrowest, through: 1200, by: 1) {
+            let r = layout(available, 8)
+            XCTAssertGreaterThanOrEqual(r.trailing, 0, "available=\(available)")
+            XCTAssertLessThanOrEqual(r.trailing, tile, "available=\(available)")
+        }
+        XCTAssertEqual(layout(620, 3).trailing, tile)
+    }
+
     /// 全部塞得下时不出尾格
     func testNoTrailingCellWhenEverythingFits() {
         let r = layout(620, 2)
         XCTAssertEqual(r.visible, 2)
         XCTAssertFalse(r.overflow)
+        XCTAssertEqual(r.trailing, 0)
     }
 
     /// 单张 / 宽度未测出：不折叠（交给调用方按原样渲染）

@@ -28,8 +28,9 @@ struct DocumentRefCard: View {
                         .truncationMode(.tail)
                 }
             }
-            // 单卡：内容最宽 240（原样）；条子里：吃满条子给的固定卡宽
-            .frame(maxWidth: width == nil ? 240 : .infinity, alignment: .leading)
+            // 单卡：内容最宽 = 条子里的卡宽（同一个 `ArtifactCardMetrics.width`，别再写一个字面量）；
+            // 条子里：吃满条子给的固定卡宽
+            .frame(maxWidth: width == nil ? ArtifactCardMetrics.width : .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             // 定高要在背景之前，白霜底才能撑满整格（多卡等高靠它）

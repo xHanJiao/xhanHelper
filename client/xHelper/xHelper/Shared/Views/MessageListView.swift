@@ -270,9 +270,17 @@ struct MessageListView: View {
 
     private var displayRows: [DisplayRow] {
         guard !isShareSelectMode else { return messages.map { DisplayRow.message($0) } }
+        #if os(macOS)
         return LocalArtifactGrouping.rows(messages) { $0.localArtifact?.isCardArtifact == true }.map { group in
             group.count == 1 ? .message(group[0]) : .cardStrip(group)
         }
+        #else
+        // **iOS 不分组**：卡片类产物目前只有文档卡片，而它只在 macOS 出（iOS 无右栏文档面板，
+        // `DocumentSelectionCoordinator.openDocument` 见 `rightSidebar == nil` 直接 no-op）。
+        // 不分组 = iOS 维持改造前那条路（单张那套 `#if os(macOS)` 会把卡片整条隐掉），
+        // 否则会出现「1 张不显示、≥2 张却显示一摞点不动的卡片」。
+        return messages.map { DisplayRow.message($0) }
+        #endif
     }
 
     /// 单条消息一行：分享态的选择圈 + 各端各自的菜单手势（原样，从滚动区里提出来）
@@ -367,7 +375,8 @@ struct MessageListView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 展开态按「这一组的第一条消息 id」记，卡片增减/流式替换都不丢
+    /// 展开态按「这一组的第一条消息 id」记。**组首一变展开态就丢**（重排把别的消息插到组前、
+    /// 或组首那条被删），这是认了的行为——展开态本就只活 8s，不值得为它加一层稳定 id。
     private func cardStripExpandedBinding(_ group: [Message]) -> Binding<Bool> {
         let key = group.first?.id ?? ""
         return Binding(
@@ -380,6 +389,10 @@ struct MessageListView: View {
 
     /// 卡片条里单张卡的渲染：尺寸必须与条子的 `cardWidth`/`cardHeight` 一致（条子按固定卡宽算排布）。
     /// 穷尽 switch —— 新增卡片类产物时编译器会在这里提醒补渲染。
+    ///
+    /// **前提：一个产物 = 一张卡**（所以条子的「＋N」按 `items.count` 算就是卡片数）。
+    /// `upsertRoundDocumentRef` 每篇文档各落一条 `[merged]`，`docRefs` 恒为单元素；将来真要一条装多张，
+    /// 得先让条子按卡片数展平，别在这儿只取 `refs.first` 把后面的悄悄吞掉。
     @ViewBuilder
     private func artifactCard(_ artifact: LocalArtifact?) -> some View {
         if let artifact {

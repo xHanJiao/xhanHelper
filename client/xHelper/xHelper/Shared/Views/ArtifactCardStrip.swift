@@ -4,6 +4,9 @@ import SwiftUI
 /// 调用方（`MessageListView`）和条子的默认值都用它，免得两处各写一个 240。
 enum ArtifactCardMetrics {
     static let width: CGFloat = 240
+    /// 条子里的定高。**卡片的正文最多是这个高度**：标题 1 行 + 摘要 ≤3 行 + 间距 6 + 上下内边距 20，
+    /// 定宽 240 实测 84pt（字号是 `.system(size:)` 固定值、不随 Dynamic Type 变，所以不会再长）。
+    /// 留 8pt 余量；真要调正文结构（比如摘要放大到 4 行）得同步改这里，否则会溢出圆角底。
     static let height: CGFloat = 92
     /// 卡片条展开后过多久自动收起（点开扫一眼就够；条子里没有「收起」控件——展开内容一定比
     /// 可视宽更宽，尾部放什么都得滑到底才够得着）。放这里是因为泛型类型里不能有 static 存储属性。
@@ -36,14 +39,9 @@ struct ArtifactCardStrip<Item: Identifiable, Card: View>: View {
     @State private var available: CGFloat = 0
     @State private var autoCollapseTask: Task<Void, Never>?
 
-    /// 尾格实际宽度：窄窗口里让出「一张卡 + 间距」之后剩多少就用多少
-    /// （与 `ThumbRowLayout.collapsed` 同一处钳制，两边的算式必须一致）。
-    private var effectiveTileWidth: CGFloat {
-        max(0, min(tileWidth, available - cardWidth - spacing))
-    }
-
-    /// 收起态露几张、要不要「＋N」——算式在 `ThumbRowLayout.collapsed`（已有单测，保证至少露一张）。
-    private var collapsedRow: (visible: Int, overflow: Bool) {
+    /// 收起态露几张、要不要「＋N」、尾格多宽——算式在 `ThumbRowLayout.collapsed`（已有单测）。
+    /// 尾格宽度直接用它的返回值，视图不再自己算一遍那个钳制。
+    private var collapsedRow: (visible: Int, overflow: Bool, trailing: CGFloat) {
         ThumbRowLayout.collapsed(
             available: available, cell: cardWidth, spacing: spacing,
             trailingCell: tileWidth, count: items.count
@@ -95,7 +93,7 @@ struct ArtifactCardStrip<Item: Identifiable, Card: View>: View {
             ForEach(Array(items.prefix(collapsedRow.visible))) { item in
                 card(item)
             }
-            if overflows, effectiveTileWidth > 0 { moreTile }
+            if overflows, collapsedRow.trailing > 0 { moreTile }
         }
     }
 
@@ -114,7 +112,7 @@ struct ArtifactCardStrip<Item: Identifiable, Card: View>: View {
         Button {
             withAnimation(.easeOut(duration: 0.2)) { expanded = true }
         } label: {
-            tile(width: effectiveTileWidth) {
+            tile(width: collapsedRow.trailing) {
                 Text("＋\(items.count - collapsedRow.visible)")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(Color("assistantText").opacity(0.7))
@@ -122,6 +120,7 @@ struct ArtifactCardStrip<Item: Identifiable, Card: View>: View {
         }
         .buttonStyle(.plain)
         .help("展开全部 \(items.count) 张")
+        .accessibilityLabel("展开全部 \(items.count) 张卡片")
     }
 
     private func tile<C: View>(width: CGFloat, @ViewBuilder _ content: () -> C) -> some View {

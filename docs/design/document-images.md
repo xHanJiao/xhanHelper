@@ -168,7 +168,7 @@ dev/prod/test 环境 yaml 同步补 `storage` 段。
 ### 8.3 PDF 导出（×2，相对路径都必须重写为绝对 URL）
 
 - **Web** `front-end/src/composables/useExportPDF.js`：`md.render` 前把 `](/images/` 重写为 `](${window.location.origin}/images/`。
-- **macOS** `DocumentPDFExporter`（client/.../Services/DocumentPDFExporter.swift:126 `loadHTMLString(html, baseURL: nil)`）：HTML 构建时同样重写为绝对 URL（`deviceManager.baseURL + /images/...`）。
+- **macOS** `DocumentPDFExporter`（client/.../Services/DocumentPDFExporter.swift:132 `loadHTMLString(html, baseURL: baseURL)`）：`baseURL` 由调用方给服务端地址，正文里的 `/images/...` 因此解析成绝对 URL。
 
 ### 8.4 分享页
 

@@ -556,7 +556,7 @@ private struct ReaderWebView: NSViewRepresentable {
 // MARK: - HTML 组装
 
 /// 屏幕阅读版 HTML：与 `DocumentPDFExporter` 同一套骨架（marked.min.js + 图表占位替换），
-/// 但 CSS 换成阅读版 —— 不加 A4 的 `595px` / `12pt` 打印尺寸，改自适应列宽
+/// 但 CSS 换成阅读版 —— 不加 A4 的 `595pt` / `12pt` 打印尺寸，改自适应列宽
 /// （`clamp(728px, 68vw, 1100px)`：窄栏维持 728，宽窗按 68% 视口长到 1100 封顶）+ 可调字号，
 /// 并且不铺任何底色（外层是卡片 material）。
 private enum ReaderHTML {

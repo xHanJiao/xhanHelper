@@ -7,6 +7,8 @@ import Foundation
 /// 渲染分发在 `MessageListView.localArtifactView`（同为 switch 穷尽）。
 enum LocalArtifact: Equatable {
     case chart(ChartData)
+    /// 文档引用。**当前恒为单元素**（`upsertRoundDocumentRef` 每篇文档各落一条 `[merged]`）——
+    /// 条子与「＋N」都按「一个产物 = 一张卡」算；真要一条装多张，得先把条子改成按卡片数展平。
     case docRefs([DocumentRef])
 
     /// 从持久化的 (type, payload) 解码；载荷损坏返回 nil（调用方跳过该条）。
@@ -28,6 +30,15 @@ enum LocalArtifact: Equatable {
         }
     }
 
+    /// 是不是「卡片类」产物：相邻的几张会在聊天里合成一条**横向卡片条**。
+    /// 非卡片的（如 chart，250pt 全宽图表）按原样单独渲染，且天然打断分组。
+    /// 渲染侧另有 `MessageListView.artifactCard` 的穷尽 switch 对应这里。
+    var isCardArtifact: Bool {
+        switch self {
+        case .docRefs: return true
+        case .chart: return false
+        }
+    }
     /// 持久化载荷。简单 Codable 结构正常不会失败；真失败由调用方记录并跳过，不静默吞。
     func payload() throws -> Data {
         switch self {

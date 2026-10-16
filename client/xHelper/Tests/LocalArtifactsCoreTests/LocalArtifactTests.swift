@@ -44,4 +44,12 @@ final class LocalArtifactTests: XCTestCase {
         XCTAssertNil(LocalArtifact(type: .docRefs, payload: Data(#"{"id":"x"}"#.utf8)))
         XCTAssertNil(LocalArtifact(type: .chart, payload: Data("[1,2,3]".utf8)))
     }
+
+    /// 只有卡片类产物进横向卡片条；chart 是全宽图表，不进（也天然打断分组）
+    func testIsCardArtifact() {
+        XCTAssertTrue(LocalArtifact.docRefs([DocumentRef(id: "d", title: "t")]).isCardArtifact)
+        XCTAssertFalse(LocalArtifact.chart(ChartData(
+            type: .bar, title: nil, labels: [], datasets: []
+        )).isCardArtifact)
+    }
 }

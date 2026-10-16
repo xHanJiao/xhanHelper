@@ -15,7 +15,8 @@ import (
 
 // RecordInline — inline 入口：主循环 record_memory 工具调用此处。
 // 对一条候选跑决策循环，返回 `{action,id,summary}` JSON 供主 LLM 知晓发生了什么。
-func (d *RecordDecisionLoop) RecordInline(ctx context.Context, userID, topic, summary string, facts []string) ([]byte, error) {
+// facts 先过逐字校验：只留用户在本会话里真说过的原话（见 verifyVerbatimFacts）。
+func (d *RecordDecisionLoop) RecordInline(ctx context.Context, userID, convID, topic, summary string, facts []string) ([]byte, error) {
 	// 主聊天 inline 调用：补审计场景（决策循环内含 LLM 调用），保留上游 UserID/ConvID。
 	// 不这样做就会丢场景 → 审计记成空 category（前端「未标注」）。
 	sc, _ := llmcost.ScenarioFromContext(ctx)
@@ -26,11 +27,36 @@ func (d *RecordDecisionLoop) RecordInline(ctx context.Context, userID, topic, su
 	}
 	ctx = llmcost.WithScenario(ctx, sc)
 
+	kept, dropped := d.verifyInlineFacts(ctx, userID, convID, facts)
+	if dropped > 0 {
+		log.Printf("[record_loop] inline facts 逐字校验：丢弃 %d 条非用户原话片段", dropped)
+	}
+	facts = kept
+
 	res, err := d.Decide(ctx, userID, recordCandidate{Summary: summary, Facts: facts, Topic: topic})
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(map[string]string{"action": res.Action, "id": res.ID, "summary": summary})
+}
+
+// verifyInlineFacts 拿本会话最近的 user 消息当基准，验证 inline facts 是不是原话。
+// 取不到消息（DB 报错 / convID 为空）时**丢弃全部 facts** 并记日志：facts 是可选字段，
+// 但「存下来的 facts 一定是用户原话」是这条链路的契约，查不了就不能放行。
+func (d *RecordDecisionLoop) verifyInlineFacts(ctx context.Context, userID, convID string, facts []string) ([]string, int) {
+	if len(facts) == 0 {
+		return nil, 0
+	}
+	if convID == "" {
+		log.Printf("[record_loop] inline facts 校验跳过：convID 为空，丢弃 %d 条 facts（user=%.8s）", len(facts), userID)
+		return nil, len(facts)
+	}
+	contents, err := d.deps.MsgRepo.ListRecentUserMessageContents(ctx, convID, inlineFactVerifyMsgLimit)
+	if err != nil {
+		log.Printf("[record_loop] inline facts 校验取消息失败（丢弃 %d 条 facts）: %v", len(facts), err)
+		return nil, len(facts)
+	}
+	return verifyVerbatimFacts(facts, contents)
 }
 
 // Decide 对一条候选跑一遍决策循环。返回本条的实际动作。LLM 出错时上抛。
@@ -47,7 +73,7 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	topicRecords, topicTotal := d.sameTopicRecords(ctx, userID, cand.Topic, neighbors)
 
 	state := &recordLoopState{deps: d.deps, cfg: d.cfg, userID: userID, source: d.source,
-		candTopic: cand.Topic, idSet: map[string]bool{}, idType: map[string]string{}}
+		candTopic: cand.Topic, candFacts: cand.Facts, idSet: map[string]bool{}, idType: map[string]string{}}
 	for _, n := range neighbors {
 		state.idSet[n.ID] = true
 		state.idType[n.ID] = n.Type

@@ -21,6 +21,9 @@ type recordLoopState struct {
 	userID    string
 	source    string
 	candTopic string // nameTopic 定稿的 topic（权威值，写入时优先于 LLM 的 topic 参数）
+	// candFacts 入口已校验过的候选原话。它是**写入侧过滤的唯一基准**：决策循环是第二次
+	// 独立采样的 LLM，没有这道它在 tool call 里写什么就落什么（见 filterWrittenFacts）。
+	candFacts []string
 	idSet     map[string]bool
 	idType    map[string]string
 	saved     bool // 一条候选最多新增 1 条记忆

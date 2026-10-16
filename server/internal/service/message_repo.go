@@ -610,6 +610,18 @@ func (r *MessageRepo) ListRecentUserMessages(ctx context.Context, convID string,
 	return list, err
 }
 
+// ListRecentUserMessageContents 只取最近 N 条 user 消息的正文，按时间倒序。
+// 给「校验 facts 是不是用户原话」这类只需要正文的调用方用：不拉 xml_context / request_json
+// 这些大字段（record_memory 是每轮对话都走的热路径）。
+func (r *MessageRepo) ListRecentUserMessageContents(ctx context.Context, convID string, limit int) ([]string, error) {
+	var out []string
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND role = 'user' AND status = ?", convID, model.MsgStatusNormal).
+		Order("created_at DESC").Limit(limit).
+		Pluck("content", &out).Error
+	return out, err
+}
+
 // CountRecent 统计用户最近 role=user 的消息数（排除子会话消息）
 func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64

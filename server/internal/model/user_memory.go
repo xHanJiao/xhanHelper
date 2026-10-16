@@ -20,7 +20,7 @@ type UserMemory struct {
 	MemoryValue   string  `gorm:"type:text;not null" json:"memory_value"`
 	Topic         string  `gorm:"index:idx_user_memory_user_topic;size:100" json:"topic"` // 联合索引 (user_id, topic)
 	Tags          string  `gorm:"size:500" json:"tags"`                                   // 逗号分隔标签（与 notes 对齐）
-	Facts         *string `gorm:"type:text" json:"facts,omitempty"`                       // 支持细节列表（JSON 数组字符串）
+	Facts         *string `gorm:"type:text" json:"facts,omitempty"`                       // 用户原话的逐字摘录（JSON 数组字符串，写入侧有原话硬校验，见 docs/design/memory-facts-verbatim）
 	ExtractPrompt *string `gorm:"type:text" json:"extract_prompt,omitempty"`              // 提取该记忆时发给 LLM 的 prompt
 	PromptHash    string  `gorm:"size:64;index" json:"prompt_hash"`                       // prompt 的 MD5 哈希，用于输入去重
 	Source        string  `gorm:"size:20;default:conversation" json:"source"`             // conversation / csv_import

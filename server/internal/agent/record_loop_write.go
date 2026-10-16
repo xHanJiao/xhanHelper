@@ -9,6 +9,23 @@ import (
 	"xhan-helper/internal/tool"
 )
 
+// filterWrittenFacts 写入侧的最后一道原话校验：模型写进来的每条 fact 必须是**候选原话**的一段
+// （可截断不可改写）。丢片段不丢写入——facts 允许为空。
+//
+// 为什么需要它：入口的 verifyVerbatimFacts 校验的是「候选」，而真正落库的是决策循环那次采样的
+// tool call 参数——第二次独立采样。没有这道收口，「facts 一定是用户原话」这个契约在最末端就是空的
+// （见 docs/design/memory-facts-verbatim §3.6）。
+func (s *recordLoopState) filterWrittenFacts(facts []string) []string {
+	if len(facts) == 0 {
+		return nil
+	}
+	kept, dropped := verifyVerbatimFacts(facts, s.candFacts)
+	if dropped > 0 {
+		log.Printf("[record_loop] %s facts 写入校验：丢弃 %d 条非候选原话片段", s.source, dropped)
+	}
+	return kept
+}
+
 func (s *recordLoopState) saveMemory(ec *tool.ExecuteContext, args json.RawMessage) *tool.Result {
 	var a struct {
 		Topic   string   `json:"topic"`
@@ -24,13 +41,14 @@ func (s *recordLoopState) saveMemory(ec *tool.ExecuteContext, args json.RawMessa
 	// topic 以 nameTopic 定稿的 s.candTopic 为准（LLM 的 topic 参数只是兜底）：
 	// 定稿发生在决策循环之前，权威值不该被循环里 LLM 随手填的值覆盖或抹空。
 	topic := keepOrReplaceTopic(s.candTopic, a.Topic)
-	if err := validateMemoryFields(topic, a.Summary, a.Facts); err != nil {
+	facts := s.filterWrittenFacts(a.Facts)
+	if err := validateMemoryFields(topic, a.Summary, facts); err != nil {
 		return errResult(err)
 	}
-	if err := validateFactCount(a.Facts); err != nil {
+	if err := validateFactCount(facts); err != nil {
 		return errResult(err)
 	}
-	mem := s.newMemory(topic, a.Summary, a.Facts)
+	mem := s.newMemory(topic, a.Summary, facts)
 	if err := s.persist(ec.Ctx, mem, true); err != nil {
 		return errResult(err)
 	}
@@ -60,14 +78,15 @@ func (s *recordLoopState) updateMemory(ec *tool.ExecuteContext, args json.RawMes
 		log.Printf("[record_loop] update target %.8s not found, skip", a.TargetID)
 		return &tool.Result{Success: false, Error: "目标记忆不存在"}
 	}
-	// facts 只增不减：与旧 facts 去重合并后再校验（模型可只传新增的细节）。
-	// 条数上限只卡模型的入参（a.Facts），合并结果不逐出。
-	if err := validateFactCount(a.Facts); err != nil {
+	// facts 整体覆盖：不再是「与旧值去重合并」——旧做法只按精确字符串去重，
+	// 换句话说的同一件事会一直累积，最后一条记忆挂几十条自相矛盾的细节（见
+	// docs/design/memory-facts-verbatim/design.md §1）。facts 表示「这条记忆当前的出处」。
+	facts := s.filterWrittenFacts(a.Facts)
+	if err := validateFactCount(facts); err != nil {
 		return errResult(err)
 	}
 	// topic：优先用 nameTopic 定稿的权威值；其次 LLM 传的；都没有则保留旧 topic。
 	topic := keepOrReplaceTopic(keepOrReplaceTopic(s.candTopic, a.Topic), old.Topic)
-	facts := mergeFacts(parseFactsPtr(old.Facts), a.Facts)
 	if err := validateMemoryFields(topic, a.Summary, facts); err != nil {
 		return errResult(err)
 	}

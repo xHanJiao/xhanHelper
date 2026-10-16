@@ -11,6 +11,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -47,8 +48,13 @@ func TestExtractCandidates_MultiAndTruncate(t *testing.T) {
 	if len(cands) != 3 {
 		t.Fatalf("truncate to 3, got %d", len(cands))
 	}
-	if cands[0].Summary != "a" || cands[0].Facts[0] != "f1" || cands[0].Reason != "r-a" {
+	// 本用例没有用户消息可作基准（msgs=nil），facts 会被逐字校验全部丢掉——
+	// facts 的保留行为由 TestExtractCandidates_DropsNonVerbatimFacts 覆盖。
+	if cands[0].Summary != "a" || cands[0].Reason != "r-a" {
 		t.Errorf("first candidate fields wrong: %+v", cands[0])
+	}
+	if len(cands[0].Facts) != 0 {
+		t.Errorf("no user messages to verify against, facts should be dropped: %+v", cands[0].Facts)
 	}
 	for _, c := range cands {
 		if c.Summary == "无理由" {
@@ -201,73 +207,6 @@ func joinRunes(rs []string) string {
 		out += r
 	}
 	return out
-}
-
-// mergeFacts：update 时 facts 只增不减——去重、保序、超限丢旧留新。
-func TestMergeFacts(t *testing.T) {
-	// 去重 + 保序（旧在前、新在后），trim 后相等算重复；大小写敏感。
-	got := mergeFacts([]string{"A", "B", " C "}, []string{"C", "D"})
-	want := []string{"A", "B", "C", "D"}
-	if len(got) != len(want) {
-		t.Fatalf("merge dedup/order: want %v, got %v", want, got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("merge[%d]: want %q, got %q", i, want[i], got[i])
-		}
-	}
-}
-
-// mergeFacts：空入参。
-func TestMergeFacts_Empty(t *testing.T) {
-	if got := mergeFacts(nil, nil); len(got) != 0 {
-		t.Errorf("nil+nil should be empty, got %v", got)
-	}
-	if got := mergeFacts(nil, []string{"A"}); len(got) != 1 || got[0] != "A" {
-		t.Errorf("nil+[A] should be [A], got %v", got)
-	}
-	// 空/纯空白的 fact 不进结果。
-	if got := mergeFacts([]string{"A"}, []string{"", "  "}); len(got) != 1 {
-		t.Errorf("blank facts should be dropped, got %v", got)
-	}
-}
-
-// mergeFacts：不逐出——合并结果可超上限，全部保留。
-func TestMergeFacts_KeepsAllOverCap(t *testing.T) {
-	old := make([]string, 0)
-	for i := 0; i < memoryFactsMaxCount; i++ {
-		old = append(old, string(rune('a'+i)))
-	}
-	got := mergeFacts(old, []string{"new1", "new2"})
-	if len(got) != memoryFactsMaxCount+2 {
-		t.Fatalf("no eviction expected: want %d, got %d", memoryFactsMaxCount+2, len(got))
-	}
-	// 旧的最前面和新加的都还在。
-	if got[0] != "a" {
-		t.Errorf("oldest fact should be kept, got %v", got)
-	}
-	if got[len(got)-1] != "new2" {
-		t.Errorf("newest fact should be kept, got %v", got)
-	}
-}
-
-// parseFactsPtr：factsPtr 的反向。空/坏 JSON 记日志后返回 nil（不阻断 update）。
-func TestParseFactsPtr(t *testing.T) {
-	p := factsPtr([]string{"A", "B"})
-	if got := parseFactsPtr(p); len(got) != 2 || got[0] != "A" {
-		t.Errorf("roundtrip failed: %v", got)
-	}
-	if got := parseFactsPtr(nil); got != nil {
-		t.Errorf("nil should yield nil, got %v", got)
-	}
-	empty := ""
-	if got := parseFactsPtr(&empty); got != nil {
-		t.Errorf("empty string should yield nil, got %v", got)
-	}
-	bad := "not json"
-	if got := parseFactsPtr(&bad); got != nil {
-		t.Errorf("bad json should yield nil (logged), got %v", got)
-	}
 }
 
 // clipTopic：保留中英文数字、剥掉标点空格、截到 ≤5 字；空输入返回空。
@@ -521,8 +460,9 @@ func TestSameTopicRecords_DegradesOnRepoError(t *testing.T) {
 	}
 }
 
-// record-loop-prompt.md §2 的指令镜像是逐字复制，必须与代码一致。
-// 这段指令曾经只在文档里、从未进代码——分家就是这个 bug 的成因，所以钉住它。
+// record-loop-prompt.md 里的两段镜像（指令正文 §2 + MemoryDefinition §0）都是逐字复制，
+// 必须与代码一致。指令这段曾经只在文档里、从未进代码——分家就是这个 bug 的成因；MemoryDefinition
+// 那段也漂过一次（少了负清单与判据），所以两份一起钉。
 // 改代码时同步那份 md（或按 mirror 方式重新生成）。
 func TestRecordLoopInstructionMirrorsDoc(t *testing.T) {
 	const docPath = "../../../docs/design/memory-note-rework/record-loop-prompt.md"
@@ -533,5 +473,9 @@ func TestRecordLoopInstructionMirrorsDoc(t *testing.T) {
 	want := "const recordLoopInstruction = `" + recordLoopInstruction + "`"
 	if !strings.Contains(string(b), want) {
 		t.Errorf("record-loop-prompt.md 的指令镜像与 recordLoopInstruction 不一致——改代码请同步该 md")
+	}
+	wantDef := "const MemoryDefinition = `" + promptbuilder.MemoryDefinition + "`"
+	if !strings.Contains(string(b), wantDef) {
+		t.Errorf("record-loop-prompt.md 的 MemoryDefinition 镜像与代码不一致——改定义请同步该 md")
 	}
 }

@@ -132,6 +132,7 @@ web_tools:
   timeout_seconds: 30
   search_count: 8 # 模型不传 count 时的条数；模型传值夹在 1..20
   max_content_chars: 8000 # fetch 正文 / search 单条正文上限（字符），须 ≤ llm.max_tool_result_chars
+  search_max_chars: 16000 # search 结果总预算（字符），超出会截条并在返回的 note 里说明
   daily_limit: 1000 # 每日 search+fetch 合计上限；<0 不限制。按请求预扣，失败也占额度
 
 subagent:

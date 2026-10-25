@@ -51,6 +51,7 @@ func newWebTestTool(t *testing.T, handler http.HandlerFunc, mutate func(*config.
 		TimeoutSeconds:  5,
 		SearchCount:     8,
 		MaxContentChars: 8000,
+		SearchMaxChars:  16000,
 		DailyLimit:      100,
 	}
 	if mutate != nil {
@@ -132,14 +133,18 @@ func TestWebSearch_RequestAndShaping(t *testing.T) {
 			t.Errorf("返回应瘦身，不应包含 %s", banned)
 		}
 	}
-	if item["summary"] != "长篇摘要" || item["content"] != "正文" || item["site_name"] != "Example" {
+	if item["content"] != "正文" || item["site_name"] != "Example" {
 		t.Errorf("item = %v", item)
+	}
+	// need_content=true 且拿到正文时，summary 与正文重复，不应再给
+	if _, ok := item["summary"]; ok {
+		t.Error("正文存在时不应同时返回 summary（同一篇正文占两遍预算）")
 	}
 }
 
 func TestWebSearch_DefaultsAndClamp(t *testing.T) {
 	var got map[string]interface{}
-	tool, _ := newWebTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+	tool, hits := newWebTestTool(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		_, _ = w.Write([]byte(`{"results":[]}`))
 	}, nil, nil)
@@ -149,16 +154,74 @@ func TestWebSearch_DefaultsAndClamp(t *testing.T) {
 		t.Errorf("不传 count 应使用配置的 8，got %v", got["count"])
 	}
 
-	execWeb(t, tool, "search", `{"query":"x","count":99}`)
+	// 显式 count=0 必须报错（不能静默按默认），且不发请求
+	before := atomic.LoadInt32(hits)
+	if res := execWeb(t, tool, "search", `{"query":"x","count":0}`); res.Success {
+		t.Error("count=0 应报错")
+	}
+	if atomic.LoadInt32(hits) != before {
+		t.Error("count 非法不应发请求")
+	}
+
+	// 超上限夹取，但要回显 requested_count
+	res := execWeb(t, tool, "search", `{"query":"x","count":99}`)
 	if got["count"] != float64(webMaxCount) {
 		t.Errorf("count 应夹到 %d，got %v", webMaxCount, got["count"])
 	}
+	var out struct {
+		RequestedCount int `json:"requested_count"`
+	}
+	decodeWebData(t, res, &out)
+	if out.RequestedCount != 99 {
+		t.Errorf("应回显 requested_count=99，got %d", out.RequestedCount)
+	}
 
+	// 超长 query 必须报错（静默截断会把整段长句当关键词，结果完全不相关）
 	long := strings.Repeat("长", webMaxQueryRunes+50)
-	execWeb(t, tool, "search", `{"query":"`+long+`"}`)
+	before = atomic.LoadInt32(hits)
+	res = execWeb(t, tool, "search", `{"query":"`+long+`"}`)
+	if res.Success || !strings.Contains(res.Error, "过长") {
+		t.Errorf("超长 query 应报错，got %q", res.Error)
+	}
+	if atomic.LoadInt32(hits) != before {
+		t.Error("超长 query 不应发请求")
+	}
+}
+
+func TestWebSearch_RecentWindow(t *testing.T) {
+	var got map[string]interface{}
+	tool, _ := newWebTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}, nil, nil)
+
+	res := execWeb(t, tool, "search", `{"query":"重庆 二手房","recent":"month"}`)
 	q, _ := got["query"].(string)
-	if n := utf8.RuneCountInString(q); n != webMaxQueryRunes {
-		t.Errorf("query 应截到 %d 字符，got %d", webMaxQueryRunes, n)
+	want := "after:" + time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+	if !strings.Contains(q, want) {
+		t.Errorf("recent=month 应追加 %q，got query=%q", want, q)
+	}
+	if strings.Count(q, "after:") != 1 {
+		t.Errorf("after: 只应出现一次，got %q", q)
+	}
+
+	var out struct {
+		Today string `json:"today"`
+	}
+	decodeWebData(t, res, &out)
+	if out.Today != time.Now().Format("2006-01-02") {
+		t.Errorf("结果应回显 today，got %q", out.Today)
+	}
+
+	// query 里已有限定就不重复加
+	execWeb(t, tool, "search", `{"query":"x after:2025-01-01","recent":"week"}`)
+	q, _ = got["query"].(string)
+	if strings.Count(q, "after:") != 1 {
+		t.Errorf("已有限定不应重复追加，got %q", q)
+	}
+
+	if res := execWeb(t, tool, "search", `{"query":"x","recent":"hour"}`); res.Success {
+		t.Error("非法 recent 应报错")
 	}
 }
 
@@ -187,16 +250,24 @@ func TestWebSearch_BudgetTruncation(t *testing.T) {
 			{"title":"1","url":"u1","summary":"一二三四五六七八九十"},
 			{"title":"2","url":"u2","summary":"一二三四五六七八九十"},
 			{"title":"3","url":"u3","summary":"一二三四五六七八九十"}]}`))
-	}, func(c *config.WebToolsConfig) { c.MaxContentChars = 20 }, nil)
+	}, func(c *config.WebToolsConfig) { c.SearchMaxChars = 20 }, nil)
 
 	res := execWeb(t, tool, "search", `{"query":"x"}`)
 	var out struct {
-		Results   []map[string]interface{} `json:"results"`
-		Truncated bool                     `json:"truncated"`
+		Results       []map[string]interface{} `json:"results"`
+		Truncated     bool                     `json:"truncated"`
+		Note          string                   `json:"note"`
+		ReturnedCount int                      `json:"returned_count"`
 	}
 	decodeWebData(t, res, &out)
-	if len(out.Results) != 2 || !out.Truncated {
-		t.Errorf("预算 20 应装下 2 条并标记截断，got len=%d truncated=%v", len(out.Results), out.Truncated)
+	if len(out.Results) != 2 || !out.Truncated || out.ReturnedCount != 2 {
+		t.Errorf("预算 20 应装下 2 条并标记截断，got len=%d truncated=%v returned=%d", len(out.Results), out.Truncated, out.ReturnedCount)
+	}
+	if !strings.Contains(out.Note, "2/3") || !strings.Contains(out.Note, "减少 count") {
+		t.Errorf("截断说明要给出生效条数与可执行的建议，got note=%q", out.Note)
+	}
+	if strings.Contains(out.Note, "search_max_chars") {
+		t.Errorf("模型调不到 search_max_chars，不该出现在对模型的文案里: %q", out.Note)
 	}
 }
 
@@ -254,15 +325,16 @@ func TestWebSearch_ErrorMessages(t *testing.T) {
 		}
 		// 失败结果要带可机器判断的字段，且 request_id 单独透出
 		var detail struct {
-			UpstreamStatus int    `json:"upstream_status"`
-			Reason         string `json:"reason"`
-			RequestID      string `json:"request_id"`
+			Stage     string `json:"stage"`
+			APIStatus int    `json:"api_status"`
+			Reason    string `json:"reason"`
+			RequestID string `json:"request_id"`
 		}
 		if err := json.Unmarshal(res.Data, &detail); err != nil {
 			t.Errorf("status %d: 失败结果应带结构化 Data: %v", c.status, err)
 			continue
 		}
-		if detail.UpstreamStatus != c.status || detail.Reason == "" {
+		if detail.Stage != "api" || detail.APIStatus != c.status || detail.Reason == "" {
 			t.Errorf("status %d: detail = %+v", c.status, detail)
 		}
 		if detail.RequestID != "abc12345-6789" {
@@ -354,8 +426,8 @@ func TestWebFetch_404ClassifiedByProbe(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":{"message":"failed to fetch URL (request_id: b05b7e7a-3408-4d51)"}}`))
 	}, nil, nil)
-	tool.probe = func(context.Context, string) (string, string) {
-		return "unsupported_content", "Content-Type: application/pdf"
+	tool.probe = func(context.Context, string) (string, string, int) {
+		return "unsupported_content", "Content-Type: application/pdf", http.StatusPartialContent // 206 是 Range 的产物，不该外泄
 	}
 
 	res := execWeb(t, tool, "fetch", `{"url":"https://arxiv.org/pdf/1706.03762"}`)
@@ -366,15 +438,35 @@ func TestWebFetch_404ClassifiedByProbe(t *testing.T) {
 		t.Errorf("错误文案应透出分类与探测细节: %q", res.Error)
 	}
 	var detail struct {
-		Status int    `json:"upstream_status"`
-		Reason string `json:"reason"`
-		RID    string `json:"request_id"`
+		Stage        string `json:"stage"`
+		APIStatus    int    `json:"api_status"`
+		TargetStatus int    `json:"target_status"`
+		Reason       string `json:"reason"`
+		RID          string `json:"request_id"`
 	}
 	if err := json.Unmarshal(res.Data, &detail); err != nil {
 		t.Fatalf("失败结果应带结构化 Data: %v", err)
 	}
-	if detail.Status != http.StatusNotFound || detail.Reason != "unsupported_content" || detail.RID == "" {
+	if detail.Stage != "target" || detail.Reason != "unsupported_content" || detail.RID == "" {
 		t.Errorf("detail = %+v", detail)
+	}
+	if detail.APIStatus != 0 {
+		t.Errorf("结论来自目标站时 api_status 不该出现，got %d", detail.APIStatus)
+	}
+	if detail.TargetStatus != 0 {
+		t.Errorf("2xx（206）不是失败原因，target_status 不该出现，got %d", detail.TargetStatus)
+	}
+
+	// 反例：目标站真返回 403（反爬）时，target_status 必须出现
+	tool.probe = func(context.Context, string) (string, string, int) {
+		return "blocked", "本地访问返回 403", http.StatusForbidden
+	}
+	res = execWeb(t, tool, "fetch", `{"url":"https://www.zhihu.com/question/1"}`)
+	if err := json.Unmarshal(res.Data, &detail); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+	if detail.Stage != "target" || detail.TargetStatus != http.StatusForbidden || detail.APIStatus != 0 {
+		t.Errorf("target 层失败应只带 target_status: %+v", detail)
 	}
 	if strings.Contains(res.Error, "b05b7e7a-3408-4d51）失败") {
 		t.Error("request_id 不应混进上游 message 原文")
@@ -395,14 +487,18 @@ func TestWebFetch_ErrorPageDetected(t *testing.T) {
 		t.Errorf("错误文案应说明是错误页: %q", res.Error)
 	}
 	var detail struct {
-		Status int    `json:"upstream_status"`
-		Reason string `json:"reason"`
+		Stage     string `json:"stage"`
+		APIStatus int    `json:"api_status"`
+		Reason    string `json:"reason"`
 	}
 	if err := json.Unmarshal(res.Data, &detail); err != nil {
 		t.Fatalf("decode data: %v", err)
 	}
-	if detail.Status != http.StatusOK || detail.Reason != "error_page" {
+	if detail.Stage != "page" || detail.Reason != "error_page" {
 		t.Errorf("detail = %+v", detail)
+	}
+	if detail.APIStatus != 0 {
+		t.Errorf("error_page 是内容质量问题，不该带 api_status，got %d", detail.APIStatus)
 	}
 	// 转义也要还原，文案里不该出现反斜杠
 	if strings.Contains(res.Error, `\`) {
@@ -476,9 +572,12 @@ func TestWebSearch_CleanupAndUnescape(t *testing.T) {
 
 func TestProbeFetchTarget_RejectsPrivateAddress(t *testing.T) {
 	for _, u := range []string{"http://127.0.0.1:9/x", "http://10.0.0.1/x", "http://169.254.169.254/latest/meta-data"} {
-		reason, detail := probeFetchTarget(context.Background(), u)
+		reason, detail, status := probeFetchTarget(context.Background(), u)
 		if reason != "private_address" {
 			t.Errorf("%s 应判为 private_address，got %q (%s)", u, reason, detail)
+		}
+		if status != 0 {
+			t.Errorf("%s 未发出请求，target_status 应为 0，got %d", u, status)
 		}
 	}
 }
@@ -505,5 +604,148 @@ func TestLooksLikeWebErrorPage(t *testing.T) {
 	}
 	if looksLikeWebErrorPage("T", "一篇正常短文，讲 404 状态码的用法和排查") {
 		t.Error("正常短文（即便提到 404）在缺少 not-found 句式时不应误判")
+	}
+}
+
+// TestFailResult_StatusOmission — stage 与状态码的可见性规则。
+// 回归：api_status 曾在 DNS/超时/PDF 这些「上游没有对应 HTTP 状态」的场景里占位 404。
+func TestFailResult_StatusOmission(t *testing.T) {
+	tool, _ := newWebTestTool(t, func(http.ResponseWriter, *http.Request) {}, nil, nil)
+
+	cases := []struct {
+		name       string
+		stage      string
+		api        int
+		target     int
+		reason     string
+		wantAPI    int
+		wantTarget int
+	}{
+		{"DeepSeek 402", "api", 402, 0, "insufficient_balance", 402, 0},
+		{"DNS 失败（DeepSeek 回了 404，但结论来自目标站）", "target", 404, 0, "dns_error", 0, 0},
+		{"目标站超时", "target", 404, 0, "timeout", 0, 0},
+		{"目标站 403（反爬）", "target", 404, 403, "blocked", 0, 403},
+		{"PDF（探测拿到的 206 是 Range 产物，不外泄）", "target", 404, 206, "unsupported_content", 0, 0},
+		{"软 404 错误页", "page", 200, 0, "error_page", 0, 0},
+		{"私网地址拦截", "local", 0, 0, "private_address", 0, 0},
+	}
+	for _, c := range cases {
+		res := tool.failResult(c.stage, c.api, c.target, c.reason, "detail", "rid")
+		if res.Success {
+			t.Fatalf("%s: 应判失败", c.name)
+		}
+		var d struct {
+			Stage        string `json:"stage"`
+			APIStatus    int    `json:"api_status"`
+			TargetStatus int    `json:"target_status"`
+		}
+		if err := json.Unmarshal(res.Data, &d); err != nil {
+			t.Fatalf("%s: decode: %v", c.name, err)
+		}
+		if d.Stage != c.stage || d.APIStatus != c.wantAPI || d.TargetStatus != c.wantTarget {
+			t.Errorf("%s: got stage=%q api=%d target=%d, want stage=%q api=%d target=%d",
+				c.name, d.Stage, d.APIStatus, d.TargetStatus, c.stage, c.wantAPI, c.wantTarget)
+		}
+	}
+}
+
+// TestClassifyTargetResponse — 目标站响应→reason 的纯函数映射（429 必须与 403 分开）。
+func TestClassifyTargetResponse(t *testing.T) {
+	cases := []struct {
+		status int
+		ct     string
+		want   string
+	}{
+		{http.StatusTooManyRequests, "text/html", "rate_limited"},
+		{http.StatusForbidden, "text/html", "blocked"},
+		{http.StatusUnauthorized, "text/html", "blocked"},
+		{http.StatusNotFound, "text/html", "not_found"},
+		{http.StatusGone, "text/html", "not_found"},
+		{http.StatusInternalServerError, "text/html", "target_error"},
+		{http.StatusOK, "application/pdf", "unsupported_content"},
+		{http.StatusPartialContent, "application/pdf", "unsupported_content"},
+		{http.StatusOK, "text/html", "upstream_only"},
+	}
+	for _, c := range cases {
+		if got, detail := classifyTargetResponse(c.status, c.ct); got != c.want {
+			t.Errorf("status=%d ct=%q: got %q (%s), want %q", c.status, c.ct, got, detail, c.want)
+		}
+	}
+}
+
+// TestCleanArticleContent — 去掉页面外壳，但不动正文与 JSON/代码结构。
+func TestCleanArticleContent(t *testing.T) {
+	in := strings.Join([]string{
+		"央行发布最新房贷利率政策",
+		"",
+		"",
+		"",
+		"记者今日从央行获悉，首套房贷利率下调 0.2 个百分点。",
+		"打开APP",
+		"评论 0",
+		"点赞 1.2万",
+		"即将离开，打开今日头条",
+		"😀😀😀😀😀😀😀😀😀",
+		"相关推荐",
+		"这是一条不该被保留的推荐内容",
+	}, "\n")
+	got := cleanArticleContent(in)
+	for _, banned := range []string{"打开APP", "评论 0", "点赞 1.2万", "即将离开", "😀", "相关推荐", "不该被保留"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("应去掉 %q，got:\n%s", banned, got)
+		}
+	}
+	if !strings.Contains(got, "首套房贷利率下调 0.2 个百分点") {
+		t.Errorf("正文被误删:\n%s", got)
+	}
+	if strings.Contains(got, "\n\n\n") {
+		t.Errorf("连续空行应压缩:\n%s", got)
+	}
+
+	// JSON 不能被破坏（缩进结构 / 内容中的引号）
+	jsonIn := "{\n  \"id\": 1,\n  \"empty\": \"\",\n  \"body\": \"正文内容\"\n}"
+	if got := cleanArticleContent(jsonIn); got != jsonIn {
+		t.Errorf("JSON 不应被改写:\nwant %q\ngot  %q", jsonIn, got)
+	}
+
+	// 长行里的「打开APP」只是正文提及，不该误删
+	longLine := strings.Repeat("背景说明", 20) + "打开APP 的转化率是本次讨论重点"
+	if got := cleanArticleContent(longLine); got != longLine {
+		t.Errorf("长行不应被当作外壳删掉, got %q", got)
+	}
+}
+
+// TestWebSearch_NeedContentFallsBackToSummary — 个别结果抽不出正文时，仍要能读到摘要。
+func TestWebSearch_NeedContentFallsBackToSummary(t *testing.T) {
+	tool, _ := newWebTestTool(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"results":[
+			{"title":"有正文","url":"https://a.com/1","summary":"摘要1","content":"正文1","rerank_score":1.8},
+			{"title":"没正文","url":"https://a.com/2","summary":"摘要2","content":"","rerank_score":1.7}
+		]}`))
+	}, nil, nil)
+
+	res := execWeb(t, tool, "search", `{"query":"x","need_content":true}`)
+	var out struct {
+		Results []struct {
+			Title   string `json:"title"`
+			Summary string `json:"summary"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	decodeWebData(t, res, &out)
+	if len(out.Results) != 2 {
+		t.Fatalf("results = %d", len(out.Results))
+	}
+	for _, r := range out.Results {
+		switch r.Title {
+		case "有正文":
+			if r.Content == "" || r.Summary != "" {
+				t.Errorf("有正文时只给 content: %+v", r)
+			}
+		case "没正文":
+			if r.Summary == "" || r.Content != "" {
+				t.Errorf("没正文时应回退到 summary: %+v", r)
+			}
+		}
 	}
 }

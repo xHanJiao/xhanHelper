@@ -141,6 +141,7 @@ type WebToolsConfig struct {
 	TimeoutSeconds  int    `yaml:"timeout_seconds"`   // 单次 HTTP 超时秒数，默认 30
 	SearchCount     int    `yaml:"search_count"`      // 模型不传 count 时的条数，默认 8；模型传值夹在 1..20
 	MaxContentChars int    `yaml:"max_content_chars"` // fetch 正文 / search 单条正文的字符上限，默认 8000
+	SearchMaxChars  int    `yaml:"search_max_chars"`  // search 结果总预算（字符），默认 16000；超出则截条并在 note 说明
 	DailyLimit      int    `yaml:"daily_limit"`       // 每日 search+fetch 合计上限，默认 1000；<0 不限制
 }
 
@@ -1062,6 +1063,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.WebTools.MaxContentChars == 0 {
 		cfg.WebTools.MaxContentChars = 8000
+	}
+	if cfg.WebTools.SearchMaxChars == 0 {
+		cfg.WebTools.SearchMaxChars = 16000
 	}
 	if cfg.WebTools.DailyLimit == 0 {
 		cfg.WebTools.DailyLimit = 1000

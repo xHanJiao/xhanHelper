@@ -60,7 +60,7 @@ web — 联网。搜索网页 / 抓取网页正文。（search, fetch）
 
 - 现状是**当轮不截、历史才截** —— 工具结果原样进 `role=tool`，只有历史重放时按 `max_tool_result_chars`(20000) 砍。
 - 所以一次抓回 5 万字符，**当轮就真的喂 5 万字符**进上下文。
-- 结论：**上限得由工具自己兜**。`fetch` 正文按 `max_content_chars`（默认 8000 **字符**，按 rune 截，不会切坏中文）截；search 结果的总预算也用同一个值，超了就不再追加后续条目并标 `truncated`。注意 `max_content_chars` 要 ≤ 20000，否则历史回放还会再砍一刀（前后不一致）。
+- 结论：**上限得由工具自己兜**。`fetch` 正文按 `max_content_chars`（默认 8000 **字符**，按 rune 截，不会切坏中文）截；search 结果的总预算用 `search_max_chars`（默认 16000），超了就不再追加后续条目，并在返回体写清「只返回前 X/Y 条」。注意 `max_content_chars` 要 ≤ 20000，否则历史回放还会再砍一刀（前后不一致）。
 
 **重试**：429 / 408 / 5xx 自动重试一次（800ms 退避），其余 4xx 不重试，直接把原因报给模型。错误文案要具体：402 →「DeepSeek 余额不足」，403 →「被安全策略拒绝」，404 →「抓不到正文（可能是 JS 渲染页/登录墙），可派 web_explore 用浏览器打开」。
 
@@ -98,10 +98,15 @@ web_tools:
   api_key: ""                 # 空则回退 llm.api_key（仅 provider=deepseek 时）
   base_url: https://api.deepseek.com
   timeout_seconds: 30
-  search_count: 8             # 模型不传 count 时的条数；模型传的值夹在 1..20
+  search_count: 8             # 模型不传 count 时的条数；模型传值须在 1..20
   max_content_chars: 8000     # fetch 正文 / search need_content 的单条上限
+  search_max_chars: 16000     # search 结果总预算（字符），超出则截条并在 note 说明
   daily_limit: 1000           # 每日 search+fetch 合计上限；0=不限制
 ```
+
+- `count` 契约：不传 = 默认 8；显式 `count=0` / 负数 → **报错**（不静默按默认）；`>20` 夹取并在返回体回显 `requested_count` / `returned_count`。
+- `recent` 参数（`day/week/month/year`）：自动换算成 `after:YYYY-MM-DD` 追加进 query，用于「本月/最近/今年」这类时效问题（搜索器不会自己把「10月」理解成本年）；返回体始终带 `today`。
+- 结果总预算受 `search_max_chars`（16000）约束，被截时 `note` 写明「只返回前 X/Y 条」，给出的建议只能是模型真能做的（减少 count / 关 need_content），不指向服务端配置项。
 
 - 启动时 `enabled` 但 key 为空（且 provider 不是 deepseek）→ `log.Printf` 说明原因并**不注册**，不 panic：这是可选能力，跟当年 `webfetch.enabled` 同一种降级方式。
 - `config.dev/prod/local` 都不用改，key 已经在 `LLM_API_KEY` 里。
@@ -183,7 +188,7 @@ web_tools:
 
 **2. fetch 失败分类（原先全部糊成「抓不到正文（404）」）**
 - 上游 404 只给一句 `failed to fetch URL (request_id: ...)`，没有类型信息；现在失败后**本地探一次**目标站点（DNS → `GET Range: bytes=0-0`，5s）来分类：`dns_error / timeout / blocked / unsupported_content / not_found / target_error / upstream_only`（本地能通、抓取服务侧失败）。
-- 失败结果除人类文案外，`Data` 里带 `{upstream_status, reason, detail, request_id}`，模型可据此决定「换来源 / 稍后重试 / 放弃」。
+- 失败结果除人类文案外，`Data` 里带 `{stage, api_status|target_status, reason, detail, request_id}`，模型可据此决定「换来源 / 稍后重试 / 放弃」。
 - **SSRF 防护**：本地探测前解析 host，命中回环/私网/链路本地/组播/未指定地址直接判 `private_address`，避免被网页注入后用联网工具扫内网。
 - **200 + 错误页**：上游对 SPA 软 404 会返回 200（实测 api-docs 死链返回外壳 + `# Page Not Found`，319 字符）。现在「正文 <800 字符且命中 not-found 文案」判为失败，`reason=error_page`。
 
@@ -204,3 +209,80 @@ web_tools:
 - 不做「每域名最多 N 条」：会藏掉有用结果，先靠低分过滤与去重。
 
 **已知局限**：`fetch` 的成功率受上游网络能力限制（维基等站点上游拿不到，本地也拿不到）；`error_page` 与低分过滤都是启发式，可能误伤极短页面或长尾查询。
+
+### 2026-10-25 第二轮真机回归后的修复
+
+回归结论：转义、404 分类、URL 清洗均已验证通过；剩余三条 + 一条新问题，处理如下。
+
+**1. `upstream_status` 语义拆开**
+- 原字段混装了「DeepSeek 接口状态」和「目标站状态」，dns/PDF/超时这三类本地失败也顶着 404，按状态码分支会误判。
+- 现在拆成：`api_status`（DeepSeek 接口状态，连不上 DeepSeek 时省略）+ `target_status`（本地探测拿到的目标站状态，DNS/超时/私网时省略）+ `reason` / `detail` / `request_id`。
+- 本地探测函数改为同时返回状态码。
+
+**2. `count` 边界与预算说明**
+- 纠正一个误判：不是「clamp 到 10」。API 实测 `count=10/20/30` 分别返回 10/20/30 条；只剩 10 条是 **token 预算**（旧值 `max_content_chars=8000`）截掉的。
+- 现在：`count` 不传 = 默认 8；显式 `count=0`/负数 → **报错**；`>20` 夹取并在返回体回显 `requested_count` / `returned_count`。
+- search 结果总预算独立成 `search_max_chars`（默认 **16000**）；被截时 `note` 写明「只返回前 X/Y 条；如需更多请减少 count 或关闭 need_content」（不给模型指向服务端配置项的建议），不再只给一个 `truncated: true`。
+
+**3. 时效性（只做参数层）**
+- 加 `recent` 参数（`day/week/month/year` → 自动换算 `after:YYYY-MM-DD` 追加进 query；query 里已有 `after:` 就不重复加）；返回体始终带 `today`；工具描述要求时效类问题必须带 `recent`。
+- 上下文本来就注入了当前日期（`<datetime>` 块），但模型没被告知「相对时间要自己转 absolute」，这次在工具描述里说清。
+- 不做 `ori_question`（本轮决定只做参数层）、不按 `date` 重排（date 实测不可靠，脏日期重排会更糟）。
+
+**4. 并发（MySQL 实测）**
+- 加门控压测 `service/search_usage_mysql_stress_test.go`（`QUOTA_MYSQL_DSN` 未设置时 Skip，CI 不跑，也不调任何付费接口）：
+  5 轮 ×（100 并发首插 + 50 并发递增）对 dev MySQL `xhan_helper_test` 执行，**零重复键、行数恒为 1、`used_count` 精确 = 150/轮**。
+
+### 2026-10-25 第三轮真机回归后的修复（收敛版）
+
+时效不做（用户决定可容忍，`recent` 保留为可选参数，默认行为不变）。只修两处：
+
+**1. 失败字段定稿：`stage` + 状态码可见性规则**
+上一版只把 `upstream_status` 改名成 `api_status`，语义没定清：DNS/超时照样占位 404；PDF 出现「`api_status:404` + `target_status:206`」自相矛盾（206 是本地 `Range` 请求的产物）；`error_page` 又给出 `api_status:200`（成功码出现在失败结果里）。
+
+现在 `stage` 显式说明结论来自哪一层，状态码只在它真是失败原因时出现：
+
+| stage | 含义 | 允许出现的状态码 |
+|---|---|---|
+| `api` | DeepSeek 接口自己失败（401/402/403/429/400/5xx，或连不上它） | `api_status`（确有 HTTP 响应时） |
+| `target` | 目标站点/到它的网络（dns/超时/反爬/不支持类型/404） | `target_status` 且 **≥400**；2xx/3xx/206 一律不出现 |
+| `page` | 内容质量问题（上游 200 但正文是错误页） | 无 |
+| `local` | 我们自己的拦截（私网地址、参数序列化失败） | 无 |
+
+`stage` 由产生结论的那一层**显式赋值**，不靠 reason 反推 —— `blocked` 既可能来自 DeepSeek 403，也可能来自目标站 403，反推会错。`request_id` 保留，用于找官方核对。
+
+**2. 截断提示改成模型可执行的建议**
+原文案写「调大 search_max_chars」，但该参数不在工具签名里（模型调不到）。现改为「只返回前 X/Y 条；如需更多请减少 count 或关闭 need_content 后重试」，配置名不出现在模型可见文案中。
+
+### 2026-10-25 第四轮真机回归后的修复
+
+**1. 429 从 `blocked` 拆出来**
+目标站 429 原来是和 401/403 一起归 `blocked`（「反爬/需登录」），会把「该退避重试」误导成「该换来源」。现在 `rate_limited` 单独一类（`webFailMessage` 也不再写死 429，因为目标站的 429 不带 api 状态码）。分类逻辑抽成纯函数 `classifyTargetResponse(status, contentType)`，可单测。
+
+**2. `need_content=true` 时不再同时返回 summary**
+上游会同时给 `summary`（600–800 字）和 `content`（全文），同一篇正文占两遍预算——这正是 `count=20` 只回来 17 条的直接原因。现在正文存在时只给 `content`；个别结果抽不出正文才回退给 `summary`（`summary` 字段加 `omitempty`）。
+
+**3. 正文做页面外壳过滤（`cleanArticleContent`）**
+保守的行级过滤，只作用于 fetch 的 `content` 与 search 的 `content`：
+- 短行（≤40 字符）命中 APP 引导/客户端提示/运营位关键词（打开APP、下载客户端、扫码、继续阅读、即将离开、责任编辑…）
+- 纯互动计数行（`评论 0`、`点赞 1.2万`）
+- 推荐位之后的内容（`相关推荐`/`猜你喜欢`… 起整段丢弃）
+- 弹幕/表情墙（符号占比 >80% 且不短的行）
+- 连续空行压缩
+
+安全边界：**长行一律不动**（宁留噪声不误删正文）；**不做行去重**（会毁掉 JSON 的缩进结构，单测钉住 GitHub JSON 原样返回）。
+
+**4. 超长 query 改为报错**
+原来超 128 字符静默截断，长句被当关键词匹配（实测返回完全无关的旧文）。现在直接报错「query 过长（N 字符，上限 128），请提炼关键词」。
+
+## 能力边界（实测）
+
+| 能力 | 边界 |
+|---|---|
+| 搜索 | 覆盖中文时效类信息较好；同一 query 会返回同文不同源的转载，已按 URL/低分清洗；`date` 为上架/索引时间，**不可靠**（实测 2022 年稿件标 2025-09），不要当发布时间 |
+| 抓取 | 静态页、官方文档、GitHub API、微信公众号长文、B 站 SPA 可抓；**PDF/压缩包等非网页内容不支持** |
+| 抓取网络 | 中文维基与英文维基上下游都超时（网络层不通，两侧都到不了）；知乎等反爬站点上游 404、本地 403 |
+| 抓取失败 | 上游 404 无类型信息，靠本地探测分类（dns_error / timeout / blocked / rate_limited / unsupported_content / not_found / target_error / upstream_only），有额外耗时（≤5s）与一次本地请求 |
+| 软 404 | 上游对 SPA 死链可能返回 200 + 站点外壳，靠「正文 <800 字符 + not-found 文案」识别，命中则判失败 |
+| 正文质量 | 已过滤 APP 引导/互动计数/推荐位/表情墙；长行不动，仍可能残留站点特有噪声 |
+| 计费 | Search / Fetch 各 5 元/1000 次成功请求；额度预扣（失败也占额度），与 token 计费无关 |

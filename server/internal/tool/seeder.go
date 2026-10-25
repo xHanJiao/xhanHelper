@@ -42,6 +42,7 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "agent", Description: "管理智能体：创建、查看、删除自定义 AI 助手", Category: "agent"},
 	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/主题/历史消息，支持语义与关键词两种模式", Category: "search"},
 	{Name: "message_search", Description: "查询历史消息：时间范围/ID 范围/按 ID 获取/数量统计", Category: "search"},
+	{Name: "web", Description: "联网搜索与网页正文抓取（DeepSeek 官方 Search/Fetch）", Category: "search"},
 	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},
 }
 

@@ -78,14 +78,14 @@ func TestToolCatalog(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(&mockOrderTool{name: "bookkeeping", desc: "记账工具", fns: []FuncSchema{{Name: "create_bill"}, {Name: "query_bills"}}})
 	reg.Register(&mockOrderTool{name: "note", desc: "笔记工具", fns: []FuncSchema{{Name: "record_note"}}})
-	reg.Register(&mockOrderTool{name: "webfetch", desc: "隐藏工具", fns: []FuncSchema{{Name: "fetch"}}})
-	reg.HideTool("webfetch")
+	reg.Register(&mockOrderTool{name: "profile", desc: "隐藏工具", fns: []FuncSchema{{Name: "fetch"}}})
+	reg.HideTool("profile")
 
 	catalog := reg.ToolCatalog()
 	if catalog == "" {
 		t.Fatal("catalog should not be empty")
 	}
-	if strings.Contains(catalog, "webfetch") {
+	if strings.Contains(catalog, "profile") {
 		t.Error("hidden tool should not appear in catalog")
 	}
 	if !strings.Contains(catalog, "create_bill") {

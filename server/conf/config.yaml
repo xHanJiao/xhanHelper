@@ -124,10 +124,15 @@ backup:
   daily_keep: 3 # 保留最近几次
   weekly_keep: 1 # 额外保留几份「≥7 天前」的
 
-webfetch:
-  enabled: false # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
-  timeout_seconds: 15
-  max_bytes: 51200
+# 联网工具（DeepSeek 官方 Search / Fetch，见 docs/design/web-tools/design.md）
+web_tools:
+  enabled: true # 注册 web 工具组（搜索 + 抓取），主循环经 expose_tools 按需暴露
+  api_key: "" # 空则回退 llm.api_key；非 deepseek provider 需单独配
+  base_url: https://api.deepseek.com
+  timeout_seconds: 30
+  search_count: 8 # 模型不传 count 时的条数；模型传值夹在 1..20
+  max_content_chars: 8000 # fetch 正文 / search 单条正文上限（字符），须 ≤ llm.max_tool_result_chars
+  daily_limit: 1000 # 每日 search+fetch 合计上限；<0 不限制。按请求预扣，失败也占额度
 
 subagent:
   explore_max_iterations: 10 # 防死循环兜底（timeout 才是真实预算）；调太多轮转不完

@@ -23,13 +23,16 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(repos.Bill), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
-	// webfetch：仅 subAgent（explore）可见，对主循环隐藏（HideTool 模式，见 docs/design/phase-18-subagent-explore.md 1.2）
-	// 由配置 webfetch.enabled 控制是否启用（默认关闭，token 消耗大）
-	if cfg.WebFetch.Enabled {
-		reg.Register(tool.NewLoggingWrapper(tool.NewWebFetchTool(cfg.WebFetch.TimeoutSeconds, cfg.WebFetch.MaxBytes), log.Default()))
-		reg.HideTool("webfetch")
+	// web：DeepSeek 官方 Search/Fetch，主循环可见（经 expose_tools 按需暴露），见 docs/design/web-tools/design.md。
+	// enabled 但没有可用 key（provider 非 deepseek 且未单独配 web_tools.api_key）→ 跳过注册并说明原因。
+	if cfg.WebTools.Enabled {
+		if cfg.WebTools.APIKey == "" {
+			log.Printf("[init] web_tools.enabled=true 但没有可用 API Key（provider 非 deepseek 时需单独配 web_tools.api_key），跳过 web 工具注册")
+		} else {
+			reg.Register(tool.NewLoggingWrapper(tool.NewWebTool(cfg.WebTools, repos.SearchUsage), log.Default()))
+		}
 	}
-	// profile：仅 subAgent（user_context）可见，对主循环隐藏（HideTool 模式，同 webfetch）。
+	// profile：仅 subAgent（user_context）可见，对主循环隐藏（HideTool 模式）。
 	// 画像已由 resource zone 每轮注入主循环，暴露查询给主循环是冗余且膨胀 catalog。
 	reg.Register(tool.NewLoggingWrapper(tool.NewProfileTool(repos.UserProfileFact), log.Default()))
 	reg.HideTool("profile")

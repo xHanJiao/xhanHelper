@@ -1140,3 +1140,7 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 | Phase 18-3 | `agent/subagent.go`、`agent/subagent_test.go` | `agent/client_tools.go`、`agent/mini_react.go`、`agent/orchestrator.go`、`internal/config/config.go`、`appinit/agents.go`、`conf/config.yaml` |
 | Phase 18-3 客户端（ask_user，见 3.10） | `client/.../Views/AskUserBar.swift` | `client/.../ChatViewModel.swift`、`client/.../ChatViewModel+ClientTools.swift` |
 | Phase 18-4 | — | 文档更新 |
+
+## 后续变更
+
+- **2026-10-25**：`webfetch` 工具整体删除（连 `WebFetchConfig` / `conf/config.yaml` 的 `webfetch:` 段 / 注册块 / 测试），由服务端联网工具组 `web`（DeepSeek 官方 Search + Fetch，返回 Markdown）取代。`web` 对**主循环可见**（渐进暴露，不再是「仅 subAgent」），配置见 `web_tools`，每日额度 `web_tools.daily_limit`（超限后按行为准则改派 `web_explore`）。影响文件：`tool/web.go`、`tool/web_test.go`、`internal/config/config.go`、`conf/config.yaml`、`appinit/tools.go`、`app/init_repos.go`（`SearchUsage` 重新接线）、`tool/seeder.go`、`agent/promptbuilder/static.go`（准则 8）、`tool/task.go`。方案见 `docs/design/web-tools/design.md`。

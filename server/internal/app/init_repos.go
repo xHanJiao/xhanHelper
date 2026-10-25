@@ -39,6 +39,7 @@ type Repos struct {
 	LlmCost                 *service.LlmCostRepo
 	LlmPrice                *service.LlmPriceRepo
 	LLMCallIO               *service.LLMCallIORepo
+	SearchUsage             *service.SearchUsageRepo
 }
 
 // InitRepos 创建所有 repo 实例
@@ -76,5 +77,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		LlmCost:                 service.NewLlmCostRepo(db),
 		LlmPrice:                service.NewLlmPriceRepo(db),
 		LLMCallIO:               service.NewLLMCallIORepo(db),
+		SearchUsage:             service.NewSearchUsageRepo(db),
 	}
 }

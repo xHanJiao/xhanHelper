@@ -32,7 +32,7 @@ type Config struct {
 	Embedding         EmbeddingConfig         `yaml:"embedding"`
 	Reflection        ReflectionConfig        `yaml:"reflection"`
 	Retrieval         RetrievalConfig         `yaml:"retrieval"`
-	WebFetch          WebFetchConfig          `yaml:"webfetch"`
+	WebTools          WebToolsConfig          `yaml:"web_tools"`
 	SubAgent          SubAgentConfig          `yaml:"subagent"`
 	Chat              ChatConfig              `yaml:"chat"`
 	Archive           ArchiveConfig           `yaml:"archive"`
@@ -131,11 +131,18 @@ type BackupConfig struct {
 	WeeklyKeep   int    `yaml:"weekly_keep"`   // 额外保留几份「≥7 天前」的，<=0 视为 1
 }
 
-// WebFetchConfig — webfetch 工具配置
-type WebFetchConfig struct {
-	Enabled        bool `yaml:"enabled"`         // 是否启用 webfetch（默认 false 关闭；启用后仅 subAgent 可见）
-	TimeoutSeconds int  `yaml:"timeout_seconds"` // 抓取超时秒数，默认 15
-	MaxBytes       int  `yaml:"max_bytes"`       // 正文大小上限（字节），默认 51200
+// WebToolsConfig — 联网工具（DeepSeek 官方 Search / Fetch）配置。
+// 设计见 docs/design/web-tools/design.md。key 缺省回退 llm.api_key；enabled 但没有可用 key
+// 时启动只告警、不注册（可选能力，不 panic）。
+type WebToolsConfig struct {
+	Enabled         bool   `yaml:"enabled"`           // 是否注册 web 工具组（默认 false）
+	APIKey          string `yaml:"api_key"`           // 空则回退 llm.api_key（仅 provider=deepseek 时）
+	BaseURL         string `yaml:"base_url"`          // 默认 https://api.deepseek.com
+	TimeoutSeconds  int    `yaml:"timeout_seconds"`   // 单次 HTTP 超时秒数，默认 30
+	SearchCount     int    `yaml:"search_count"`      // 模型不传 count 时的条数，默认 8；模型传值夹在 1..20
+	MaxContentChars int    `yaml:"max_content_chars"` // fetch 正文 / search 单条正文的字符上限，默认 8000
+	SearchMaxChars  int    `yaml:"search_max_chars"`  // search 结果总预算（字符），默认 16000；超出则截条并在 note 说明
+	DailyLimit      int    `yaml:"daily_limit"`       // 每日 search+fetch 合计上限，默认 1000；<0 不限制
 }
 
 // SubAgentConfig — 子 agent（task 工具）配置
@@ -1044,11 +1051,28 @@ func validate(cfg *Config) error {
 	if cfg.Backup.WeeklyKeep <= 0 {
 		cfg.Backup.WeeklyKeep = 1
 	}
-	if cfg.WebFetch.TimeoutSeconds == 0 {
-		cfg.WebFetch.TimeoutSeconds = 15
+	// 联网工具（DeepSeek 官方 Search / Fetch）默认值
+	if cfg.WebTools.BaseURL == "" {
+		cfg.WebTools.BaseURL = "https://api.deepseek.com"
 	}
-	if cfg.WebFetch.MaxBytes == 0 {
-		cfg.WebFetch.MaxBytes = 51200
+	if cfg.WebTools.TimeoutSeconds == 0 {
+		cfg.WebTools.TimeoutSeconds = 30
+	}
+	if cfg.WebTools.SearchCount == 0 {
+		cfg.WebTools.SearchCount = 8
+	}
+	if cfg.WebTools.MaxContentChars == 0 {
+		cfg.WebTools.MaxContentChars = 8000
+	}
+	if cfg.WebTools.SearchMaxChars == 0 {
+		cfg.WebTools.SearchMaxChars = 16000
+	}
+	if cfg.WebTools.DailyLimit == 0 {
+		cfg.WebTools.DailyLimit = 1000
+	}
+	// key 回退：官方 Search/Fetch 与 DeepSeek 大模型同一个 key，非 deepseek provider 需单独配
+	if cfg.WebTools.APIKey == "" && cfg.LLM.Provider == "deepseek" {
+		cfg.WebTools.APIKey = cfg.LLM.APIKey
 	}
 	// Debug JSON 默认值（配 debug_persist_json 开关使用）
 	d := &cfg.LLM.DebugJSON

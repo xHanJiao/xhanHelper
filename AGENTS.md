@@ -145,7 +145,7 @@ type Tool interface {
 | `reminder` | 待办提醒创建/查询/取消/提及标记 |
 | `plan` | 会话执行计划（todo）管理 |
 | `task` | 子任务/子 agent：`web_explore` / `file_explore` / `user_context`，白名单双保险 |
-| `webfetch` | 网页正文抓取。**HideTool，仅 subAgent 可见**，由 `webfetch.enabled` 控制 |
+| `web` | 联网：`search`（搜索网页，支持 site:/after:/lang: 等语法）+ `fetch`（抓取网页正文，Markdown）。主循环可见（渐进暴露），`web_tools.enabled` 控制，每日额度 `web_tools.daily_limit` |
 | `profile` | 画像稳定层只读查询。**HideTool，仅 subAgent 可见**（画像已每轮注入主循环） |
 | `mailbox` | 向信箱投递消息。只注册进**反思注册表**；主循环经 `chat.tool_excludes` 隐藏 |
 
@@ -175,7 +175,7 @@ type Tool interface {
   - `~/Library/Application Support/xhanHelper-dev/xhan_helper.db` = **dev 沙盒库**（`make local-dev` / `APP_ENV=local.dev`，端口 18924）。测试、试验、清洗演练用这个。
   - 判据：**路径里带 `-dev` 的才是 dev**。不确定时先 `sqlite3 -readonly <db> "SELECT count(*) FROM user_memories"` 只读确认，绝不写 prod。
 - 敏感变量：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`XHAN_HELPER_DB_PASSWORD`、`ALLOWED_USER`、`XHAN_HELPER_ADMIN`。本地放 `server/.env`（已 gitignore，`make dev` 会加载）
-- 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`webfetch`、`storage`、`share`、`archive`、`mcp`、`snowflake`、`global_default_role`
+- 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`web_tools`、`storage`、`share`、`archive`、`mcp`、`snowflake`、`global_default_role`
 - 后台任务总开关 `server.disable_background_tasks`，关闭后不启 `CronRunner`、不跑 profile 迁移、`onChatEnd` 短路
 
 ## 常用命令

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"xhan-helper/internal/model"
 )
@@ -33,18 +34,23 @@ func (r *SearchUsageRepo) TryUse(ctx context.Context, provider string, totalQuot
 		return 0, fmt.Errorf("查询搜索用量失败: %w", err)
 	}
 
-	// 检测配置变更（新购套餐）：total_quota 或 expires_at 变了则重置计数
+	// 检测配置变更（新购套餐 / 跨天）：total_quota 或 expires_at 变了则重置计数。
+	// 更新带旧值条件：并发下只有一个请求真正重置，其余以 DB 最新状态继续（避免各自清零丢计数）。
 	if su.TotalQuota != totalQuota || !su.ExpiresAt.Equal(expiresAt) {
-		if err := r.db.WithContext(ctx).Model(&su).Updates(map[string]interface{}{
-			"total_quota": totalQuota,
-			"expires_at":  expiresAt,
-			"used_count":  0,
-		}).Error; err != nil {
+		if err := r.db.WithContext(ctx).Model(&model.SearchUsage{}).
+			Where("id = ? AND expires_at = ? AND total_quota = ?", su.ID, su.ExpiresAt, su.TotalQuota).
+			Updates(map[string]interface{}{
+				"total_quota": totalQuota,
+				"expires_at":  expiresAt,
+				"used_count":  0,
+			}).Error; err != nil {
 			return 0, fmt.Errorf("更新搜索配额配置失败: %w", err)
 		}
-		su.TotalQuota = totalQuota
-		su.ExpiresAt = expiresAt
-		su.UsedCount = 0
+		var cur model.SearchUsage
+		if err := r.db.WithContext(ctx).First(&cur, "id = ?", su.ID).Error; err != nil {
+			return 0, fmt.Errorf("查询搜索用量失败: %w", err)
+		}
+		su = cur
 	}
 
 	return r.atomicIncrement(ctx, &su)
@@ -58,11 +64,16 @@ func (r *SearchUsageRepo) createAndIncrement(ctx context.Context, provider strin
 		UsedCount:  initialUsed,
 		ExpiresAt:  expiresAt,
 	}
-	if err := r.db.WithContext(ctx).Create(&su).Error; err != nil {
+	// 并发窗口：多个请求可能同时发现「无记录」，插入必须幂等，否则撞 provider 唯一索引（1062）。
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&su).Error; err != nil {
 		return 0, fmt.Errorf("创建搜索用量记录失败: %w", err)
 	}
-	// 首次创建后立即 +1（initialUsed 是创建前的已用量）
-	return r.atomicIncrement(ctx, &su)
+	// 统一重读取真实行：插入可能被别的请求抢先，本地 su 也不一定是最新计数。
+	var cur model.SearchUsage
+	if err := r.db.WithContext(ctx).Where("provider = ?", provider).First(&cur).Error; err != nil {
+		return 0, fmt.Errorf("查询搜索用量失败: %w", err)
+	}
+	return r.atomicIncrement(ctx, &cur)
 }
 
 func (r *SearchUsageRepo) atomicIncrement(ctx context.Context, su *model.SearchUsage) (int, error) {
@@ -74,15 +85,19 @@ func (r *SearchUsageRepo) atomicIncrement(ctx context.Context, su *model.SearchU
 	result := r.db.WithContext(ctx).Model(&model.SearchUsage{}).
 		Where("id = ? AND used_count < total_quota", su.ID).
 		Update("used_count", gorm.Expr("used_count + 1"))
-	if result.RowsAffected == 0 {
-		// 重新读取获取当前实际值
-		if err := r.db.WithContext(ctx).First(su, "id = ?", su.ID).Error; err != nil {
-			return 0, fmt.Errorf("查询搜索用量失败: %w", err)
-		}
-		return su.UsedCount, fmt.Errorf("搜索次数已用完（%d/%d）",
-			su.UsedCount, su.TotalQuota)
+	if result.Error != nil {
+		return 0, fmt.Errorf("更新搜索用量失败: %w", result.Error)
 	}
-	return su.UsedCount + 1, nil
+	// 回读真实计数：递增是原子的，本地的 su.UsedCount 在并发下已过期。
+	var cur model.SearchUsage
+	if err := r.db.WithContext(ctx).First(&cur, "id = ?", su.ID).Error; err != nil {
+		return 0, fmt.Errorf("查询搜索用量失败: %w", err)
+	}
+	if result.RowsAffected == 0 {
+		return cur.UsedCount, fmt.Errorf("搜索次数已用完（%d/%d）",
+			cur.UsedCount, cur.TotalQuota)
+	}
+	return cur.UsedCount, nil
 }
 
 // Ensure 确保 DB 中存在该 provider 的记录（不存在则用 config 值创建），不做递增

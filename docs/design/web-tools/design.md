@@ -167,3 +167,40 @@ web_tools:
 - 不把额度余量塞进每次结果（只在超限时报数）。
 - 这版不动 `web_explore` 的服务端白名单（子 agent 单条结果预算只有 2000 字符，`fetch` 内容会被截得很狠，要动得连着调 `maxToolResult`）。
 - 不接成本中心。
+
+## 后续变更
+
+### 2026-10-25 第一轮真机回归后的修复
+
+回归结论：20 次成功 / 6 次失败，约 0.10 元；search 可用但并发有问题，fetch 需要修分类。已按下列方案修完（同一分支 `feat/web-tools`）。
+
+**1. 并发首次调用撞 `search_usages` 唯一索引（1062）**
+- 根因：`TryUse` 是 `First`（无记录）→ `Create`，两个并发请求会同时插入。不是索引建错——这张表是**单行滚动计数器**，`provider` 唯一索引是对的；该修的是插入幂等。
+- 改法：`Create` 加 `clause.OnConflict{DoNothing: true}`（MySQL 走 `ON DUPLICATE KEY UPDATE id=id`，SQLite 走 `ON CONFLICT DO NOTHING`），随后重读真实行再原子递增。
+- 顺带：跨天重置改成带旧值条件的 `UPDATE`（并发下只有一个请求真正清零），`atomicIncrement` 回读真实计数（原先返回的 `used` 可能是并发前的旧值），并补上原先没检查的 `Update` 错误。
+- 额度失败不再把 DB 细节（表名/索引/SQL）喂给模型，只进日志。
+- 测试：`service/search_usage_repo_test.go`（并发首插、超限、跨天重置、跨天与递增并发、DB 错误上抛）。
+
+**2. fetch 失败分类（原先全部糊成「抓不到正文（404）」）**
+- 上游 404 只给一句 `failed to fetch URL (request_id: ...)`，没有类型信息；现在失败后**本地探一次**目标站点（DNS → `GET Range: bytes=0-0`，5s）来分类：`dns_error / timeout / blocked / unsupported_content / not_found / target_error / upstream_only`（本地能通、抓取服务侧失败）。
+- 失败结果除人类文案外，`Data` 里带 `{upstream_status, reason, detail, request_id}`，模型可据此决定「换来源 / 稍后重试 / 放弃」。
+- **SSRF 防护**：本地探测前解析 host，命中回环/私网/链路本地/组播/未指定地址直接判 `private_address`，避免被网页注入后用联网工具扫内网。
+- **200 + 错误页**：上游对 SPA 软 404 会返回 200（实测 api-docs 死链返回外壳 + `# Page Not Found`，319 字符）。现在「正文 <800 字符且命中 not-found 文案」判为失败，`reason=error_page`。
+
+**3. Markdown 转义还原（最伤语义的一条）**
+- 上游清洗器把 CommonMark 可转义标点全转义：GitHub API 回来是 `\{\"id\"\: 908531752\,`，文档回来是 `\# 标题`、`\|`。现在 `unescapeMarkdown` 按 CommonMark 规则还原（`\` + ASCII 标点 → 标点），作用于 fetch 的 `title/content` 与 search 的 `content`；`summary` 本来就干净，不动。
+- 取舍：代码块里本想显示字面 `\.` 的会被还原成 `.`。
+
+**4. search 结果清洗（基础版）**
+- 丢空标题、按清洗后 URL 去重；
+- URL 剥跟踪参数（`utm_*`/`gclid`/`fbclid`/`spm`/`scm`/`share_token`/`partner`/`aff`/`affiliate`/`p_source`/`p_type`/`via`）；
+- `rerank_score < 1.0` 且剩余 ≥3 条时丢弃（官方说 ≥1.5 为优质，留 1.0 作底线）；
+- `count` 边界写进工具描述（默认 8、最多 20、非正数按默认）；`date` 标注「上架/索引时间，可能不准，别当发布时间下断言」。
+- 实测确认 API 没有 10 条上限（`count=10/20/30` 分别返回 10/20/30 条），上限是我们自己收的。
+
+**5. 维持不变的口径**
+- 额度仍是**请求前预扣**，失败请求也占额度（6 次失败各扣 1 次）；DeepSeek 侧失败不计费。
+- 不做本地兜底抓取：实测本机连维基都超时，兜底救不了这类站点（上游失败多为其网络受限），只多一套要维护的抓取器。
+- 不做「每域名最多 N 条」：会藏掉有用结果，先靠低分过滤与去重。
+
+**已知局限**：`fetch` 的成功率受上游网络能力限制（维基等站点上游拿不到，本地也拿不到）；`error_page` 与低分过滤都是启发式，可能误伤极短页面或长尾查询。

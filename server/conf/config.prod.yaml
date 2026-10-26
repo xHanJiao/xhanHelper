@@ -3,7 +3,7 @@ server:
   mode: release
   registration_enabled: false
   allowed_users: [your-username]
-  memory_auto_extract: true
+  memory_auto_extract: false # 暂关 post_chat（观察期）：只留 inline。判据见 docs/design/memory-quality/design.md 文末
   admin_users:
     - ${XHAN_HELPER_ADMIN}
 

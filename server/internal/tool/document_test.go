@@ -1306,6 +1306,32 @@ func TestDocumentToolRegistryValidation(t *testing.T) {
 	reg.ValidateCatalog()
 }
 
+// 正文口径必须随写入口下发：文档是成品、不是对话纪要。改文案时别把这条丢了。
+func TestDocumentBodyHintInSchema(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+
+	var createContent, updateDesc string
+	for _, fn := range tool.Functions() {
+		switch fn.Name {
+		case "create_document":
+			props, _ := fn.Parameters["properties"].(map[string]interface{})
+			content, _ := props["content"].(map[string]interface{})
+			createContent, _ = content["description"].(string)
+		case "update_document":
+			updateDesc = fn.Description
+		}
+	}
+	for name, desc := range map[string]string{
+		"create_document.content": createContent,
+		"update_document":         updateDesc,
+	} {
+		if !strings.Contains(desc, "讨论纪要") || !strings.Contains(desc, "只写最终结果") {
+			t.Errorf("%s 缺少正文口径（不是对话纪要）: %q", name, desc)
+		}
+	}
+}
+
 // 并发局部替换不同片段：无锁时后写者用旧快照整列覆盖会丢改动，有锁则全部保留
 func TestDocumentConcurrentUpdateNoLostUpdate(t *testing.T) {
 	tool, cleanup := setupDocumentTool(t)

@@ -79,6 +79,10 @@ var docListFields = map[string]bool{
 // 避免模型按可见性/length 猜。
 const docAudienceParamDesc = "文档读者层级，必填判断：给用户阅读的成品填 finished；给助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal。internal 默认不出现在用户列表，但工具检索/读取、拿到链接仍可见。"
 
+// docBodyHint create/update 共用的正文口径：文档是成品，不是这次对话的纪要。
+// 用户没要求保留过程时，模型很容易把讨论细节整段搬进去，所以把判据写在落笔处。
+const docBodyHint = "正文只写最终结果：结论、选它的理由（含为什么没选别的方案）、怎么用。不写成讨论纪要——不写谁在什么时候说了什么、不复述讨论经过与来回修改的痕迹、不出现「刚才」「我们讨论到」「本轮」这类对话残留；没定的事等定了再写，读者应能脱离这段对话独立读懂。internal 材料可保留工作要点（走过的路、待办），但同样只记要点，不转述对话原话。"
+
 // docDefaultFields list/query 共用的默认返回字段（不含 preview，避免默认就堆大输出）。
 var docDefaultFields = []string{"id", "title", "tags", "created_at", "updated_at", "conversation_id"}
 
@@ -199,7 +203,7 @@ func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAn
 func (t *DocumentTool) Name() string { return "document" }
 
 func (t *DocumentTool) Description() string {
-	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。创建时必须声明 audience：给用户读的成品填 finished，供助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal；internal 默认不出现在用户列表，但工具检索/读取仍可见。需要配图时用 image.list_images 找用户上传的图，把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docLinkHint
+	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。创建时必须声明 audience：给用户读的成品填 finished，供助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal；internal 默认不出现在用户列表，但工具检索/读取仍可见。需要配图时用 image.list_images 找用户上传的图，把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docBodyHint + docLinkHint
 }
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
@@ -220,7 +224,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"title":    map[string]interface{}{"type": "string", "description": fmt.Sprintf("文档标题，≤%d 字，超长会被拒绝", maxDocumentTitleLen)},
-					"content":  map[string]interface{}{"type": "string", "description": fmt.Sprintf("Markdown 格式的文档正文，≤%d 字，超长会被拒绝（请拆分成多篇）", maxDocumentContentLen)},
+					"content":  map[string]interface{}{"type": "string", "description": fmt.Sprintf("Markdown 格式的文档正文，≤%d 字，超长会被拒绝（请拆分成多篇）。", maxDocumentContentLen) + docBodyHint},
 					"tags":     map[string]interface{}{"type": "string", "description": "逗号分隔的标签（半角逗号），用于分类检索，如 技术,Go,后端；自动去重"},
 					"audience": map[string]interface{}{"type": "string", "enum": []string{model.DocumentAudienceFinished, model.DocumentAudienceInternal}, "description": docAudienceParamDesc},
 				},
@@ -272,7 +276,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "update_document",
 			Display:     "修改文档",
-			Description: "修改已有文档。局部小改动优先用 old_text/new_text 指定替换片段（无需传全文，省 token 且不会误覆盖其他内容）；只有重写全文时才传 content。old_text 必须与文档当前内容精确匹配且唯一。仅更新传入的非空字段。局部替换时不要弄丢正文里已有的内部链接。" + docLinkHint,
+			Description: "修改已有文档。局部小改动优先用 old_text/new_text 指定替换片段（无需传全文，省 token 且不会误覆盖其他内容）；只有重写全文时才传 content。old_text 必须与文档当前内容精确匹配且唯一。仅更新传入的非空字段。局部替换时不要弄丢正文里已有的内部链接。" + docBodyHint + docLinkHint,
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

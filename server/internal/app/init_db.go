@@ -21,6 +21,7 @@ func AllModels() []any {
 		&model.UserToken{},
 		&model.Conversation{},
 		&model.Message{},
+		&model.Artifact{},
 		&model.Bill{},
 		&model.UserMemory{},
 		&model.ScheduledTask{},

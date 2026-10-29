@@ -235,6 +235,11 @@ func (r *ConversationRepo) BeginPurge(ctx context.Context, convID string) (scope
 		if e := tx.Where("conversation_id IN ?", scope).Delete(&model.MessageShare{}).Error; e != nil {
 			return e
 		}
+		// HTML 产物跟着会话走（软删只改 deleted_at，不重写正文，几乎零 IO）。
+		// 文档是用户级资产，不在这里清——别照文档的逻辑处理（docs/design/html-artifact §十一）。
+		if e := tx.Where("conversation_id IN ?", scope).Delete(&model.Artifact{}).Error; e != nil {
+			return e
+		}
 		return nil
 	})
 	return
@@ -277,7 +282,13 @@ func (r *ConversationRepo) FinishPurge(ctx context.Context, scope []string) erro
 	if len(scope) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Where("id IN ?", scope).Delete(&model.Conversation{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 产物随会话一起物理删（一条按 conversation 的批删，不逐条）。
+		if e := tx.Unscoped().Where("conversation_id IN ?", scope).Delete(&model.Artifact{}).Error; e != nil {
+			return e
+		}
+		return tx.Where("id IN ?", scope).Delete(&model.Conversation{}).Error
+	})
 }
 
 // GetExtra — 读取会话的 extra 数据

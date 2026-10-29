@@ -33,6 +33,17 @@ func (r *MessageRepo) Create(ctx context.Context, m *model.Message) error {
 	return r.db.WithContext(ctx).Create(m).Error
 }
 
+// SetArtifactsJSON — 把本轮产出的 HTML 产物引用挂到 assistant 消息上。
+// 只在本轮结束时调一次（正文不在这里，见 docs/design/html-artifact §五）。
+func (r *MessageRepo) SetArtifactsJSON(ctx context.Context, msgID, artifactsJSON string) error {
+	if msgID == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("id = ?", msgID).
+		Update("artifacts_json", artifactsJSON).Error
+}
+
 // DebugJSONUpdate — 单条调试 JSON 落库更新（异步刷盘用）
 type DebugJSONUpdate struct {
 	MessageID   string

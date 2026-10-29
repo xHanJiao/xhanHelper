@@ -500,6 +500,8 @@ struct ContentView: View {
                     DocumentSelectionCoordinator.shared.documentVM = documentVM
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
+                    ArtifactOpenCoordinator.shared.rightSidebar = rightSidebar
+                    ArtifactOpenCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     registerAppShortcutBridge()
                 }
                 .onDisappear {

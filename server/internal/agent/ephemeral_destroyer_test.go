@@ -26,7 +26,7 @@ func setupDestroyer(t *testing.T) (*EphemeralDestroyer, *service.DelayedTaskRepo
 	if err := db.AutoMigrate(
 		&model.Conversation{}, &model.Message{}, &model.Embedding{},
 		&model.ConversationSummary{}, &model.ConversationPlan{}, &model.MessageShare{},
-		&model.DelayedTask{},
+		&model.DelayedTask{}, &model.Artifact{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

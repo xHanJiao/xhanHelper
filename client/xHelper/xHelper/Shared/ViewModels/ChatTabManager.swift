@@ -111,6 +111,9 @@ final class ChatTabManager: ObservableObject {
         vm.onOpenDocument = { id in
             DocumentSelectionCoordinator.shared.openDocument(id: id)
         }
+        vm.onOpenArtifact = { id, title in
+            ArtifactOpenCoordinator.shared.open(id: id, title: title)
+        }
         tabs.append(tab)
         activate(tab)
         resetBlank(tab)
@@ -145,6 +148,9 @@ final class ChatTabManager: ObservableObject {
         }
         vm.onOpenDocument = { id in
             DocumentSelectionCoordinator.shared.openDocument(id: id)
+        }
+        vm.onOpenArtifact = { id, title in
+            ArtifactOpenCoordinator.shared.open(id: id, title: title)
         }
         let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm, isEphemeral: ephemeral ?? false)
         vm.onEphemeralChanged = { [weak tab] in tab?.isEphemeral = $0 }

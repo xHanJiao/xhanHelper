@@ -33,6 +33,10 @@ func (m *mockMsgRepo) Create(ctx context.Context, msg *model.Message) error {
 	return nil
 }
 
+func (m *mockMsgRepo) SetArtifactsJSON(ctx context.Context, msgID, artifactsJSON string) error {
+	return nil
+}
+
 func (m *mockMsgRepo) ListRecentUserMessages(ctx context.Context, convID string, limit int) ([]model.Message, error) {
 	return nil, nil
 }

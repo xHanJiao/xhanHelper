@@ -162,7 +162,8 @@ func TestHandleOneRoundResponse_WithToolCalls_Continues(t *testing.T) {
 
 type failingMsgRepo struct{}
 
-func (failingMsgRepo) Create(context.Context, *model.Message) error { return fmt.Errorf("db down") }
+func (failingMsgRepo) Create(context.Context, *model.Message) error           { return fmt.Errorf("db down") }
+func (failingMsgRepo) SetArtifactsJSON(context.Context, string, string) error { return nil }
 
 func TestSaveAssistantMsg_PersistsReasoningEncryptedUsageTrace(t *testing.T) {
 	repo := &recordingMsgRepo{}

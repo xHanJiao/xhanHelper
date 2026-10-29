@@ -22,6 +22,10 @@ func (m *recordingMsgRepo) Create(ctx context.Context, msg *model.Message) error
 	return nil
 }
 
+func (m *recordingMsgRepo) SetArtifactsJSON(ctx context.Context, msgID, artifactsJSON string) error {
+	return nil
+}
+
 // nativeToolCallResponse 生成原生 function calling 的工具调用响应（done 事件携带 ToolCalls）。
 // 工具名指向不存在的工具，执行后返回错误结果但不会 panic，保证循环持续不收敛。
 func nativeToolCallResponse() mockLLMResponse {

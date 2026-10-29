@@ -13,6 +13,7 @@ type Repos struct {
 	User                    *service.UserRepo
 	Conversation            *service.ConversationRepo
 	Message                 *service.MessageRepo
+	Artifact                *service.ArtifactRepo
 	Bill                    *service.BillRepo
 	Mem                     *service.UserMemoryRepo
 	Note                    *service.NoteRepo
@@ -51,6 +52,7 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		User:                    service.NewUserRepo(db, cfg.Server.TokenTTLMinutes, cfg.Server.MaxTokensPerUser),
 		Conversation:            service.NewConversationRepo(db),
 		Message:                 msgRepo,
+		Artifact:                service.NewArtifactRepo(db),
 		Bill:                    service.NewBillRepo(db),
 		Mem:                     service.NewUserMemoryRepo(db),
 		Note:                    service.NewNoteRepo(db),

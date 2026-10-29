@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"strconv"
@@ -210,7 +211,7 @@ func requireConversationOwner(c *gin.Context, convRepo *service.ConversationRepo
 }
 
 func getMessages(convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo) gin.HandlerFunc {
+	msgRepo *service.MessageRepo, artifactRepo *service.ArtifactRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
 		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
@@ -223,11 +224,57 @@ func getMessages(convRepo *service.ConversationRepo,
 			return
 		}
 		msgs = cleanMessages(msgs)
+		attachArtifacts(c.Request.Context(), artifactRepo, msgs)
 		view.JSONOK(c, msgs)
 	}
 }
 
-func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {
+// attachArtifacts — 把消息里的产物引用批量展开成 {id,title,summary}（一次 IN 查询，禁止 N+1）。
+// 失败只降级（记日志、卡片不显示），消息本身照常返回。
+func attachArtifacts(ctx context.Context, repo *service.ArtifactRepo, msgs []model.Message) {
+	if repo == nil {
+		return
+	}
+	ids := make([]string, 0, len(msgs))
+	parsed := make([][]model.ArtifactRef, len(msgs))
+	for i := range msgs {
+		if msgs[i].ArtifactsJSON == nil || *msgs[i].ArtifactsJSON == "" {
+			continue
+		}
+		var refs []model.ArtifactRef
+		if err := json.Unmarshal([]byte(*msgs[i].ArtifactsJSON), &refs); err != nil {
+			log.Printf("[conv] parse artifacts_json msg=%s: %v", msgs[i].ID, err)
+			continue
+		}
+		parsed[i] = refs
+		for _, r := range refs {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	detail, err := repo.FindRefsByIDs(ctx, ids)
+	if err != nil {
+		log.Printf("[conv] expand artifacts: %v", err)
+		return
+	}
+	for i, refs := range parsed {
+		if len(refs) == 0 {
+			continue
+		}
+		out := make([]model.ArtifactRef, 0, len(refs))
+		for _, r := range refs {
+			if d, ok := detail[r.ID]; ok {
+				out = append(out, d)
+			}
+		}
+		msgs[i].Artifacts = out
+	}
+}
+
+func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
+	artifactRepo *service.ArtifactRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
 		conv, ok := requireConversationOwner(c, convRepo, convID)
@@ -245,6 +292,7 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 			return
 		}
 		result.Messages = cleanMessages(result.Messages)
+		attachArtifacts(c.Request.Context(), artifactRepo, result.Messages)
 		// 带上无痕标记：客户端各加载路径（openConversation / iOS 直连 / 历史回退）统一从此灌入 VM，
 		// 避免只在 openConversation 注入导致 pill 状态与服务端不一致。
 		view.JSONOK(c, gin.H{

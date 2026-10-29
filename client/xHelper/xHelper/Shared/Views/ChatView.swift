@@ -46,6 +46,7 @@ struct ChatView: View {
 
     let baseURL: String
     let token: String
+    @ObservedObject private var artifactOpener = ArtifactOpenCoordinator.shared
 
     var body: some View {
 #if os(iOS)
@@ -53,6 +54,22 @@ struct ChatView: View {
             GlassBackground()
             content
             topBarCover
+        }
+        // iOS 没有右栏：产物用整屏 sheet 展示（同一个 HTMLArtifactView）
+        .sheet(item: $artifactOpener.presented) { payload in
+            NavigationStack {
+                HTMLArtifactView(html: payload.html)
+                    .navigationTitle(payload.title)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("完成") { artifactOpener.presented = nil }
+                        }
+                    }
+            }
+        }
+        .onAppear {
+            artifactOpener.configure(baseURL: baseURL, token: token)
         }
 #else
         content
@@ -74,6 +91,7 @@ struct ChatView: View {
                 toolQueue: viewModel.toolQueue,
                 verifyStatus: viewModel.verifyStatus,
                 onOpenDocument: { viewModel.onOpenDocument?($0) },
+                onOpenArtifact: { id, title in viewModel.onOpenArtifact?(id, title) },
                 hasMoreBefore: viewModel.hasMoreBefore,
                 isLoadingMore: viewModel.isLoadingMore,
                 loadMoreError: viewModel.loadMoreError,

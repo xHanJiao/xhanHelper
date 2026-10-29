@@ -197,6 +197,11 @@ class APIClient {
 		return try await get("/api/documents/\(id)")
 	}
 
+	/// HTML 产物正文（唯一的正文出口；消息列表只带 id/title/summary）。
+	func getArtifact(id: String) async throws -> ArtifactPayload {
+		return try await get("/api/artifacts/\(id)")
+	}
+
 	/// 词云标签统计。audience 与列表同口径：缺省 finished，all=不过滤。
 	func listDocumentTags(audience: String? = nil) async throws -> DocumentTagListResponse {
 		var path = "/api/documents/tags"

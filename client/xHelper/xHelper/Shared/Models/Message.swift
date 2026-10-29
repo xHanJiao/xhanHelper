@@ -21,6 +21,8 @@ struct Message: Identifiable, Codable {
     /// 本地产物的解码结果（chart / docRefs…）。瞬态：持久化的是 `localToolResult.payload`，
     /// 由 `mergeLocalToolResults` 在加载/插入时解码。
     var localArtifact: LocalArtifact? = nil
+    /// 本条消息产出的 HTML 产物引用（服务端 `artifacts` 字段）。正文不在这里。
+    var artifacts: [ArtifactRef] = []
     /// 刚发出、还没从服务端拉回时的内存缩略图（仅本地展示，不入库）
     var localImages: [PlatformImage] = []
 
@@ -40,6 +42,7 @@ struct Message: Identifiable, Codable {
         case memoryIds = "memory_ids"
         case imageIdsJSON = "image_ids"
         case toolCallId = "tool_call_id"
+        case artifacts
         case createdAt = "created_at"
     }
 

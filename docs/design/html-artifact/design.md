@@ -327,6 +327,74 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 
 **为什么不复用文档那种「面板内打开 + 返回」**：那要新写一层面板内导航，而且同一个产物从聊天点开是 tab、从灵阅点开是面板内，行为不一致。tab 方案零新代码，且列表留在面板里可以点回去继续翻。
 
+### 9.6 分享：公开只读链接
+
+需求：把做好的页发给别人看，**对方不需要账号**。
+
+**不新建分享表**：产物与分享是 1:1，`artifacts` 直接加一列 `share_token`（uuid，`json:"-"`）。文档那边用独立表是历史选择，这里照抄只会多一整套 repo。
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/artifacts/:id/share` | 生成或返回现有 token（幂等），回 `{token, url}` |
+| `DELETE /api/artifacts/:id/share` | 撤销：清空 token，旧链接立即 404 |
+| `GET /api/share/artifacts/:token` | 公开只读，**直接返回 `text/html`** |
+
+- **为什么直接吐 HTML 而不是像文档那样返回 JSON + Vue 页**：产物本身就是完整自包含文档，前端再渲染一层纯属多写一个页面。
+- **为什么挂在 `/api/` 下**：nginx 只转发 `/api/` 与 `/images/`，因此零部署改动（想要 `/a/xxx` 短链才需要动线上配置）。
+- 链接**永久有效、可随时撤销**；不做有效期、不做访问密码、不做访问计数。
+- **v1 只有 macOS 有分享入口**（产物页右上角浮钮）：iOS 的 sheet 里没有，`HTMLArtifactView` 已按两端都能编译写，补的话是在 `ChatView` 的 sheet `.toolbar` 里放同一个按钮。
+
+安全（两层）：
+
+1. 产物入库时已清洗：`script/iframe/object/embed` 删除、`on*` 属性删除、外链 URL 过滤、图片内联为 `data:`、内嵌 CSP `default-src 'none'`。
+2. 公开路由再压一层响应头：`Content-Security-Policy: sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:` + `X-Content-Type-Options: nosniff` + `Referrer-Policy: no-referrer` + `Cache-Control: no-store`。
+   - `sandbox` 把页面放进**不透明源**：万一哪天清洗漏了，脚本也碰不到同域 Web 端存在 localStorage 里的 Bearer token。
+   - `no-store` 是「可撤销」的前提——允许缓存的话，撤销后浏览器还拿旧副本继续显示。
+
+图片与分享的关系：生成时已内联成字节副本，因此**不依赖图床、不需要登录、不受 `image_ttl_days` 影响**。代价是图片随页面一起公开，且撤销只让 URL 失效——**对方已保存的副本收不回**。
+
+生命周期：无痕会话的产物随会话销、软删的产物被 GORM 默认过滤 → 两种情况下链接都自然 404。
+
+### 9.7 删除：软删、无回收站
+
+- `DELETE /api/artifacts/:id`，按 `user_id` 鉴权，命中 0 行回 404。
+- 软删（`gorm.DeletedAt`）：正文仍留在库里，但列表、详情、分享路由都看不到（GORM 默认过滤）。**不提供回收站**——产物是可再生成的成品，留着恢复入口反而要维护一套「已删」视图。
+- 客户端（灵阅列表）：卡片页脚 `CardAction(role: .destructive)` + 二次确认（产物一次性、删了没入口找回）。删除成功后本地 `items` 移除、`total -= 1`；若该产物正开在右栏 tab 里，一并 `closeTab`，不留僵尸 tab。
+- **和分享的联动**：token 就在同一行，删掉即失效，无需额外逻辑。
+- **聊天里的旧卡片仍在**：点开 404，coordinator 提示「这个页面已被删除」（而不是把英文错误抛给用户）。
+
+### 9.8 大页面的加载态
+
+现象：内联 13 张图的页面接近 8MB 上限，点开时「拉 JSON → 解析 → 注入基线 → `loadHTMLString`」全在主线程（`-default-isolation MainActor`），期间**没有任何反馈**，用户看到的就是"点了没反应"。
+
+做法：`ArtifactOpenCoordinator.open` **先开一个骨架 tab**（spinner + 标题），拉到正文后 `updateTabContent` 换成 `HTMLArtifactView`；失败则**关掉骨架 tab** 并 toast 说清原因（留一个永远白屏的 tab 比没有更糟）。
+
+- 骨架走的是右栏既有的 tab 机制（`tabs[i].content` 是 `var`，已有 `updateTabTitle` 同款写法），不新造容器。
+- iOS 的 sheet 保持原位（先弹出再显示加载态），无需 tab。
+- 顺带收益：点卡片后立刻有视觉反馈，「点了没反应」这类反馈不会再被误判成 bug。
+
+### 9.9 聊天里的卡片按轮次成槽
+
+现象：一轮里既生成了文档（文档卡）又生成了 HTML 页（产物卡），两张卡上下堆着，看不出属于同一轮。
+
+根因：两张卡走两条不同的渲染路 ——
+
+| 卡 | 数据在哪 | 原渲染 |
+|---|---|---|
+| 文档卡 | 独立的 `local_tool_result` 消息（靠 `anchorUserID` 归位到本轮 user 消息） | 相邻卡片消息合并成横排条 |
+| HTML 产物卡 | 助手消息的 `artifacts` 字段 | 塞在消息内部竖排 |
+
+定义：**一轮 = 一条 user 消息到该轮结束**。本轮产生的所有卡片（文档卡 / HTML 卡）进**同一个横排槽**，槽放在本轮末尾。
+
+实现要点：
+
+- `DisplayRow` 增加 `.cardSlot([ChatCard])`；`ChatCard` 是枚举（`docRef` / `htmlRef`），`ArtifactCardStrip` 本来就是泛型容器，直接吃。
+- 归组时按消息顺序走：遇到 user 消息先关掉上一轮的槽；卡片消息不单独成行；普通助手消息自己成一行且把它 `artifacts` 里的卡塞进本轮槽；列表末尾收尾。
+- **单张卡保持原样**（渲染整卡，不缩成 240×92）；≥2 张才用横排条。`HTMLArtifactCard` 因此要支持 `width`/`height` 参数，与 `DocumentRefCard` 一致。
+- 流式期间本轮就是最后一段，槽在底部随卡片到达而增长，不会"等整轮结束才蹦出来"。
+- 分享多选态**保持逐条**（每张卡各自一行 + 选择圈），不进槽——那个态要求逐卡可点。
+- iOS 不分组（无右栏、无文档卡）。
+
 ## 十、Web 前端
 
 Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**：渲染同样的标题 + 摘要卡，点击在 `<iframe sandbox="" srcdoc="...">` 里展开（空 `sandbox` 等效于关 JS + 禁同源，和 WKWebView 那条线等价）。做不做随你，但字段解析必须容错。
@@ -352,9 +420,11 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `internal/service/artifact_repo.go`
 - `internal/tool/html_artifact.go` + 测试
 - `internal/util/htmlsanitize/sanitize.go`（清洗 + 校验纯函数，含 CSP 注入与 `image:` 内联钩子；不含版式基线）+ 测试
-- `internal/controller/artifact.go`（`GetArtifact` 正文出口 + `ListArtifacts` 列表）+ `router.go` 两行
+- `internal/controller/artifact.go`（`GetArtifact` 正文出口 + `ListArtifacts` 列表 + `DeleteArtifact` + 分享三接口 + 公开只读路由 `ViewSharedArtifact`）+ `router.go`
 
 服务端（改造）：
+
+- `internal/model/artifact.go`（+`ShareToken`，`json:"-"`）
 
 - `internal/model/message.go`（+`artifacts_json`）
 - `internal/agent/orchestrator.go`（本轮结束时收集 id 写回消息；本轮图片 id 透传给工具）
@@ -367,20 +437,25 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 客户端（新增）：
 
 - `Shared/Views/HTMLArtifactCard.swift`（照 `DocumentRefCard`）
-- `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底）
-- `Shared/Views/ArtifactListView.swift`（右栏「灵阅」列表：`PageContainer` + `CardGridView`）
+- `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底 + 分享按钮）
+- `Shared/Views/ArtifactLoadingView.swift`（大页面的骨架态：spinner + 标题；失败时直接关掉 tab）
+- `Shared/Views/ArtifactListView.swift`（右栏「灵阅」列表：`PageContainer` + `CardGridView` + 删除）
 - `Shared/ViewModels/ArtifactViewModel.swift`（分页加载，30/页）
 - `Shared/Models/ArtifactRef.swift`（`ArtifactRef` + `ArtifactPayload` + `ArtifactSummary` / `ArtifactListResponse`）
-- `Shared/Services/ArtifactOpenCoordinator.swift`（拉正文 + 打开右栏 / iOS sheet）
+- `Shared/Services/ArtifactOpenCoordinator.swift`（拉正文 + 先开骨架 tab + 换内容 / iOS sheet + 分享）
+- `Shared/Views/MessageListView.swift`（`DisplayRow.cardSlot`：按轮次归组卡片）
+- `Shared/Extensions/Pasteboard.swift`（复制到剪贴板，macOS/iOS 共用）
 
 客户端（改造）：
 
 - `Shared/Models/Message.swift`（+`artifacts`）
 - `Shared/Views/MessageListView.swift`（渲染卡片 + 按 id 去重 + 点击调 coordinator）
+- `Shared/Views/HTMLArtifactCard.swift`（支持 `width`/`height`，与 `DocumentRefCard` 一致以便混排）
+- `Shared/Views/RightSidebarManager.swift`（+`updateTabContent`）
 - `Shared/ViewModels/ChatViewModel.swift`（SSE tool_result 即时插卡）
 - `Shared/Views/BrowsePanelView.swift`（`BrowsePanel` 新增 `.artifacts`「灵阅」，替换 `.notes`）
 - `Shared/Views/PageHolders.swift`、`ContentView.swift`、`RightSidebarView.swift`（接线 `artifactVM`）
-- `Shared/Services/APIClient.swift`（`listArtifacts`）
+- `Shared/Services/APIClient.swift`（`listArtifacts` / `deleteArtifact` / `shareArtifact` / `unshareArtifact`）
 
 前端（改造）：`front-end/src/` 消息卡片最小展示（sandbox iframe）。
 
@@ -406,6 +481,14 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - CSS 背景图：页面里写 `url(image:<id>)`，确认工具报错而不是页面静默少图
 - 图片张数：一页塞 13 张，确认报错而不去读第 13 个文件
 - 内存：连开关五篇，活动监视器里 WebContent 进程数不应随"打开过的篇数"线性增长
+- **分享（macOS）**：产物页右上角点分享 → 复制到链接 → 浏览器无痕窗口打开，页面完整、图片在、控制台无报错；`curl -i` 确认 `Content-Security-Policy: sandbox`、`Cache-Control: no-store`
+- **分享撤销**：`DELETE .../share` 后同一个链接 404；再点分享得到**新** token（旧链接不会复活）
+- **分享与删除**：分享着的一条产物删掉后，链接立刻 404
+- **分享与无痕**：无痕会话里生成的页面，会话销毁后链接 404
+- **删除**：灵阅删一条 → 弹确认 → 卡片消失、`total` 减一、翻页不重复；若该页开着 tab，tab 一并关掉
+- **删除后旧卡片**：回到聊天里点那张旧卡 → 提示「这个页面已被删除」，不是英文错误
+- **加载态**：用一张内联了多张大图的页面点开，确认**立刻**出现 spinner 骨架，随后换成真页面（不出现"点了没反应"）
+- **卡片槽**：一轮里同时生成文档和 HTML 页 → 两张卡在**同一条横排**；再发一轮 → 新的一槽；单张卡仍是原样整卡；分享多选态仍能逐条选中
 
 ## 十四、风险
 
@@ -416,7 +499,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **宽度错配**：模型按 1000px 设计 → 右栏横向滚。靠工具描述里的 760px 约定 + 基线 CSS 兜底。
 - **体积**：正文十几 KB 没问题；带图页面按图片体积走（base64 ×1.33），单图 ≤4MB、单页 ≤8MB。参数不会变长（模型只写 `image:<id>`），但 DB 行会变大——这是"自包含换过期免疫"的代价。
 - **图片不可回溯**：内联保证已生成页面永久有效，但源图若在生成前已被 TTL 清掉就找不回来；CSS 背景图（`url(image:...)`）v1 不支持，只能走 `<img>`。
-- **分享会连带公开私有图**：artifact 目前只有鉴权接口（`router.go` 里没有公开分享路由），所以内联的聊天私有图不会外泄。**哪天加 artifact 分享，内联进正文的私有图会跟着一起公开**，届时要么分享前剥离图片，要么接受这条。
+- **分享会连带公开私有图**（已兑现，见 §9.6）：产物里的图在生成时就内联成 `data:`，所以分享一页带图的手账＝把这些**聊天私有图**一起公开——源图的 TTL、`visibility`、`user_id` 鉴权都不再生效，撤销也只能让 URL 失效（对方已保存的副本收不回）。要不要在分享前剥离图片是取舍：v1 选择接受，因为「图随页走」正是产物自包含的前提。
 - **修订会堆卡**：v1 没有"改这一版"的入口，用户说"再改改"等于重新生成一条新回复 + 一条新 artifact。旧的不算过期内容（它是上一轮的真实产物），但连改五版就是五张长得很像的卡。存储无所谓（100KB 量级），烦的是聊天流。解法在 v2：`artifact_id` 入参 + `supersedes_id` + 渲染只显示链条末端。
 - **分享**：消息分享（`MessageShare`）会把卡片带出去，但正文需要鉴权取不到 → 打开是空。v1 要么分享时隐藏卡片，要么把 HTML 一起打包（未定，倾向隐藏）。
 - **修订闭环**：主模型没有眼睛，用户说"这版太满"它只拿到 id，只能靠文字描述瞎改。v1 只支持"带 id 重新生成一版"，不做局部改；把修订交给带风格库上下文的子 agent 是 v2 的事。
@@ -468,3 +551,10 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：`note` 工具在 `conf/config.yaml` 用 `chat.tool_excludes: [note]` 收口（配置层，不改代码）。理由：Mac 端已无笔记面板，留着工具会出现「写了看不见」；笔记历史数据与 Web 端 `NotesView.vue` 不受影响。
   - 生命周期确认：普通删除/归档会话不动 artifacts（作品比聊天记录长寿）；无痕会话由 `BeginPurge` + `FinishPurge` 连删，不漏进灵阅。
   - 影响文件：`server/.../service/artifact_repo.go`（+`ListByUser`）、`controller/artifact.go`（+`ListArtifacts`）、`controller/router.go`；`client/.../Views/{BrowsePanelView,PageHolders,ArtifactListView,ContentView,RightSidebarView}.swift`、`ViewModels/ArtifactViewModel.swift`（新）、`Models/ArtifactRef.swift`、`Services/APIClient.swift`；删除 `NoteListView.swift` / `NoteViewModel.swift` / `NoteDetailOverlay.swift`。
+- **2026-10-29 · 分享 + 删除 + 加载态 + 卡片槽**
+  - 需求：① 产物要能发给别人看（对方无账号）；② 灵阅要能删；③ 大页面（13 张内联图）点开后长时间无反馈，像"点了没反应"；④ 一轮里文档卡与 HTML 卡上下堆着，看不出属于同一轮。
+  - 决定：分享走 `artifacts.share_token`（1:1，不建新表），公开路由**直接吐 `text/html`**，挂 `/api/share/artifacts/:token`（nginx 零改动）；响应头带 `sandbox` + `no-store`（见 §9.6）。
+  - 决定：删除是软删、无回收站；聊天里的旧卡片点开提示「这个页面已被删除」（见 §9.7）。
+  - 决定：`open()` 先开骨架 tab、拉到正文再换内容，解决"无反馈"（见 §9.8）。
+  - 决定：聊天卡片按**轮次**归组到同一横排槽（`DisplayRow.cardSlot`），单张保持整卡、≥2 张才成条，分享多选态仍逐条（见 §9.9）。
+  - 影响文件：`server/.../model/artifact.go`、`service/artifact_repo.go`(+测试)、`controller/artifact.go`、`controller/router.go`；`client/.../Views/{HTMLArtifactView,HTMLArtifactCard,ArtifactLoadingView(新),ArtifactListView,MessageListView,RightSidebarManager,ChatView}.swift`、`Services/{APIClient,ArtifactOpenCoordinator}.swift`、`ViewModels/ArtifactViewModel.swift`。

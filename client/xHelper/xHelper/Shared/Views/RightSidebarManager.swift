@@ -456,6 +456,15 @@ final class RightSidebarManager: ObservableObject {
         }
     }
 
+    /// 就地换掉某个 tab 的内容（产物页「先开骨架、拉到正文再换」用，见 docs/design/html-artifact §9.8）。
+    func updateTabContent(id: String, content: AnyView) {
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            var updated = tabs[i]
+            updated.content = content
+            tabs[i] = updated
+        }
+    }
+
     func updateTabHost(id: String, host: String) {
         guard !host.isEmpty else { return }
         if let i = tabs.firstIndex(where: { $0.id == id }) {

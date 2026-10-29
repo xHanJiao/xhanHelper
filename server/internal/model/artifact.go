@@ -12,14 +12,16 @@ import (
 // HTML 字段打了 `json:"-"`，任何直接序列化都不会把正文漏给列表接口——
 // 列表只能通过 ArtifactRef / FindRefsByIDs 取标题和摘要。
 type Artifact struct {
-	ID             string         `gorm:"primaryKey;size:36" json:"id"`
-	UserID         string         `gorm:"size:36;not null;index" json:"-"`
-	ConversationID string         `gorm:"size:36;not null;index" json:"conversation_id"`
-	Title          string         `gorm:"size:200;not null" json:"title"`
-	Summary        string         `gorm:"size:500;not null" json:"summary"`
-	HTML           string         `gorm:"type:longtext;not null" json:"-"`
-	CreatedAt      time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             string `gorm:"primaryKey;size:36" json:"id"`
+	UserID         string `gorm:"size:36;not null;index" json:"-"`
+	ConversationID string `gorm:"size:36;not null;index" json:"conversation_id"`
+	Title          string `gorm:"size:200;not null" json:"title"`
+	Summary        string `gorm:"size:500;not null" json:"summary"`
+	HTML           string `gorm:"type:longtext;not null" json:"-"`
+	// ShareToken — 公开分享链接的凭证（空 = 未分享）。1:1、永久、可撤销（见 design §9.6）。
+	ShareToken string         `gorm:"size:64;index" json:"-"`
+	CreatedAt  time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // ArtifactRef — 消息列表里用来渲染卡片的轻量引用（不含正文）。

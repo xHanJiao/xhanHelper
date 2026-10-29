@@ -73,3 +73,50 @@ func (r *ArtifactRepo) ListByUser(ctx context.Context, userID string, limit, off
 	}
 	return rows, total, nil
 }
+
+// Delete 软删一条（按 user_id 鉴权）。返回受影响行数，0 表示不存在或不属于该用户。
+//
+// 主键放进 Model（活动埋点规则）：GORM 回调要从模型读结构化主键。
+// 分享 token 在同一行，删掉即失效——公开路由也走默认的 deleted_at 过滤。
+func (r *ArtifactRepo) Delete(ctx context.Context, userID, id string) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Delete(&model.Artifact{ID: id})
+	return res.RowsAffected, res.Error
+}
+
+// SetShareToken 设置分享 token（幂等：已有则原地覆盖）。返回受影响行数，0 表示不存在。
+func (r *ArtifactRepo) SetShareToken(ctx context.Context, userID, id, token string) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("share_token", token)
+	return res.RowsAffected, res.Error
+}
+
+// ClearShareToken 撤销分享。已撤销时 rows 为 0（调用方据此判 void 情况）。
+func (r *ArtifactRepo) ClearShareToken(ctx context.Context, userID, id string) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("share_token", "")
+	return res.RowsAffected, res.Error
+}
+
+// GetByShareToken 按 token 取一条（含正文，公开路由要用）。
+// 软删的行取不到（GORM 默认过滤）→ 删除后旧链接自动 404。
+func (r *ArtifactRepo) GetByShareToken(ctx context.Context, token string) (*model.Artifact, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).Where("share_token = ?", token).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// GetShareToken 只取 token（不碰正文）。重复点「分享」时复用它，别把已发出去的旧链接作废。
+func (r *ArtifactRepo) GetShareToken(ctx context.Context, userID, id string) (string, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).Select("share_token").
+		Where("id = ? AND user_id = ?", id, userID).First(&a).Error; err != nil {
+		return "", err
+	}
+	return a.ShareToken, nil
+}

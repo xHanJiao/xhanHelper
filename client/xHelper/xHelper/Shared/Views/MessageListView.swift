@@ -215,8 +215,8 @@ struct MessageListView: View {
                     switch row {
                     case .message(let msg):
                         messageRowWithGestures(msg)
-                    case .cardStrip(let group):
-                        cardStripRow(group)
+                    case .cardSlot(let cards):
+                        cardSlotRow(cards)
                             .scaleEffect(y: -1)
                     }
                 }
@@ -255,31 +255,74 @@ struct MessageListView: View {
 
     // MARK: Message row
 
-    /// 显示行：普通消息一行；**相邻的卡片类本地产物**并成一行（横向卡片条）。
-    /// 分享选择模式逐条（每张卡各自一条，跟分享那套指示器对齐），不分组。
+    /// 显示行：普通消息一行；**同一轮的卡片**并成一条横排槽（见 docs/design/html-artifact §9.9）。
+    /// 分享选择模式逐条（每张卡各自一条，跟分享那套指示器对齐），不归组。
     private enum DisplayRow: Identifiable {
         case message(Message)
-        case cardStrip([Message])
+        case cardSlot([ChatCard])
 
         var id: String {
             switch self {
             case .message(let m): return m.id
-            case .cardStrip(let g): return "strip_\(g.first?.id ?? "")"
+            case .cardSlot(let cards): return "slot_\(cards.first?.id ?? "")"
             }
+        }
+    }
+
+    /// 卡片槽里的一张卡。文档卡与 HTML 产物卡走两条数据路（独立消息 vs 消息字段），
+    /// 但在这里统一成同一种"卡"，才能混排（§9.9）。
+    private enum ChatCard: Identifiable {
+        case html(ArtifactRef)
+        case document(DocumentRef)
+
+        var id: String {
+            switch self {
+            case .html(let ref): return "html:\(ref.id)"
+            case .document(let ref): return "doc:\(ref.id)"
+            }
+        }
+
+        static func cards(from artifact: LocalArtifact) -> [ChatCard] {
+            if case .docRefs(let refs) = artifact { return refs.map { .document($0) } }
+            return []
         }
     }
 
     private var displayRows: [DisplayRow] {
         guard !isShareSelectMode else { return messages.map { DisplayRow.message($0) } }
         #if os(macOS)
-        return LocalArtifactGrouping.rows(messages) { $0.localArtifact?.isCardArtifact == true }.map { group in
-            group.count == 1 ? .message(group[0]) : .cardStrip(group)
+        // 一轮 = 一条 user 消息到该轮结束。本轮所有卡片（文档卡 / HTML 卡）收进同一个槽，
+        // 槽落在这轮的末尾；流式期间本轮就是最后一段，槽在底部随卡片到达而增长。
+        var rows: [DisplayRow] = []
+        var cards: [ChatCard] = []
+        func flush() {
+            guard !cards.isEmpty else { return }
+            // 按 id 去重：真撞了就是 SwiftUI 的 "ID occurs multiple times" + 可能错行，一行保险
+            var seen = Set<String>()
+            rows.append(.cardSlot(cards.filter { seen.insert($0.id).inserted }))
+            cards.removeAll()
         }
+        for msg in messages {
+            if msg.role == "user" {
+                flush()
+                rows.append(.message(msg))
+                continue
+            }
+            if msg.role == "local_tool_result" {
+                if let artifact = msg.localArtifact, artifact.isCardArtifact {
+                    cards.append(contentsOf: ChatCard.cards(from: artifact))
+                    continue
+                }
+                rows.append(.message(msg))
+                continue
+            }
+            rows.append(.message(msg))
+            cards.append(contentsOf: msg.artifactRefs.map { .html($0) })
+        }
+        flush()
+        return rows
         #else
-        // **iOS 不分组**：卡片类产物目前只有文档卡片，而它只在 macOS 出（iOS 无右栏文档面板，
-        // `DocumentSelectionCoordinator.openDocument` 见 `rightSidebar == nil` 直接 no-op）。
-        // 不分组 = iOS 维持改造前那条路（单张那套 `#if os(macOS)` 会把卡片整条隐掉），
-        // 否则会出现「1 张不显示、≥2 张却显示一摞点不动的卡片」。
+        // **iOS 不归组**：无右栏、无文档卡，维持逐条渲染。
         return messages.map { DisplayRow.message($0) }
         #endif
     }
@@ -367,48 +410,83 @@ struct MessageListView: View {
         }
     }
 
-    /// 一行的横向卡片条（≥2 张卡片类产物）。单张不进这里——走原来的 `localArtifactView`。
-    private func cardStripRow(_ group: [Message]) -> some View {
-        ArtifactCardStrip(items: group, expanded: cardStripExpandedBinding(group)) { msg in
-            artifactCard(msg.localArtifact)
-        }
-        .padding(.horizontal, Layout.chatHorizontalPadding + 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    /// 卡片是否在消息内部内联渲染：macOS 平时由「本轮卡片槽」统一渲染（§9.9），
+    /// 只有分享选择态要逐条可点时才回到内联。
+    private var cardsRenderedInline: Bool {
+        #if os(macOS)
+        return isShareSelectMode
+        #else
+        return true
+        #endif
     }
 
-    /// 展开态按「这一组的第一条消息 id」记。**组首一变展开态就丢**（重排把别的消息插到组前、
-    /// 或组首那条被删），这是认了的行为——展开态本就只活 8s，不值得为它加一层稳定 id。
-    private func cardStripExpandedBinding(_ group: [Message]) -> Binding<Bool> {
-        let key = group.first?.id ?? ""
+    /// 一行的卡片槽：本轮所有卡片（文档卡 / HTML 卡混排）。
+    /// 单张不进条子——保持原样的整卡；≥2 张走 `ArtifactCardStrip` 的收起/展开那一套。
+    @ViewBuilder
+    private func cardSlotRow(_ cards: [ChatCard]) -> some View {
+        if cards.count == 1, let card = cards.first {
+            singleCard(card)
+        } else {
+            ArtifactCardStrip(items: cards, expanded: cardSlotExpandedBinding(cards)) { card in
+                stripCard(card)
+            }
+            .padding(.horizontal, Layout.chatHorizontalPadding + 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 单张卡：与改造前的观感一致（文档卡和产物卡本来就各有一个整卡样式）。
+    @ViewBuilder
+    private func singleCard(_ card: ChatCard) -> some View {
+        switch card {
+        case .html(let ref):
+            HTMLArtifactCard(title: ref.title, summary: ref.summary) {
+                onOpenArtifact(ref.id, ref.title)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Layout.chatHorizontalPadding)
+        case .document(let ref):
+            DocumentRefCard(ref: ref) { onOpenDocument(ref.id) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Layout.chatHorizontalPadding + 14)
+        }
+    }
+
+    /// 条子里的卡：尺寸必须与条子的 `cardWidth`/`cardHeight` 一致（条子按固定卡宽算排布）。
+    /// 穷尽 switch —— 新增卡片类型时编译器会在这里提醒补渲染。
+    @ViewBuilder
+    private func stripCard(_ card: ChatCard) -> some View {
+        switch card {
+        case .html(let ref):
+            HTMLArtifactCard(
+                title: ref.title,
+                summary: ref.summary,
+                width: ArtifactCardMetrics.width,
+                height: ArtifactCardMetrics.height
+            ) {
+                onOpenArtifact(ref.id, ref.title)
+            }
+        case .document(let ref):
+            DocumentRefCard(
+                ref: ref,
+                width: ArtifactCardMetrics.width,
+                height: ArtifactCardMetrics.height
+            ) {
+                onOpenDocument(ref.id)
+            }
+        }
+    }
+
+    /// 展开态按「这一槽的第一张卡 id」记。**槽首一变展开态就丢**（重排把别的卡插到队前、
+    /// 或槽首那张被删），这是认了的行为——展开态本就只活 8s，不值得为它加一层稳定 id。
+    private func cardSlotExpandedBinding(_ cards: [ChatCard]) -> Binding<Bool> {
+        let key = cards.first?.id ?? ""
         return Binding(
             get: { expandedCardStrips.contains(key) },
             set: { on in
                 if on { expandedCardStrips.insert(key) } else { expandedCardStrips.remove(key) }
             }
         )
-    }
-
-    /// 卡片条里单张卡的渲染：尺寸必须与条子的 `cardWidth`/`cardHeight` 一致（条子按固定卡宽算排布）。
-    /// 穷尽 switch —— 新增卡片类产物时编译器会在这里提醒补渲染。
-    ///
-    /// **前提：一个产物 = 一张卡**（所以条子的「＋N」按 `items.count` 算就是卡片数）。
-    /// `upsertRoundDocumentRef` 每篇文档各落一条 `[merged]`，`docRefs` 恒为单元素；将来真要一条装多张，
-    /// 得先让条子按卡片数展平，别在这儿只取 `refs.first` 把后面的悄悄吞掉。
-    @ViewBuilder
-    private func artifactCard(_ artifact: LocalArtifact?) -> some View {
-        if let artifact {
-            switch artifact {
-            case .docRefs(let refs):
-                if let ref = refs.first {
-                    DocumentRefCard(ref: ref, width: ArtifactCardMetrics.width, height: ArtifactCardMetrics.height) {
-                        onOpenDocument(ref.id)
-                    }
-                }
-            case .chart:
-                // chart 是 `isCardArtifact == false` 的全宽图表，永远不进条子
-                EmptyView()
-            }
-        }
     }
 
     /// 只发图不写字时 content 为空：此时不渲染空气泡，只显示缩略图条。
@@ -450,7 +528,7 @@ struct MessageListView: View {
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
-            if !msg.artifactRefs.isEmpty {
+            if !msg.artifactRefs.isEmpty, cardsRenderedInline {
                 // HTML 产物卡片：数据来自消息字段（服务端），正文点开才拉
                 ForEach(msg.artifactRefs) { ref in
                     HTMLArtifactCard(title: ref.title, summary: ref.summary) {
@@ -719,15 +797,6 @@ struct MessageListView: View {
                 }
             }
         }
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        #if os(iOS)
-        UIPasteboard.general.string = text
-        #else
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #endif
     }
 
     private func dismissMenu() {

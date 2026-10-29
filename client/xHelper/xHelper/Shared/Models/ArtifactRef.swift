@@ -36,3 +36,14 @@ struct ArtifactListResponse: Codable {
     let items: [ArtifactSummary]
     let total: Int
 }
+
+/// `POST /api/artifacts/:id/share` 的响应：token + 相对路径（客户端用 baseURL 拼绝对地址）。
+struct ArtifactShare: Codable {
+    let token: String
+    let url: String
+}
+
+/// `DELETE /api/artifacts/:id/share` 的响应：`revoked=false` 表示本来就没分享。
+struct ArtifactUnshare: Codable {
+    let revoked: Bool
+}

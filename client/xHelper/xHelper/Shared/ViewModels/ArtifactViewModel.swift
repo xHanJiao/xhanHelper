@@ -52,4 +52,19 @@ final class ArtifactViewModel: ObservableObject {
             ToastCenter.shared.show("加载更多失败：\(error.localizedDescription)")
         }
     }
+
+    /// 删除一条（软删，无回收站）。成功后就地移除，不重拉整页——列表会跳动。
+    /// 分页不会因此错位：下次 `loadMore` 用 `items.count` 当 offset，本地少一条服务端也少一条。
+    func delete(id: String) async {
+        do {
+            try await apiClient.deleteArtifact(id: id)
+            items.removeAll { $0.id == id }
+            total = max(0, total - 1)
+            // 该页若正开在右栏 tab 里，一并关掉，别留一个内容还在的僵尸 tab
+            ArtifactOpenCoordinator.shared.closeTabIfOpen(id: id)
+        } catch {
+            LogBuffer.shared.error("ArtifactViewModel.delete: \(error)")
+            ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+        }
+    }
 }

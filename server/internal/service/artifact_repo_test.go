@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -74,5 +75,66 @@ func TestArtifactRepoListByUser(t *testing.T) {
 	}
 	if len(rows2) != 0 {
 		t.Fatalf("第二页应为空，实际 %d 条", len(rows2))
+	}
+}
+
+// 删除与分享：越权删不动、软删后列表/分享都取不到、token 可设可撤。
+func TestArtifactRepoDeleteAndShare(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := []model.Artifact{
+		{ID: "b1", UserID: "u1", ConversationID: "c1", Title: "我的", Summary: "s", HTML: "<html>1</html>"},
+		{ID: "b2", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", HTML: "<html>2</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	// 越权删：行数 0，别人的那条还在
+	if rows, err := repo.Delete(ctx, "u1", "b2"); err != nil || rows != 0 {
+		t.Fatalf("越权删除应影响 0 行，实际 rows=%d err=%v", rows, err)
+	}
+	if _, err := repo.GetByID(ctx, "u2", "b2"); err != nil {
+		t.Fatalf("别人的产物不该被删掉: %v", err)
+	}
+
+	// 分享：设置后可只取 token，也可按 token 取正文
+	if _, err := repo.SetShareToken(ctx, "u1", "b1", "tok-1"); err != nil {
+		t.Fatalf("SetShareToken: %v", err)
+	}
+	if tok, err := repo.GetShareToken(ctx, "u1", "b1"); err != nil || tok != "tok-1" {
+		t.Fatalf("GetShareToken 应为 tok-1，实际 %q err=%v", tok, err)
+	}
+	if a, err := repo.GetByShareToken(ctx, "tok-1"); err != nil || a.ID != "b1" {
+		t.Fatalf("按 token 取不到产物: %v", err)
+	}
+
+	// 删除自己的：列表、按 token 都取不到（软删过滤）
+	if rows, err := repo.Delete(ctx, "u1", "b1"); err != nil || rows != 1 {
+		t.Fatalf("删除应影响 1 行，实际 rows=%d err=%v", rows, err)
+	}
+	if _, total, err := repo.ListByUser(ctx, "u1", 10, 0); err != nil || total != 0 {
+		t.Fatalf("删除后列表应为空，实际 total=%d err=%v", total, err)
+	}
+	if _, err := repo.GetByShareToken(ctx, "tok-1"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("删除后分享链接应失效，实际 err=%v", err)
+	}
+
+	// 撤销分享：token 清空，旧 token 取不到
+	if _, err := repo.SetShareToken(ctx, "u2", "b2", "tok-2"); err != nil {
+		t.Fatalf("SetShareToken b2: %v", err)
+	}
+	if _, err := repo.ClearShareToken(ctx, "u2", "b2"); err != nil {
+		t.Fatalf("ClearShareToken: %v", err)
+	}
+	if tok, _ := repo.GetShareToken(ctx, "u2", "b2"); tok != "" {
+		t.Fatalf("撤销后 token 应为空，实际 %q", tok)
+	}
+	if _, err := repo.GetByShareToken(ctx, "tok-2"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("撤销后旧 token 应失效，实际 err=%v", err)
 	}
 }

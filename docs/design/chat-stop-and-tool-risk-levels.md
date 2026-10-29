@@ -108,6 +108,13 @@ func riskLevel(for flatName: String) -> Int { riskLevels[flatName] ?? 2 }   // �
 > **本文此处已过时（2026-10-16）**：确认闸门现在是 `need != .none`，等级 → 是否确认的映射在
 > `client/xHelper/xHelper/Shared/Tools/ToolConfirmPolicy.swift`（`L4 → 红色必弹`、`fs 的 L3 → 必弹`、
 > 其余 L3/L2 免确认）；本文没有 L4 / shell / forcedL3 的概念，仅作历史记录。
+>
+> **2026-10-29 再变**：新增全局「完全信任」开关（输入栏盾牌按钮，持久化 `xhan_full_trust`）。开着时
+> 跳过所有静态等级的确认（含 fs 写、shell 写/执行、browser 写盘与注入系统事件），但 **`forcedL3`（防注入
+> 升级：高敏域 / http 明文页 / 用户标签授权）仍必确认**，硬拦截（命令白名单 / 高危路径 / 敏感文件名 /
+> 未授权目录）不受影响。**免确认 ≠ 替你授权**：fs 的「临时授权该路径 1h」只在用户点了确认条时发生；
+> 全信任下范围外目录直接报错（提示去「设置 → 文件访问授权」添加），与 shell 的 workdir 规则一致。
+> 判决仍是同一个 `ToolConfirmPolicy.requirement(level:isFileSystemTool:forcedL3:fullTrust:)`。
 
 ```swift
 // 历史写法（已不适用）：
@@ -162,3 +169,4 @@ if level >= 3 {
 ## 后续变更
 
 - **2026-10-04**：确认从单槽改队列，只显示队首；排队的并发审批不再互相覆盖。超时由 60s 调为 180s（只给队首计时），服务端 `llm.client_tool_timeout_secs` 120→240 配套。详见 `docs/bugs/027-macos-tool-confirmation-single-slot-overwrite.md`。影响 `ChatViewModel.swift`（`pendingToolConfirmations` 队列 + `resolveToolConfirmation(id:allow:)`）、`ChatView.swift`、`DiffPreviewView.swift`、`ContentView.swift`、`xHelperMac/App.swift`、`server/conf/config.yaml`。
+- **2026-10-29**：撤掉三档信任模式后补回**一档**「完全信任」全局开关（持久化 `xhan_full_trust`，默认关；输入栏红盾牌；开启前二次确认）。只跳过静态等级确认；`forcedL3`（防注入）与硬拦截不变。**免确认不等于替你授权**：全信任下 fs 的范围外目录不再自动「临时授权 1h」（那原本是确认条附带的动作），直接报错要求去设置里添加（`ChatViewModel+ClientTools` 的 fs 分支）。影响 `Shared/Tools/ToolConfirmPolicy.swift`（`requirement` 收进 `forcedL3`/`fullTrust`）、`Shared/Services/ToolTrustStore.swift`（新）、`Shared/ViewModels/ChatViewModel+ClientTools.swift`、`Shared/Views/{InputBarTypes,InputBarButtons,ChatView}.swift`、`Shared/Services/InputBarLayoutState.swift`、`Tests/FsCoreTests/ToolConfirmPolicyTests.swift`。

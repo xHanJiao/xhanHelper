@@ -106,7 +106,7 @@ extension ChatViewModel {
                 // L4 高危必弹红色（shell 写/执行、browser 写盘与注入系统事件）、fs 的 L3（写文件 / 读未授权路径）必弹，
                 // 其余 L3（如 browser open）与 L2 免确认直接执行。
                 // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
-                // forcedL3 标记"敏感上下文升的级"，防注入最后一道，任何情况下都必须确认。
+                // forcedL3 标记"敏感上下文升的级"，防注入最后一道，任何情况下都必须确认（完全信任也不跳过）。
                 var level = LocalToolRegistry.shared.riskLevel(for: toolName, arguments: args)
                 var forcedL3 = false
                 if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName, arguments: args) {
@@ -137,8 +137,33 @@ extension ChatViewModel {
                 }
 
                 let isFsWrite = toolName == "fs__write" || toolName == "fs__edit"    // 改用户文件：确认条出 diff
-                var need = ToolConfirmPolicy.requirement(level: level, isFileSystemTool: isFS)
-                if forcedL3, need == .none { need = .confirm } // 敏感上下文升的级：本来免确认的也要弹
+                // 开关状态与未授权路径各读一次：后面的确认判定与 fs 闸门必须用同一份快照，
+                // 否则将来 fs 挂上 forcedL3 时会出现「用户点了允许、然后又被拒」。
+                let fullTrust = ToolTrustStore.shared.fullTrust
+                let fsUnauthorizedPaths: [String] = (isFS && level == 3)
+                    ? FileSystemToolProvider.extractPaths(flatName: toolName, arguments: args)
+                        .filter { !DirectoryAuthorizationManager.shared.isAuthorized($0) }
+                    : []
+
+                // fs 的 level==3 = 写文件 / 读未授权路径：确认条同时兼作「临时授权该路径 1h」的入口。
+                // 闸门放在确认**之前**：它只与目录是否已授权有关，与用户点不点允许无关，
+                // 也避免「点了允许又被拒」。
+                if ToolConfirmPolicy.fsUnauthorizedAction(unauthorized: fsUnauthorizedPaths, fullTrust: fullTrust) == .block {
+                    let list = fsUnauthorizedPaths.joined(separator: "、")
+                    LogBuffer.shared.warning("clientToolCall: \(toolName) blocked (full trust, unauthorized dir): \(list)")
+                    execOutcome = "failed"; execErrorType = "blocked"
+                    try await api.submitToolResult(
+                        callId: callID, resultJSON: nil,
+                        error: "路径不在已授权目录内：\(list)（如需访问请先在「设置 → 文件访问授权」添加该目录）")
+                    return
+                }
+
+                let need = ToolConfirmPolicy.requirement(
+                    level: level,
+                    isFileSystemTool: isFS,
+                    forcedL3: forcedL3,
+                    fullTrust: fullTrust
+                )
                 if need != .none {
                     // shell：生成人话解释（用户不读原始命令，只看这句判断意图）
                     var shellExplain: String?
@@ -200,13 +225,9 @@ extension ChatViewModel {
                     }
                 }
 
-                if isFS, level == 3 {
-                    let paths = FileSystemToolProvider.extractPaths(flatName: toolName, arguments: args)
-                    for path in paths {
-                        if !DirectoryAuthorizationManager.shared.isAuthorized(path) {
-                            DirectoryAuthorizationManager.shared.authorize(path, permanent: false)
-                        }
-                    }
+                // 确认条已获允许（全信任下无未授权路径，列表为空）→ 临时授权，后续同路径不再问。
+                for path in fsUnauthorizedPaths {
+                    DirectoryAuthorizationManager.shared.authorize(path, permanent: false)
                 }
 
                 // 执行预算按「剩余」算：服务端预算 × 0.9 减去已消耗的排队/审批时间。

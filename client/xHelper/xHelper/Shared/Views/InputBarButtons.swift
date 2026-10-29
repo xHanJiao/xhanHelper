@@ -29,6 +29,27 @@ struct ModePill: View {
     }
 }
 
+/// 完全信任图标按钮（全局持久化开关）：关=灰盾，开=红盾斜杠。
+/// 开启属安全降级，二次确认由 ChatView 负责；本视图只负责外观与点击。
+struct TrustPill: View {
+    let context: InputBarContext
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: isOn ? "shield.slash.fill" : "shield.lefthalf.filled",
+            tint: isOn ? .red : .secondary,
+            tooltip: isOn
+                ? "完全信任：本地工具免确认（含 fs 写、shell 写/执行，仅限已授权目录），点击关闭"
+                : "完全信任已关闭（fs 写 / shell 写仍会确认），点击开启",
+            action: action
+        )
+    }
+}
+
 /// 模型切换图标按钮：快速（bolt 绿）/ 深度（pro+thinking，蓝紫），点击切换。仅图标，hover 看 tooltip。
 struct ModelPill: View {
     let context: InputBarContext

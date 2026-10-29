@@ -59,6 +59,13 @@ nonisolated enum ToolRiskLevels {
 ///   fs 分支把「写文件」和「读未授权路径」都算成 3（后者兼作「批准后临时授权该路径」的入口），必须确认。
 /// - L4：**高危，必弹红色确认条**，且拿到红色 UI「请求执行高危操作」。当前有：shell 写/执行、
 ///   browser 的写盘（download）与注入系统事件（cgclick / drag）。
+///
+/// 两个运行时开关（都只影响确认条，不影响硬拦截：命令白名单 / 高危路径 / 敏感文件名 / 未授权目录）：
+/// - `forcedL3`：敏感上下文动态升级（高敏域 / http 明文页 / 用户标签写入授权），**任何情况都必须确认**
+///   （防注入最后一道），完全信任也不跳过。
+/// - `fullTrust`：全局「完全信任」，跳过上面所有静态等级的确认。**只对已授权目录生效**：fs 的 L3
+///   （写文件 / 读未授权路径）原本靠确认条顺带临时授权路径 1h，全信任下不再授权——范围外目录由调用点
+///   直接报错（见 `ChatViewModel+ClientTools` 的 fs 分支）。
 nonisolated enum ToolConfirmPolicy {
 
     enum Requirement {
@@ -70,9 +77,32 @@ nonisolated enum ToolConfirmPolicy {
         case hardened
     }
 
-    static func requirement(level: Int, isFileSystemTool: Bool) -> Requirement {
+    static func requirement(
+        level: Int,
+        isFileSystemTool: Bool,
+        forcedL3: Bool = false,
+        fullTrust: Bool = false
+    ) -> Requirement {
+        if forcedL3 { return level >= 4 ? .hardened : .confirm }
+        if fullTrust { return .none }
         if level >= 4 { return .hardened }
         if level == 3, isFileSystemTool { return .confirm }
         return .none
+    }
+
+    /// fs 的 L3（写文件 / 读未授权路径）落到未授权目录时怎么办。
+    ///
+    /// 确认条原本还有第二个作用：用户点了「允许」就**临时授权该路径 1h**。所以完全信任只能免掉确认，
+    /// 不能顺手把授权也免了——否则模型点名的任意路径都会被静默放行，实际权限超过开启时承诺的范围。
+    /// 与 shell 一致：范围外目录一律拒，让用户自己去「设置 → 文件访问授权」添加（一次性、永久）。
+    enum FsUnauthorizedAction: Equatable {
+        /// 拒绝执行（报「未授权目录」，不落盘）。
+        case block
+        /// 确认条已获用户允许 → 临时授权该路径。
+        case authorizeTemporarily
+    }
+
+    static func fsUnauthorizedAction(unauthorized: [String], fullTrust: Bool) -> FsUnauthorizedAction {
+        unauthorized.isEmpty || !fullTrust ? .authorizeTemporarily : .block
     }
 }

@@ -8,6 +8,9 @@ import SwiftUI
 struct HTMLArtifactCard: View {
     let title: String
     let summary: String
+    /// 只在**横向卡片条**里给（多张卡要等宽等高，条子按固定卡宽算排布）；都不传＝按内容撑开
+    var width: CGFloat? = nil
+    var height: CGFloat? = nil
     let onOpen: () -> Void
 
     var body: some View {
@@ -27,9 +30,12 @@ struct HTMLArtifactCard: View {
                         .truncationMode(.tail)
                 }
             }
-            .frame(maxWidth: ArtifactCardMetrics.width, alignment: .leading)
+            // 单卡：内容最宽 = 条子里的卡宽；条子里：吃满条子给的固定卡宽
+            .frame(maxWidth: width == nil ? ArtifactCardMetrics.width : .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            // 定高要在背景之前，底才能撑满整格（多卡等高靠它，和 DocumentRefCard 一致）
+            .frame(width: width, height: height, alignment: .top)
             .background(Color("surfaceInput"), in: RoundedRectangle(cornerRadius: 11))
         }
         .buttonStyle(.plain)

@@ -57,6 +57,11 @@ struct AckReminderResponse: Codable {
     let acknowledgedAt: String
     let triggerMessage: String
     let triggerMessageMsgId: String
+    /// 点通知后该落到哪段对话（提醒的来源会话）。空 = 没有可跳的会话
+    /// （秘书 / 反思自动生成的提醒，或那段对话已删）——此时停在原地。
+    /// 可选：云端后端没升级时响应里根本没有这两个键，不能让整次 ack 解码失败。
+    let conversationId: String?
+    let conversationTitle: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -64,5 +69,7 @@ struct AckReminderResponse: Codable {
         case acknowledgedAt = "acknowledged_at"
         case triggerMessage = "trigger_message"
         case triggerMessageMsgId = "trigger_message_msg_id"
+        case conversationId = "conversation_id"
+        case conversationTitle = "conversation_title"
     }
 }

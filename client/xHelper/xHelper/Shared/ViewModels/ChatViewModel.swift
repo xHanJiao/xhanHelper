@@ -926,6 +926,7 @@ class ChatViewModel: ObservableObject {
         contextTokens = 0
         contextWindow = 0
         usage = nil
+        mode = "work"   // 空对话不继承上一篇的模式（删掉 plan 会话后不能停在只读）
         planNodes = []
         isPlanModalVisible = false
         isPlanMinimized = false

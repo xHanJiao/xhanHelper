@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"time"
@@ -46,6 +47,10 @@ func (h *ReminderHandler) ListReminders(c *gin.Context) {
 }
 
 // AckReminder POST /api/reminders/:id/ack
+//
+// 点通知后把「触发消息」写回**创建这条提醒的那段对话**，并把它的 id 返回给客户端去打开。
+// 不落默认会话（那个概念正在淡出）：提醒没有来源会话（秘书 / 反思自动生成）或那段对话已删，
+// 就只置已确认、不写任何消息，客户端收到空 conversation_id 便原地不动。
 func (h *ReminderHandler) AckReminder(c *gin.Context) {
 	userID := c.GetString("user_id")
 	id := c.Param("id")
@@ -57,14 +62,12 @@ func (h *ReminderHandler) AckReminder(c *gin.Context) {
 		return
 	}
 
-	if rem.TriggerMessageMsgID != "" {
-		view.JSONOK(c, gin.H{
-			"id":                     rem.ID,
-			"status":                 rem.Status,
-			"acknowledged_at":        rem.AcknowledgedAt,
-			"trigger_message":        rem.TriggerMessage,
-			"trigger_message_msg_id": rem.TriggerMessageMsgID,
-		})
+	// 已经 ack 过：幂等返回，不重复插消息（但仍带上会话，重复点通知照样能跳过去）。
+	// 判据用 status 而不是 TriggerMessageMsgID：没有来源会话时 msgID 恒为空，
+	// 只看 msgID 会让这类提醒每次点都重跑一遍（刷新 acknowledged_at、重复弹文案）。
+	if rem.Status == model.ReminderStatusAcknowledged {
+		view.JSONOK(c, ackPayload(rem, rem.Status, rem.AcknowledgedAt, rem.TriggerMessage, rem.TriggerMessageMsgID,
+			ackTargetConversation(c.Request.Context(), h, userID, rem.ConversationID)))
 		return
 	}
 
@@ -83,53 +86,72 @@ func (h *ReminderHandler) AckReminder(c *gin.Context) {
 		triggerMsg = rem.Content
 	}
 
-	defaultConv, err := h.convRepo.FindDefaultByUser(c.Request.Context(), userID)
-	if err != nil {
-		log.Printf("[reminders] find default conv error: %v", err)
-	}
-	if defaultConv == nil {
-		defaultConv = &model.Conversation{
-			ID:        uuid.New().String(),
-			UserID:    userID,
-			IsDefault: true,
+	msgID := ""
+	conv := ackTargetConversation(c.Request.Context(), h, userID, rem.ConversationID)
+	if conv != nil {
+		msg := &model.Message{
+			ID:             uuid.New().String(),
+			ConversationID: conv.ID,
+			UserID:         userID,
+			Role:           "assistant",
+			Content:        triggerMsg,
+			Status:         model.MsgStatusNormal,
 		}
-		if err := h.convRepo.Create(c.Request.Context(), defaultConv); err != nil {
-			log.Printf("[reminders] create default conv error: %v", err)
-			view.JSONError(c, 500, "create default conversation failed")
+		agent.SetNoMerge(msg)
+		if err := h.msgRepo.Create(c.Request.Context(), msg); err != nil {
+			log.Printf("[reminders] create message error: %v", err)
+			view.JSONError(c, 500, "insert trigger message failed")
 			return
 		}
+		msgID = msg.ID
 	}
 
-	msg := &model.Message{
-		ID:             uuid.New().String(),
-		ConversationID: defaultConv.ID,
-		UserID:         userID,
-		Role:           "assistant",
-		Content:        triggerMsg,
-		Status:         model.MsgStatusNormal,
-	}
-	agent.SetNoMerge(msg)
-	if err := h.msgRepo.Create(c.Request.Context(), msg); err != nil {
-		log.Printf("[reminders] create message error: %v", err)
-		view.JSONError(c, 500, "insert trigger message failed")
-		return
-	}
-
-	if err := h.reminderRepo.Ack(c.Request.Context(), userID, id, msg.ID); err != nil {
+	if err := h.reminderRepo.Ack(c.Request.Context(), userID, id, msgID); err != nil {
 		log.Printf("[reminders] ack error: %v", err)
 		view.JSONError(c, 500, "ack reminder failed")
 		return
 	}
 
 	now := time.Now()
-	log.Printf("[reminders] ack'd: %s msg=%s", id[:8], msg.ID[:8])
-	view.JSONOK(c, gin.H{
+	log.Printf("[reminders] ack'd: %s msg=%q conv=%q", id, msgID, rem.ConversationID)
+	view.JSONOK(c, ackPayload(rem, model.ReminderStatusAcknowledged, now, triggerMsg, msgID, conv))
+}
+
+// ackTargetConversation 点通知后该落到哪段对话：提醒的创建会话仍然在、属于本人、没被删就返回它。
+// 其余情况返回 nil（调用方据此不写消息、不跳转）。查库失败按可降级处理：记日志后当没有来源。
+func ackTargetConversation(ctx context.Context, h *ReminderHandler, userID, convID string) *model.Conversation {
+	if convID == "" {
+		return nil
+	}
+	conv, err := h.convRepo.FindByID(ctx, convID)
+	if err != nil {
+		log.Printf("[reminders] ack find conv %s error: %v", convID, err)
+		return nil
+	}
+	// 子会话（subAgent）不在用户的会话列表里（列表按 parent_id IS NULL 过滤），
+	// 往那儿写消息等于写进用户看不见的地方。
+	if conv == nil || conv.UserID != userID || conv.IsDeleted || conv.ParentID != nil {
+		return nil
+	}
+	return conv
+}
+
+// ackPayload 组 ack 响应。conv 为 nil（没有可用来源会话）时两个会话字段为空串。
+func ackPayload(rem *model.Reminder, status string, ackedAt time.Time, trigger, msgID string,
+	conv *model.Conversation) gin.H {
+	convID, convTitle := "", ""
+	if conv != nil {
+		convID, convTitle = conv.ID, conv.Title
+	}
+	return gin.H{
 		"id":                     rem.ID,
-		"status":                 model.ReminderStatusAcknowledged,
-		"acknowledged_at":        now,
-		"trigger_message":        triggerMsg,
-		"trigger_message_msg_id": msg.ID,
-	})
+		"status":                 status,
+		"acknowledged_at":        ackedAt,
+		"trigger_message":        trigger,
+		"trigger_message_msg_id": msgID,
+		"conversation_id":        convID,
+		"conversation_title":     convTitle,
+	}
 }
 
 // CancelReminder POST /api/reminders/:id/cancel

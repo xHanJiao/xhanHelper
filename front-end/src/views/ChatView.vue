@@ -23,9 +23,7 @@
  *     【分支 B】同会话重载 (needsRefetch=true)
  *       → 流程同分支 A，完成后 chat.needsRefetch = false
  *     【分支 C】无会话 ID
- *       → GET /api/conversations/default   尝试获取默认会话
- *       → 有则 router.replace 跳转（重新触发分支 A）
- *       → 无则 chat.reset() + fetchLlmConfig()（显示空白页）
+ *       → chat.reset()（空白欢迎页，会话由首条消息懒创建；不再跳默认会话）
  *
  * ── 三、用户发送消息 ─────────────────────────────────────────────────────────
  *   handleSend() (L459):
@@ -62,7 +60,7 @@
  */
 
 import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted, provide } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
@@ -89,7 +87,6 @@ const auth = useAuthStore()
 const isAdmin = computed(() => auth.user?.isAdmin === true)
 const theme = useThemeStore()
 const route = useRoute()
-const router = useRouter()
 const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel } = useChatSSE()
@@ -547,27 +544,13 @@ watch(() => route.params.id, async (newId, oldId) => {
 
   // ====================================================================
   // 分支 C：路由里没有会话 ID（用户访问 /chat 或被重定向到无 id 状态）
-  // 先尝试通过 API 获取默认会话并跳转，若无则显示空白欢迎页
+  // 直接显示空白欢迎页；会话由首条消息懒创建（SSE 回传 conversation_id）。
+  // 不再自动跳默认会话 —— 那个概念正在淡出（客户端启动已是空白新对话）。
   // ====================================================================
   } else if (!newId) {
     inputVisible.value = true
     isInitialScrollDone.value = false
     if (chat.isStreaming) cancel()
-
-    // 通过 API 获取默认会话，避免拉全量列表
-    try {
-      const defaultConv = await api.get('/api/conversations/default')
-      if (defaultConv?.id) {
-        // 找到默认会话 → 清空状态并重定向到 /chat/:id
-        chat.reset()
-        router.replace(`/chat/${defaultConv.id}`)
-        return // 提前返回，router.replace 会再次触发此 watcher 进入分支 A
-      }
-    } catch (e) {
-      console.error('Failed to get default conversation', e)
-    }
-
-    // 无默认会话（首次使用），显示空白状态
     chat.reset()
   }
 }, { immediate: true })

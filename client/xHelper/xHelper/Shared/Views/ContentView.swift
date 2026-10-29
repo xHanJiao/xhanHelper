@@ -39,7 +39,7 @@ struct ContentView: View {
     @StateObject private var agentVM: AgentViewModel
     @StateObject private var billVM: BillViewModel
     @StateObject private var memoryVM: MemoryViewModel
-    @StateObject private var noteVM: NoteViewModel
+    @StateObject private var artifactVM: ArtifactViewModel
     @StateObject private var documentVM: DocumentViewModel
     @StateObject private var themeVM: ThemeViewModel
     @StateObject private var imageVM: ImageViewModel
@@ -305,7 +305,7 @@ struct ContentView: View {
         _agentVM = StateObject(wrappedValue: AgentViewModel(apiClient: api))
         _billVM = StateObject(wrappedValue: BillViewModel(apiClient: api))
         _memoryVM = StateObject(wrappedValue: MemoryViewModel(apiClient: api))
-        _noteVM = StateObject(wrappedValue: NoteViewModel(apiClient: api))
+        _artifactVM = StateObject(wrappedValue: ArtifactViewModel(apiClient: api))
         _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
         _themeVM = StateObject(wrappedValue: ThemeViewModel(apiClient: api))
         _imageVM = StateObject(wrappedValue: ImageViewModel(apiClient: api))
@@ -399,7 +399,7 @@ struct ContentView: View {
                                     manager: rightSidebar,
                                     billVM: billVM,
                                     memoryVM: memoryVM,
-                                    noteVM: noteVM,
+                                    artifactVM: artifactVM,
                                     documentVM: documentVM,
                                     themeVM: themeVM,
                                     agentVM: agentVM,

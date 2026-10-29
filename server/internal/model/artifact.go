@@ -13,7 +13,7 @@ import (
 // 列表只能通过 ArtifactRef / FindRefsByIDs 取标题和摘要。
 type Artifact struct {
 	ID             string         `gorm:"primaryKey;size:36" json:"id"`
-	UserID         string         `gorm:"size:36;not null;index" json:"user_id"`
+	UserID         string         `gorm:"size:36;not null;index" json:"-"`
 	ConversationID string         `gorm:"size:36;not null;index" json:"conversation_id"`
 	Title          string         `gorm:"size:200;not null" json:"title"`
 	Summary        string         `gorm:"size:500;not null" json:"summary"`

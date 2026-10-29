@@ -9,7 +9,7 @@ struct RightSidebarView: View {
     @ObservedObject var manager: RightSidebarManager
     @ObservedObject var billVM: BillViewModel
     @ObservedObject var memoryVM: MemoryViewModel
-    @ObservedObject var noteVM: NoteViewModel
+    @ObservedObject var artifactVM: ArtifactViewModel
     @ObservedObject var documentVM: DocumentViewModel
     @ObservedObject var themeVM: ThemeViewModel
     @ObservedObject var agentVM: AgentViewModel
@@ -492,7 +492,7 @@ struct RightSidebarView: View {
                     manager: manager,
                     billVM: billVM,
                     memoryVM: memoryVM,
-                    noteVM: noteVM,
+                    artifactVM: artifactVM,
                     documentVM: documentVM,
                     themeVM: themeVM,
                     agentVM: agentVM,

@@ -184,6 +184,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/images/:id", rc.ImageHandler.Delete)
 
 		// HTML 产物：正文的唯一出口（消息列表只带摘要，见 docs/design/html-artifact §4.1）
+		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)
 		auth.GET("/artifacts/:id", rc.ArtifactHandler.GetArtifact)
 	}
 

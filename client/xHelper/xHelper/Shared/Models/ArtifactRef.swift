@@ -16,3 +16,23 @@ struct ArtifactPayload: Codable, Identifiable {
     let summary: String
     let html: String
 }
+
+/// `GET /api/artifacts` 的列表项（右栏「灵阅」）：**不含正文**，点开才按 id 拉。
+struct ArtifactSummary: Codable, Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+    let conversationId: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, summary
+        case conversationId = "conversation_id"
+        case createdAt = "created_at"
+    }
+}
+
+struct ArtifactListResponse: Codable {
+    let items: [ArtifactSummary]
+    let total: Int
+}

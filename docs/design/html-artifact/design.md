@@ -254,7 +254,9 @@ rightSidebar.openTab(
 - `BrowserToolProvider.performCloseAll` 里 `activeTabId = nil` → **经实现时核对不用改**：那是 provider 自己的字段，不是 `rs.activeTabId`；`RightSidebarManager.closeTab` 关掉网页 tab 时会保留仍存在的 tab（含产物页），所以产物不会被藏掉。
 - 遍历 `manager.tabs` 的浏览器语义（进浏览器、关页回落、保活、右键菜单、拖分屏）按 `id.hasPrefix("artifact:")` 过滤掉这一类。全仓此类引用约 11 处，集中在 `RightSidebarView`；实现时收紧成三处真正会踩到的：`enterBrowser`、`performCloseScoped` / `performCloseTab` 的回落、`demoteAgentTab` 的回落。
 
-**不选"新增浏览面板的一个 case"**：`BrowsePanel` 是 `CaseIterable` 驱动的网格入口（账单/记忆/文档…），加一个 case 会在侧栏首页多出一个永久入口"HTML 页面"——而我们要的是"看当前这一页"，不是"一个内容库"。
+**当时不选"新增浏览面板的一个 case"**：`BrowsePanel` 是 `CaseIterable` 驱动的网格入口（账单/记忆/文档…），加一个 case 会在侧栏首页多出一个永久入口——那时要的是"看当前这一页"，不是"一个内容库"。
+
+**2026-10-29 补充**：产物已经攒成库，用户提出要回看入口，于是新增浏览面板 `灵阅`（见 §9.5）。聊天里的卡片仍然走 tab，两条入口共用同一个 coordinator，行为一致。
 
 ### 9.2 WKWebView 配置
 
@@ -298,6 +300,33 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 
 真需要的两个场景各有替代：调样式在 Xcode 的 WKWebView 里看，存档/发人用 `WKWebView.createPDF`（后续再加）。
 
+### 9.5 回看入口：右栏「灵阅」
+
+聊天里的卡片只在消息流里，翻历史要一直往上滚。产物攒多之后需要一个**按时间倒序的内容库**——右栏浏览面板新增一项「灵阅」，替代原来的「笔记」。
+
+笔记的退场是**配置层收口**，不是使用习惯：`conf/config.yaml` 的 `chat.tool_excludes: [note]` 让 `note` 工具对 LLM 彻底不可见（`expose_tools` 的目录与函数定义两层都拦，见 `makeExposeFn`）。否则会出现「模型还能写、Mac 端却没地方看」。历史笔记数据保留，Web 前端 `NotesView.vue` 仍可查。
+
+数据源与消息表无关：
+
+- 列表 `GET /api/artifacts?limit=30&offset=0` → `{items, total}`，`WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC`。
+- **只 `Select` 五列**（id/title/summary/conversation_id/created_at）。正文 `html` 不进 SQL、也不进 JSON（`Artifact.HTML` 是 `json:"-"`），沿用 §4.1 的硬规则。
+- 详情仍只有 `GET /api/artifacts/:id` 一个正文出口。
+
+界面与交互：
+
+- `PageContainer` + `CardGridView` + `CardConfig`（标题 + 摘要 2 行 + 日期脚注），与文档列表同款观感；不做搜索、不按会话分组、不能删除（v1）。
+- 点一条 → `ArtifactOpenCoordinator.open(id:title:)` → 右栏开 tab 渲染整页（与聊天卡片同一条路径，同一 id 再点是切回去）。
+- 「灵阅」是浏览面板的一种态；离开再回来会重新拉第一页（`ArtifactViewModel.load` 在 `.task` 里），顺带把刚生成的产物顶到最前面。
+- 空态：「灵阅还是空的——在聊天里让我做一张手账或对比图试试」。
+
+生命周期（和消息不是一回事）：
+
+- 普通删除/归档会话只置 `conversation.is_deleted`，**不动 artifacts**。所以作品比聊天记录活得久，历史消息翻不到了灵阅里还在——这是成品该有的行为。
+- 无痕会话走 `BeginPurge`（按 conversation 软删）+ `FinishPurge`（物理删），**无痕里生成的作品不会漏进灵阅**（§十一）。
+- 内联过图片的产物是自包含字节副本，列表页不碰图片，也不受 `image_ttl_days` 影响。
+
+**为什么不复用文档那种「面板内打开 + 返回」**：那要新写一层面板内导航，而且同一个产物从聊天点开是 tab、从灵阅点开是面板内，行为不一致。tab 方案零新代码，且列表留在面板里可以点回去继续翻。
+
 ## 十、Web 前端
 
 Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**：渲染同样的标题 + 摘要卡，点击在 `<iframe sandbox="" srcdoc="...">` 里展开（空 `sandbox` 等效于关 JS + 禁同源，和 WKWebView 那条线等价）。做不做随你，但字段解析必须容错。
@@ -323,7 +352,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `internal/service/artifact_repo.go`
 - `internal/tool/html_artifact.go` + 测试
 - `internal/util/htmlsanitize/sanitize.go`（清洗 + 校验纯函数，含 CSP 注入与 `image:` 内联钩子；不含版式基线）+ 测试
-- `internal/controller/artifact.go` + `router.go` 一行
+- `internal/controller/artifact.go`（`GetArtifact` 正文出口 + `ListArtifacts` 列表）+ `router.go` 两行
 
 服务端（改造）：
 
@@ -333,12 +362,15 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `internal/service/image_store.go`（`DataURI` 内联出口：owner 校验 + 读文件 + 单图上限）
 - `internal/controller/conversations.go`（`getMessages` / `messages-v2` 一次 `IN` 批量展开 title/summary）
 - `internal/app/*`（注册 repo + 工具）
+- `conf/config.yaml`（`chat.tool_excludes: [note]`：笔记工具退场，见 §9.5）
 
 客户端（新增）：
 
 - `Shared/Views/HTMLArtifactCard.swift`（照 `DocumentRefCard`）
 - `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底）
-- `Shared/Models/ArtifactRef.swift`（`ArtifactRef` + `ArtifactPayload`）
+- `Shared/Views/ArtifactListView.swift`（右栏「灵阅」列表：`PageContainer` + `CardGridView`）
+- `Shared/ViewModels/ArtifactViewModel.swift`（分页加载，30/页）
+- `Shared/Models/ArtifactRef.swift`（`ArtifactRef` + `ArtifactPayload` + `ArtifactSummary` / `ArtifactListResponse`）
 - `Shared/Services/ArtifactOpenCoordinator.swift`（拉正文 + 打开右栏 / iOS sheet）
 
 客户端（改造）：
@@ -346,6 +378,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `Shared/Models/Message.swift`（+`artifacts`）
 - `Shared/Views/MessageListView.swift`（渲染卡片 + 按 id 去重 + 点击调 coordinator）
 - `Shared/ViewModels/ChatViewModel.swift`（SSE tool_result 即时插卡）
+- `Shared/Views/BrowsePanelView.swift`（`BrowsePanel` 新增 `.artifacts`「灵阅」，替换 `.notes`）
+- `Shared/Views/PageHolders.swift`、`ContentView.swift`、`RightSidebarView.swift`（接线 `artifactVM`）
+- `Shared/Services/APIClient.swift`（`listArtifacts`）
 
 前端（改造）：`front-end/src/` 消息卡片最小展示（sandbox iframe）。
 
@@ -358,6 +393,8 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **触发边界**：问天气、列三件待办、解释一个概念、要一段代码 —— 这四种都**不该**生成页面，确认走 markdown
 - **每轮上限**：同轮内要求"给我五种风格"，确认最多落 3 条
 - **不取正文**：抓一次消息列表接口的响应，确认里面没有 `html` 字段（`Omit` 生效）
+- **灵阅列表**：右栏 →「灵阅」→ 看到历史产物（时间倒序）→ 点一条在右栏开 tab → 切回面板 → 滚到底自动加载第 31 条；抓一次 `/api/artifacts` 响应，确认同样没有 `html` 字段
+- **灵阅与消息解耦**：删掉（归档）产出该页的会话，确认灵阅里那条还在、点开正常
 - **不重复**：生成页面后，正文里不应再出现页面内的同一份内容
 - 版式基线：一条模型没写任何样式的 HTML，打开后仍满足最小字号、行高、不横向滚动、有底色
 - 恶意样本：存一条带 `<script>alert(1)</script>`、`<iframe src="file:///etc/passwd">`、外链 `<img>` 的，确认剥干净、WebView 控制台无报错、无网络请求
@@ -423,3 +460,11 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 修正「源图被清理」用例的恒真断言：改为删除后**重新查库**再断言。
   - **已知上限**：8MB 总量 ÷（4MB×1.33）≈ 1.5 张满配图，两张 4MB 原图仍会失败。真机撞得多时优先调 `MaxInlineBytes`，不加压缩。
   - 影响文件：`util/htmlsanitize/sanitize.go`（+测试）、`service/image_store.go`（+测试）、`tool/html_artifact.go`（+测试）。
+- **2026-10-29 · 右栏「灵阅」回看入口**（替代笔记面板）
+  - 需求：产物只在消息流里，翻历史要一直往上滚；要一个按时间倒序的回看入口。笔记已不再写入，用户在两者之间选了「替代」。
+  - 决定：`BrowsePanel` 用 `artifacts`「灵阅」替换 `notes`；笔记浏览链（`NoteListView` / `NoteViewModel` / `NoteDetailOverlay` / `NotePage`）删除。后端 `/api/notes`、笔记数据、Web 端 `NotesView.vue` 不动。
+  - 决定：列表走新接口 `GET /api/artifacts`（30/页，`Select` 五列不含正文）；点开复用 `ArtifactOpenCoordinator` 开右栏 tab，与聊天卡片同一条路径。
+  - 决定：不做搜索、按会话分组、删除产物；iOS 与 Web 端暂无入口。
+  - 决定：`note` 工具在 `conf/config.yaml` 用 `chat.tool_excludes: [note]` 收口（配置层，不改代码）。理由：Mac 端已无笔记面板，留着工具会出现「写了看不见」；笔记历史数据与 Web 端 `NotesView.vue` 不受影响。
+  - 生命周期确认：普通删除/归档会话不动 artifacts（作品比聊天记录长寿）；无痕会话由 `BeginPurge` + `FinishPurge` 连删，不漏进灵阅。
+  - 影响文件：`server/.../service/artifact_repo.go`（+`ListByUser`）、`controller/artifact.go`（+`ListArtifacts`）、`controller/router.go`；`client/.../Views/{BrowsePanelView,PageHolders,ArtifactListView,ContentView,RightSidebarView}.swift`、`ViewModels/ArtifactViewModel.swift`（新）、`Models/ArtifactRef.swift`、`Services/APIClient.swift`；删除 `NoteListView.swift` / `NoteViewModel.swift` / `NoteDetailOverlay.swift`。

@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/util/imgshrink"
 )
 
 // 图片魔数白名单：mime → 扩展名。只认这四种，svg/可执行/HTML 一律拒绝（防脚本注入）。
@@ -210,15 +211,79 @@ func (s *ImageStore) Open(a *model.ImageAsset) (*os.File, error) {
 	return os.Open(s.FilePath(a))
 }
 
-// InlineMaxBytes — 单张图内联进 HTML 产物时的原字节上限。
+// 内联压缩参数 — 产物页按 760px 宽设计、右栏最宽 1200，Retina 到顶也就 ~2400 物理像素，
+// 1600 够看；q85 在照片上看不出差别，体积通常只有原图的 1/8（见 docs/design/html-artifact §4.3）。
 //
-// 不做压缩：压缩要引 golang.org/x/image 并处理 EXIF 方向（iPhone 竖拍会横躺），
-// v1 宁可对超大图报错（docs/design/html-artifact §4.3）。
-const InlineMaxBytes int64 = 4 << 20
+// 为什么要压：原图动辄 4000×3000 / 3–5MB，再乘 1.33 倍 base64 膨胀，几张就顶满整页上限。
+const (
+	InlineMaxEdge     = 1600
+	InlineJPEGQuality = 85
+)
+
+func (s *ImageStore) inlineCacheDir() string { return filepath.Join(s.dir, "inline") }
+
+// inlineCache 找已压好的内联副本（jpg 优先，其次 png）。没有就返回 ok=false。
+func (s *ImageStore) inlineCache(id string) (path, mime string, ok bool) {
+	for _, c := range []struct{ ext, mime string }{{"jpg", "image/jpeg"}, {"png", "image/png"}} {
+		p := filepath.Join(s.inlineCacheDir(), id+"."+c.ext)
+		if fi, err := os.Stat(p); err == nil && fi.Size() > 0 {
+			return p, c.mime, true
+		}
+	}
+	return "", "", false
+}
+
+// removeInlineCache — 原图删除/清理时一并删掉压缩副本（否则 inline/ 会越攒越多）。
+func (s *ImageStore) removeInlineCache(id string) {
+	for _, ext := range []string{"jpg", "png"} {
+		if err := os.Remove(filepath.Join(s.inlineCacheDir(), id+"."+ext)); err != nil && !os.IsNotExist(err) {
+			log.Printf("[image] remove inline cache %s failed: %v", shortID(id), err)
+		}
+	}
+}
+
+// writeInlineCache — 原子落盘（临时文件 + rename）：读者要么看不到，要么看到完整文件。
+func (s *ImageStore) writeInlineCache(id, mime string, data []byte) error {
+	ext := "jpg"
+	if mime == "image/png" {
+		ext = "png"
+	}
+	dir := s.inlineCacheDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create inline cache dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, id+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create inline temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("write inline temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("close inline temp: %w", err)
+	}
+	if err := os.Rename(tmpName, filepath.Join(dir, id+"."+ext)); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("rename inline cache: %w", err)
+	}
+	return nil
+}
+
+func dataURI(mime string, data []byte) string {
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
 
 // DataURI — 把用户的图片读成 data: URI，供 HTML 产物内联。
+//
 // 必须带 owner：产物页只允许嵌自己的图。文件缺失（被清理）按错误返回，
 // 让调用方整页失败，而不是静默少一张用户点名要的图。
+//
+// 内联前**先压一遍**（imgshrink）：原图直接 base64 会让整页秒顶上限，且解码渲染都慢。
+// 压缩结果按 id 落盘缓存，同一张图第二次内联直接读。
 func (s *ImageStore) DataURI(ctx context.Context, userID, id string) (string, error) {
 	a, err := s.repo.GetByIDAndUser(ctx, id, userID)
 	if err != nil {
@@ -227,27 +292,43 @@ func (s *ImageStore) DataURI(ctx context.Context, userID, id string) (string, er
 		}
 		return "", fmt.Errorf("查图片记录: %w", err)
 	}
-	// 先 stat 再看大小：上传上限 32MB，为判 4MB 把整个文件读进内存不值。
-	path := s.FilePath(a)
-	fi, err := os.Stat(path)
+
+	if p, mime, ok := s.inlineCache(a.ID); ok {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			return dataURI(mime, data), nil
+		}
+		// 缓存坏了不影响正确性：记一笔，往下重新压
+		log.Printf("[image] read inline cache %s failed: %v", shortID(a.ID), err)
+	}
+
+	src, err := os.ReadFile(s.FilePath(a))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", errors.New("图片文件已丢失（可能被清理）")
 		}
-		return "", fmt.Errorf("查图片文件: %w", err)
-	}
-	if fi.Size() > InlineMaxBytes {
-		return "", fmt.Errorf("图片太大（%d 字节，上限 %d），换一张小点的图", fi.Size(), InlineMaxBytes)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
 		return "", fmt.Errorf("读图片文件: %w", err)
 	}
-	mime := a.Mime
-	if mime == "" {
-		mime = http.DetectContentType(data)
+	out, mime, err := imgshrink.Shrink(src, InlineMaxEdge, InlineJPEGQuality)
+	if err != nil {
+		if errors.Is(err, imgshrink.ErrTooLarge) {
+			return "", fmt.Errorf("%w，换一张小一点的图", err)
+		}
+		return "", err
 	}
-	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+	if err := s.writeInlineCache(a.ID, mime, out); err != nil {
+		// 写不进缓存不影响本次结果，下次再压一遍而已
+		log.Printf("[image] write inline cache %s failed: %v", shortID(a.ID), err)
+	}
+	return dataURI(mime, out), nil
+}
+
+// shortID — 日志里只打 id 前缀（id 是 uuid，取 8 位够定位）。
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 // EnsureFileID 确保图片在 LLM 侧有 file_id（缺失则懒上传并回填）。
@@ -280,6 +361,7 @@ func (s *ImageStore) Delete(ctx context.Context, a *model.ImageAsset) error {
 	if err := os.Remove(s.FilePath(a)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove image file: %w", err)
 	}
+	s.removeInlineCache(a.ID)
 	return s.repo.Delete(ctx, a.ID, a.UserID)
 }
 
@@ -407,8 +489,9 @@ func (s *ImageStore) purge(ctx context.Context, cutoff time.Time, list staleList
 			a := &rows[i]
 			if err := os.Remove(s.FilePath(a)); err != nil && !os.IsNotExist(err) {
 				// 文件删不掉不阻断记录清理：留着记录只会反复重试，反而更糟
-				log.Printf("[image_cleanup] remove file %s failed: %v", a.ID[:8], err)
+				log.Printf("[image_cleanup] remove file %s failed: %v", shortID(a.ID), err)
 			}
+			s.removeInlineCache(a.ID)
 			ids = append(ids, a.ID)
 		}
 		n, err := s.repo.DeleteBatch(ctx, ids)

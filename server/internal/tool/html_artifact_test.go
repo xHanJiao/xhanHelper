@@ -1,9 +1,13 @@
 package tool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +19,22 @@ import (
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
+
+// tinyPNG — 真能解码的最小 PNG（内联前会压缩，只对魔数做手脚的假图会被拒）。
+// 每次调用改一个像素，让 sha256 不同 —— 否则 Upload 会按内容去重成同一张，张数就测不出来了。
+var tinypngSeq int
+
+func tinyPNG(t *testing.T) []byte {
+	t.Helper()
+	tinypngSeq++
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	img.Set(tinypngSeq%8, tinypngSeq%8, color.RGBA{R: uint8(tinypngSeq), G: 200, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
+}
 
 func setupArtifactTool(t *testing.T) (*HTMLArtifactTool, *gorm.DB, *service.ImageStore, func()) {
 	t.Helper()
@@ -133,8 +153,8 @@ func TestHTMLArtifactInlinesImage(t *testing.T) {
 	tl, db, images, cleanup := setupArtifactTool(t)
 	defer cleanup()
 	ctx := context.Background()
-	// 只需魔数正确：Upload 按 DetectContentType 判类型，DataURI 不解析像素
-	png := append([]byte("\x89PNG\r\n\x1a\n"), []byte(strings.Repeat("0", 64))...)
+	// 必须是**真能解码**的图：内联前会压缩（imgshrink），只对魔数做手脚的假图会报「无法识别」
+	png := tinyPNG(t)
 	asset, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, png)
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -214,7 +234,7 @@ func TestHTMLArtifactRejectsTooManyImages(t *testing.T) {
 	ids := make([]string, 0, maxInlineImages+1)
 	for i := 0; i < maxInlineImages; i++ {
 		// 每张内容不同：Upload 按 sha256 去重，同一份字节只会拿到一个 id
-		png := append([]byte("\x89PNG\r\n\x1a\n"), []byte(fmt.Sprintf("img-%d", i))...)
+		png := tinyPNG(t) // 每次内容不同才有独立 asset（Upload 按 sha256 去重无所谓，张数才是被测对象）
 		a, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, png)
 		if err != nil {
 			t.Fatalf("upload: %v", err)

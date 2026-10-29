@@ -1554,8 +1554,8 @@ class ChatViewModel: ObservableObject {
     /// 只改内存，不落盘——重载后由消息字段接管（服务端是唯一事实来源）。
     private func appendArtifactRef(_ ref: ArtifactRef) {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        guard !messages[idx].artifacts.contains(where: { $0.id == ref.id }) else { return }
-        messages[idx].artifacts.append(ref)
+        guard !messages[idx].artifactRefs.contains(where: { $0.id == ref.id }) else { return }
+        messages[idx].artifacts = messages[idx].artifactRefs + [ref]
     }
 
     // MARK: Local Tool Results

@@ -257,6 +257,15 @@ final class RightSidebarManager: ObservableObject {
     /// 特殊 tab（浏览器内工具页），固定最右、不可拖拽重排
     static let specialTabIDs = [downloadTabID, bookmarkTabID, historyTabID, configTabID, mediaTabID]
 
+    /// HTML 产物 tab 的 id 前缀。它不在浏览器 session 里，所以浏览器语义
+    /// （进浏览器 / 关页回落 / 保活 / 右键菜单）必须按它过滤，别把产物页当网页。
+    static let artifactTabPrefix = "artifact:"
+
+    static func isArtifactTab(_ id: String?) -> Bool {
+        guard let id else { return false }
+        return id.hasPrefix(artifactTabPrefix)
+    }
+
     /// 网页 tab 之间拖拽重排（特殊 tab 不参与）
     func moveTab(from id: String, to targetID: String) {
         guard id != targetID else { return }

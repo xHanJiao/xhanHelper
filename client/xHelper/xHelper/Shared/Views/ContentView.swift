@@ -329,6 +329,10 @@ struct ContentView: View {
                 }
             }
         }
+        // iOS 没有右栏：产物走 ChatView 的 sheet（macOS 由 ChatTabManager 接线）
+        vm.onOpenArtifact = { id, title in
+            ArtifactOpenCoordinator.shared.open(id: id, title: title)
+        }
         _chatViewModel = StateObject(wrappedValue: vm)
     }
     #endif

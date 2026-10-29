@@ -1,7 +1,7 @@
 # HTML 产物（聊天场景）
 
 > 日期：2026-10-29
-> 状态：**定稿（待开发）**，决策见 §十一
+> 状态：**已实现**（2026-10-29，`feat/html-artifact`），代码审查见 `docs/code-review/html-artifact/2026-10-29.md`
 > 来源：2026-10-29 讨论纪要（`~/Desktop/HTML产物展示机制-讨论纪要-20261029.md`）
 > 前情：已经用模型自由生成验证过效果（四版手账风格），卡在落地——目前 HTML 只是输出到本地目录，demo 可用，不能实际使用。
 
@@ -37,14 +37,13 @@
 ```go
 // internal/model/artifact.go
 type Artifact struct {
-    ID             int64
-    UserID         int64
-    ConversationID int64   // 必须挂：无痕会话销毁要连带清
+    ID             string  // UUID
+    UserID         string
+    ConversationID string // 必须挂：无痕会话销毁要连带清
     Title          string
     Summary        string
-    HTML           string  // LONGTEXT
+    HTML           string  // LONGTEXT，json:"-"（任何列表都带不出去）
     CreatedAt      time.Time
-    UpdatedAt      time.Time
     DeletedAt      gorm.DeletedAt
 }
 ```
@@ -221,8 +220,8 @@ rightSidebar.openTab(
 
 **接入位置定为 `tabs` 池**（不再单开一个右栏模式）：`openTab` 一行就能拿到 tab 条、关闭、返回、切回已有 tab 这些配套，而独立字段/独立模式得自己把这些重画一遍。代价是两个已知毛病，各补一处守卫即可：
 
-- `BrowserToolProvider.performCloseAll` 里 `activeTabId = nil` → 改成"回落到仍存在的 tab"，否则点"退出浏览器"会把没被关的手账从视野里藏掉（tab 还在数组里，点卡能回来，但会让人愣一下）。
-- 遍历 `manager.tabs` 的浏览器语义（favicon、保活、右键菜单、拖分屏）按 `id.hasPrefix("artifact:")` 过滤掉这一类。全仓此类引用约 11 处，集中在 `RightSidebarView`。
+- `BrowserToolProvider.performCloseAll` 里 `activeTabId = nil` → **经实现时核对不用改**：那是 provider 自己的字段，不是 `rs.activeTabId`；`RightSidebarManager.closeTab` 关掉网页 tab 时会保留仍存在的 tab（含产物页），所以产物不会被藏掉。
+- 遍历 `manager.tabs` 的浏览器语义（进浏览器、关页回落、保活、右键菜单、拖分屏）按 `id.hasPrefix("artifact:")` 过滤掉这一类。全仓此类引用约 11 处，集中在 `RightSidebarView`；实现时收紧成三处真正会踩到的：`enterBrowser`、`performCloseScoped` / `performCloseTab` 的回落、`demoteAgentTab` 的回落。
 
 **不选"新增浏览面板的一个 case"**：`BrowsePanel` 是 `CaseIterable` 驱动的网格入口（账单/记忆/文档…），加一个 case 会在侧栏首页多出一个永久入口"HTML 页面"——而我们要的是"看当前这一页"，不是"一个内容库"。
 
@@ -294,7 +293,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 
 - `internal/model/message.go`（+`artifacts_json`）
 - `internal/agent/orchestrator.go`（本轮结束时收集 id 写回消息）
-- `internal/controller/chat.go`（消息接口批量展开 title/summary）
+- `internal/controller/conversations.go`（`getMessages` / `messages-v2` 一次 `IN` 批量展开 title/summary）
 - `internal/app/*`（注册 repo + 工具）
 
 客户端（新增）：
@@ -342,3 +341,16 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 ## 十五、一句话
 
 先把"能显示、能打开、不会崩"跑通，再谈生成得多好；先把"什么时候不该生成"跑通，再谈生成得多勤。
+
+## 十六、后续变更
+
+- **2026-10-29 · 代码审查后的修正**（审查报告 `docs/code-review/html-artifact/2026-10-29.md`）
+  - `Message.artifacts` 改 Optional + `artifactRefs` 计算属性：服务端 `omitempty` 会把空数组整个省掉，合成的 `Decodable` 不用属性默认值兜缺 key，否则所有消息列表解码失败。
+  - `html.create` 的配额改为**校验/清洗通过后**再扣：截断是最常见的失败，连撞三次不该让整轮报废。
+  - `artifacts_json` 只存 `{id,type}`，标题摘要读时由 `attachArtifacts` 一次 `IN` 展开（原实现多存了一份，已删）。
+  - 右栏浏览器语义按 `artifact:` 前缀过滤：`enterBrowser` 不再把产物 tab 当目标；关页回落不再抢走产物视图。`performCloseAll` 经核对无需改动（见 §9.1）。
+  - 补 `navigationDelegate`（非 `about:` 导航一律 cancel）+ 加载失败提示（不再纯白屏）。
+  - iOS 补上 `onOpenArtifact` 接线（此前 sheet 是死代码）。
+  - CSP 增加 `font-src data:`（内联 base64 字体不再静默失效）；`<style>` 改为清洗所有文本子节点。
+  - 删掉 `ArtifactRepo.SoftDeleteByConversations` / `DeleteByConversations` 两个死方法（删除逻辑在 `ConversationRepo.BeginPurge` / `FinishPurge`）。
+  - 影响文件：`client/.../Message.swift`、`MessageListView.swift`、`ChatViewModel.swift`、`ContentView.swift`、`HTMLArtifactView.swift`、`ArtifactOpenCoordinator.swift`、`RightSidebarManager.swift`、`BrowserToolProvider.swift`；`server/.../html_artifact.go`、`orchestrator.go`、`conversations.go`、`artifact_repo.go`、`htmlsanitize/sanitize.go`。

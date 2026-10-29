@@ -67,6 +67,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"拿不准就不要用。一次只生成一张，需要多张先问用户。",
 			"调用之后，正文只写结论/推荐/下一步，不要再用 markdown 复述页面里的内容。",
 			"页面要求：按 760px 宽设计、不要横向滚动；自己铺不透明底色；可以内联 <style>，但不要写 script、iframe，也不要用外链图片或字体（会被删除）。",
+			"观感参考（手账只是其中一种，别套模板、别固定风格）：手账风＝米色纸底 + 胶带/时间轴 + 手写感标题；对比页＝两栏并排 + 色块区分优劣；时间线＝左侧时间列 + 竖向连线；一页纸总结＝大标题 + 三块要点。留白充足、统一配色，别做满屏边框。",
 			"summary 必须一句话说清这页讲了什么（用户据此决定点不点），不要写「以下是对比」「详见下图」。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
@@ -108,16 +109,18 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 	if utf8.RuneCountInString(req.Summary) > maxArtifactSumLen {
 		return &Result{Success: false, Error: fmt.Sprintf("summary 超过 %d 字", maxArtifactSumLen)}
 	}
-	if !t.allowOne(ec.TurnID) {
-		return &Result{Success: false, Error: fmt.Sprintf("本轮已生成 %d 张页面，够了；如需更多请先问用户", maxArtifactsPerTurn)}
-	}
 	if ec.ConvID == "" {
 		return &Result{Success: false, Error: "当前没有会话上下文，无法生成页面"}
 	}
 
+	// 先校验、清洗，再扣配额：截断是最常见的失败（全链路没有 finish_reason 处理），
+	// 失败也扣次数会让模型连撞三次后整轮报废。
 	clean, err := htmlsanitize.Process(req.HTML)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
+	}
+	if !t.allowOne(ec.TurnID) {
+		return &Result{Success: false, Error: fmt.Sprintf("本轮已生成 %d 张页面，够了；如需更多请先问用户", maxArtifactsPerTurn)}
 	}
 
 	a := &model.Artifact{

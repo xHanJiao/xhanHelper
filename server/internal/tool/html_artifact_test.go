@@ -108,3 +108,20 @@ func TestHTMLArtifactPerTurnCap(t *testing.T) {
 		t.Fatalf("新一轮应重新计数: %s", res.Error)
 	}
 }
+
+// 校验/清洗失败不能扣配额：截断是最常见的失败，连撞三次不该让整轮报废。
+func TestHTMLArtifactFailedDoesNotConsumeQuota(t *testing.T) {
+	tl, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-5"}
+
+	broken := artArgs("t", "s", strings.Replace(samplePage, "</html>", "", 1))
+	for i := 0; i < maxArtifactsPerTurn+2; i++ {
+		if res := tl.Execute(ec, "create", broken); res.Success {
+			t.Fatalf("第 %d 次截断页面应失败", i+1)
+		}
+	}
+	if res := tl.Execute(ec, "create", artArgs("t", "s", samplePage)); !res.Success {
+		t.Fatalf("失败不应扣配额，重写后应成功: %s", res.Error)
+	}
+}

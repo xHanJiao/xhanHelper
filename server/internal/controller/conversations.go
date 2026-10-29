@@ -232,9 +232,6 @@ func getMessages(convRepo *service.ConversationRepo,
 // attachArtifacts — 把消息里的产物引用批量展开成 {id,title,summary}（一次 IN 查询，禁止 N+1）。
 // 失败只降级（记日志、卡片不显示），消息本身照常返回。
 func attachArtifacts(ctx context.Context, repo *service.ArtifactRepo, msgs []model.Message) {
-	if repo == nil {
-		return
-	}
 	ids := make([]string, 0, len(msgs))
 	parsed := make([][]model.ArtifactRef, len(msgs))
 	for i := range msgs {

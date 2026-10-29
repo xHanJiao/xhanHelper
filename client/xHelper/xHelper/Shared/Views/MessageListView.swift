@@ -450,9 +450,9 @@ struct MessageListView: View {
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
-            if !msg.artifacts.isEmpty {
+            if !msg.artifactRefs.isEmpty {
                 // HTML 产物卡片：数据来自消息字段（服务端），正文点开才拉
-                ForEach(msg.artifacts) { ref in
+                ForEach(msg.artifactRefs) { ref in
                     HTMLArtifactCard(title: ref.title, summary: ref.summary) {
                         onOpenArtifact(ref.id, ref.title)
                     }

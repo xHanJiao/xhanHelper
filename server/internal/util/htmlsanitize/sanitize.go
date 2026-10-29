@@ -38,7 +38,7 @@ var urlAttrs = map[string]bool{
 var cssURLRe = regexp.MustCompile(`(?i)url\(\s*(['"]?)([^'")]*)(['"]?)\s*\)`)
 
 const (
-	cspContent = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
+	cspContent = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'"
 	// baselineCSS — 通用版式底线。DOM 顺序放在模型自带样式之前，模型总能覆盖
 	// （不要用 !important，那会把模型的自定义锁死）。
 	baselineCSS = `html,body{margin:0;padding:0;background:#fff}
@@ -100,8 +100,13 @@ func cleanNode(n *html.Node) {
 				c = next
 				continue
 			}
-			if tag == "style" && c.FirstChild != nil {
-				c.FirstChild.Data = cleanCSS(c.FirstChild.Data)
+			if tag == "style" {
+				// 逐个文本子节点清洗（别只看 FirstChild：漏一个就等于没清）。
+				for t := c.FirstChild; t != nil; t = t.NextSibling {
+					if t.Type == html.TextNode || t.Type == html.CommentNode {
+						t.Data = cleanCSS(t.Data)
+					}
+				}
 			}
 			cleanAttrs(c)
 			cleanNode(c)

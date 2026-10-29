@@ -22,7 +22,12 @@ struct Message: Identifiable, Codable {
     /// 由 `mergeLocalToolResults` 在加载/插入时解码。
     var localArtifact: LocalArtifact? = nil
     /// 本条消息产出的 HTML 产物引用（服务端 `artifacts` 字段）。正文不在这里。
-    var artifacts: [ArtifactRef] = []
+    /// 必须 Optional：服务端 `omitempty` 会把空数组整个省掉，而合成的 `Decodable`
+    /// **不会**用属性默认值兜缺 key（会抛 keyNotFound，整条消息列表解码失败）。
+    var artifacts: [ArtifactRef]?
+
+    /// 读用这个（nil 归一成空数组）。
+    var artifactRefs: [ArtifactRef] { artifacts ?? [] }
     /// 刚发出、还没从服务端拉回时的内存缩略图（仅本地展示，不入库）
     var localImages: [PlatformImage] = []
 

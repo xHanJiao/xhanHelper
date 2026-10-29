@@ -51,24 +51,3 @@ func (r *ArtifactRepo) FindRefsByIDs(ctx context.Context, ids []string) (map[str
 	}
 	return out, nil
 }
-
-// SoftDeleteByConversations 无痕销毁 Stage A：只改 deleted_at，不重写正文（溢出页不动，几乎零 IO）。
-func (r *ArtifactRepo) SoftDeleteByConversations(ctx context.Context, convIDs []string) error {
-	if len(convIDs) == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).
-		Where("conversation_id IN ?", convIDs).
-		Delete(&model.Artifact{}).Error
-}
-
-// DeleteByConversations 无痕销毁 Stage B：按会话物理删，一条 SQL，不逐条删。
-func (r *ArtifactRepo) DeleteByConversations(ctx context.Context, convIDs []string) (int64, error) {
-	if len(convIDs) == 0 {
-		return 0, nil
-	}
-	res := r.db.WithContext(ctx).Unscoped().
-		Where("conversation_id IN ?", convIDs).
-		Delete(&model.Artifact{})
-	return res.RowsAffected, res.Error
-}

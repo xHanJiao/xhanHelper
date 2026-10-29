@@ -36,7 +36,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
             }
             rs.openTab(
                 // 以 id 为键：再点同一张是切回去，不会开第二份
-                id: "artifact:\(id)",
+                id: "\(RightSidebarManager.artifactTabPrefix)\(id)",
                 title: payload.title.isEmpty ? title : payload.title,
                 icon: "doc.richtext",
                 content: AnyView(HTMLArtifactView(html: payload.html))

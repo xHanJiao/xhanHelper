@@ -1708,6 +1708,7 @@ func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 }
 
 // artifactRefsFromResults — 从工具结果里挑出 HTML 产物引用（只认带 artifact_id 的）。
+// 只留 id/type 落库：标题摘要读时由 attachArtifacts 一次 IN 展开，别冗余一份（docs/design/html-artifact §5）。
 func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
 	refs := make([]model.ArtifactRef, 0, len(results))
 	for _, r := range results {
@@ -1717,17 +1718,19 @@ func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
 		var d struct {
 			ArtifactID string `json:"artifact_id"`
 			Type       string `json:"type"`
-			Title      string `json:"title"`
-			Summary    string `json:"summary"`
 		}
-		if err := json.Unmarshal(r.result.Data, &d); err != nil || d.ArtifactID == "" {
+		if err := json.Unmarshal(r.result.Data, &d); err != nil {
+			log.Printf("[orch] parse artifact ref: %v", err)
+			continue
+		}
+		if d.ArtifactID == "" {
 			continue
 		}
 		typ := d.Type
 		if typ == "" {
 			typ = model.ArtifactTypeHTML
 		}
-		refs = append(refs, model.ArtifactRef{ID: d.ArtifactID, Type: typ, Title: d.Title, Summary: d.Summary})
+		refs = append(refs, model.ArtifactRef{ID: d.ArtifactID, Type: typ})
 	}
 	return refs
 }

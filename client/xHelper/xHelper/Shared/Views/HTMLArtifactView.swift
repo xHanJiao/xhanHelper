@@ -86,8 +86,10 @@ struct HTMLArtifactView: View {
             }
             Button(role: .destructive) {
                 Task {
-                    if await ArtifactOpenCoordinator.shared.unshare(id: id) {
-                        ToastCenter.shared.show("已撤销分享，旧链接已失效")
+                    switch await ArtifactOpenCoordinator.shared.unshare(id: id) {
+                    case .some(true): ToastCenter.shared.show("已撤销分享，旧链接已失效")
+                    case .some(false): ToastCenter.shared.show("这一页还没有分享链接")
+                    case .none: break // 失败已由 coordinator toast
                     }
                 }
             } label: {
@@ -116,17 +118,6 @@ struct HTMLArtifactView: View {
         copyToPasteboard(url)
         ToastCenter.shared.show("分享链接已复制：拿到链接的人无需登录即可查看")
     }
-}
-
-/// 剪贴板：macOS 用 NSPasteboard、iOS 用 UIPasteboard（两端共用这个视图）。
-private func copyToPasteboard(_ text: String) {
-    #if os(macOS)
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
-    #else
-    UIPasteboard.general.string = text
-    #endif
 }
 
 /// 取消一切非 about: 导航（页面是自包含单文件，不该再跳），并把加载失败报给视图。

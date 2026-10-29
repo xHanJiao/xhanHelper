@@ -160,7 +160,7 @@ case .docRefs(let refs): DocumentRefCard（仅 macOS，iOS 无右栏文档面板
 
 `DocumentRefCard`（按 `card-mockup.html` 定稿）：**整卡可点**（`Button` 包住内容，`buttonStyle(.plain)`），只展示**标题 13.5 semibold + 摘要 11.5 muted（最多 3 行）**，`spacing 6`；`surfaceInput` 底、r11、无外框、maxWidth 240、内边距 12×10。图标/标签/「打开」按钮已按观感迭代裁掉（点整卡即可打开文档面板定位）。
 
-**多张卡片类产物进横向卡片条**（2026-10-16 起，见文末「后续变更」）：相邻的卡片类产物由 `LocalArtifactGrouping.rows` 并成一行，交给 `ArtifactCardStrip` 排布——收起态按宽度自适应露完整卡（**至少露一张**）+ 尾部窄「＋N」格，点它展开成横向可滑的一排（**没有「收起」控件**，展开后一段时间自动收起）；**单张仍走上面这条原路**。`LocalArtifact.isCardArtifact` 区分卡片类（`.docRefs`）与非卡片类（`.chart` 全宽图表，不进条子、且天然打断分组）。
+**多张卡片类产物进横向卡片条**（2026-10-16 起；2026-10-29 起改为**按轮次**归组，见文末「后续变更」）：同一轮的卡片类产物（文档卡 + HTML 产物卡）由 `MessageListView.displayRows` 并成一行（槽落在这轮末尾），交给 `ArtifactCardStrip` 排布——收起态按宽度自适应露完整卡（**至少露一张**）+ 尾部窄「＋N」格，点它展开成横向可滑的一排（**没有「收起」控件**，展开后一段时间自动收起）；**单张仍走上面这条原路**。`LocalArtifact.isCardArtifact` 区分卡片类（`.docRefs`）与非卡片类（`.chart` 全宽图表，不进条子）。
 
 > 标签展示曾用 `ViewThatFits(in: .horizontal)` 宽度自适应收起（`+N`），现标签整体不展示，相关代码已移除；若日后要恢复，参照 `card-mockup.html` 历史或 git 记录。
 
@@ -274,3 +274,11 @@ loadConversation   → messages 全量替换
   - **已知取舍**：客户端时钟超前时，上一页最后一轮的卡片理论上可能漏进当前页（需与页首 user 消息相差 <时钟差，7 轮边界），最坏落位偏一格、不会消失。
   - **落盘时序修正**：白板首轮补落盘（`persistLocalArtifactsUnderConversation`）从 done 的「拿到会话 id」处挪到「user 消息 id 也替换完」之后，落下的锚点直接是服务端 id（否则会与 `reattachAnchor` 抢写）。
   - 影响文件：`Services/LocalToolResultStore.swift` · `LocalArtifacts/LocalArtifactTime.swift` · `LocalArtifacts/LocalArtifactMerge.swift` · `ViewModels/ChatViewModel.swift` + 对应测试。
+- 2026-10-29 · 聊天卡片改为**按轮次成槽**（HTML 产物卡也进条子，与文档卡混排）：
+  - **分组的唯一事实来源**从 `LocalArtifactGrouping.rows` 换成 `MessageListView.displayRows`：不再按「相邻消息」判断，而是**按轮次**（一条 user 消息到该轮结束）归组——同一轮的所有卡片（文档卡 + HTML 产物卡）收进同一个槽，槽落在这轮末尾。理由：HTML 产物卡挂在助手消息的 `artifacts` 字段上，与文档卡（独立消息）永远是两条渲染路，靠相邻关系永远排不到一起。
+  - `LocalArtifacts/LocalArtifactGrouping.swift` 与 `Tests/LocalArtifactsCoreTests/LocalArtifactGroupingTests.swift` **已删除**（不再有调用方）。
+  - 卡片统一成 `MessageListView.ChatCard`（`html` / `document` 两种），`ArtifactCardStrip` 的泛型 `Item` 直接吃它；`HTMLArtifactCard` 因此新增 `width`/`height`，与 `DocumentRefCard` 对齐。
+  - **展开态按槽首卡片 id 记**（`html:<id>` / `doc:<id>`），不再是「组首消息 id」；组首一变仍会丢展开态（只活 8s，认了）。
+  - 槽内按 id 去重（防 SwiftUI `ID occurs multiple times`）。
+  - **分享选择模式仍逐条**（不进槽）：那个态要求每张卡都能各自选中。**iOS 仍逐条**（无右栏、无文档卡）。
+  - 影响文件：`Views/MessageListView.swift` · `Views/HTMLArtifactCard.swift`。

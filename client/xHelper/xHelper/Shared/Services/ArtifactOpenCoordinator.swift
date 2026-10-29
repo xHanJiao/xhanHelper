@@ -99,15 +99,15 @@ final class ArtifactOpenCoordinator: ObservableObject {
         }
     }
 
-    /// 撤销分享：旧链接立即失效。
-    func unshare(id: String) async -> Bool {
+    /// 撤销分享：旧链接立即失效。返回是否真的撤销了（nil＝请求失败，false＝本来没分享）。
+    func unshare(id: String) async -> Bool? {
         do {
-            try await api.unshareArtifact(id: id)
-            return true
+            let resp = try await api.unshareArtifact(id: id)
+            return resp.revoked
         } catch {
             LogBuffer.shared.error("ArtifactOpenCoordinator.unshare id=\(id): \(error)")
             ToastCenter.shared.show("撤销分享失败：\(error.localizedDescription)")
-            return false
+            return nil
         }
     }
 }

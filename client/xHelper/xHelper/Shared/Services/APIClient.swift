@@ -217,9 +217,9 @@ class APIClient {
 		return try await post("/api/artifacts/\(id)/share", body: [:])
 	}
 
-	/// 撤销分享：旧链接立即 404。
-	func unshareArtifact(id: String) async throws {
-		try await delete("/api/artifacts/\(id)/share")
+	/// 撤销分享：旧链接立即 404。返回是否真的撤销了（本来没分享就是 false）。
+	func unshareArtifact(id: String) async throws -> ArtifactUnshare {
+		return try await deleteWithResponse("/api/artifacts/\(id)/share")
 	}
 
 	/// 词云标签统计。audience 与列表同口径：缺省 finished，all=不过滤。
@@ -548,6 +548,14 @@ class APIClient {
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         try await doRequestStatusOnly(req)
+    }
+
+    /// DELETE 但要把 `data` 解析出来（撤销分享要知道是否真的撤销了）。
+    private func deleteWithResponse<T: Decodable>(_ path: String) async throws -> T {
+        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        req.httpMethod = "DELETE"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return try await doRequest(req)
     }
 
     /// 只校验统一包装（HTTP 200 + status=="ok"），不解析 data 具体结构。

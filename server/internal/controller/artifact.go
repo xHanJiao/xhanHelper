@@ -127,7 +127,8 @@ func (h *ArtifactHandler) DeleteArtifactShare(c *gin.Context) {
 	id := c.Param("id")
 
 	// 先确认行存在：Update 影响 0 行既可能是「本来就没分享」也可能是「不存在」，得区分。
-	if _, err := h.repo.GetShareToken(c.Request.Context(), userID, id); err != nil {
+	token, err := h.repo.GetShareToken(c.Request.Context(), userID, id)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			view.JSONError(c, http.StatusNotFound, "artifact not found")
 			return
@@ -141,7 +142,8 @@ func (h *ArtifactHandler) DeleteArtifactShare(c *gin.Context) {
 		view.JSONError(c, http.StatusInternalServerError, "revoke share failed")
 		return
 	}
-	view.JSONOK(c, gin.H{"shared": false})
+	// revoked=false：本来就没分享。客户端据此换文案，别让「已撤销」成了假话。
+	view.JSONOK(c, gin.H{"shared": false, "revoked": token != ""})
 }
 
 // ViewSharedArtifact GET /api/share/artifacts/:token — 公开只读，直接吐 HTML（见 design §9.6）。

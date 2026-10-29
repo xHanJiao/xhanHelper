@@ -297,7 +297,9 @@ struct MessageListView: View {
         var cards: [ChatCard] = []
         func flush() {
             guard !cards.isEmpty else { return }
-            rows.append(.cardSlot(cards))
+            // 按 id 去重：真撞了就是 SwiftUI 的 "ID occurs multiple times" + 可能错行，一行保险
+            var seen = Set<String>()
+            rows.append(.cardSlot(cards.filter { seen.insert($0.id).inserted }))
             cards.removeAll()
         }
         for msg in messages {
@@ -795,15 +797,6 @@ struct MessageListView: View {
                 }
             }
         }
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        #if os(iOS)
-        UIPasteboard.general.string = text
-        #else
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #endif
     }
 
     private func dismissMenu() {

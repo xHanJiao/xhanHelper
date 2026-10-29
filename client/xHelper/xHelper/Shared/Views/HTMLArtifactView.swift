@@ -65,6 +65,8 @@ struct HTMLArtifactView: View {
             }
         }
         .ignoresSafeArea()
+        // 换一篇/重新生成：失败态跟着重置，别把上一次的错误留在新页上
+        .onChange(of: html) { _, _ in loadFailed = false }
     }
 }
 
@@ -106,7 +108,8 @@ private struct ArtifactWebView: NSViewRepresentable {
         webView.loadHTMLString(page, baseURL: nil)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: html, onFail: onFail) }
+    // 和 makeNSView/makeUIView 加载的是同一串（注入后），否则首次 update 必判「变了」再重载一次
+    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: injectingBaseline(html), onFail: onFail) }
 
     final class Coordinator {
         var loadedHTML: String
@@ -134,7 +137,8 @@ private struct ArtifactWebView: UIViewRepresentable {
         webView.loadHTMLString(page, baseURL: nil)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: html, onFail: onFail) }
+    // 和 makeNSView/makeUIView 加载的是同一串（注入后），否则首次 update 必判「变了」再重载一次
+    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: injectingBaseline(html), onFail: onFail) }
 
     final class Coordinator {
         var loadedHTML: String

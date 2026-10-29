@@ -21,7 +21,8 @@ final class CalendarToolProvider: LocalToolProvider {
                 description: """
                 查看某个时间窗口内的日历事件（按开始时间升序）。
                 用户问「我明天有什么安排」「这周几个会」「下周三下午空不空」时用本工具。
-                时间一律用带时区的 ISO8601，如 2026-10-30T00:00:00+08:00；一次性最多返回 50 条。
+                时间一律用带时区的 ISO8601，如 2026-10-30T00:00:00+08:00；默认返回 50 条（上限 200）。
+                每行末尾的 id= 和 t=（起始 unix 秒）是改/删时的定位依据，重复事件必须两者一起传。
                 """,
                 inputSchema: [
                     "type": "object",
@@ -40,7 +41,8 @@ final class CalendarToolProvider: LocalToolProvider {
                 description: """
                 按关键字搜索日历事件（标题/备注/地点包含即命中）。
                 用户问「我什么时候跟张三开会」「上次那个体检预约是哪天」时用本工具。
-                默认搜索前后 30 天，可用 days_back / days_forward 调整。
+                默认搜索前后 30 天，可用 days_back / days_forward 调整；默认返回 30 条（上限 200）。
+                每行末尾的 id= 和 t= 是改/删时的定位依据，重复事件必须两者一起传。
                 """,
                 inputSchema: [
                     "type": "object",
@@ -80,18 +82,22 @@ final class CalendarToolProvider: LocalToolProvider {
             LocalToolSchema(
                 name: "update_event",
                 description: """
-                修改一个已存在的日历事件（先用 list_events / search_events 拿到 event_id）。
-                只传要改的字段。重复事件的修改只作用于该次。
+                修改一个已存在的日历事件（先用 list_events / search_events 拿到 id 与 t）。
+                只传要改的字段。重复事件的修改只作用于该次，因此必须同时传 occurrence（= 列表里的 t）。
+                不能给其他人发邀请（EventKit 不支持）。
                 """,
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "event_id": ["type": "string", "description": "要修改的事件 ID"],
+                        "occurrence": ["type": "integer", "description": "哪一次：列表行尾的 t=（unix 秒）。重复事件必传"],
                         "title": ["type": "string", "description": "新标题"],
                         "start": ["type": "string", "description": "新开始时间，ISO8601"],
                         "end": ["type": "string", "description": "新结束时间，ISO8601"],
                         "calendar": ["type": "string", "description": "移到另一本日历（名称）"],
                         "notes": ["type": "string", "description": "新备注"],
+                        "all_day": ["type": "boolean", "description": "改成全天 / 改回定时"],
+                        "alarm_minutes": ["type": "integer", "description": "提前几分钟提醒：0 = 到点，-1 = 不提醒。不传则保持原闹钟"],
                     ],
                     "required": ["event_id"],
                 ],
@@ -100,13 +106,14 @@ final class CalendarToolProvider: LocalToolProvider {
             LocalToolSchema(
                 name: "delete_event",
                 description: """
-                删除一个日历事件（先用 list_events / search_events 拿到 event_id）。
-                重复事件的删除只作用于该次。
+                删除一个日历事件（先用 list_events / search_events 拿到 id 与 t）。
+                重复事件的删除只作用于该次，因此必须同时传 occurrence（= 列表里的 t）。
                 """,
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "event_id": ["type": "string", "description": "要删除的事件 ID"],
+                        "occurrence": ["type": "integer", "description": "哪一次：列表行尾的 t=（unix 秒）。重复事件必传"],
                     ],
                     "required": ["event_id"],
                 ],
@@ -146,7 +153,7 @@ final class CalendarToolProvider: LocalToolProvider {
         let limit = min(max((args["limit"] as? Int) ?? 50, 1), 200)
         var calendars: [EKCalendar] = []
         if let name = args["calendar"] as? String, !name.isEmpty {
-            calendars = [try cal.resolveCalendar(explicit: name)]
+            calendars = [try cal.resolveCalendarForReading(explicit: name)]
         }
         let predicate = cal.store.predicateForEvents(withStart: start, end: end, calendars: calendars.isEmpty ? nil : calendars)
         let events = cal.store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
@@ -191,6 +198,7 @@ final class CalendarToolProvider: LocalToolProvider {
         event.startDate = start
         event.endDate = end
         event.isAllDay = allDay
+        if allDay { Self.normalizeAllDay(event) }
         if let notes = args["notes"] as? String, !notes.isEmpty { event.notes = notes }
         let alarmMinutes = (args["alarm_minutes"] as? Int) ?? 0
         if alarmMinutes >= 0 {
@@ -214,6 +222,14 @@ final class CalendarToolProvider: LocalToolProvider {
         if args["end"] as? String != nil {
             event.endDate = try Self.parseDate(args["end"] as? String, name: "end")
         }
+        if let allDay = args["all_day"] as? Bool {
+            event.isAllDay = allDay
+            if allDay { Self.normalizeAllDay(event) }
+        }
+        if let minutes = args["alarm_minutes"] as? Int {
+            for alarm in event.alarms ?? [] { event.removeAlarm(alarm) }
+            if minutes >= 0 { event.addAlarm(EKAlarm(relativeOffset: -Double(minutes) * 60)) }
+        }
         if let name = args["calendar"] as? String, !name.isEmpty {
             event.calendar = try cal.resolveCalendar(explicit: name)
         }
@@ -226,23 +242,67 @@ final class CalendarToolProvider: LocalToolProvider {
     private func deleteEvent(_ args: [String: Any], _ cal: CalendarStore) throws -> LocalToolResult {
         let event = try Self.lookup(args, cal)
         let id = event.eventIdentifier ?? ""
+        let mirrorReminderID = ReminderCalendarMirror.reminderID(fromNotes: event.notes)
         try cal.store.remove(event, span: .thisEvent, commit: true)
         LogBuffer.shared.info("[Calendar] delete_event: \(id)")
-        return Self.json(["ok": true, "event_id": id])
+        var payload: [String: Any] = ["ok": true, "event_id": id]
+        if let mirrorReminderID {
+            // 提醒镜像的事件：尊重删除，记墓碑后不再重建；那提醒会回落成系统通知
+            ReminderCalendarMirror.shared.forget(reminderID: mirrorReminderID)
+            payload["note"] = "这是提醒镜像生成的事件，已记下删除、不会再自动重建；对应提醒改为系统通知"
+        }
+        return Self.json(payload)
     }
 
+    /// 按 `event_id`（+ `occurrence` = 起始 unix 秒）定位事件。
+    ///
+    /// 重复事件每次出现的 `eventIdentifier` 相同，`store.event(withIdentifier:)` 拿回的是系列首条，
+    /// 直接 `.thisEvent` 改/删会落到错的那一次 —— 所以重复事件必须带锚点，用窗口查询挑出那一次。
     private static func lookup(_ args: [String: Any], _ cal: CalendarStore) throws -> EKEvent {
         guard let id = (args["event_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
             throw CalendarStore.Failure(message: "缺少 event_id 参数")
         }
+        if let anchor = args["occurrence"] as? Int {
+            let start = Date(timeIntervalSince1970: TimeInterval(anchor))
+            let predicate = cal.store.predicateForEvents(
+                withStart: start.addingTimeInterval(-1), end: start.addingTimeInterval(1), calendars: nil)
+            // shortcut: 跨时区或被移动过的 occurrence 可能定位不到，届时报错让模型重新 list_events
+            let candidates = cal.store.events(matching: predicate)
+            let index = CalendarCore.occurrenceIndex(
+                identifier: id,
+                anchor: anchor,
+                candidates: candidates.map { ($0.eventIdentifier, CalendarCore.anchor($0.startDate)) })
+            guard let index else {
+                throw CalendarStore.Failure(message: "找不到 id=\(id) 在 t=\(anchor) 那次（可能已被移动/删除），请重新 list_events 取最新 t")
+            }
+            return candidates[index]
+        }
         guard let event = cal.store.event(withIdentifier: id) else {
             throw CalendarStore.Failure(message: "找不到事件 \(id)（可能已被删除或日历被移除）")
+        }
+        if event.hasRecurrenceRules {
+            throw CalendarStore.Failure(message: "这是重复事件，改/删必须带 occurrence（列表行尾的 t=），否则会落到系列第一次")
         }
         return event
     }
 
-    // MARK: - 结果封装
+    // MARK: - 全天事件归一
 
+    /// 全天事件归一到「当天 00:00 → 结束日 00:00」（日历感知，夏令时切换日也是整一天）。
+    /// 多日全天保留跨度：只把首尾落到日界，不压成一天。
+    private static func normalizeAllDay(_ event: EKEvent) {
+        let cal = Calendar.current
+        let startDay = cal.startOfDay(for: event.startDate)
+        let endDay = cal.startOfDay(for: event.endDate)
+        event.startDate = startDay
+        if endDay > startDay {
+            event.endDate = endDay
+        } else {
+            event.endDate = cal.date(byAdding: .day, value: 1, to: startDay) ?? startDay.addingTimeInterval(86400)
+        }
+    }
+
+    // MARK: - 结果封装
     private static func textResult(events: [EKEvent], total: Int, cal: CalendarStore) -> LocalToolResult {
         let lines = events.map { cal.describe($0) }
         var text = lines.joined(separator: "\n")
@@ -254,7 +314,7 @@ final class CalendarToolProvider: LocalToolProvider {
         if text.utf8.count > 15000 {
             text = String(text.prefix(5000)) + "\n…结果过大已截断，请缩小时间范围"
         }
-        return json(["count": lines.count, "events": text])
+        return json(["count": lines.count, "total": total, "events": text])
     }
 
     private static func json(_ obj: [String: Any]) -> LocalToolResult {

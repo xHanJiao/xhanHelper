@@ -30,6 +30,9 @@ class NotificationManager: ObservableObject {
     ///   - total: 服务端总数；`total > pending.count` 说明这一页被截断了，此时**不许**按「不在本页」删东西
     func syncWithServer(pending: [Reminder], total: Int) async {
         // 先试日历：能写进日历的不再排本地通知（闹钟响在日历上，事件通过 iCloud 同步到手机）
+        //
+        // shortcut: 镜像只在 macOS 做。将来真上 iOS 客户端时，iOS 会为同一条提醒再排一次本地通知，
+        // 与已同步过去的日历闹钟双响；届时要靠事件备注里的 [xhanhelper:<reminder_id>] 反查去重。
         let truncated = total > pending.count
         var toNotify = pending
         var mirroredIDs = Set<String>()
@@ -44,34 +47,35 @@ class NotificationManager: ObservableObject {
         }
 
         let center = UNUserNotificationCenter.current()
-        let pendingRequests = await center.pendingNotificationRequests()
-        let localIds = Set(pendingRequests.map(\.identifier))
-        let serverIds = Set(toNotify.map(\.id))
+        let localIds = Set((await center.pendingNotificationRequests()).map(\.identifier))
         let now = Date()
         let isoFormatter = ISO8601DateFormatter()
 
-        // 已经落进日历的提醒，之前可能排过本地通知（例如开关是刚打开的）→ 撤掉，避免同一分钟响两次
-        if !mirroredIDs.isEmpty {
-            let stale = localIds.intersection(mirroredIDs)
-            if !stale.isEmpty {
-                center.removePendingNotificationRequests(withIdentifiers: Array(stale))
+        let eligible = toNotify.filter { reminder in
+            guard reminder.isPending, !reminder.isGenerating else { return false }
+            guard !reminder.notificationBody.isEmpty else {
+                LogBuffer.shared.diag("[Reminder] 正文还没生成，本轮不排通知 id=\(reminder.id)")
+                return false
             }
+            guard let deadline = isoFormatter.date(from: reminder.deadline), deadline > now else { return false }
+            return true
         }
+        // 排布规则（含「已镜像不排」「截断不撤」）在 `CalendarCore.notificationPlan`，有单测
+        let plan = CalendarCore.notificationPlan(
+            localIDs: localIds,
+            pendingIDs: toNotify.map(\.id),
+            eligible: eligible.map(\.id),
+            mirrored: mirroredIDs,
+            truncated: truncated)
 
-        for reminder in toNotify {
-            guard reminder.isPending, !reminder.isGenerating else { continue }
-            guard !reminder.notificationBody.isEmpty else { continue }
-            guard let deadline = isoFormatter.date(from: reminder.deadline), deadline > now else { continue }
-
-            if !localIds.contains(reminder.id) {
-                schedule(reminder: reminder)
-            }
+        if !plan.toRemove.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: plan.toRemove)
         }
-
-        guard !truncated else { return }
-        let toRemove = localIds.subtracting(serverIds)
-        if !toRemove.isEmpty {
-            center.removePendingNotificationRequests(withIdentifiers: Array(toRemove))
+        // offset 分页 + created_at DESC 时，两页之间新建提醒会让边界项重复 → 必须去重，否则会 trap
+        let byID = Dictionary(toNotify.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for id in plan.toSchedule {
+            guard let reminder = byID[id] else { continue }
+            schedule(reminder: reminder)
         }
     }
 

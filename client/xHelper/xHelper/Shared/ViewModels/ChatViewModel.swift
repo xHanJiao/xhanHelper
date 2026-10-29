@@ -523,6 +523,18 @@ class ChatViewModel: ObservableObject {
         if toolName.hasPrefix("shell") {
             // shell 危险命令必须完整展示，不复用 prefix(80) 截断
             argsSummary = (arguments["command"] as? String) ?? "(无命令)"
+        } else if toolName.hasPrefix("calendar__") {
+            // 日历写是 L4：完整展示「哪条日程、什么时候、写进哪本日历」，不做 80 字截断
+            let function = String(toolName.dropFirst("calendar__".count))
+            var summary = CalendarCore.confirmationSummary(function: function, arguments: arguments)
+            #if os(macOS)
+            // 改/删只拿到 id：补上事件标题与时间，别让人对着一个 id 点「允许」
+            if let eventID = arguments["event_id"] as? String,
+               let line = CalendarStore.shared.summary(eventID: eventID, occurrence: arguments["occurrence"] as? Int) {
+                summary += " ｜ " + line
+            }
+            #endif
+            argsSummary = summary
         } else {
             #if os(macOS)
             if browserArgsSummary {

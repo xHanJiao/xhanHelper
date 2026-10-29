@@ -41,6 +41,9 @@ nonisolated enum ToolRiskLevels {
         // L3 需确认（fs 分支特例）：本地文件写入（覆盖/追加/编辑，破坏性操作）
         "fs__write": 3,
         "fs__edit": 3,
+        // L2 只读（显式登记：默认等级一旦调整，不至于把日历读连带变成必弹）
+        "calendar__list_events": 2,
+        "calendar__search_events": 2,
         // L4 高危（红色必弹）：往用户日历里写/改/删事件 —— 会同步到手机，且删改难以回滚
         "calendar__create_event": 4,
         "calendar__update_event": 4,

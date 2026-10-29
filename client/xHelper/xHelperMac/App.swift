@@ -901,6 +901,9 @@ struct MacSettingsView: View {
     // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
     @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
     @State private var calendarStatus = ""
+    @State private var calendarAuthorized = false
+    @State private var mirroredEventCount = 0
+    @State private var showCalendarPurgeConfirm = false
     // key/默认值见 LongReplyAlert（唯一事实来源）；key 带环境后缀，dev/prod 不串味
     @AppStorage(LongReplyAlert.soundKey) private var longReplyAlertSound = LongReplyAlert.defaultSoundEnabled
     @AppStorage(LongReplyAlert.secondsKey) private var longReplyAlertSeconds = LongReplyAlert.defaultSeconds
@@ -915,6 +918,12 @@ struct MacSettingsView: View {
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+    }
+
+    private func refreshCalendarStatus() {
+        calendarStatus = CalendarStore.shared.statusText
+        calendarAuthorized = CalendarStore.shared.isAuthorized
+        mirroredEventCount = ReminderCalendarMirror.shared.mirroredCount
     }
 
     var body: some View {
@@ -970,11 +979,37 @@ struct MacSettingsView: View {
                     Button("请求权限") {
                         Task {
                             _ = await CalendarStore.shared.ensureAccess()
-                            calendarStatus = CalendarStore.shared.statusText
+                            refreshCalendarStatus()
                         }
                     }
                 }
-                .task { calendarStatus = CalendarStore.shared.statusText }
+                .task { refreshCalendarStatus() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    refreshCalendarStatus()
+                }
+                if !calendarAuthorized {
+                    Text("未授权时提醒只在 Mac 上响（系统通知），不会同步到手机。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("已写入日历的提醒事件")
+                    Spacer()
+                    Text("\(mirroredEventCount) 条").foregroundStyle(.secondary)
+                    Button("清理…") { showCalendarPurgeConfirm = true }
+                        .disabled(mirroredEventCount == 0)
+                }
+                .confirmationDialog("删除已写入日历的提醒事件？", isPresented: $showCalendarPurgeConfirm, titleVisibility: .visible) {
+                    Button("删除 \(mirroredEventCount) 条", role: .destructive) {
+                        Task {
+                            _ = await ReminderCalendarMirror.shared.purgeAll()
+                            refreshCalendarStatus()
+                        }
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("会经 iCloud 同步删除到其他设备；你在日历里对这些事件做过的修改会一起丢失。这些提醒之后改为系统通知，不会再写回日历。")
+                }
             }
 
             Section("文件访问授权") {

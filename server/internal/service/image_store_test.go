@@ -3,9 +3,14 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -384,15 +389,28 @@ func TestImageStoreDescribeFailureMarksAttempt(t *testing.T) {
 	}
 }
 
-// 内联单图上限：先 stat 再读，超限直接拒（sparse 文件，不真写 4MB）。
-func TestImageStoreDataURITooLarge(t *testing.T) {
+// 内联：大图会被压到适合屏幕的尺寸并落盘缓存，第二次直接用缓存（不再压一遍）。
+func TestImageStoreDataURIShrinksAndCaches(t *testing.T) {
 	store, db, cleanup := setupImageStore(t, 32<<20)
 	defer cleanup()
 	ctx := context.Background()
 
+	// 真图：3000×2000 的 JPEG（压缩后应显著变小）
+	src := image.NewRGBA(image.Rect(0, 0, 3000, 2000))
+	for y := 0; y < 2000; y += 7 {
+		for x := 0; x < 3000; x += 7 {
+			src.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 90, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	raw := buf.Bytes()
+
 	a := &model.ImageAsset{
-		ID: "big-img", UserID: "u1", Ext: "png", Mime: "image/png",
-		Bytes: InlineMaxBytes + 1, Visibility: model.ImageVisibilityPrivate, Source: model.ImageSourceChat,
+		ID: "big-img", UserID: "u1", Ext: "jpg", Mime: "image/jpeg",
+		Bytes: int64(len(raw)), Visibility: model.ImageVisibilityPrivate, Source: model.ImageSourceChat,
 	}
 	if err := db.Create(a).Error; err != nil {
 		t.Fatalf("create record: %v", err)
@@ -400,23 +418,68 @@ func TestImageStoreDataURITooLarge(t *testing.T) {
 	if err := os.MkdirAll(store.Dir(), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	f, err := os.Create(store.FilePath(a))
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	if err := f.Truncate(InlineMaxBytes + 1); err != nil {
-		f.Close()
-		t.Fatalf("truncate: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+	if err := os.WriteFile(store.FilePath(a), raw, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
 
-	if _, err := store.DataURI(ctx, "u1", a.ID); err == nil {
-		t.Fatal("超过单图上限应报错")
+	uri, err := store.DataURI(ctx, "u1", a.ID)
+	if err != nil {
+		t.Fatalf("DataURI: %v", err)
 	}
-	// 别人的图按"不存在"处理
+	if !strings.HasPrefix(uri, "data:image/jpeg;base64,") {
+		t.Fatalf("应以 JPEG data URI 返回，实际前缀 %q", uri[:min(32, len(uri))])
+	}
+	payload := strings.TrimPrefix(uri, "data:image/jpeg;base64,")
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatalf("decode base64: %v", err)
+	}
+	if int64(len(decoded)) >= int64(len(raw))/2 {
+		t.Fatalf("应压到原图一半以下：%d -> %d", len(raw), len(decoded))
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(decoded))
+	if err != nil {
+		t.Fatalf("decode shrunk: %v", err)
+	}
+	if cfg.Width > InlineMaxEdge && cfg.Height > InlineMaxEdge {
+		t.Fatalf("最长边应 ≤%d，实际 %d×%d", InlineMaxEdge, cfg.Width, cfg.Height)
+	}
+
+	// 缓存：第二次不再重压（缓存文件 mtime 不变）
+	cache, _, ok := store.inlineCache(a.ID)
+	if !ok {
+		t.Fatal("应落盘内联缓存")
+	}
+	before, err := os.Stat(cache)
+	if err != nil {
+		t.Fatalf("stat cache: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	again, err := store.DataURI(ctx, "u1", a.ID)
+	if err != nil {
+		t.Fatalf("DataURI 第二次: %v", err)
+	}
+	if again != uri {
+		t.Fatal("缓存命中应返回同一份 URI")
+	}
+	after, err := os.Stat(cache)
+	if err != nil {
+		t.Fatalf("stat cache: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("第二次不应重新压缩写盘")
+	}
+
+	// 越权读取按「不存在」处理
 	if _, err := store.DataURI(ctx, "u2", a.ID); err == nil {
 		t.Fatal("越权读取应报错")
+	}
+
+	// 删除图片时缓存一并清掉
+	if err := store.Delete(ctx, a); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("删除后内联缓存应被清掉，err=%v", err)
 	}
 }

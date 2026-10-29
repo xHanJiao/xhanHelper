@@ -897,7 +897,7 @@ struct ShareResultView: View {
 
     private var urlBar: some View {
         Button {
-            copyURLToPasteboard(shareUrl)
+            copyToPasteboard(shareUrl)
             ToastCenter.shared.show("链接已复制")
         } label: {
             HStack(spacing: 8) {
@@ -1014,15 +1014,6 @@ struct ShareResultView: View {
         let img = NSImage(size: rep.size)
         img.addRepresentation(rep)
         return img
-        #endif
-    }
-
-    private func copyURLToPasteboard(_ text: String) {
-        #if os(iOS)
-        UIPasteboard.general.string = text
-        #else
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
         #endif
     }
 

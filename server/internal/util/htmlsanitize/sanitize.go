@@ -17,7 +17,8 @@ import (
 const (
 	// MaxBytes — 模型给的 HTML 上限（内联图片之前），挡误存巨型 HTML。
 	MaxBytes = 2 << 20
-	// MaxInlineBytes — 内联图片之后的整页上限。图片单独限（service.InlineMaxBytes），
+	// MaxInlineBytes — 内联图片之后的整页上限。单张图先由 imgshrink 压到最长边 1600，
+	// 所以这里的字节数基本只由张数决定（见 docs/design/html-artifact §4.3）。
 	// 这里兜住"很多张中等图"叠出的大页面。
 	MaxInlineBytes = 8 << 20
 	// MinBytes — 下限，挡空壳。

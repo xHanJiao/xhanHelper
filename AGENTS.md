@@ -8,7 +8,7 @@
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go **1.25**、Gin、GORM、MySQL（dev/prod）、SQLite（**仅 test**） |
+| 后端 | Go **1.26**、Gin、GORM、MySQL（dev/prod）、SQLite（**仅 test**） |
 | AI | provider: `deepseek` / `ark` / `doubao`（`claude` 为 stub）；DeepSeek 原生 function calling；Ark Embedding |
 | 前端 | Vue 3 + Naive UI + Pinia + Vue Router + Chart.js + markdown-it + Vite（`front-end/`）。无 Tailwind，样式用 CSS 变量 + Naive token |
 | 客户端 | Swift + SwiftUI，macOS 26.3 / iOS 26.0；`Shared/` 同时编进两个 target |

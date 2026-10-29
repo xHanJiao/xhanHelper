@@ -102,4 +102,32 @@ final class LocalArtifactMergeTests: XCTestCase {
         ]
         XCTAssertEqual(reposition(items).map(\.id), ["u1", "a1", "u2", "l2", "a2"])
     }
+
+    // MARK: - placeAnchored（按 user 消息 id 归位，不依赖时钟）
+
+    func testPlaceAnchoredInsertsAfterItsAnchor() {
+        let items = [Item(id: "u1", role: "user"), Item(id: "a1", role: "assistant")]
+        let result = LocalArtifactMerge.placeAnchored(
+            items, anchored: [(afterID: "u1", item: Item(id: "l1", role: "local"))], id: \.id)
+        XCTAssertEqual(result.map(\.id), ["u1", "l1", "a1"])
+    }
+
+    func testPlaceAnchoredKeepsOrderForSameAnchor() {
+        let items = [Item(id: "u1", role: "user"), Item(id: "a1", role: "assistant")]
+        let result = LocalArtifactMerge.placeAnchored(
+            items,
+            anchored: [
+                (afterID: "u1", item: Item(id: "l1", role: "local")),
+                (afterID: "u1", item: Item(id: "l2", role: "local")),
+            ],
+            id: \.id)
+        XCTAssertEqual(result.map(\.id), ["u1", "l1", "l2", "a1"])
+    }
+
+    func testPlaceAnchoredSkipsMissingAnchor() {
+        let items = [Item(id: "u1", role: "user")]
+        let result = LocalArtifactMerge.placeAnchored(
+            items, anchored: [(afterID: "u-gone", item: Item(id: "l1", role: "local"))], id: \.id)
+        XCTAssertEqual(result.map(\.id), ["u1"])
+    }
 }

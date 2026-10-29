@@ -175,7 +175,8 @@ SSE tool_result    → DocumentArtifactProducer.patch(args, data) → DocumentRe
 SSE done           → assistant id __streaming__ → 真实 id（本地产物不受影响）
 ...
 loadConversation   → messages 全量替换
-                   → mergeLocalToolResults: 按 [first.createdAt, last.createdAt] 从盘读回
+                   → mergeLocalToolResults: 读全会话产物（有锚点的按 user 消息 id 插回，
+                     无锚点的旧数据按下界 + 时间排序 + 位置归位）
                      → LocalArtifact(type:payload:) 解码 → append
                      → 按 createdAt 排序 → LocalArtifactMerge.reposition 归位
                    ⇒ 卡片回到对应回复的思考 + 正文上方
@@ -195,7 +196,7 @@ loadConversation   → messages 全量替换
 | `LocalArtifactTests` | chart/docRefs 编解码往返；空 docRefs；Unicode/emoji/换行；坏 payload → nil；类型不符 → nil |
 | `DocumentArtifactTests` | 只认 create/update（get/query/list/delete → nil）；create 无 tags = `[]`；update 无 tags = `nil`、空串 = `[]`；update **data 优先于 args**（title/tags/preview）、data 有 title 而 args 无、data 回填空 tags = `[]`；`new_text` 不作 preview；title 来源；缺 id/空 id → nil；parseTags 半/全角 + 去重 + 去空；preview 折叠 + 安全上限截断补 `...` + 空 → nil |
 | `DocumentRefMergeTests` | `make` 兜底 title「文档」/tags `[]`；`merged` nil 保留、非 nil 覆盖；`create[a,b,c]→update[a]`= `[a]`；update 无 tags 保留；update `tags=""` 清空；片段更新不冲掉旧摘要 |
-| `LocalToolResultStoreTests` | upsert→entries 往返；多会话文件隔离；同 id 覆盖不重复；范围过滤含边界；换新实例仍从盘读回；clearAll 清盘与内存 |
+| `LocalToolResultStoreTests` | upsert→allEntries 往返；锚点往返 + `reattachAnchor` 只改匹配项；旧 JSON 无锚点键仍能解码；读取不被服务端时钟上界过滤；多会话文件隔离；同 id 覆盖不重复；换新实例仍从盘读回；clearAll 清盘与内存 |
 | `LocalArtifactMergeTests` | local 移到最近 assistant **之前**；tie 排在 assistant 前/后都稳定；多条 local 注入同一 assistant 前且保序；距下一轮更近则归下一轮；不被下一轮抢走；等距取靠前者；无 assistant 保持；空/单元素 noop |
 
 ## 七、涉及文件
@@ -228,7 +229,8 @@ loadConversation   → messages 全量替换
 
 ## 九、风险 / 已知取舍
 
-- **时间串格式**：本地 `ISO8601DateFormatter`（UTC `Z`，无小数秒）与服务端 RFC3339 可能**时区偏移都不同**——本地 SQLite 后端下发东八区 `…+08:00`，云端 MySQL 下发 `Z`。**绝不能按字符串比较**（会差 8 小时）。统一走 `LocalArtifactTime.parse/isOrdered/isWithin` 解析成 `Date` 再比（解析失败才回退字符串）。重定位本身按**位置**判定（不比较时间串）。
+- **时间串格式**：本地 `ISO8601DateFormatter`（UTC `Z`，无小数秒）与服务端 RFC3339 可能**时区偏移都不同**——本地 SQLite 后端下发东八区 `…+08:00`，云端 MySQL 下发 `Z`。**绝不能按字符串比较**（会差 8 小时）。统一走 `LocalArtifactTime.parse/isOrdered/isOnOrAfter` 解析成 `Date` 再比（解析失败才回退字符串）。重定位本身按**位置**判定（不比较时间串）。
+  - **2026-10-29 更正**：光解析成 `Date` 还不够——**卡片是本机时钟、消息是服务端时钟**（实测差 ~44s），跨时钟域比较上界会把卡片误剔。现行做法：读取不过滤上界，归位按 `Entry.anchorUserID`（位置锚点）而非时间；`isWithin` 已换成只判下界的 `isOnOrAfter`。见 `docs/bugs/040`。
 - **设备本地**：缓存不跨设备，新设备/重装后历史轮次的本地产物不出现。要跨设备需回头解析历史 `tool_calls_json`，是另一个量级，先不做。
 - **本地结果不可分享**：`isUnshareable` 覆盖所有 `localToolResult`，chart 同款，符合预期。
 - **update 结果多带一个 preview**：服务端每次 `update_document` 多返回 ~100 字正文摘要进模型上下文（为让 update-only 卡片有摘要）。量小、接受；若日后在意 token，把 `preview` 从结果里去掉、卡片改无摘要态即可。
@@ -265,3 +267,10 @@ loadConversation   → messages 全量替换
   - **展开态的键仍是「组首消息 id」**：组首一变（重排、往组前插卡）展开态就丢——认了，它本就只活 8s，不值得再加一层稳定 id。
   - 测试：`LocalArtifactsCoreTests/LocalArtifactGroupingTests.swift`(新) · `ThumbRowLayoutTests/CardStripLayoutTests.swift`(新) · `LocalArtifactTests`(+`isCardArtifact`)。
   - **渲染自检靶**（`scripts/snapshot-cardstrip.sh`）：把真视图渲成 PNG。两个坑：`ImageRenderer` **不渲染 `ScrollView`**（展开态会渲成空白）→ 改用 `NSHostingView` + `cacheDisplay`；裸可执行文件的 `Bundle.main` 找不到 `Assets.car`，token 色会解析成**透明** → 要包一个最小 `.app` 壳。
+- 2026-10-29 · 卡片偶发消失：**时钟域混用**（见 `docs/bugs/040-document-card-dropped-by-clock-skew.md`）：
+  - **根因**：卡片时间戳来自本机时钟，消息时间来自服务端时钟（实测本机快 ~44s），加载时却用服务端时间做**闭区间**过滤 → 卡片比页尾消息晚就被当「越界」丢掉；下一轮再发消息页尾变大，卡片又回来（表现为「有时候消失」）。停止/出错轮（无 assistant 落库）同样中招。
+  - **决定（用户拍板 A+B）**：① `entries(for:from:to:)` → `allEntries(for:)`，读取**不再有上界**，只剩「不早于页首」的下界（`LocalArtifactTime.isOnOrAfter`）；② `Entry` 增 `anchorUserID`（该卡所属轮的 user 消息 id），加载时按锚点**位置**插回、不参与时间排序；done 里 user 消息 id 从本地 UUID 换成服务端 id 时 `reattachAnchor` 跟着改写。
+  - **行为**：新卡片永不因时钟被剔、也不会被时钟偏移带到下一轮；旧数据（无锚点）与停止轮（锚点是本地 id，永远匹配不上）回退「下界过滤 + 时间排序 + `reposition`」，仍然可见。
+  - **已知取舍**：客户端时钟超前时，上一页最后一轮的卡片理论上可能漏进当前页（需与页首 user 消息相差 <时钟差，7 轮边界），最坏落位偏一格、不会消失。
+  - **落盘时序修正**：白板首轮补落盘（`persistLocalArtifactsUnderConversation`）从 done 的「拿到会话 id」处挪到「user 消息 id 也替换完」之后，落下的锚点直接是服务端 id（否则会与 `reattachAnchor` 抢写）。
+  - 影响文件：`Services/LocalToolResultStore.swift` · `LocalArtifacts/LocalArtifactTime.swift` · `LocalArtifacts/LocalArtifactMerge.swift` · `ViewModels/ChatViewModel.swift` + 对应测试。

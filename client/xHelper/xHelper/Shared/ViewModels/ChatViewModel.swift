@@ -812,8 +812,8 @@ class ChatViewModel: ObservableObject {
             if oldLastId != nil, oldLastId != messages.last?.id {
                 scrollToBottomRequested = true
             }
-            if let first = messages.first, let last = messages.last {
-                await mergeLocalToolResults(from: first.createdAt, to: last.createdAt)
+            if let first = messages.first {
+                await mergeLocalToolResults(from: first.createdAt)
             }
             oldestCursor = result.oldestCursor
             newestCursor = result.newestCursor
@@ -868,8 +868,8 @@ class ChatViewModel: ObservableObject {
                 DispatchQueue.main.async {
                     self.hasMoreBefore = stillHasMore
                 }
-                if let first = newMsgs.first, let last = messages.last {
-                    Task { await mergeLocalToolResults(from: first.createdAt, to: last.createdAt) }
+                if let first = newMsgs.first {
+                    Task { await mergeLocalToolResults(from: first.createdAt) }
                 }
             } else {
                 messages = messages + result.messages.flatMap { $0.withoutToolCalls() }
@@ -1225,11 +1225,11 @@ class ChatViewModel: ObservableObject {
             if let err = doneError {
                 ToastCenter.shared.show("服务提示：\(err)")
             }
+            var blankCID: String?   // 空白 tab 首轮的真实会话 id：等 user id 也换好再补落盘
             if let cid = parseConversationIdFromDone(event.data) {
                 let wasBlank = (conversationId ?? "").isEmpty
                 conversationId = cid
-                // 空白 tab 首轮期间本地产物只留内存（那时还没有会话 id），这里补落盘到真实 id。
-                if wasBlank { persistLocalArtifactsUnderConversation(cid) }
+                if wasBlank { blankCID = cid }
                 onConversationCreated?(cid, parseTitleFromDone(event.data))
                 // 空白 tab 若开了无痕意图：会话已按 ephemeral=true 建成 → 转成服务端标记
                 promoteEphemeralIntent()
@@ -1243,8 +1243,14 @@ class ChatViewModel: ObservableObject {
                 replaceStreamingMessageID(with: msgID)
             }
             if let userMsgID = parseUserMessageIdFromDone(event.data) {
+                let oldUserID = currentRoundUserID
                 replaceUserMessageID(with: userMsgID)
+                // 卡片锚点跟着换成服务端 id，重载后按 id 归位（不靠两个时钟比大小）
+                reattachLocalArtifactAnchors(from: oldUserID, to: userMsgID)
             }
+            // 空白 tab 首轮：卡片此前只留内存（那时还没有会话 id），现在 id 与 user id 都齐了再补落盘，
+            // 这样落下的锚点直接就是服务端 user id。
+            if let blankCID { persistLocalArtifactsUnderConversation(blankCID) }
             // 上下文用量即时更新（来自 done 事件，零请求）
             if let ctx = parseContextFromDone(event.data) {
                 if ctx.tokens > 0 { contextTokens = ctx.tokens }
@@ -1566,6 +1572,8 @@ class ChatViewModel: ObservableObject {
         let createdAt = msg.createdAt
         let convID = msg.conversationId
         let type = artifact.type
+        // 归位锚点：本轮 user 消息 id（流式期是本地 UUID，done 后由 reattachLocalArtifactAnchors 改写）
+        let anchor = currentRoundUserID
         // 空白 tab 首轮：会话 id 还没生成（要等 done），此时按空 id 落盘会写进 `.json`，
         // 重载按真实 id 读不到 → 卡片丢。先只留内存，done 拿到真实 id 后补落盘
         // （见 persistLocalArtifactsUnderConversation）。
@@ -1573,7 +1581,8 @@ class ChatViewModel: ObservableObject {
         Task {
             do {
                 try await LocalToolResultStore.shared.upsert(
-                    type: type, payload: payload, id: id, createdAt: createdAt, conversationId: convID)
+                    type: type, payload: payload, id: id, createdAt: createdAt,
+                    conversationId: convID, anchorUserID: anchor)
             } catch {
                 LogBuffer.shared.error("insertLocalArtifact: persist \(type.rawValue) failed: \(error)")
             }
@@ -1602,12 +1611,14 @@ class ChatViewModel: ObservableObject {
             messages[idx].localToolResult = LocalToolResultData(type: .docRefs, payload: payload)
             let createdAt = messages[idx].createdAt
             let convID = messages[idx].conversationId
+            let anchor = currentRoundUserID
             // 空会话 id（首轮）先只留内存，done 后由 persistLocalArtifactsUnderConversation 补写。
             guard !convID.isEmpty else { return }
             Task {
                 do {
                     try await LocalToolResultStore.shared.upsert(
-                        type: .docRefs, payload: payload, id: localID, createdAt: createdAt, conversationId: convID)
+                        type: .docRefs, payload: payload, id: localID, createdAt: createdAt,
+                        conversationId: convID, anchorUserID: anchor)
                 } catch {
                     LogBuffer.shared.error("upsertRoundDocumentRef: persist failed doc=\(patch.id): \(error)")
                 }
@@ -1617,18 +1628,25 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func mergeLocalToolResults(from: String, to: String) async {
+    private func mergeLocalToolResults(from: String) async {
         let existingIDs = Set(messages.lazy.filter { $0.role == "local_tool_result" }.map { $0.id })
 
         let entries: [LocalToolResultStore.Entry]
         do {
-            entries = try await LocalToolResultStore.shared.entries(for: conversationId ?? "", from: from, to: to)
+            entries = try await LocalToolResultStore.shared.allEntries(for: conversationId ?? "")
         } catch {
             LogBuffer.shared.error("mergeLocalToolResults: load failed: \(error)")
             return
         }
 
+        // 有锚点且锚点在本页 → 直接按位置插回（不参与时间排序）。
+        // 其余（旧数据 / 停止轮锚点还是本地 id）→ 回退：只按下界过滤，再走时间排序 + 位置归位。
+        var anchored: [(afterID: String, item: Message)] = []
         for entry in entries where !existingIDs.contains(entry.id) {
+            guard let artifact = LocalArtifact(type: entry.type, payload: entry.payload) else {
+                LogBuffer.shared.error("mergeLocalToolResults: decode \(entry.type.rawValue) id=\(entry.id) failed")
+                continue
+            }
             var msg = Message(
                 id: entry.id,
                 conversationId: conversationId ?? "",
@@ -1638,12 +1656,14 @@ class ChatViewModel: ObservableObject {
                 createdAt: entry.createdAt
             )
             msg.localToolResult = LocalToolResultData(type: entry.type, payload: entry.payload)
-            guard let artifact = LocalArtifact(type: entry.type, payload: entry.payload) else {
-                LogBuffer.shared.error("mergeLocalToolResults: decode \(entry.type.rawValue) id=\(entry.id) failed")
-                continue
-            }
             msg.localArtifact = artifact
-            messages.append(msg)
+
+            if let anchor = entry.anchorUserID, messages.contains(where: { $0.id == anchor }) {
+                anchored.append((afterID: anchor, item: msg))
+            } else if LocalArtifactTime.isOnOrAfter(entry.createdAt, from: from) {
+                messages.append(msg)
+            }
+            // 剩下的：锚点所在轮不在本页（上翻分页后会再读到），先不显示
         }
 
         // 按解析后的时间排序（本地卡片 UTC `Z` vs 服务端 `+08:00`，字符串排序会错位）。
@@ -1654,22 +1674,33 @@ class ChatViewModel: ObservableObject {
             isUser: { $0.role == "user" },
             isAssistant: { $0.role == "assistant" }
         )
+        messages = LocalArtifactMerge.placeAnchored(
+            messages, anchored: anchored, id: \.id
+        )
     }
 
     /// 空白 tab 首轮的本地产物落盘（那时会话 id 尚未生成，insertLocalArtifact 只留了内存）。
     /// 拿到真实 id 后按该 id 补写，并清掉历史遗留的空会话键文件（`local_results/.json`）。
+    /// 锚点用**扫描到的本轮 user 消息 id**（调用点在 done 的 user id 替换之后，故已是服务端 id）。
     private func persistLocalArtifactsUnderConversation(_ cid: String) {
         guard !cid.isEmpty else { return }
-        for msg in messages where msg.role == "local_tool_result" {
-            guard let ltr = msg.localToolResult else { continue }
+        var anchor: String?
+        for msg in messages {
+            if msg.role == "user" {
+                anchor = msg.id
+                continue
+            }
+            guard msg.role == "local_tool_result", let ltr = msg.localToolResult else { continue }
             let id = msg.id
             let createdAt = msg.createdAt
             let type = ltr.type
             let payload = ltr.payload
+            let anchorID = anchor   // 每轮 Task 捕获当期值，别在循环里共享可变的 anchor
             Task {
                 do {
                     try await LocalToolResultStore.shared.upsert(
-                        type: type, payload: payload, id: id, createdAt: createdAt, conversationId: cid)
+                        type: type, payload: payload, id: id, createdAt: createdAt,
+                        conversationId: cid, anchorUserID: anchorID)
                 } catch {
                     LogBuffer.shared.error("persistLocalArtifactsUnderConversation: persist \(type.rawValue) failed: \(error)")
                 }
@@ -1681,6 +1712,24 @@ class ChatViewModel: ObservableObject {
                 try await LocalToolResultStore.shared.removeConversation("")
             } catch {
                 LogBuffer.shared.error("persistLocalArtifactsUnderConversation: clean empty-key failed: \(error)")
+            }
+        }
+    }
+
+    /// 本轮 user 消息 id —— 本地产物的归位锚点。
+    private var currentRoundUserID: String? {
+        messages.last(where: { $0.role == "user" })?.id
+    }
+
+    /// done 把 user 消息 id 从本地 UUID 换成服务端 id：把本轮卡片的锚点一起改写，
+    /// 否则重载后锚点匹配不上，只能退回按时间归位（被客户端时钟偏移带偏）。
+    private func reattachLocalArtifactAnchors(from old: String?, to new: String) {
+        guard let old, old != new, let cid = conversationId, !cid.isEmpty else { return }
+        Task {
+            do {
+                try await LocalToolResultStore.shared.reattachAnchor(conversationId: cid, from: old, to: new)
+            } catch {
+                LogBuffer.shared.error("reattachLocalArtifactAnchors: \(error)")
             }
         }
     }

@@ -55,4 +55,21 @@ enum LocalArtifactMerge {
         }
         return result
     }
+
+    /// 把带**锚点**的条目插到锚点消息之后（同锚点按传入顺序依次插在先前那条之后）。
+    /// 锚点不在列表里 → 跳过该条（它那一轮没加载到，翻页后会再读到）。
+    ///
+    /// 为什么不参与 `reposition` 的时间排序：锚点是消息 id，跨会话重载后依旧稳定；
+    /// 而卡片时间戳是客户端时钟、消息时间是服务端时钟（实测差 ~44s），排序会把卡片排错轮。
+    static func placeAnchored<E>(_ items: [E], anchored: [(afterID: String, item: E)], id: (E) -> String) -> [E] {
+        var result = items
+        var inserted: [String: Int] = [:]
+        for pair in anchored {
+            guard let i = result.firstIndex(where: { id($0) == pair.afterID }) else { continue }
+            let offset = inserted[pair.afterID, default: 0]
+            result.insert(pair.item, at: i + 1 + offset)
+            inserted[pair.afterID] = offset + 1
+        }
+        return result
+    }
 }

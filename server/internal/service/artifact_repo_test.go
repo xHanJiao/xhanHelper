@@ -78,6 +78,83 @@ func TestArtifactRepoListByUser(t *testing.T) {
 	}
 }
 
+// 原地覆盖：同 id 改内容；越权/不存在返回 false；内容相同也不能被判成不存在。
+func TestArtifactRepoUpdateInPlace(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := []model.Artifact{
+		{ID: "c1", UserID: "u1", ConversationID: "c1", Title: "旧", Summary: "旧", HTML: "<html>旧</html>"},
+		{ID: "c2", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", HTML: "<html>x</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>")
+	if err != nil || !ok {
+		t.Fatalf("Update 应成功，ok=%v err=%v", ok, err)
+	}
+	a, err := repo.GetByID(ctx, "u1", "c1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if a.Title != "新标题" || a.Summary != "新摘要" || a.HTML != "<html>新</html>" {
+		t.Fatalf("覆盖没生效：%+v", a)
+	}
+
+	// 内容完全相同再改一次：MySQL 的 RowsAffected 会是 0，不能拿它判存在
+	if ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>"); err != nil || !ok {
+		t.Fatalf("同值更新也应返回 true，ok=%v err=%v", ok, err)
+	}
+	// 越权 / 不存在
+	if ok, err := repo.Update(ctx, "u1", "c2", "t", "s", "<html>y</html>"); err != nil || ok {
+		t.Fatalf("越权更新应返回 false，ok=%v err=%v", ok, err)
+	}
+	if ok, err := repo.Update(ctx, "u1", "nope", "t", "s", "<html>y</html>"); err != nil || ok {
+		t.Fatalf("不存在应返回 false，ok=%v err=%v", ok, err)
+	}
+}
+
+// 批量删除：混入别人的 id / 空串只删自己的；空入参不打 DB。
+func TestArtifactRepoDeleteMany(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := []model.Artifact{
+		{ID: "d1", UserID: "u1", ConversationID: "c1", Title: "a", Summary: "s", HTML: "<html>1</html>"},
+		{ID: "d2", UserID: "u1", ConversationID: "c1", Title: "b", Summary: "s", HTML: "<html>2</html>"},
+		{ID: "d3", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", HTML: "<html>3</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	rows, err := repo.DeleteMany(ctx, "u1", []string{"d1", "d2", "d3", ""})
+	if err != nil {
+		t.Fatalf("DeleteMany: %v", err)
+	}
+	if rows != 2 {
+		t.Fatalf("只应删掉自己的 2 条，实际 %d", rows)
+	}
+	if _, err := repo.GetByID(ctx, "u2", "d3"); err != nil {
+		t.Fatalf("别人的页面不该被删: %v", err)
+	}
+	if _, err := repo.GetByID(ctx, "u1", "d1"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("d1 应已软删，err=%v", err)
+	}
+
+	if rows, err := repo.DeleteMany(ctx, "u1", nil); err != nil || rows != 0 {
+		t.Fatalf("空入参应返回 0 且不报错，rows=%d err=%v", rows, err)
+	}
+}
+
 // 删除与分享：越权删不动、软删后列表/分享都取不到、token 可设可撤。
 func TestArtifactRepoDeleteAndShare(t *testing.T) {
 	repo, db, cleanup := setupArtifactRepo(t)

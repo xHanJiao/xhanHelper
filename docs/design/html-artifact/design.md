@@ -70,11 +70,16 @@ type Artifact struct {
 |---|---|---|
 | 每轮最多 | 3 张 | 防模型循环/重试刷屏；同时覆盖"给我三种风格"这种合理请求 |
 | 单条大小 | 模型 HTML ≤2MB；内联图片后 ≤8MB | 挡误存；图片单独限（§4.3） |
+| 改版 | 原地覆盖同一行 | 传 `artifact_id` 就 UPDATE，不新建；照扣一次单轮配额（防模型反复重写） |
 | 每会话总量 | 不设硬上限 | 一天两页 ≈ 一年 14MB，且列表不取正文，日常零开销；只影响备份体积。带图页面按图计（一张原图 base64 约 ×1.33） |
 
-**不做内容去重。** 自由生成的 HTML 几乎不可能字节重复，按正文哈希等于写一段永不执行的分支；重试导致的重复由"每轮 ≤3"兜住。真正的重复问题属于修订闭环（v2），那时用户明确说"改这一版"，模型带 `artifact_id` 进来，是不是新版本是确定的语义，不用猜。
+**不做内容去重。** 自由生成的 HTML 几乎不可能字节重复，按正文哈希等于写一段永不执行的分支；重试导致的重复由"每轮 ≤3"兜住。"改这一版"造成的堆积交给 §4.2 的原地覆盖——用户明确说"改这页"时是不是新版本是确定语义，不用猜。
 
-**永远不做"同一 id 覆盖正文"。** 快照类内容被改写会让历史消息失去历史性——翻回三天前那条消息，看到的却是今天的版式。要做修订只能新建记录（v2 用 `supersedes_id` 串起来，渲染时只显示链条末端）。
+**改版 = 原地覆盖（2026-10-29 起；此前写的是「永远不做」）。** `html.create` 接受可选 `artifact_id`：传了就 UPDATE 同一行的 `title/summary/html`，不新建、id 不变、灵阅条数不变。
+
+起因：真机做手账时用户连着改十几版样式，"改一版就是新建一条"让灵阅堆出二十多张同款页面，只能逐条删。新建一版在语义上对，在交互上错。
+
+代价（明确接受）：旧版本不再可回溯，翻回三天前的消息看到的是今天的版式；同理已分享的链接会跟着变成新版。能接受的前提是产物定位为**可再生成的成品**而非快照记录。真需要版本历史时再引 `supersedes_id` 链（只显示链条末端那种）。
 
 ### 4.3 图片：生成时内联，与源文件解耦
 
@@ -184,7 +189,7 @@ type Artifact struct {
 
 ## 八、工具 v1
 
-名字：`html`。三个参数：`title` / `summary` / `html`。
+名字：`html`。参数：`title` / `summary` / `html`，外加可选的 `artifact_id`（改已有页面时传，见 §4.2）。
 
 ### 8.1 什么时候该用（工具描述里必须写死）
 
@@ -236,6 +241,7 @@ type Artifact struct {
 - 描述里写一句"一次只生成一张，需要多张时先问用户"——比硬上限更有效，且不误伤。
 - 每轮 ≤3 张；模型 HTML ≤2MB，内联图片后 ≤8MB；单张不设原字节上限（内联前压到最长边 1600，§4.3）。
 - 描述里写清配图写法（`<img src="image:<id>">`），并明确"不要自己写 base64"。
+- 改版：用户说"再改改/换版式"时传 `artifact_id` 原地覆盖，不要新建（§4.2）。
 - 模型能稳定输出十几 KB，真遇到截断再改成"传文件路径"。
 - 只读声明：无（写库）。
 - 失败即失败，不静默降级。
@@ -327,7 +333,7 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 
 界面与交互：
 
-- `PageContainer` + `CardGridView` + `CardConfig`（标题 + 摘要 2 行 + 日期脚注），与文档列表同款观感；不做搜索、不按会话分组、不能删除（v1）。
+- `PageContainer` + `CardGridView` + `CardConfig`（标题 + 摘要 2 行 + 日期脚注），与文档列表同款观感；不做搜索、不按会话分组。删除见 §9.7（单条 + 多选批量）。
 - 点一条 → `ArtifactOpenCoordinator.open(id:title:)` → 右栏开 tab 渲染整页（与聊天卡片同一条路径，同一 id 再点是切回去）。
 - 「灵阅」是浏览面板的一种态；离开再回来会重新拉第一页（`ArtifactViewModel.load` 在 `.task` 里），顺带把刚生成的产物顶到最前面。
 - 空态：「灵阅还是空的——在聊天里让我做一张手账或对比图试试」。
@@ -371,8 +377,10 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 ### 9.7 删除：软删、无回收站
 
 - `DELETE /api/artifacts/:id`，按 `user_id` 鉴权，命中 0 行回 404。
+- `POST /api/artifacts/batch-delete`，body `{ids:[...]}`（≤100、去重去空，空 400）→ `WHERE user_id = ? AND id IN ?` 软删。越权/已删的 id 静默跳过，返回 `{deleted:n}`——批量操作里一条失效 id 不该让整次失败。
 - 软删（`gorm.DeletedAt`）：正文仍留在库里，但列表、详情、分享路由都看不到（GORM 默认过滤）。**不提供回收站**——产物是可再生成的成品，留着恢复入口反而要维护一套「已删」视图。
 - 客户端（灵阅列表）：卡片页脚 `CardAction(role: .destructive)` + 二次确认（产物一次性、删了没入口找回）。删除成功后本地 `items` 移除、`total -= 1`；若该产物正开在右栏 tab 里，一并 `closeTab`，不留僵尸 tab。
+- **多选批量删除**（2026-10-29，为清理「改版堆出来的那批」）：列表顶部 `选择` → 卡片变勾选态（点卡＝勾选，单条删除按钮隐藏）→ `全选 / 删除所选(N) / 取消`。二次确认共用一个 alert（同一视图挂两个 `.alert` 会互相覆盖）。成功后退出选择态；失败留在选择态，可直接重试。
 - **和分享的联动**：token 就在同一行，删掉即失效，无需额外逻辑。
 - **聊天里的旧卡片仍在**：点开 404，coordinator 提示「这个页面已被删除」（而不是把英文错误抛给用户）。
 
@@ -421,7 +429,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 | 无痕是否连带删 | **删 artifact，但不删文档** | artifact 是那条消息的身体；文档是用户级资产，`BeginPurge` 现在也不清它。这个区别别让人照文档的逻辑处理 |
 | 接入位置 | **`tabs` 池** + 两处守卫 | 见 §9.1；独立模式要自己重画 tab 条，不划算 |
 | 内容去重 | **不做** | 自由生成的 HTML 几乎不可能字节重复，按正文哈希等于写一段永不执行的分支；重试由"每轮 ≤3"兜住 |
-| 同一 id 覆盖正文 | **永远不做** | 快照被改写会让历史消息失去历史性。修订只能新建记录（v2 用 `supersedes_id`） |
+| 同一 id 覆盖正文 | **做**（2026-10-29 拍板，§4.2） | 改版堆积的交互成本高于「快照历史性」；产物是可再生成的成品。代价：旧版不可回溯、分享链接跟新版 |
 | 浏览器打开 | **v1 不做** | 见 §9.4 |
 | 写入方式 | **同步单行 INSERT** | 见 §4.1；`request_json` 的异步先例不适用 |
 
@@ -453,8 +461,8 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `Shared/Views/HTMLArtifactCard.swift`（照 `DocumentRefCard`）
 - `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底 + 分享按钮）
 - `Shared/Views/ArtifactLoadingView.swift`（大页面的骨架态：spinner + 标题；失败时直接关掉 tab）
-- `Shared/Views/ArtifactListView.swift`（右栏「灵阅」列表：`PageContainer` + `CardGridView` + 删除）
-- `Shared/ViewModels/ArtifactViewModel.swift`（分页加载，30/页）
+- `Shared/Views/ArtifactListView.swift`（右栏「灵阅」列表：`PageContainer` + `CardGridView` + 单条删除 + 多选批量删除）
+- `Shared/ViewModels/ArtifactViewModel.swift`（分页加载，30/页；`delete` / `deleteMany`）
 - `Shared/Models/ArtifactRef.swift`（`ArtifactRef` + `ArtifactPayload` + `ArtifactSummary` / `ArtifactListResponse`）
 - `Shared/Services/ArtifactOpenCoordinator.swift`（拉正文 + 先开骨架 tab + 换内容 / iOS sheet + 分享）
 - `Shared/Views/MessageListView.swift`（`DisplayRow.cardSlot`：按轮次归组卡片）
@@ -469,7 +477,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `Shared/ViewModels/ChatViewModel.swift`（SSE tool_result 即时插卡）
 - `Shared/Views/BrowsePanelView.swift`（`BrowsePanel` 新增 `.artifacts`「灵阅」，替换 `.notes`）
 - `Shared/Views/PageHolders.swift`、`ContentView.swift`、`RightSidebarView.swift`（接线 `artifactVM`）
-- `Shared/Services/APIClient.swift`（`listArtifacts` / `deleteArtifact` / `shareArtifact` / `unshareArtifact`）
+- `Shared/Services/APIClient.swift`（`listArtifacts` / `deleteArtifact` / `deleteArtifacts` / `shareArtifact` / `unshareArtifact`）
 
 前端（改造）：`front-end/src/` 消息卡片最小展示（sandbox iframe）。
 
@@ -484,6 +492,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **不取正文**：抓一次消息列表接口的响应，确认里面没有 `html` 字段（`Omit` 生效）
 - **灵阅列表**：右栏 →「灵阅」→ 看到历史产物（时间倒序）→ 点一条在右栏开 tab → 切回面板 → 滚到底自动加载第 31 条；抓一次 `/api/artifacts` 响应，确认同样没有 `html` 字段
 - **灵阅与消息解耦**：删掉（归档）产出该页的会话，确认灵阅里那条还在、点开正常
+- **改版原地覆盖**：生成一页 → 说"把标题改大一点" → 灵阅条数**不变**、点开是**同一页的新版**（不是多一条）；旧轮聊天卡点开也是新版
+- **改版 id 失效**：删掉页面后让模型"改刚才那页" → 工具报错点名 id，库里**不新增**
+- **批量删除**：灵阅点「选择」→ 全选 → 取消勾选要留的两张 → 删除所选 → 确认 → 卡片消失、`total` 对得上、翻页不重复、对应右栏 tab 一并关掉
 - **不重复**：生成页面后，正文里不应再出现页面内的同一份内容
 - 版式基线：一条模型没写任何样式的 HTML，打开后仍满足最小字号、行高、不横向滚动、有底色
 - 恶意样本：存一条带 `<script>alert(1)</script>`、`<iframe src="file:///etc/passwd">`、外链 `<img>` 的，确认剥干净、WebView 控制台无报错、无网络请求
@@ -515,7 +526,8 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **图片不可回溯**：内联保证已生成页面永久有效，但源图若在生成前已被 TTL 清掉就找不回来；CSS 背景图（`url(image:...)`）v1 不支持，只能走 `<img>`。
 - **小图原样内联会带 EXIF（含 GPS）**：够小的图走 passthrough（不重编码，保住原画质与动图），它的 APP1 元数据会跟着 `data:` 进页面；产物现在可公开分享（§9.6），等于 GPS 也会随链接出去。大图重编码时元数据已丢。
 - **分享会连带公开私有图**（已兑现，见 §9.6）：产物里的图在生成时就内联成 `data:`，所以分享一页带图的手账＝把这些**聊天私有图**一起公开——源图的 TTL、`visibility`、`user_id` 鉴权都不再生效，撤销也只能让 URL 失效（对方已保存的副本收不回）。要不要在分享前剥离图片是取舍：v1 选择接受，因为「图随页走」正是产物自包含的前提。
-- **修订会堆卡**：v1 没有"改这一版"的入口，用户说"再改改"等于重新生成一条新回复 + 一条新 artifact。旧的不算过期内容（它是上一轮的真实产物），但连改五版就是五张长得很像的卡。存储无所谓（100KB 量级），烦的是聊天流。解法在 v2：`artifact_id` 入参 + `supersedes_id` + 渲染只显示链条末端。
+- **改版会丢历史版本**（2026-10-29 起支持原地覆盖）：同一 id 的正文被改写，翻回三天前的消息看到的是今天的版式；已分享的链接也会跟着变。这是「只留一份」换来的代价，见 §4.2。
+- **改版依赖模型记得 `artifact_id`**：上一版 id 在 tool 结果里，长会话被窗口裁掉后模型可能拿不到 → 仍会新建一条。工具描述里已写死"改这一版必须传"，但不是硬保证。要硬保证得做服务端自动归并（同会话同标题覆盖），误伤面太大，不做。
 - **分享**：消息分享（`MessageShare`）会把卡片带出去，但正文需要鉴权取不到 → 打开是空。v1 要么分享时隐藏卡片，要么把 HTML 一起打包（未定，倾向隐藏）。
 - **修订闭环**：主模型没有眼睛，用户说"这版太满"它只拿到 id，只能靠文字描述瞎改。v1 只支持"带 id 重新生成一版"，不做局部改；把修订交给带风格库上下文的子 agent 是 v2 的事。
 
@@ -580,3 +592,10 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：**历史产物不重算**（已存成 `data:` 的页面不动）。
   - 决定：`InlineMaxBytes`（单图 4MB 上限）删除；工具描述同步去掉「单张 ≤4MB」。
   - 影响文件：`util/imgshrink/shrink.go`(新)+测试、`service/image_store.go`(+测试)、`tool/html_artifact.go`（描述）、`util/htmlsanitize/sanitize.go`（注释）、`go.mod`（+`golang.org/x/image`）。
+- **2026-10-29 · 改版改原地覆盖 + 灵阅多选删除**
+  - 起因：真机连着改了十几版手账样式，每轮都新建一条，灵阅里堆出二十多张同款页面，用户只想留两张。设计文档 §14 早就把这条列为「修订会堆卡」，现在到期了。
+  - 决定：`html.create` 增加**可选** `artifact_id`——传了就原地覆盖同一行的 `title/summary/html`（id 不变、不新增行），不传才新建。找不到/不属于该用户 → 报错点名，**不静默新建**（静默新建正是堆积来源）。
+  - 决定：工具描述写死「用户说再改改/换版式时必须传 artifact_id」，靠模型判断，不是硬保证（长会话里 id 可能被窗口裁掉）。
+  - 决定：**推翻**原先的「永远不做同一 id 覆盖正文」（§4.2 / §11）——代价是旧版不可回溯、分享链接跟着变新版，用户已接受。
+  - 决定：灵阅加速 `POST /api/artifacts/batch-delete` + 客户端选择态（全选 / 删除所选 N / 取消），用来清理本次堆下的存量（§9.7）。
+  - 影响文件：`server/.../service/artifact_repo.go`（+`Update` / `DeleteMany`）+测试、`tool/html_artifact.go`（+`artifact_id`、抽出 `inlineImages`）+测试、`controller/artifact.go`（+`BatchDeleteArtifacts`）、`controller/router.go`；`client/.../Views/ArtifactListView.swift`（选择态）、`ViewModels/ArtifactViewModel.swift`（+`deleteMany`）、`Services/APIClient.swift`（+`deleteArtifacts`）。

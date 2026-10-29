@@ -85,6 +85,42 @@ func (r *ArtifactRepo) Delete(ctx context.Context, userID, id string) (int64, er
 	return res.RowsAffected, res.Error
 }
 
+// Update — 原地覆盖一页（「改这一版」，见 design §4.2）。
+//
+// 返回 false 表示不存在或不属于该用户。**不能拿 RowsAffected 判存在**：
+// MySQL 在新值与原值相同时返回 0，会把一次成功的空改误判成 404。
+// 所以先 Count 一次再更新（多一次索引查询，换掉一类隐蔽误判）。
+func (r *ArtifactRepo) Update(ctx context.Context, userID, id, title, summary, html string) (bool, error) {
+	var exists int64
+	if err := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Count(&exists).Error; err != nil {
+		return false, err
+	}
+	if exists == 0 {
+		return false, nil
+	}
+	err := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]any{"title": title, "summary": summary, "html": html}).Error
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// DeleteMany — 批量软删（灵阅多选删除）。只删属于该用户的，返回实际删除行数。
+// 空入参直接返回 0：`IN ()` 在部分方言里是语法错误，别让空选择变成 500。
+func (r *ArtifactRepo) DeleteMany(ctx context.Context, userID string, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("user_id = ? AND id IN ?", userID, ids).
+		Delete(&model.Artifact{})
+	return res.RowsAffected, res.Error
+}
+
 // SetShareToken 设置分享 token（幂等：已有则原地覆盖）。返回受影响行数，0 表示不存在。
 func (r *ArtifactRepo) SetShareToken(ctx context.Context, userID, id, token string) (int64, error) {
 	res := r.db.WithContext(ctx).Model(&model.Artifact{}).

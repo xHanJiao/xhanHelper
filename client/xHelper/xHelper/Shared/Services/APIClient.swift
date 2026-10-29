@@ -212,6 +212,11 @@ class APIClient {
 		try await delete("/api/artifacts/\(id)")
 	}
 
+	/// 批量删除（灵阅多选，软删，无回收站）。
+	func deleteArtifacts(ids: [String]) async throws {
+		try await post("/api/artifacts/batch-delete", body: ["ids": ids])
+	}
+
 	/// 生成或复用分享链接（幂等：重复调用返回同一个 token，不会作废已发出的链接）。
 	func shareArtifact(id: String) async throws -> ArtifactShare {
 		return try await post("/api/artifacts/\(id)/share", body: [:])

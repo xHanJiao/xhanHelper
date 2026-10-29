@@ -67,4 +67,26 @@ final class ArtifactViewModel: ObservableObject {
             ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
         }
     }
+
+    /// 批量删除（灵阅多选）。成功就地移除，不重拉整页。返回是否成功——失败时调用方不该退出选择态。
+    func deleteMany(ids: [String]) async -> Bool {
+        guard !ids.isEmpty else { return true }
+        do {
+            try await apiClient.deleteArtifacts(ids: ids)
+            let set = Set(ids)
+            let removed = items.filter { set.contains($0.id) }.count
+            items.removeAll { set.contains($0.id) }
+            // 只减真正在列表里的条数：ids 可能含已被删掉的
+            total = max(0, total - removed)
+            // 被删的页若正开在右栏 tab 里，一并关掉，别留僵尸 tab
+            for id in ids {
+                ArtifactOpenCoordinator.shared.closeTabIfOpen(id: id)
+            }
+            return true
+        } catch {
+            LogBuffer.shared.error("ArtifactViewModel.deleteMany: \(error)")
+            ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+            return false
+        }
+    }
 }

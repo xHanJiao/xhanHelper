@@ -188,6 +188,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)
 		auth.GET("/artifacts/:id", rc.ArtifactHandler.GetArtifact)
 		auth.DELETE("/artifacts/:id", rc.ArtifactHandler.DeleteArtifact)
+		auth.POST("/artifacts/batch-delete", rc.ArtifactHandler.BatchDeleteArtifacts)
 		auth.POST("/artifacts/:id/share", rc.ArtifactHandler.CreateArtifactShare)
 		auth.DELETE("/artifacts/:id/share", rc.ArtifactHandler.DeleteArtifactShare)
 	}

@@ -66,6 +66,98 @@ func artArgs(title, summary, html string) json.RawMessage {
 	return b
 }
 
+// reviseArgs — 「改这一版」：在 artArgs 基础上带 artifact_id。
+func reviseArgs(title, summary, html, id string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"title": title, "summary": summary, "html": html, "artifact_id": id})
+	return b
+}
+
+func artifactIDFrom(t *testing.T, res *Result) string {
+	t.Helper()
+	var out struct {
+		ArtifactID string `json:"artifact_id"`
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	return out.ArtifactID
+}
+
+// 改版 = 原地覆盖：同一个 id、行数不变、正文/标题换掉（灵阅里不会多一条）。
+func TestHTMLArtifactReviseOverwritesInPlace(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-r1"},
+		"create", artArgs("初版", "第一版", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	revised := strings.Replace(samplePage, "三方案对比", "改过的标题", 1)
+	res2 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-r2"},
+		"create", reviseArgs("改版", "第二版", revised, id))
+	if !res2.Success {
+		t.Fatalf("revise failed: %s", res2.Error)
+	}
+	if got := artifactIDFrom(t, res2); got != id {
+		t.Fatalf("改版应返回同一个 id，实际 %s != %s", got, id)
+	}
+
+	var count int64
+	if err := db.Model(&model.Artifact{}).Count(&count).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("改版不应新增行，实际 %d 行", count)
+	}
+
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Title != "改版" || got.Summary != "第二版" || !strings.Contains(got.HTML, "改过的标题") {
+		t.Fatalf("原地覆盖没生效：title=%q summary=%q", got.Title, got.Summary)
+	}
+	if strings.Contains(got.HTML, "三方案对比") {
+		t.Fatal("旧正文应被替换")
+	}
+}
+
+// 改一个不存在 / 别人的 id：报错点名，且**不偷偷新建**（静默新建正是堆积的来源）。
+func TestHTMLArtifactReviseUnknownIDDoesNotCreate(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// 别人的页面
+	other := &model.Artifact{ID: "other", UserID: "u2", ConversationID: "c2", Title: "t", Summary: "s", HTML: samplePage}
+	if err := db.Create(other).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	for _, id := range []string{"no-such-id", "other"} {
+		res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-x-" + id},
+			"create", reviseArgs("t", "s", samplePage, id))
+		if res.Success {
+			t.Fatalf("id=%s 应该报错", id)
+		}
+		if !strings.Contains(res.Error, "不存在") {
+			t.Fatalf("id=%s 的错误应点名不存在，实际 %q", id, res.Error)
+		}
+	}
+
+	var count int64
+	if err := db.Model(&model.Artifact{}).Where("user_id = ?", "u1").Count(&count).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("失败不应新建，u1 实际有 %d 行", count)
+	}
+}
+
 func TestHTMLArtifactCreate(t *testing.T) {
 	tl, db, _, cleanup := setupArtifactTool(t)
 	defer cleanup()

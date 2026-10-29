@@ -12,6 +12,22 @@ final class ToolRiskLevelsTests: XCTestCase {
         XCTAssertEqual(ToolRiskLevels.level(for: "browser__agent_browser_drag"), 4)
     }
 
+    /// 日历读是 L2 免确认；建/改/删是 L4 必弹（会同步到手机、删改难回滚）。
+    func testCalendarWritesAreL4AndReadsSkip() {
+        for tool in ["calendar__create_event", "calendar__update_event", "calendar__delete_event"] {
+            XCTAssertEqual(ToolRiskLevels.level(for: tool), 4)
+            XCTAssertEqual(
+                ToolConfirmPolicy.requirement(level: ToolRiskLevels.level(for: tool), isFileSystemTool: false),
+                .hardened)
+        }
+        for tool in ["calendar__list_events", "calendar__search_events"] {
+            XCTAssertEqual(ToolRiskLevels.level(for: tool), 2)
+            XCTAssertEqual(
+                ToolConfirmPolicy.requirement(level: ToolRiskLevels.level(for: tool), isFileSystemTool: false),
+                .none)
+        }
+    }
+
     /// 打开网址仍是 L3（免确认）：导航本身不写盘、不注入事件，属已记决策。
     func testBrowserOpenStaysL3() {
         XCTAssertEqual(ToolRiskLevels.level(for: "browser__agent_browser_open"), 3)

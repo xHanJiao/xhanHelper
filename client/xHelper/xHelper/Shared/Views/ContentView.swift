@@ -656,8 +656,19 @@ struct ContentView: View {
         guard let token = deviceManager.token else { return }
         let api = APIClient(baseURL: deviceManager.baseURL, token: token)
         do {
-            let response = try await api.listReminders(status: "pending")
-            await notificationManager.syncWithServer(pending: response.items)
+            // 翻页拉全量：一页 50 条不够时，第 51 条起既不镜像也不排通知
+            var items: [Reminder] = []
+            var offset = 0
+            var serverTotal = 0
+            for _ in 0..<4 {
+                let page = try await api.listReminders(status: "pending", limit: 50, offset: offset)
+                serverTotal = page.total
+                items.append(contentsOf: page.items)
+                offset += page.items.count
+                if page.items.isEmpty || items.count >= page.total { break }
+            }
+            // 超过 4 页（200 条）才会剩下没拉到的，此时 total 大于实到条数 → 下游进入「截断保护」
+            await notificationManager.syncWithServer(pending: items, total: max(serverTotal, items.count))
         } catch {
             LogBuffer.shared.error("[Reminder] sync error: \(error)")
         }

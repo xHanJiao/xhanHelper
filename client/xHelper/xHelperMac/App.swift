@@ -644,6 +644,7 @@ struct xhanHelperMacApp: App {
                     await LocalToolRegistry.shared.register(wrapper)
                 }
                 LocalToolRegistry.shared.register(ChartTool())
+                LocalToolRegistry.shared.register(CalendarToolProvider())
                 LocalToolRegistry.shared.register(FileSystemToolProvider())
                 LocalToolRegistry.shared.register(ShellToolProvider(scope: .full))
                 LocalToolRegistry.shared.register(ShellToolProvider(scope: .peek))
@@ -897,6 +898,12 @@ struct MacSettingsView: View {
     // 「使用本地后端」开关：默认关（dev/prod 一致）。仅在 serverURL 为空时生效。
     @AppStorage(LocalBackendPreference.useLocalKey) private var useLocalBackend = LocalBackendPreference.useLocalDefault
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
+    // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
+    @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
+    @State private var calendarStatus = ""
+    @State private var calendarAuthorized = false
+    @State private var mirroredEventCount = 0
+    @State private var showCalendarPurgeConfirm = false
     // key/默认值见 LongReplyAlert（唯一事实来源）；key 带环境后缀，dev/prod 不串味
     @AppStorage(LongReplyAlert.soundKey) private var longReplyAlertSound = LongReplyAlert.defaultSoundEnabled
     @AppStorage(LongReplyAlert.secondsKey) private var longReplyAlertSeconds = LongReplyAlert.defaultSeconds
@@ -911,6 +918,12 @@ struct MacSettingsView: View {
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+    }
+
+    private func refreshCalendarStatus() {
+        calendarStatus = CalendarStore.shared.statusText
+        calendarAuthorized = CalendarStore.shared.isAuthorized
+        mirroredEventCount = ReminderCalendarMirror.shared.mirroredCount
     }
 
     var body: some View {
@@ -952,6 +965,51 @@ struct MacSettingsView: View {
                     Text("5 分钟").tag(300)
                 }
                 .disabled(!longReplyAlertSound)
+            }
+
+            Section("提醒与日历") {
+                Toggle("提醒同步到日历", isOn: $reminderSyncToCalendar)
+                Text("开启后新提醒会写成日历事件，到点由日历闹钟提醒，iCloud 会自动同步到手机；写不进日历时回退为系统通知。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("日历访问权限")
+                    Spacer()
+                    Text(calendarStatus).foregroundStyle(.secondary)
+                    Button("请求权限") {
+                        Task {
+                            _ = await CalendarStore.shared.ensureAccess()
+                            refreshCalendarStatus()
+                        }
+                    }
+                }
+                .task { refreshCalendarStatus() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    refreshCalendarStatus()
+                }
+                if !calendarAuthorized {
+                    Text("未授权时提醒只在 Mac 上响（系统通知），不会同步到手机。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("已写入日历的提醒事件")
+                    Spacer()
+                    Text("\(mirroredEventCount) 条").foregroundStyle(.secondary)
+                    Button("清理…") { showCalendarPurgeConfirm = true }
+                        .disabled(mirroredEventCount == 0)
+                }
+                .confirmationDialog("删除已写入日历的提醒事件？", isPresented: $showCalendarPurgeConfirm, titleVisibility: .visible) {
+                    Button("删除 \(mirroredEventCount) 条", role: .destructive) {
+                        Task {
+                            _ = await ReminderCalendarMirror.shared.purgeAll()
+                            refreshCalendarStatus()
+                        }
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("会经 iCloud 同步删除到其他设备；你在日历里对这些事件做过的修改会一起丢失。这些提醒之后改为系统通知，不会再写回日历。")
+                }
             }
 
             Section("文件访问授权") {

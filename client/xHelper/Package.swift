@@ -11,7 +11,7 @@ let package = Package(
         .target(
             name: "FsCore",
             path: "xHelper/Shared",
-            sources: ["Tools/GrepParser.swift", "Tools/SensitiveFileBlocker.swift", "Tools/PDFTextCore.swift", "Tools/SubagentResultParser.swift", "Tools/ToolOutputStore.swift", "Tools/FsPath.swift", "Tools/AgentWorkspace.swift", "Tools/DirectoryAuthorizationManager.swift", "Tools/ShellCommandParser.swift", "Tools/ShellCommandDescriber.swift", "Tools/DiffRenderer.swift", "Tools/ToolConfirmPolicy.swift", "Tools/ToolsDataRoot.swift"]
+            sources: ["Tools/GrepParser.swift", "Tools/SensitiveFileBlocker.swift", "Tools/PDFTextCore.swift", "Tools/SubagentResultParser.swift", "Tools/ToolOutputStore.swift", "Tools/FsPath.swift", "Tools/AgentWorkspace.swift", "Tools/DirectoryAuthorizationManager.swift", "Tools/ShellCommandParser.swift", "Tools/ShellCommandDescriber.swift", "Tools/DiffRenderer.swift", "Tools/ToolConfirmPolicy.swift", "Tools/ToolsDataRoot.swift", "Tools/CalendarEventCore.swift"]
         ),
         .testTarget(
             name: "FsCoreTests",

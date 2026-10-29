@@ -70,3 +70,9 @@ browser 的 `download / cgclick / drag` 是 review 后从 L3 提到 L4 的（写
 - `client/xHelper/xHelper/Shared/Views/InputBarButtons.swift`（删 `TrustedPill`）、`Views/InputBarTypes.swift`（删 `case trusted`；UserDefaults 里残留的 `"trusted"` 由 `compactMap(InputBarButtonID.init(rawValue:))` 静默忽略，无需迁移）、`Views/ChatView.swift`（删三档 UI 分支 / 二次确认弹窗 / `inputBarTint` 收成两分支）、`Views/InputBar.swift`（三个 Preview）
 - 文案：`Views/ConfigPanelView.swift`、`server/internal/agent/subagent.go`（file_explore 的 shell 说明）
 - 同步文档：`../shell-tool/{design,command-expansion,readonly-free-and-peek}.md`、`fs-write-tools.md`、`fs-write-subagent.md`、`fs-grep-pagination-security.md`、`browser-agent-workspace-test-guide.md`、`fs-batch1-test-guide.md`、`../multimodal-images.md`、`../return-to-cloud/design.md`
+
+### 2026-10-29 · 日历写操作进 L4
+
+`calendar__create_event` / `update_event` / `delete_event` 登记为 **L4（红色必弹）**：会写进用户日历并同步到手机，删改也难以回滚。
+`calendar__list_events` / `search_events` 属只读，走默认 L2 免确认。见 `../calendar-native/design.md`。
+

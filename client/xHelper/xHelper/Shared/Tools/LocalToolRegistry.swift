@@ -91,6 +91,12 @@ final class LocalToolRegistry {
         // shell
         "shell__run": "执行命令",
         "shell_peek__run": "查看命令",
+        // calendar
+        "calendar__list_events": "查看日程",
+        "calendar__search_events": "搜索日程",
+        "calendar__create_event": "创建日程",
+        "calendar__update_event": "修改日程",
+        "calendar__delete_event": "删除日程",
     ]
 
     /// 用户可读的工具展示名：优先用简短名，其次 schema 的中文 description（截断），未命中兜底 flatName

@@ -39,18 +39,13 @@ var cssURLRe = regexp.MustCompile(`(?i)url\(\s*(['"]?)([^'")]*)(['"]?)\s*\)`)
 
 const (
 	cspContent = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'"
-	// baselineCSS — 通用版式底线。DOM 顺序放在模型自带样式之前，模型总能覆盖
-	// （不要用 !important，那会把模型的自定义锁死）。
-	baselineCSS = `html,body{margin:0;padding:0;background:#fff}
-body{max-width:760px;margin:0 auto;padding:24px 20px;line-height:1.6;font-size:16px;
-font-family:-apple-system,"PingFang SC",sans-serif;overflow-x:hidden;word-break:break-word;
--webkit-font-smoothing:antialiased}
-img{max-width:100%;height:auto}
-table{max-width:100%;border-collapse:collapse}
-pre,code{white-space:pre-wrap;word-break:break-word}`
 )
 
-// Process — 校验 + 清洗 + 注入 CSP 与版式基线。返回可直接入库的完整 HTML。
+// Process — 校验 + 清洗 + 注入 CSP。返回可直接入库的完整 HTML。
+//
+// 版式基线**不在这里注入**：基线是渲染期的表现层，写在库里就没法回溯
+// （改一次版式要求把所有历史页面重新生成）。客户端加载时再插，见
+// docs/design/html-artifact/design.md §9.3。
 func Process(raw string) (string, error) {
 	if len(raw) > MaxBytes {
 		return "", fmt.Errorf("HTML 太大（%d 字节，上限 %d）", len(raw), MaxBytes)
@@ -71,15 +66,12 @@ func Process(raw string) (string, error) {
 	cleanNode(doc)
 
 	head := ensureHead(doc)
-	// 顺序很重要：先 CSP、再基线样式，模型自己的 <style> 排在后面才能覆盖基线。
+	// CSP 注入到 head 最前面（版本是服务端契约，和渲染期基线互不影响）。
 	head.InsertBefore(textNode("\n"), head.FirstChild)
 	head.InsertBefore(&html.Node{Type: html.ElementNode, Data: "meta", Attr: []html.Attribute{
 		{Key: "http-equiv", Val: "Content-Security-Policy"},
 		{Key: "content", Val: cspContent},
 	}}, head.FirstChild)
-	styleNode := &html.Node{Type: html.ElementNode, Data: "style"}
-	styleNode.AppendChild(textNode(baselineCSS))
-	head.InsertBefore(styleNode, head.FirstChild)
 	head.InsertBefore(textNode("\n"), head.FirstChild)
 
 	var buf strings.Builder

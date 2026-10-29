@@ -186,7 +186,7 @@ type Artifact struct {
 - 观感：留白、纸感、配色，给一两个正例片段的文字描述（手账只是其中一种，不写死风格）
 - **按 760px 宽设计、不做横向滚动**——模型不知道容器多宽（右栏默认 840），不写这条每张都要手动缩放
 
-通用版式（字号下限、行高、最大宽度、底色）不靠模型，由服务端注入基线 CSS 保证，见 §9.3。
+通用版式（字号下限、行高、最大宽度、底色）不靠模型，由客户端加载时注入基线 CSS 保证，见 §9.3。
 
 ### 8.5 其他
 
@@ -245,14 +245,19 @@ webView.loadHTMLString(html, baseURL: nil)    // 页面自包含，不需要 bas
 - 底下**垫一层不透明底**，别让页面直接压在照片底图上（见 `docs/bugs/030` 那类灰闪，文档读者已在右栏跑 WKWebView，照它的做法）。
 - 加载失败要有错误态（别白屏），走 `LogBuffer.error` + Toast。
 
-### 9.3 版式基线 CSS（服务端注入）
+### 9.3 版式基线 CSS（客户端加载时注入）
 
-模型不一定每次都写到"好读"，所以入库时在模型自带的 `<style>` **之前**注入一小段基线（DOM 顺序在前，模型总能覆盖）：
+模型不一定每次都写到"好读"，所以加载时在模型自带的 `<style>` **之前**注入一小段基线（DOM 顺序在前，模型总能覆盖）：
 
-- `max-width` + 左右留白、`line-height: 1.6`、正文最小 15px（挡 12px 密密麻麻的表格）
+- **正文列交给顶层容器**，`body` 只管背景：`body > *{max-width:min(760px,100%);margin-left:auto;margin-right:auto}`。
+  不能把 `max-width` 写在 `body` 上——模型普遍会写 `body{margin:0}` 顶掉居中；body 被限宽还会让模型的桌面底色只铺 760，侧栏一宽就露出白边（2026-10-29 实测两页都是这样）。
+- `min(760px, 100%)`：侧栏窄于 760 时让写死 `width:720px` 的页面收缩，而不是被 `overflow-x:hidden` 裁掉。
+- `line-height: 1.6`、正文最小 15px（挡 12px 密密麻麻的表格）
 - 表格 `max-width: 100%` + `overflow-x: hidden`（挡横向滚动）
 - 页面自带不透明底色，**不跟随 app 主题**（不透明是为了不直接压在照片底图上；页内配色由模型决定）
 - 系统字体栈 `-apple-system, "PingFang SC"`
+
+**注入位置在客户端（`HTMLArtifactView`），不写进库**：基线是表现层，写进库就没法回溯——改一次版式要把所有历史页面重新生成。存储的 HTML 只有清洗结果 + CSP（服务端契约），基线随 app 版本走。
 
 这是整个方案里性价比最高的十几行：内容千变，基线不变。
 
@@ -286,7 +291,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `internal/model/artifact.go`（`Artifact` + `ArtifactRef`）
 - `internal/service/artifact_repo.go`
 - `internal/tool/html_artifact.go` + 测试
-- `internal/util/htmlsanitize/sanitize.go`（清洗 + 校验纯函数）+ 测试
+- `internal/util/htmlsanitize/sanitize.go`（清洗 + 校验纯函数，含 CSP 注入；不含版式基线）+ 测试
 - `internal/controller/artifact.go` + `router.go` 一行
 
 服务端（改造）：
@@ -299,7 +304,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 客户端（新增）：
 
 - `Shared/Views/HTMLArtifactCard.swift`（照 `DocumentRefCard`）
-- `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 不透明底）
+- `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底）
 - `Shared/Models/ArtifactRef.swift`（`ArtifactRef` + `ArtifactPayload`）
 - `Shared/Services/ArtifactOpenCoordinator.swift`（拉正文 + 打开右栏 / iOS sheet）
 
@@ -354,3 +359,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - CSP 增加 `font-src data:`（内联 base64 字体不再静默失效）；`<style>` 改为清洗所有文本子节点。
   - 删掉 `ArtifactRepo.SoftDeleteByConversations` / `DeleteByConversations` 两个死方法（删除逻辑在 `ConversationRepo.BeginPurge` / `FinishPurge`）。
   - 影响文件：`client/.../Message.swift`、`MessageListView.swift`、`ChatViewModel.swift`、`ContentView.swift`、`HTMLArtifactView.swift`、`ArtifactOpenCoordinator.swift`、`RightSidebarManager.swift`、`BrowserToolProvider.swift`；`server/.../html_artifact.go`、`orchestrator.go`、`conversations.go`、`artifact_repo.go`、`htmlsanitize/sanitize.go`。
+- **2026-10-29 · 版式随右栏宽度自适应**（用户反馈：侧栏一宽一窄页面就破相）
+  - 根因：基线把 `max-width:760px;margin:0 auto` 写在 `body` 上，模型普遍写 `body{margin:0}` 直接顶掉居中；body 被限宽后模型的桌面底色只铺 760，侧栏一宽就露白边；侧栏窄于 760 时模型写死的 `width:720px` 又被 `overflow-x:hidden` 裁掉。
+  - 决定：`body` 只当背景层，正文列交给顶层容器 `body > *{max-width:min(760px,100%)}`；宽了纸张居中、底色铺满，窄了整页收缩不裁字。
+  - 决定：**基线改到客户端加载时注入**（服务端只存清洗结果 + CSP）。理由：基线是表现层，写进库没法回溯，改一次版式要把所有历史页面重新生成。
+  - 工具描述补「body 只放底色，容器用 width:100%;max-width:760px」。
+  - 影响文件：`Shared/Views/HTMLArtifactView.swift`、`server/.../htmlsanitize/sanitize.go`（+测试）、`server/.../tool/html_artifact.go`。

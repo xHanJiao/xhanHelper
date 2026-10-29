@@ -1,6 +1,38 @@
 import SwiftUI
 import WebKit
 
+/// 版式基线：**加载时注入**，不写进库。
+/// 写进库就没法回溯——改一次版式要把所有历史页面重新生成；放在这里改一次对所有页生效。
+/// 顺序在模型自己的 `<style>` 之前（模型总能覆盖），且不用 `!important`。
+///
+/// 关键约束（踩过）：不要把 `max-width` 写在 `body` 上。模型普遍会写 `body{margin:0}`，
+/// 那会顶掉居中；而且 body 被限宽后模型的桌面底色只铺 760，侧栏一宽就露出白边。
+/// 正文列交给顶层容器，`min(760px,100%)` 让写死 720 的页在窄侧栏里收缩而不是被裁掉。
+private let baselineCSS = """
+html,body{margin:0;padding:0;background:#fff}
+html{min-height:100%}
+body{box-sizing:border-box;min-height:100vh;padding:24px 20px;line-height:1.6;font-size:16px;
+font-family:-apple-system,"PingFang SC",sans-serif;overflow-x:hidden;word-break:break-word;
+-webkit-font-smoothing:antialiased}
+body > *{max-width:min(760px,100%);margin-left:auto;margin-right:auto}
+img{max-width:100%;height:auto}
+table{max-width:100%;border-collapse:collapse}
+pre,code{white-space:pre-wrap;word-break:break-word}
+"""
+
+/// 把基线插到 `<head>` 开头。服务端保证每页都有 head（`htmlsanitize.ensureHead`），
+/// 兜底分支只是别让万一缺 head 的页面白屏。
+private func injectingBaseline(_ html: String) -> String {
+    let style = "<style>\(baselineCSS)</style>"
+    guard let headStart = html.range(of: "<head", options: .caseInsensitive),
+          let tagEnd = html[headStart.lowerBound...].firstIndex(of: ">") else {
+        return style + html
+    }
+    var out = html
+    out.insert(contentsOf: style, at: html.index(after: tagEnd))
+    return out
+}
+
 /// 右栏里的 HTML 产物页。
 ///
 /// 安全靠引擎而不是靠清洗：`javaScriptEnabled = false` + 取消一切导航。
@@ -63,14 +95,15 @@ private struct ArtifactWebView: NSViewRepresentable {
     let onFail: (String) -> Void
 
     func makeNSView(context: Context) -> WKWebView {
-        makeWebView(html: html, delegate: context.coordinator.navigationGuard)
+        makeWebView(html: injectingBaseline(html), delegate: context.coordinator.navigationGuard)
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         // html 一变（重新生成/切到另一篇）就重载；内容相同不重复 load
-        guard context.coordinator.loadedHTML != html else { return }
-        context.coordinator.loadedHTML = html
-        webView.loadHTMLString(html, baseURL: nil)
+        let page = injectingBaseline(html)
+        guard context.coordinator.loadedHTML != page else { return }
+        context.coordinator.loadedHTML = page
+        webView.loadHTMLString(page, baseURL: nil)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: html, onFail: onFail) }
@@ -91,13 +124,14 @@ private struct ArtifactWebView: UIViewRepresentable {
     let onFail: (String) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
-        makeWebView(html: html, delegate: context.coordinator.navigationGuard)
+        makeWebView(html: injectingBaseline(html), delegate: context.coordinator.navigationGuard)
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard context.coordinator.loadedHTML != html else { return }
-        context.coordinator.loadedHTML = html
-        webView.loadHTMLString(html, baseURL: nil)
+        let page = injectingBaseline(html)
+        guard context.coordinator.loadedHTML != page else { return }
+        context.coordinator.loadedHTML = page
+        webView.loadHTMLString(page, baseURL: nil)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: html, onFail: onFail) }

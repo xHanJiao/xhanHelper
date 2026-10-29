@@ -9,7 +9,7 @@ const sample = `<!DOCTYPE html><html><head><title>t</title></head><body>
 <h1>对比</h1><p>内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容</p>
 </body></html>`
 
-func TestProcessInjectsCSPAndBaseline(t *testing.T) {
+func TestProcessInjectsCSPWithoutBaseline(t *testing.T) {
 	out, err := Process(sample)
 	if err != nil {
 		t.Fatalf("Process: %v", err)
@@ -17,17 +17,18 @@ func TestProcessInjectsCSPAndBaseline(t *testing.T) {
 	if !strings.Contains(out, "Content-Security-Policy") {
 		t.Fatal("缺 CSP meta")
 	}
-	if !strings.Contains(out, "max-width:760px") {
-		t.Fatal("缺版式基线")
+	// 基线是渲染期的事（客户端注入），存进库就没法随版本更新了
+	if strings.Contains(out, "-webkit-font-smoothing") || strings.Contains(out, "min(760px,100%)") {
+		t.Fatal("版式基线不应写进存储的 HTML")
 	}
-	// 基线必须排在模型样式之前：先出现 baseline 的 style，再出现模型自己的 style
+	// 模型自己的样式必须原样保留（注入点不在这里，别顺手改了别人的样式）
 	model := strings.Replace(sample, "</head>", "<style>h1{color:#c00}</style></head>", 1)
 	out2, err := Process(model)
 	if err != nil {
 		t.Fatalf("Process model style: %v", err)
 	}
-	if strings.Index(out2, "max-width:760px") > strings.Index(out2, "color:#c00") {
-		t.Fatal("基线样式必须排在模型样式之前，否则模型无法覆盖")
+	if !strings.Contains(out2, "color:#c00") {
+		t.Fatal("模型样式应保留")
 	}
 }
 

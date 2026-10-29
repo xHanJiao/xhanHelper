@@ -41,6 +41,10 @@ nonisolated enum ToolRiskLevels {
         // L3 需确认（fs 分支特例）：本地文件写入（覆盖/追加/编辑，破坏性操作）
         "fs__write": 3,
         "fs__edit": 3,
+        // L4 高危（红色必弹）：往用户日历里写/改/删事件 —— 会同步到手机，且删改难以回滚
+        "calendar__create_event": 4,
+        "calendar__update_event": 4,
+        "calendar__delete_event": 4,
     ]
 
     /// 未登记工具的等级（低风险写）。改它会一次性影响所有第三方 MCP 工具。
@@ -58,7 +62,7 @@ nonisolated enum ToolRiskLevels {
 /// - L3：**一般风险，默认免确认**（打开网址、浏览器交互等）。唯一例外是 fs 工具的 L3——registry 的
 ///   fs 分支把「写文件」和「读未授权路径」都算成 3（后者兼作「批准后临时授权该路径」的入口），必须确认。
 /// - L4：**高危，必弹红色确认条**，且拿到红色 UI「请求执行高危操作」。当前有：shell 写/执行、
-///   browser 的写盘（download）与注入系统事件（cgclick / drag）。
+///   browser 的写盘（download）与注入系统事件（cgclick / drag）、日历的建/改/删（会同步到手机）。
 nonisolated enum ToolConfirmPolicy {
 
     enum Requirement {

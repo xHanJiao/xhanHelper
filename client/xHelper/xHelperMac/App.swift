@@ -644,6 +644,7 @@ struct xhanHelperMacApp: App {
                     await LocalToolRegistry.shared.register(wrapper)
                 }
                 LocalToolRegistry.shared.register(ChartTool())
+                LocalToolRegistry.shared.register(CalendarToolProvider())
                 LocalToolRegistry.shared.register(FileSystemToolProvider())
                 LocalToolRegistry.shared.register(ShellToolProvider(scope: .full))
                 LocalToolRegistry.shared.register(ShellToolProvider(scope: .peek))
@@ -897,6 +898,9 @@ struct MacSettingsView: View {
     // 「使用本地后端」开关：默认关（dev/prod 一致）。仅在 serverURL 为空时生效。
     @AppStorage(LocalBackendPreference.useLocalKey) private var useLocalBackend = LocalBackendPreference.useLocalDefault
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
+    // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
+    @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
+    @State private var calendarStatus = ""
     // key/默认值见 LongReplyAlert（唯一事实来源）；key 带环境后缀，dev/prod 不串味
     @AppStorage(LongReplyAlert.soundKey) private var longReplyAlertSound = LongReplyAlert.defaultSoundEnabled
     @AppStorage(LongReplyAlert.secondsKey) private var longReplyAlertSeconds = LongReplyAlert.defaultSeconds
@@ -952,6 +956,25 @@ struct MacSettingsView: View {
                     Text("5 分钟").tag(300)
                 }
                 .disabled(!longReplyAlertSound)
+            }
+
+            Section("提醒与日历") {
+                Toggle("提醒同步到日历", isOn: $reminderSyncToCalendar)
+                Text("开启后新提醒会写成日历事件，到点由日历闹钟提醒，iCloud 会自动同步到手机；写不进日历时回退为系统通知。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("日历访问权限")
+                    Spacer()
+                    Text(calendarStatus).foregroundStyle(.secondary)
+                    Button("请求权限") {
+                        Task {
+                            _ = await CalendarStore.shared.ensureAccess()
+                            calendarStatus = CalendarStore.shared.statusText
+                        }
+                    }
+                }
+                .task { calendarStatus = CalendarStore.shared.statusText }
             }
 
             Section("文件访问授权") {

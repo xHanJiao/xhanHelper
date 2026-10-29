@@ -25,19 +25,40 @@ class NotificationManager: ObservableObject {
         }
     }
 
-    func syncWithServer(pending: [Reminder]) async {
-        if !pending.isEmpty {
+    /// - Parameters:
+    ///   - pending: 服务端返回的 pending 提醒（一次一页）
+    ///   - total: 服务端总数；`total > pending.count` 说明这一页被截断了，此时**不许**按「不在本页」删东西
+    func syncWithServer(pending: [Reminder], total: Int) async {
+        // 先试日历：能写进日历的不再排本地通知（闹钟响在日历上，事件通过 iCloud 同步到手机）
+        let truncated = total > pending.count
+        var toNotify = pending
+        var mirroredIDs = Set<String>()
+        #if os(macOS)
+        let outcome = await ReminderCalendarMirror.shared.mirror(pending: pending, total: total)
+        toNotify = outcome.toNotify
+        mirroredIDs = outcome.mirroredIDs
+        #endif
+
+        if !toNotify.isEmpty {
             _ = await requestAuthorization()
         }
 
         let center = UNUserNotificationCenter.current()
         let pendingRequests = await center.pendingNotificationRequests()
         let localIds = Set(pendingRequests.map(\.identifier))
-        let serverIds = Set(pending.map(\.id))
+        let serverIds = Set(toNotify.map(\.id))
         let now = Date()
         let isoFormatter = ISO8601DateFormatter()
 
-        for reminder in pending {
+        // 已经落进日历的提醒，之前可能排过本地通知（例如开关是刚打开的）→ 撤掉，避免同一分钟响两次
+        if !mirroredIDs.isEmpty {
+            let stale = localIds.intersection(mirroredIDs)
+            if !stale.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: Array(stale))
+            }
+        }
+
+        for reminder in toNotify {
             guard reminder.isPending, !reminder.isGenerating else { continue }
             guard !reminder.notificationBody.isEmpty else { continue }
             guard let deadline = isoFormatter.date(from: reminder.deadline), deadline > now else { continue }
@@ -47,6 +68,7 @@ class NotificationManager: ObservableObject {
             }
         }
 
+        guard !truncated else { return }
         let toRemove = localIds.subtracting(serverIds)
         if !toRemove.isEmpty {
             center.removePendingNotificationRequests(withIdentifiers: Array(toRemove))

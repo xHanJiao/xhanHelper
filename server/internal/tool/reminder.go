@@ -31,7 +31,7 @@ func NewReminderTool(reminderRepo *service.ReminderRepo, llmClient llm.LLMClient
 func (t *ReminderTool) Name() string { return "reminder" }
 
 func (t *ReminderTool) Description() string {
-	return "设置、查看、搜索、取消待办提醒。提醒到期后系统会弹通知，点击通知助手会主动在聊天里提起。支持一次性提醒，循环提醒预留中。"
+	return "设置、查看、搜索、取消待办提醒。提醒到期后会提醒你（Mac 上写成日历事件并随 iCloud 同步到手机，写不进日历时退回系统通知），点击提醒助手会主动在聊天里提起。支持一次性提醒，循环提醒预留中。"
 }
 
 func (t *ReminderTool) Catalog() (CatalogEntry, bool) {

@@ -657,7 +657,7 @@ struct ContentView: View {
         let api = APIClient(baseURL: deviceManager.baseURL, token: token)
         do {
             let response = try await api.listReminders(status: "pending")
-            await notificationManager.syncWithServer(pending: response.items)
+            await notificationManager.syncWithServer(pending: response.items, total: response.total)
         } catch {
             LogBuffer.shared.error("[Reminder] sync error: \(error)")
         }

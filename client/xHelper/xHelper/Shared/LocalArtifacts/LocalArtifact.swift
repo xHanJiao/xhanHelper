@@ -30,9 +30,9 @@ enum LocalArtifact: Equatable {
         }
     }
 
-    /// 是不是「卡片类」产物：相邻的几张会在聊天里合成一条**横向卡片条**。
-    /// 非卡片的（如 chart，250pt 全宽图表）按原样单独渲染，且天然打断分组。
-    /// 渲染侧另有 `MessageListView.artifactCard` 的穷尽 switch 对应这里。
+    /// 是不是「卡片类」产物：同一轮里的几张会在聊天里合成一条**横向卡片槽**（2026-10-29 起按轮次归组）。
+    /// 非卡片的（如 chart，250pt 全宽图表）按原样单独渲染，不进卡片槽。
+    /// 渲染侧对应 `MessageListView.stripCard` / `singleCard` 的穷尽 switch。
     var isCardArtifact: Bool {
         switch self {
         case .docRefs: return true

@@ -220,6 +220,8 @@ const (
 	InlineJPEGQuality = 85
 )
 
+// shortcut: 缓存只按 id 命名、没有版本键 —— 改 InlineMaxEdge / InlineJPEGQuality 之后
+// 老缓存仍会吐旧尺寸旧画质，必须手删 images/inline/ 才生效；要长期调参再加参数进文件名。
 func (s *ImageStore) inlineCacheDir() string { return filepath.Join(s.dir, "inline") }
 
 // inlineCache 找已压好的内联副本（jpg 优先，其次 png）。没有就返回 ok=false。

@@ -84,6 +84,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
 	// 公开分享
 	r.GET("/api/share/messages/:token", rc.MessageShareHandler.ViewSharedMessages)
+	r.GET("/api/share/artifacts/:token", rc.ArtifactHandler.ViewSharedArtifact)
 	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 图床公开读：仅服务 Visibility=public 的图（文档配图/分享页/PDF 导出；<img> 带不了请求头）
 	r.GET("/images/:file", rc.ImageHandler.ServePublic)
@@ -186,6 +187,9 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		// HTML 产物：正文的唯一出口（消息列表只带摘要，见 docs/design/html-artifact §4.1）
 		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)
 		auth.GET("/artifacts/:id", rc.ArtifactHandler.GetArtifact)
+		auth.DELETE("/artifacts/:id", rc.ArtifactHandler.DeleteArtifact)
+		auth.POST("/artifacts/:id/share", rc.ArtifactHandler.CreateArtifactShare)
+		auth.DELETE("/artifacts/:id/share", rc.ArtifactHandler.DeleteArtifactShare)
 	}
 
 	// 管理员路由

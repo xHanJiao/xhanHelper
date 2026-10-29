@@ -61,7 +61,7 @@ struct ChatView: View {
         // iOS 没有右栏：产物用整屏 sheet 展示（同一个 HTMLArtifactView）
         .sheet(item: $artifactOpener.presented) { payload in
             NavigationStack {
-                HTMLArtifactView(html: payload.html)
+                HTMLArtifactView(id: payload.id, title: payload.title, html: payload.html)
                     .navigationTitle(payload.title)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {

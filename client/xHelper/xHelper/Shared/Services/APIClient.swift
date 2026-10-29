@@ -207,6 +207,21 @@ class APIClient {
 		return try await get("/api/artifacts?limit=\(limit)&offset=\(offset)")
 	}
 
+	/// 删除一条产物（软删，无回收站；分享链接随之失效）。
+	func deleteArtifact(id: String) async throws {
+		try await delete("/api/artifacts/\(id)")
+	}
+
+	/// 生成或复用分享链接（幂等：重复调用返回同一个 token，不会作废已发出的链接）。
+	func shareArtifact(id: String) async throws -> ArtifactShare {
+		return try await post("/api/artifacts/\(id)/share", body: [:])
+	}
+
+	/// 撤销分享：旧链接立即 404。
+	func unshareArtifact(id: String) async throws {
+		try await delete("/api/artifacts/\(id)/share")
+	}
+
 	/// 词云标签统计。audience 与列表同口径：缺省 finished，all=不过滤。
 	func listDocumentTags(audience: String? = nil) async throws -> DocumentTagListResponse {
 		var path = "/api/documents/tags"

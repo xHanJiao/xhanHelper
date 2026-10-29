@@ -41,8 +41,11 @@ private func injectingBaseline(_ html: String) -> String {
 /// 内存约定：**不要**把这个视图塞进 `RightSidebarTab.content` 的构造参数、也不要进
 /// `keptAliveTabIds`——切走即销毁，切回来重新 `loadHTMLString`（页面无 JS 无网络，重载可忽略）。
 struct HTMLArtifactView: View {
+    let id: String
+    let title: String
     let html: String
     @State private var loadFailed = false
+    @State private var isSharing = false
 
     var body: some View {
         ZStack {
@@ -67,7 +70,63 @@ struct HTMLArtifactView: View {
         .ignoresSafeArea()
         // 换一篇/重新生成：失败态跟着重置，别把上一次的错误留在新页上
         .onChange(of: html) { _, _ in loadFailed = false }
+        #if os(macOS)
+        // 分享按钮浮在右上角：页面是整幅 WKWebView，tab 栏里塞不进额外控件
+        .overlay(alignment: .topTrailing) { shareButton }
+        #endif
     }
+
+    /// 分享菜单（docs/design/html-artifact §9.6）：生成/复用链接 → 复制；也可以撤销。
+    private var shareButton: some View {
+        Menu {
+            Button {
+                Task { await copyShareLink() }
+            } label: {
+                Label("复制分享链接", systemImage: "link")
+            }
+            Button(role: .destructive) {
+                Task {
+                    if await ArtifactOpenCoordinator.shared.unshare(id: id) {
+                        ToastCenter.shared.show("已撤销分享，旧链接已失效")
+                    }
+                }
+            } label: {
+                Label("撤销分享", systemImage: "link.badge.plus")
+            }
+        } label: {
+            Image(systemName: isSharing ? "ellipsis" : "square.and.arrow.up")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color("assistantText").opacity(0.7))
+                .padding(8)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(isSharing)
+        .padding(10)
+        .help("分享这一页")
+    }
+
+    private func copyShareLink() async {
+        guard !isSharing else { return }
+        isSharing = true
+        defer { isSharing = false }
+        guard let url = await ArtifactOpenCoordinator.shared.share(id: id) else { return }
+        copyToPasteboard(url)
+        ToastCenter.shared.show("分享链接已复制：拿到链接的人无需登录即可查看")
+    }
+}
+
+/// 剪贴板：macOS 用 NSPasteboard、iOS 用 UIPasteboard（两端共用这个视图）。
+private func copyToPasteboard(_ text: String) {
+    #if os(macOS)
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+    #else
+    UIPasteboard.general.string = text
+    #endif
 }
 
 /// 取消一切非 about: 导航（页面是自包含单文件，不该再跳），并把加载失败报给视图。
@@ -170,6 +229,6 @@ private func makeWebView(html: String, delegate: WKNavigationDelegate) -> WKWebV
 }
 
 #Preview("页面") {
-    HTMLArtifactView(html: "<html><body><h1>预览</h1><p>内容</p></body></html>")
+    HTMLArtifactView(id: "preview", title: "预览", html: "<html><body><h1>预览</h1><p>内容</p></body></html>")
         .frame(width: 700, height: 500)
 }

@@ -323,10 +323,9 @@ struct ContentView: View {
         let vm = ChatViewModel(apiClient: api)
         vm.onConversationGone = { [weak vm] cid in
             NotificationCenter.default.post(name: .conversationRemoved, object: nil, userInfo: ["id": cid])
-            if let def = deviceManager.defaultConversation {
-                Task { @MainActor in
-                    await vm?.loadConversation(id: def.id, title: def.title, mode: def.mode)
-                }
+            // 当前会话被删 → 回到空白新对话，不再落到默认会话（那个概念正在淡出）
+            Task { @MainActor in
+                vm?.resetForNewChat()
             }
         }
         // iOS 没有右栏：产物走 ChatView 的 sheet（macOS 由 ChatTabManager 接线）
@@ -693,6 +692,7 @@ struct ContentView: View {
             do {
                 let response = try await api.ackReminder(id: reminderId)
                 LogBuffer.shared.info("[Reminder] ack: success id=\(response.id) trigger=\(response.triggerMessage.prefix(40))")
+                let convId = response.conversationId ?? ""
 
                 guard response.status == "acknowledged" else {
                     if response.status == "cancelled" {
@@ -702,16 +702,23 @@ struct ContentView: View {
                     return
                 }
 
-                guard let conv = deviceManager.defaultConversation else { return }
+                // 跳回**创建这条提醒的那段对话**（服务端 ack 把触发消息写在那里）。
+                // 没有来源会话（秘书/反思自动生成的提醒）或已删 → 停在原地，只弹一句文案，
+                // 不再落默认会话（那个概念正在淡出）。文案是 LLM 生成的，截断防顶满屏。
+                guard !convId.isEmpty else {
+                    let text = response.triggerMessage
+                    ToastCenter.shared.show(text.count > 120 ? String(text.prefix(120)) + "…" : text)
+                    return
+                }
                 DispatchQueue.main.async {
 #if !os(macOS)
                     selectedTab = "chat"
 #endif
                 }
 #if os(macOS)
-                await chatTabManager.openConversation(id: conv.id, title: conv.title, mode: conv.mode)
+                await chatTabManager.openConversation(id: convId, title: response.conversationTitle ?? "")
 #else
-                await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
+                await chatViewModel.loadConversation(id: convId, title: response.conversationTitle ?? "", mode: nil)
 #endif
                 return
             } catch {

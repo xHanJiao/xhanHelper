@@ -169,6 +169,7 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 	rem := &model.Reminder{
 		ID:                uuid.New().String(),
 		UserID:            ec.UserID,
+		ConversationID:    ec.ConvID,
 		Content:           req.Content,
 		Deadline:          deadline,
 		Status:            model.ReminderStatusGenerating,

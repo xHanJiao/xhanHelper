@@ -49,7 +49,8 @@ export function useChatSSE() {
     try {
       const body = {
         message,
-        conversation_id: conversationId || undefined,
+        // 空串而不是 undefined：undefined 会被 JSON.stringify 丢掉，服务端就按「老入口」落默认会话
+        conversation_id: conversationId ?? '',
         deep_mode: deepMode || false,
         agent_id: agentId || undefined,
         memory_threshold: 0.5,

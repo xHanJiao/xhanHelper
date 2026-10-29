@@ -1906,7 +1906,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if let cur = activeTabId, tabs[cur] == nil {
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next {
+            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -1970,7 +1970,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // activeSession）会报"没有打开的页面"，需手动 switch_tab 才能恢复。
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next {
+            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -2098,7 +2098,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if activeTabId == id {
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next {
+            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -2148,15 +2148,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func enterBrowser() {
         guard let rs = rightSidebar else { return }
         rs.isOpen = true
-        if rs.hasTabs {
-            let target = rs.activeTabId
-                ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) })?.id
-                ?? rs.tabs.first?.id
-            if let target {
-                rs.activeTabId = target
-                if !RightSidebarManager.specialTabIDs.contains(target) {
-                    selectTab(target)
-                }
+        // HTML 产物 tab 不在浏览器 session 里：当成"没有激活的网页"处理，否则一键进浏览器会原地卡住。
+        let current = RightSidebarManager.isArtifactTab(rs.activeTabId) ? nil : rs.activeTabId
+        let target = current
+            ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) && !RightSidebarManager.isArtifactTab($0.id) })?.id
+            ?? rs.tabs.first(where: { !RightSidebarManager.isArtifactTab($0.id) })?.id
+        if let target {
+            rs.activeTabId = target
+            if !RightSidebarManager.specialTabIDs.contains(target) {
+                selectTab(target)
             }
         } else {
             openBlankTab()

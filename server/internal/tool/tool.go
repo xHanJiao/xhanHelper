@@ -75,6 +75,10 @@ type ExecuteContext struct {
 	ToolCallID string
 	Mode       string // 会话模式：model.ConvModeWork / ConvModePlan（只拦写）
 
+	// UserImageIDs — 本轮用户消息附带的图片 id（image 工具的 scope=turn 数据源）。
+	// 后台任务/子 agent 为空。
+	UserImageIDs []string
+
 	// Events — SSE 事件通道，工具可以通过此通道向客户端推送自定义事件。
 	// 重要：必须在工具 Execute() 方法返回前发送，不可在异步 goroutine 中使用 channel。
 	// channel 在 ReAct 循环结束后关闭，延迟发送会 Panic。replay/测试场景下为 nil。

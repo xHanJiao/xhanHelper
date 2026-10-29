@@ -25,7 +25,12 @@ type Message struct {
 	EncryptedContent *string `gorm:"type:text;column:encrypted_content" json:"-"` // 方舟思考加密原文，仅服务器回传用，不暴露前端
 	ToolCallsJSON    *string `gorm:"type:mediumtext;column:tool_calls_json" json:"tool_calls_json,omitempty"`
 	ToolCallID       *string `gorm:"size:36;column:tool_call_id" json:"tool_call_id,omitempty"`
-	MemoryIDs        *string `gorm:"type:mediumtext;column:memory_ids" json:"memory_ids,omitempty"`
+	// ArtifactsJSON — 本条消息产出的 HTML 产物引用（JSON 数组，只存 {id,type}，正文在 artifacts 表）。
+	// 只写 assistant 消息；读取时由控制器批量展开成 Artifacts（见 attachArtifacts）。
+	ArtifactsJSON *string `gorm:"type:mediumtext;column:artifacts_json" json:"artifacts_json,omitempty"`
+	// Artifacts — 供接口返回的展开结果，不落库。
+	Artifacts []ArtifactRef `gorm:"-" json:"artifacts,omitempty"`
+	MemoryIDs *string       `gorm:"type:mediumtext;column:memory_ids" json:"memory_ids,omitempty"`
 	// ImageIDs — 本条消息附带的图片 id 列表（JSON 数组字符串，存 ImageAsset.ID）。
 	// 只写 user 消息；图片本身不入 content（TEXT 存不下），走引用。
 	ImageIDs     *string   `gorm:"type:mediumtext;column:image_ids" json:"image_ids,omitempty"`

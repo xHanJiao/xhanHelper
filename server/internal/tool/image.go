@@ -3,7 +3,10 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
+	"html"
+	"strings"
 
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
@@ -21,14 +24,16 @@ func NewImageTool(repo *service.ImageAssetRepo) *ImageTool {
 func (t *ImageTool) Name() string { return "image" }
 
 func (t *ImageTool) Description() string {
-	return "查看用户上传过的图片列表。需要给文档配图（把用户传的图放进正文）时，先在这里找到合适的图。" +
-		"每条带一句内容描述，按描述挑图，不必让模型逐张识图。选中后把返回的 markdown 字段原样写进文档正文即可；" +
+	return "查看用户上传过的图片列表。需要给文档配图、或把图放进 HTML 页面（手账/图文混排）时，先在这里找到合适的图。" +
+		"scope=turn 只看用户本轮刚发的图（最常用）；scope=all 看全部（新的在前）。" +
+		"每条带一句内容描述，按描述挑图，不必让模型逐张识图。" +
+		"选中后：文档正文用返回的 markdown 字段原样嵌入；HTML 页面用返回的 html 字段原样嵌入。" +
 		"图片一旦被文档引用，会自动变为可公开分享。描述可能暂时为空（尚未生成）。"
 }
 
 func (t *ImageTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "图片。查看用户上传的图片列表（含描述），给文档配图时用来挑图。",
+		ShortDesc: "图片。查看用户上传的图片列表（含描述），给文档或 HTML 页面配图时用来挑图。",
 		Funcs:     []string{"list_images"},
 	}, true
 }
@@ -38,12 +43,17 @@ func (t *ImageTool) Functions() []FuncSchema {
 		{
 			Name:        "list_images",
 			Display:     "图片列表",
-			Description: "列出用户上传的图片（新的在前），返回 id、描述、可直接嵌入 Markdown 的 markdown 片段（![](/images/<id>.<ext>)）与来源。默认每页 20 条。",
+			Description: "列出用户的图片，返回 id、描述、可直接嵌入的片段与来源。scope=turn 只列本轮用户发的图（不分页）；scope=all 列全部（新的在前，默认每页 20 条）。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d，上限 %d；传 0 只取总数返回空列表", defaultDocPageSize, maxDocPageSize)},
-					"offset": map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
+					"scope": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"turn", "all"},
+						"description": "turn = 本轮用户发的图；all = 全部（默认）。",
+					},
+					"limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数（仅 scope=all），默认 %d，上限 %d；传 0 只取总数返回空列表", defaultDocPageSize, maxDocPageSize)},
+					"offset": map[string]interface{}{"type": "integer", "description": "偏移量（仅 scope=all），默认 0，不能为负"},
 				},
 			},
 		},
@@ -66,44 +76,84 @@ func (t *ImageTool) Execute(ec *ExecuteContext, funcName string, args json.RawMe
 
 func (t *ImageTool) listImages(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		Limit  *int `json:"limit"`
-		Offset *int `json:"offset"`
+		Scope  string `json:"scope"`
+		Limit  *int   `json:"limit"`
+		Offset *int   `json:"offset"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
-	if errMsg != "" {
-		return &Result{Success: false, Error: errMsg}
+
+	var list []model.ImageAsset
+	var total int64
+	if strings.EqualFold(strings.TrimSpace(req.Scope), "turn") {
+		// 本轮附件：按消息里的 id 顺序返回，不分页（一次最多几张）。
+		if len(ec.UserImageIDs) == 0 {
+			return imageListResult(nil, 0, "本轮没有附件图片；要看用户上传过的其它图，用 scope=all。")
+		}
+		assets, err := t.repo.GetByIDsAndUser(ec.Ctx, ec.UserImageIDs, ec.UserID)
+		if err != nil {
+			return &Result{Success: false, Error: "list images: " + err.Error()}
+		}
+		byID := make(map[string]model.ImageAsset, len(assets))
+		for _, a := range assets {
+			byID[a.ID] = a
+		}
+		for _, id := range ec.UserImageIDs {
+			if a, ok := byID[id]; ok {
+				list = append(list, a)
+			}
+		}
+		total = int64(len(list))
+	} else {
+		limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
+		if errMsg != "" {
+			return &Result{Success: false, Error: errMsg}
+		}
+		var err error
+		list, total, err = t.repo.ListByUser(ec.Ctx, ec.UserID, limit, offset)
+		if err != nil {
+			return &Result{Success: false, Error: "list images: " + err.Error()}
+		}
 	}
 
-	list, total, err := t.repo.ListByUser(ec.Ctx, ec.UserID, limit, offset)
-	if err != nil {
-		return &Result{Success: false, Error: "list images: " + err.Error()}
-	}
+	return imageListResult(list, total, "文档正文用 markdown 字段原样嵌入；HTML 页面用 html 字段原样嵌入。描述可能暂时为空（尚未生成）。")
+}
 
+func imageListResult(list []model.ImageAsset, total int64, hint string) *Result {
 	type item struct {
 		ID          string `json:"id"`
 		Description string `json:"description"`
 		Markdown    string `json:"markdown"`
+		HTML        string `json:"html"`
+		Bytes       int64  `json:"bytes"`
 		Source      string `json:"source"`
 		CreatedAt   string `json:"created_at"`
 	}
 	items := make([]item, 0, len(list))
 	for _, a := range list {
+		alt := a.Description
+		if alt == "" {
+			alt = a.Source
+		}
 		items = append(items, item{
 			ID:          a.ID,
 			Description: a.Description,
 			Markdown:    fmt.Sprintf("![](/images/%s.%s)", a.ID, a.Ext),
+			HTML:        fmt.Sprintf("<img src=\"image:%s\" alt=\"%s\">", a.ID, html.EscapeString(alt)),
+			Bytes:       a.Bytes,
 			Source:      a.Source,
 			CreatedAt:   a.CreatedAt.Format("2006-01-02 15:04"),
 		})
 	}
 
-	data, _ := json.Marshal(map[string]interface{}{
+	data, err := json.Marshal(map[string]interface{}{
 		"images": items,
 		"total":  total,
-		"hint":   "把 markdown 字段原样嵌入文档正文即可配图；描述可能暂时为空（尚未生成）。",
+		"hint":   hint,
 	})
+	if err != nil {
+		return &Result{Success: false, Error: "结果序列化失败: " + err.Error()}
+	}
 	return &Result{Success: true, Data: data}
 }

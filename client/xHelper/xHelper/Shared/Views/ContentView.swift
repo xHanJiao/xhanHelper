@@ -39,7 +39,7 @@ struct ContentView: View {
     @StateObject private var agentVM: AgentViewModel
     @StateObject private var billVM: BillViewModel
     @StateObject private var memoryVM: MemoryViewModel
-    @StateObject private var noteVM: NoteViewModel
+    @StateObject private var artifactVM: ArtifactViewModel
     @StateObject private var documentVM: DocumentViewModel
     @StateObject private var themeVM: ThemeViewModel
     @StateObject private var imageVM: ImageViewModel
@@ -305,7 +305,7 @@ struct ContentView: View {
         _agentVM = StateObject(wrappedValue: AgentViewModel(apiClient: api))
         _billVM = StateObject(wrappedValue: BillViewModel(apiClient: api))
         _memoryVM = StateObject(wrappedValue: MemoryViewModel(apiClient: api))
-        _noteVM = StateObject(wrappedValue: NoteViewModel(apiClient: api))
+        _artifactVM = StateObject(wrappedValue: ArtifactViewModel(apiClient: api))
         _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
         _themeVM = StateObject(wrappedValue: ThemeViewModel(apiClient: api))
         _imageVM = StateObject(wrappedValue: ImageViewModel(apiClient: api))
@@ -328,6 +328,10 @@ struct ContentView: View {
                     await vm?.loadConversation(id: def.id, title: def.title, mode: def.mode)
                 }
             }
+        }
+        // iOS 没有右栏：产物走 ChatView 的 sheet（macOS 由 ChatTabManager 接线）
+        vm.onOpenArtifact = { id, title in
+            ArtifactOpenCoordinator.shared.open(id: id, title: title)
         }
         _chatViewModel = StateObject(wrappedValue: vm)
     }
@@ -395,7 +399,7 @@ struct ContentView: View {
                                     manager: rightSidebar,
                                     billVM: billVM,
                                     memoryVM: memoryVM,
-                                    noteVM: noteVM,
+                                    artifactVM: artifactVM,
                                     documentVM: documentVM,
                                     themeVM: themeVM,
                                     agentVM: agentVM,
@@ -500,6 +504,8 @@ struct ContentView: View {
                     DocumentSelectionCoordinator.shared.documentVM = documentVM
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
+                    ArtifactOpenCoordinator.shared.rightSidebar = rightSidebar
+                    ArtifactOpenCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     registerAppShortcutBridge()
                 }
                 .onDisappear {

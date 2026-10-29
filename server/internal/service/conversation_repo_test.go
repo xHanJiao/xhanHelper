@@ -26,7 +26,7 @@ func setupPurgeRepo(t *testing.T) (*ConversationRepo, *gorm.DB, func()) {
 	}
 	if err := db.AutoMigrate(
 		&model.Conversation{}, &model.Message{}, &model.Embedding{},
-		&model.ConversationSummary{}, &model.ConversationPlan{}, &model.MessageShare{},
+		&model.ConversationSummary{}, &model.ConversationPlan{}, &model.MessageShare{}, &model.Artifact{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 enum BrowsePanel: String, Identifiable, CaseIterable {
     case bills = "账单"
     case memories = "记忆"
-    case notes = "笔记"
+    case artifacts = "灵阅"
     case documents = "文档"
     case images = "图片"
     case themes = "主题"
@@ -22,7 +22,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         switch self {
         case .bills:     return "yensign.circle"
         case .memories:  return "brain.head.profile"
-        case .notes:     return "note.text"
+        case .artifacts: return "doc.richtext"
         case .documents: return "doc.text"
         case .images:    return "photo.on.rectangle.angled"
         case .themes:    return "tag"
@@ -35,7 +35,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         switch self {
         case .bills:     return "查看账单记录与统计"
         case .memories:  return "长期记忆与语义搜索"
-        case .notes:     return "笔记与标签检索"
+        case .artifacts: return "回看聊天里生成过的手账、报告与对比图"
         case .documents: return "Markdown 文档与版本"
         case .images:    return "图片库：预览与清理已上传的图"
         case .themes:    return "主题状态追踪"
@@ -96,7 +96,7 @@ struct BrowsePanelView: View {
     @ObservedObject var manager: RightSidebarManager
     @ObservedObject var billVM: BillViewModel
     @ObservedObject var memoryVM: MemoryViewModel
-    @ObservedObject var noteVM: NoteViewModel
+    @ObservedObject var artifactVM: ArtifactViewModel
     @ObservedObject var documentVM: DocumentViewModel
     @ObservedObject var themeVM: ThemeViewModel
     @ObservedObject var agentVM: AgentViewModel
@@ -366,7 +366,7 @@ struct BrowsePanelView: View {
     // MARK: - 网格
 
     private var grid: some View {
-        // 10 格：宽 5 列 × 2 行、窄 2 列 × 5 行。窄态高度不够时靠 ScrollView 兜住，
+        // 9 格（浏览器 + 8 个面板）：宽 5 列 × 2 行、窄 2 列 × 5 行。窄态高度不够时靠 ScrollView 兜住，
         // 内容比视口矮时用 minHeight 撑满以保持垂直居中。
         GeometryReader { geo in
             let (columns, spacing) = adaptiveColumns(width: geo.size.width - 48)
@@ -800,7 +800,7 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:     return billVM.isLoading
         case .memories:  return memoryVM.isLoading
-        case .notes:     return noteVM.isLoading
+        case .artifacts: return artifactVM.isLoading
         case .documents:
             if documentVM.openDocument != nil { return documentVM.isDetailLoading }
             return documentVM.mode == .trash ? documentVM.isTrashLoading : documentVM.isLoading
@@ -824,7 +824,7 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:     await billVM.load()
         case .memories:  await memoryVM.load()
-        case .notes:     await noteVM.load()
+        case .artifacts: await artifactVM.load()
         case .documents: await documentVM.loadCurrentMode()
         case .images:    await imageVM.load()
         case .themes:    await themeVM.load()
@@ -840,8 +840,8 @@ struct BrowsePanelView: View {
             BillPage(viewModel: billVM, baseURL: baseURL, token: token)
         case .memories:
             MemoryPage(viewModel: memoryVM)
-        case .notes:
-            NotePage(viewModel: noteVM)
+        case .artifacts:
+            ArtifactPage(viewModel: artifactVM)
         case .documents:
             DocumentPage(viewModel: documentVM)
         case .images:

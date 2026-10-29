@@ -104,13 +104,15 @@ type reactState struct {
 	msgs                   []llm.Message
 	allToolCalls           []tool.ToolCall
 	lastAssistantMsgID     string
+	artifactRefs           []model.ArtifactRef // 本轮产出的 HTML 页面引用，结束后挂到最后一条 assistant 消息
 	userMsgID              string
-	verifyRetries          int    // 本轮对话已重检验次数
-	nativeFCTextDeferred   bool   // 文本因 verify 暂缓推送（检验通过后再补推）
-	clientToolsUnavailable bool   // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
-	finalRound             bool   // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
-	maxPromptTokens        int    // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
-	outcome                string // 本轮 turn 的 outcome（activity.Outcome*），供 chat.turn.ended
+	userImageIDs           []string // 本轮附件图片 id：工具（image scope=turn）按它取图
+	verifyRetries          int      // 本轮对话已重检验次数
+	nativeFCTextDeferred   bool     // 文本因 verify 暂缓推送（检验通过后再补推）
+	clientToolsUnavailable bool     // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
+	finalRound             bool     // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
+	maxPromptTokens        int      // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
+	outcome                string   // 本轮 turn 的 outcome（activity.Outcome*），供 chat.turn.ended
 
 	// 渐进式工具暴露：本会话窗口内已启用的函数（仅 native FC 主循环使用）。
 	// key = "组名.函数名"（如 "note.search"）。
@@ -128,6 +130,7 @@ type LLMResponse struct {
 // msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
 type msgCreator interface {
 	Create(ctx context.Context, m *model.Message) error
+	SetArtifactsJSON(ctx context.Context, msgID, artifactsJSON string) error
 }
 
 type profileFactGetter interface {
@@ -518,10 +521,26 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	state = &reactState{
-		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
-		userMsgID: userMsg.ID,
-		outcome:   activity.OutcomeCompleted,
+		msgs:         append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
+		userMsgID:    userMsg.ID,
+		userImageIDs: req.UserImageIDs,
+		outcome:      activity.OutcomeCompleted,
 	}
+	// HTML 产物引用挂到本轮最后一条 assistant 消息上（正文在 artifacts 表，消息只存 id）。
+	// 用 WithoutCancel：用户点停止/断线不该让卡片丢失。
+	defer func() {
+		if len(state.artifactRefs) == 0 || state.lastAssistantMsgID == "" {
+			return
+		}
+		b, err := json.Marshal(state.artifactRefs)
+		if err != nil {
+			log.Printf("[orch] marshal artifacts error: %v", err)
+			return
+		}
+		if err := o.msgRepo.SetArtifactsJSON(context.WithoutCancel(ctx), state.lastAssistantMsgID, string(b)); err != nil {
+			log.Printf("[orch] save artifacts_json error: %v", err)
+		}
+	}()
 	o.loadExposure(ctx, req, userMsg, state)
 	defer o.persistExposure(ctx, req, userMsg, state)
 
@@ -1404,6 +1423,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
 		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, req.TurnID, o.registry, internalTCs, clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
+		state.artifactRefs = append(state.artifactRefs, artifactRefsFromResults(toolCallResults)...)
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
 		return false
 	}
@@ -1689,6 +1709,34 @@ func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 	return ids
 }
 
+// artifactRefsFromResults — 从工具结果里挑出 HTML 产物引用（只认带 artifact_id 的）。
+// 只留 id/type 落库：标题摘要读时由 attachArtifacts 一次 IN 展开，别冗余一份（docs/design/html-artifact §5）。
+func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
+	refs := make([]model.ArtifactRef, 0, len(results))
+	for _, r := range results {
+		if r.result == nil || !r.result.Success || len(r.result.Data) == 0 {
+			continue
+		}
+		var d struct {
+			ArtifactID string `json:"artifact_id"`
+			Type       string `json:"type"`
+		}
+		if err := json.Unmarshal(r.result.Data, &d); err != nil {
+			log.Printf("[orch] parse artifact ref: %v", err)
+			continue
+		}
+		if d.ArtifactID == "" {
+			continue
+		}
+		typ := d.Type
+		if typ == "" {
+			typ = model.ArtifactTypeHTML
+		}
+		refs = append(refs, model.ArtifactRef{ID: d.ArtifactID, Type: typ})
+	}
+	return refs
+}
+
 // collectToolResultsNative 原生 FC 路径：工具结果以 role=tool 保存，关联真实 tool_call_id。
 func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs []tool.ToolCall, nativeTCs []llm.ToolCall, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message, hidden bool) []llm.Message {
 	for i := range internalTCs {
@@ -1827,7 +1875,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, ToolCallID: call.ID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, ToolCallID: call.ID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups), UserImageIDs: state.userImageIDs}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

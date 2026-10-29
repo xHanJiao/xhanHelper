@@ -42,12 +42,11 @@ struct MemoryPage: View {
     }
 }
 
-struct NotePage: View {
-    @ObservedObject var viewModel: NoteViewModel
+struct ArtifactPage: View {
+    @ObservedObject var viewModel: ArtifactViewModel
 
     var body: some View {
-        NoteListView(viewModel: viewModel)
-            .task { await viewModel.load() }
+        ArtifactListView(viewModel: viewModel)
     }
 }
 

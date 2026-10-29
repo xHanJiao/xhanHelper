@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"xhan-helper/internal/model"
 )
@@ -206,6 +208,46 @@ func (s *ImageStore) noteDescribed(id string) {
 // Open 打开图片文件（供私有/公开读取）
 func (s *ImageStore) Open(a *model.ImageAsset) (*os.File, error) {
 	return os.Open(s.FilePath(a))
+}
+
+// InlineMaxBytes — 单张图内联进 HTML 产物时的原字节上限。
+//
+// 不做压缩：压缩要引 golang.org/x/image 并处理 EXIF 方向（iPhone 竖拍会横躺），
+// v1 宁可对超大图报错（docs/design/html-artifact §4.3）。
+const InlineMaxBytes int64 = 4 << 20
+
+// DataURI — 把用户的图片读成 data: URI，供 HTML 产物内联。
+// 必须带 owner：产物页只允许嵌自己的图。文件缺失（被清理）按错误返回，
+// 让调用方整页失败，而不是静默少一张用户点名要的图。
+func (s *ImageStore) DataURI(ctx context.Context, userID, id string) (string, error) {
+	a, err := s.repo.GetByIDAndUser(ctx, id, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", errors.New("图片不存在或已被清理")
+		}
+		return "", fmt.Errorf("查图片记录: %w", err)
+	}
+	// 先 stat 再看大小：上传上限 32MB，为判 4MB 把整个文件读进内存不值。
+	path := s.FilePath(a)
+	fi, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errors.New("图片文件已丢失（可能被清理）")
+		}
+		return "", fmt.Errorf("查图片文件: %w", err)
+	}
+	if fi.Size() > InlineMaxBytes {
+		return "", fmt.Errorf("图片太大（%d 字节，上限 %d），换一张小点的图", fi.Size(), InlineMaxBytes)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("读图片文件: %w", err)
+	}
+	mime := a.Mime
+	if mime == "" {
+		mime = http.DetectContentType(data)
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 // EnsureFileID 确保图片在 LLM 侧有 file_id（缺失则懒上传并回填）。

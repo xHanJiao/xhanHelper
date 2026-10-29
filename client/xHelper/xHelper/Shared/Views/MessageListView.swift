@@ -19,6 +19,7 @@ struct MessageListView: View {
     let toolQueue: [ToolCallDisplay]  // 工具调用展示队列（最新助手气泡下方 pill）
     let verifyStatus: VerifyStatus?   // 响应检验状态（最新助手气泡下方 pill）
     let onOpenDocument: (String) -> Void
+    let onOpenArtifact: (String, String) -> Void
     let hasMoreBefore: Bool
     let isLoadingMore: Bool
     let loadMoreError: String?
@@ -447,6 +448,17 @@ struct MessageListView: View {
                 ToolActivityToast(toolQueue: toolQueue, verifyStatus: verifyStatus)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.chatHorizontalPadding)
+            }
+
+            if !msg.artifactRefs.isEmpty {
+                // HTML 产物卡片：数据来自消息字段（服务端），正文点开才拉
+                ForEach(msg.artifactRefs) { ref in
+                    HTMLArtifactCard(title: ref.title, summary: ref.summary) {
+                        onOpenArtifact(ref.id, ref.title)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
             if let artifact = msg.localArtifact {

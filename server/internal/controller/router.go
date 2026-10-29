@@ -28,6 +28,7 @@ type RouterConfig struct {
 	ConvRepo             *service.ConversationRepo
 	PlanRepo             *service.ConversationPlanRepo
 	MsgRepo              *service.MessageRepo
+	ArtifactRepo         *service.ArtifactRepo
 	AgentRepo            *service.AgentRepo
 	BillHandler          *BillHandler
 	NoteHandler          *NoteHandler
@@ -42,6 +43,7 @@ type RouterConfig struct {
 	SummaryHandler       *SummaryHandler
 	ReminderHandler      *ReminderHandler
 	ImageHandler         *ImageHandler
+	ArtifactHandler      *ArtifactHandler
 	ClientBridge         *agent.ClientToolBridge
 	Destroyer            *agent.EphemeralDestroyer
 	LlmCostRepo          *service.LlmCostRepo
@@ -112,8 +114,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/conversations", createConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.GET("/conversations", listConversations(rc.ConvRepo, rc.AgentRepo))
 		auth.GET("/conversations/default", getDefaultConversation(rc.ConvRepo, rc.AgentRepo))
-		auth.GET("/conversations/:id/messages", getMessages(rc.ConvRepo, rc.MsgRepo))
-		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(rc.MsgRepo, rc.ConvRepo))
+		auth.GET("/conversations/:id/messages", getMessages(rc.ConvRepo, rc.MsgRepo, rc.ArtifactRepo))
+		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(rc.MsgRepo, rc.ConvRepo, rc.ArtifactRepo))
 		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(rc.MsgRepo, rc.ConvRepo))
 		auth.PATCH("/conversations/:id", renameConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.PATCH("/conversations/:id/mode", updateConversationMode(rc.ConvRepo))
@@ -180,6 +182,10 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/images", rc.ImageHandler.List)
 		auth.GET("/images/:id/file", rc.ImageHandler.ServePrivate)
 		auth.DELETE("/images/:id", rc.ImageHandler.Delete)
+
+		// HTML 产物：正文的唯一出口（消息列表只带摘要，见 docs/design/html-artifact §4.1）
+		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)
+		auth.GET("/artifacts/:id", rc.ArtifactHandler.GetArtifact)
 	}
 
 	// 管理员路由

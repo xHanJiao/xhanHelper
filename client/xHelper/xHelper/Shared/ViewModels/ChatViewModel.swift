@@ -175,6 +175,8 @@ class ChatViewModel: ObservableObject {
     @Published var toolQueue: [ToolCallDisplay] = []
     /// 点文档卡片时回调：(documentId)。由 ChatTabManager 接线到 DocumentSelectionCoordinator。
     var onOpenDocument: ((String) -> Void)?
+    /// 点开 HTML 产物卡片（拉正文 + 右栏打开）
+    var onOpenArtifact: ((String, String) -> Void)?
     /// 待展示工具调用 FIFO：tool_call 暂存，tool_result 到后取出构造完结 pill（不展示 running）
     private struct PendingToolCall {
         let display: String
@@ -1168,6 +1170,16 @@ class ChatViewModel: ObservableObject {
                 // 聊天里的文档卡片：agent 建/改过的文档派生成本地产物，独立成一条
                 // local_tool_result 消息并落盘（切屏/重载后按时间重放）。只认 create/update，
                 // 同轮多次触达同一篇就地合并更新（后写覆盖、缺省保留）。
+                // HTML 产物：卡片立刻挂到当前这条回复上（服务端字段要等重载才有）
+                if pending.tool == "html", pending.function == "create", tr.success,
+                   let aid = tr.data?["artifact_id"] as? String {
+                    appendArtifactRef(ArtifactRef(
+                        id: aid,
+                        type: tr.data?["type"] as? String ?? "html",
+                        title: tr.data?["title"] as? String ?? "",
+                        summary: tr.data?["summary"] as? String ?? ""
+                    ))
+                }
                 if pending.tool == "document", tr.success,
                    let patch = DocumentArtifactProducer.patch(function: pending.function,
                                                               args: pending.args,
@@ -1536,6 +1548,14 @@ class ChatViewModel: ObservableObject {
               let err = obj["error"] as? String, !err.isEmpty
         else { return nil }
         return err
+    }
+
+    /// 把 HTML 产物引用挂到当前流式回复上（幂等：同 id 只留一张）。
+    /// 只改内存，不落盘——重载后由消息字段接管（服务端是唯一事实来源）。
+    private func appendArtifactRef(_ ref: ArtifactRef) {
+        guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
+        guard !messages[idx].artifactRefs.contains(where: { $0.id == ref.id }) else { return }
+        messages[idx].artifacts = messages[idx].artifactRefs + [ref]
     }
 
     // MARK: Local Tool Results

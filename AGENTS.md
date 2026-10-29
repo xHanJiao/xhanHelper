@@ -227,7 +227,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 ## 开发约定
 
 - 与用户交流只用中文（代码/注释/日志沿用项目既有风格）
-- **文档往哪写**：新需求/功能的设计方案写 `docs/design/<feature>/design.md`（先写文档、确认后开发）；bug 修复记录写 `docs/bugs/NNN-<slug>.md`（按编号递增，写新条前先 `ls docs/bugs/` 取号）
+- **文档往哪写**：新需求/功能的设计方案写 `docs/design/<feature>/design.md`（先写文档、确认后开发）；bug 修复记录写 `docs/bugs/NNN-<slug>.md`（按编号递增，写新条前先 `ls docs/bugs/` 取号）；**代码审查意见写 `docs/code-review/<feature>/<YYYY-MM-DD>.md`，`<feature>` 与 `docs/design/` 下对应的需求目录同名**（整仓/无对应需求的审查才平铺成 `docs/code-review/<YYYY-MM-DD>-<slug>.md`）
 - **bug 文档何时写（非平凡才写）**：根因跨系统 / 有坑易复发 / 用户拍过方案 → 写清「问题表现·根因·最终方案」；一行小改不写
 - **文档要跟着改（维护最新）**：改动触及某设计文档所描述的**行为/取值/决策**时，同一次改动里更新该文档；有用户拍板的变更在文档尾部追加一条「后续变更」（日期 + 决定 + 影响文件），别让文档停在旧值。改前先 `rg docs/design/` 找相关文档 —— 同一行为可能被多份文档描述（如「连线」同时写在 `document-highlight-annotation` 与 `document-annotation-reply` 两处）；`docs/bugs/` 同理——修复方案后续若变更，回头更新对应 bug 文档
 - model/ 只放结构体，DB 操作放 service/；工具实现放 tool/，不要耦合到 controller 或 agent
@@ -345,7 +345,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 
 - `docs/design/` — 设计文档主战场，`phase-1` ~ `phase-18` 按阶段归档；`mac-apps/` 是 macOS 客户端专项；每个设计目录下可放 `mockup.html` 交互预览（规范见「UI 预览与设计 token」）
 - 常读：`progressive-tool-disclosure.md`、`post-chat-worker-group.md`、`plan-mode-readonly.md`、`phase-18-subagent-explore.md`、`retrieval` 相关、`memory-quality/`（记忆写入质量与噪声回收）、`mac-apps/settings-sheet-style.md`、`mac-apps/swift6-concurrency-fix.md`
-- `docs/bugs/` — 按编号递增记录（写新条前先 `ls docs/bugs/` 取号）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
+- `docs/bugs/` — 按编号递增记录（写新条前先 `ls docs/bugs/` 取号）；`docs/code-review/` — 代码审查报告，按 `docs/design/` 的需求目录名建子目录（`<feature>/<日期>.md`）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
 - `docs/learning/` `docs/research/` `docs/security/` `docs/todo/` — 学习笔记 / 调研 / 红队测试 / 待办
 - `docs/stats/` — 由 `scripts/dev-stats.py` 生成的开发节奏快照（一次性产物，非设计文档）
 

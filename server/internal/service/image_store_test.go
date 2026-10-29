@@ -383,3 +383,40 @@ func TestImageStoreDescribeFailureMarksAttempt(t *testing.T) {
 		t.Error("description_at should be marked on failure to stop retries")
 	}
 }
+
+// 内联单图上限：先 stat 再读，超限直接拒（sparse 文件，不真写 4MB）。
+func TestImageStoreDataURITooLarge(t *testing.T) {
+	store, db, cleanup := setupImageStore(t, 32<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := &model.ImageAsset{
+		ID: "big-img", UserID: "u1", Ext: "png", Mime: "image/png",
+		Bytes: InlineMaxBytes + 1, Visibility: model.ImageVisibilityPrivate, Source: model.ImageSourceChat,
+	}
+	if err := db.Create(a).Error; err != nil {
+		t.Fatalf("create record: %v", err)
+	}
+	if err := os.MkdirAll(store.Dir(), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	f, err := os.Create(store.FilePath(a))
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if err := f.Truncate(InlineMaxBytes + 1); err != nil {
+		f.Close()
+		t.Fatalf("truncate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if _, err := store.DataURI(ctx, "u1", a.ID); err == nil {
+		t.Fatal("超过单图上限应报错")
+	}
+	// 别人的图按"不存在"处理
+	if _, err := store.DataURI(ctx, "u2", a.ID); err == nil {
+		t.Fatal("越权读取应报错")
+	}
+}

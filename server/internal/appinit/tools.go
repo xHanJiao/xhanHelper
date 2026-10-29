@@ -133,7 +133,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewReminderTool(repos.Reminder, llmClients.BgFlash), log.Default()))
 	// HTML 产物：生成可在右栏打开的页面（见 docs/design/html-artifact）
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewHTMLArtifactTool(repos.Artifact), log.Default()))
+		tool.NewHTMLArtifactTool(repos.Artifact, infra.ImageStore), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewPlanTool(repos.ConversationPlan), log.Default()))
 

@@ -106,12 +106,13 @@ type reactState struct {
 	lastAssistantMsgID     string
 	artifactRefs           []model.ArtifactRef // 本轮产出的 HTML 页面引用，结束后挂到最后一条 assistant 消息
 	userMsgID              string
-	verifyRetries          int    // 本轮对话已重检验次数
-	nativeFCTextDeferred   bool   // 文本因 verify 暂缓推送（检验通过后再补推）
-	clientToolsUnavailable bool   // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
-	finalRound             bool   // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
-	maxPromptTokens        int    // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
-	outcome                string // 本轮 turn 的 outcome（activity.Outcome*），供 chat.turn.ended
+	userImageIDs           []string // 本轮附件图片 id：工具（image scope=turn）按它取图
+	verifyRetries          int      // 本轮对话已重检验次数
+	nativeFCTextDeferred   bool     // 文本因 verify 暂缓推送（检验通过后再补推）
+	clientToolsUnavailable bool     // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
+	finalRound             bool     // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
+	maxPromptTokens        int      // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
+	outcome                string   // 本轮 turn 的 outcome（activity.Outcome*），供 chat.turn.ended
 
 	// 渐进式工具暴露：本会话窗口内已启用的函数（仅 native FC 主循环使用）。
 	// key = "组名.函数名"（如 "note.search"）。
@@ -520,9 +521,10 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	state = &reactState{
-		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
-		userMsgID: userMsg.ID,
-		outcome:   activity.OutcomeCompleted,
+		msgs:         append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
+		userMsgID:    userMsg.ID,
+		userImageIDs: req.UserImageIDs,
+		outcome:      activity.OutcomeCompleted,
 	}
 	// HTML 产物引用挂到本轮最后一条 assistant 消息上（正文在 artifacts 表，消息只存 id）。
 	// 用 WithoutCancel：用户点停止/断线不该让卡片丢失。
@@ -1873,7 +1875,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, ToolCallID: call.ID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, ToolCallID: call.ID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups), UserImageIDs: state.userImageIDs}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

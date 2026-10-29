@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	// MaxBytes — 单条上限，挡误存巨型 HTML。
+	// MaxBytes — 模型给的 HTML 上限（内联图片之前），挡误存巨型 HTML。
 	MaxBytes = 2 << 20
+	// MaxInlineBytes — 内联图片之后的整页上限。图片单独限（service.InlineMaxBytes），
+	// 这里兜住"很多张中等图"叠出的大页面。
+	MaxInlineBytes = 8 << 20
 	// MinBytes — 下限，挡空壳。
 	MinBytes = 200
 )
@@ -41,12 +44,15 @@ const (
 	cspContent = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'"
 )
 
-// Process — 校验 + 清洗 + 注入 CSP。返回可直接入库的完整 HTML。
+// ProcessWithImages — 校验 + 清洗 + 注入 CSP，返回可直接入库的完整 HTML。
+// resolve 非空时，先把 `img[src="image:<id>"]` 换成 data: URI；顺序必须在清洗之前，
+// 换完 src 是 `data:image/...`，safeURL 才会放行。
+// resolve 返回 error 时整页失败（用户点名要的图不能静默少一张）。
 //
 // 版式基线**不在这里注入**：基线是渲染期的表现层，写在库里就没法回溯
 // （改一次版式要求把所有历史页面重新生成）。客户端加载时再插，见
 // docs/design/html-artifact/design.md §9.3。
-func Process(raw string) (string, error) {
+func ProcessWithImages(raw string, resolve func(id string) (string, error)) (string, error) {
 	if len(raw) > MaxBytes {
 		return "", fmt.Errorf("HTML 太大（%d 字节，上限 %d）", len(raw), MaxBytes)
 	}
@@ -63,6 +69,11 @@ func Process(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("HTML 解析失败：%w", err)
 	}
+	if resolve != nil {
+		if err := inlineImages(doc, resolve); err != nil {
+			return "", err
+		}
+	}
 	cleanNode(doc)
 
 	head := ensureHead(doc)
@@ -78,7 +89,70 @@ func Process(raw string) (string, error) {
 	if err := html.Render(&buf, doc); err != nil {
 		return "", fmt.Errorf("HTML 序列化失败：%w", err)
 	}
-	return buf.String(), nil
+	out := buf.String()
+	if len(out) > MaxInlineBytes {
+		return "", fmt.Errorf("页面内联图片后太大（%d 字节，上限 %d）：少放几张图或换小一点的图", len(out), MaxInlineBytes)
+	}
+	return out, nil
+}
+
+// imageScheme — 产物页里引用图床图片的写法：`<img src="image:<id>">`。
+const imageScheme = "image:"
+
+// cssImageRefRe — CSS 里的图片引用（url(image:<id>)）。v1 不支持背景图，
+// 命中就报错：让 cleanCSS 静默换成 none 等于"用户点名要的图悄悄没了"。
+var cssImageRefRe = regexp.MustCompile(`(?i)url\(\s*['"]?` + imageScheme)
+
+// inlineImages — 把 img[src=image:<id>] 换成 resolve 返回的 data: URI。
+// 只认 <img>：CSS 背景图要改 cleanCSS 的放行规则，v1 不做（见设计文档 §4.3），
+// 所以这里先扫出来报错，而不是让后面的 cleanCSS 静默丢掉。
+func inlineImages(root *html.Node, resolve func(id string) (string, error)) error {
+	var walk func(n *html.Node) error
+	walk = func(n *html.Node) error {
+		if n.Type == html.ElementNode {
+			tag := strings.ToLower(n.Data)
+			for _, a := range n.Attr {
+				name := strings.ToLower(a.Key)
+				if name == "style" && cssImageRefRe.MatchString(a.Val) {
+					return errors.New("CSS 背景图不支持图片引用：图片只能放 <img src=\"image:<id>\">")
+				}
+			}
+			if tag == "style" {
+				for t := n.FirstChild; t != nil; t = t.NextSibling {
+					if t.Type == html.TextNode && cssImageRefRe.MatchString(t.Data) {
+						return errors.New("CSS 背景图不支持图片引用：图片只能放 <img src=\"image:<id>\">")
+					}
+				}
+			}
+			if tag == "img" {
+				for i, a := range n.Attr {
+					if !strings.EqualFold(a.Key, "src") {
+						continue
+					}
+					v := strings.TrimSpace(a.Val)
+					if len(v) < len(imageScheme) || !strings.EqualFold(v[:len(imageScheme)], imageScheme) {
+						continue
+					}
+					id := strings.TrimSpace(v[len(imageScheme):])
+					if id == "" {
+						return errors.New("图片引用缺少 id（写 <img src=\"image:<id>\">）")
+					}
+					uri, err := resolve(id)
+					if err != nil {
+						return fmt.Errorf("图片 %s 无法内联：%w", id, err)
+					}
+					n.Attr[i].Val = uri
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if err := walk(c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(root)
 }
 
 // cleanNode — 深度优先删除危险节点、清危险属性。style 元素的文本也走一遍 CSS 清洗。

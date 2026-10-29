@@ -48,7 +48,7 @@ type Artifact struct {
 }
 ```
 
-- 资源（图片）base64 内联进 HTML，做成**自包含单文件**。代价体积涨约 1/3；视频扛不住，v1 不收。
+- 资源（图片）base64 内联进 HTML，做成**自包含单文件**（细则见 §4.3）。代价体积涨约 1/3；视频扛不住，v1 不收。
 - 消息表**不存正文**，只存引用（见 §五）。
 
 ### 4.1 写入 / 读取的 IO 口径
@@ -69,12 +69,41 @@ type Artifact struct {
 | 限制 | 值 | 理由 |
 |---|---|---|
 | 每轮最多 | 3 张 | 防模型循环/重试刷屏；同时覆盖"给我三种风格"这种合理请求 |
-| 单条大小 | 2MB | 挡误存 |
-| 每会话总量 | 不设硬上限 | 一天两页 ≈ 一年 14MB，且列表不取正文，日常零开销；只影响备份体积 |
+| 单条大小 | 模型 HTML ≤2MB；内联图片后 ≤8MB | 挡误存；图片单独限（§4.3） |
+| 每会话总量 | 不设硬上限 | 一天两页 ≈ 一年 14MB，且列表不取正文，日常零开销；只影响备份体积。带图页面按图计（一张原图 base64 约 ×1.33） |
 
 **不做内容去重。** 自由生成的 HTML 几乎不可能字节重复，按正文哈希等于写一段永不执行的分支；重试导致的重复由"每轮 ≤3"兜住。真正的重复问题属于修订闭环（v2），那时用户明确说"改这一版"，模型带 `artifact_id` 进来，是不是新版本是确定的语义，不用猜。
 
 **永远不做"同一 id 覆盖正文"。** 快照类内容被改写会让历史消息失去历史性——翻回三天前那条消息，看到的却是今天的版式。要做修订只能新建记录（v2 用 `supersedes_id` 串起来，渲染时只显示链条末端）。
+
+### 4.3 图片：生成时内联，与源文件解耦
+
+模型**不写 base64**（参数太长，极易写崩），只写引用：
+
+```html
+<img src="image:<ImageAsset.ID>" alt="...">
+```
+
+服务端在清洗之前解析这个 scheme：按 `id + userID` 查 `image_assets`、读磁盘文件、转成 `data:image/...;base64,...` 写回 `src`。清洗随后照常跑，`safeURL` 仍然只放行 `#anchor` 与 `data:image/`。
+
+**为什么必须内联而不是"引用 id + 渲染时取"**：图片有保留期（被消息引用过 15 天、孤儿 3 天，`storage.image_ttl_days` / `image_orphan_ttl_days`）。内联发生在生成那一刻，页面从此是字节副本，**源图之后被清掉也不影响已生成的页面**。引用型方案则要额外给图片做 pin（新列 + 清理豁免 + 解除时机），页面也不再自包含。
+
+规则：
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 模型给的 HTML | ≤ 2MB | 内联前，挡误存 |
+| 单张图原字节 | ≤ 4MB | 超过报错，不做压缩（压缩要引 x/image + 处理 EXIF 方向，v1 不值得） |
+| 单页内联总量 | ≤ 8MB | base64 后；超了报错，提示少放几张 |
+| 单页张数 | ≤ 12 | 真正兜体积的是 8MB；这条只避免"为一张页读几十个文件" |
+| 支持的写法 | 只 `img[src="image:<id>"]` | CSS `background-image: url(image:...)` **命中即报错**（不能指望 `cleanCSS` 静默换成 `none`），见下 |
+| 来源 | 该用户自己的任意 `ImageAsset` | 文档配图（public）也能用；owner 不匹配按"不存在"处理 |
+
+失败口径：**任一引用解析失败（已过期 / 不存在 / 越权 / 超过 4MB / 超过张数或总量 / 写成了 CSS 背景图）→ 整次 `html.create` 失败**，错误里点名是哪个 id。页面不入库、不扣单轮配额。理由：用户明确要求"把这张图放进去"，静默少一张比报错更糟。
+
+内联成功后对这些 id 调 `MarkReferenced`，把源图保留期续 15 天——便于同一会话隔几天再修订一版；**不改全局 TTL、不加豁免**。页面本身不依赖这一步。
+
+模型怎么发现图片：`image.list_images` 增加 `scope`（`turn` = 本轮附件、`all` = 全库分页），结果里直接给 `<img src="image:<id>">` 片段。本轮附件的 id 由 orchestrator 通过 `ExecuteContext.UserImageIDs` 带进工具。
 
 ## 五、卡片：数据源跟消息走，不跟设备走
 
@@ -116,9 +145,10 @@ type Artifact struct {
 | `<script>`、`on*`、`javascript:` | 关 JS 后失效 | 顺手删掉（一行，留着也是脏数据） |
 | `<iframe>` / `<object>` / `<embed>` | **仍然有效**，file:// 同源很松，能框本机文件进页面 | **必须删** |
 | 外链 `<img>` / `<link>` / CSS `url()` | 仍然发请求（泄漏 IP、引荐） | 删 + 靠 CSP 兜底 |
+| `<img src="image:<id>">` | 是本站私有图床引用，页面本身取不到 | 清洗前换成 `data:` URI（§4.3）；换不成直接失败 |
 | `<meta http-equiv="refresh">` | 仍然会跳转 | 删 |
 
-所以入库时做四件事：删 `script/iframe/object/embed/link/meta`、删 `on*` 属性与 `javascript:`、剥外链 `src`/`href`、在 `<head>` 注入
+所以入库时做五件事：先把 `image:` 引用内联成 `data:` URI（§4.3）、删 `script/iframe/object/embed/link/meta`、删 `on*` 属性与 `javascript:`、剥外链 `src`/`href`、在 `<head>` 注入
 
 ```html
 <meta http-equiv="Content-Security-Policy"
@@ -191,7 +221,8 @@ type Artifact struct {
 ### 8.5 其他
 
 - 描述里写一句"一次只生成一张，需要多张时先问用户"——比硬上限更有效，且不误伤。
-- 每轮 ≤3 张、单条 ≤2MB（§4.2）。
+- 每轮 ≤3 张；模型 HTML ≤2MB，内联图片后 ≤8MB，单图 ≤4MB（§4.2 / §4.3）。
+- 描述里写清配图写法（`<img src="image:<id>">`），并明确"不要自己写 base64"。
 - 模型能稳定输出十几 KB，真遇到截断再改成"传文件路径"。
 - 只读声明：无（写库）。
 - 失败即失败，不静默降级。
@@ -291,13 +322,15 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `internal/model/artifact.go`（`Artifact` + `ArtifactRef`）
 - `internal/service/artifact_repo.go`
 - `internal/tool/html_artifact.go` + 测试
-- `internal/util/htmlsanitize/sanitize.go`（清洗 + 校验纯函数，含 CSP 注入；不含版式基线）+ 测试
+- `internal/util/htmlsanitize/sanitize.go`（清洗 + 校验纯函数，含 CSP 注入与 `image:` 内联钩子；不含版式基线）+ 测试
 - `internal/controller/artifact.go` + `router.go` 一行
 
 服务端（改造）：
 
 - `internal/model/message.go`（+`artifacts_json`）
-- `internal/agent/orchestrator.go`（本轮结束时收集 id 写回消息）
+- `internal/agent/orchestrator.go`（本轮结束时收集 id 写回消息；本轮图片 id 透传给工具）
+- `internal/tool/image.go`（`list_images` 增加 `scope`，返回可直接用的 `<img src="image:<id>">`）
+- `internal/service/image_store.go`（`DataURI` 内联出口：owner 校验 + 读文件 + 单图上限）
 - `internal/controller/conversations.go`（`getMessages` / `messages-v2` 一次 `IN` 批量展开 title/summary）
 - `internal/app/*`（注册 repo + 工具）
 
@@ -329,6 +362,12 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - 版式基线：一条模型没写任何样式的 HTML，打开后仍满足最小字号、行高、不横向滚动、有底色
 - 恶意样本：存一条带 `<script>alert(1)</script>`、`<iframe src="file:///etc/passwd">`、外链 `<img>` 的，确认剥干净、WebView 控制台无报错、无网络请求
 - 截断样本：故意存一条缺 `</html>` 的，确认工具返回错误、库里没有记录
+- 带图页面：本轮发一张图 + "把手账加上这张图"，确认页面里是内联 `data:`（不是 `image:` 也没外链），断网也能显示
+- 图已过期：把源图删掉后打开已生成的页面，确认图仍在（内联生效）
+- 引用失效图：让页面引用一个不存在的 id，确认工具报错点名该 id、库里没有记录、单轮配额没被扣
+- 超大图：拿一张 >4MB 的图内联，确认报错而不是入库
+- CSS 背景图：页面里写 `url(image:<id>)`，确认工具报错而不是页面静默少图
+- 图片张数：一页塞 13 张，确认报错而不去读第 13 个文件
 - 内存：连开关五篇，活动监视器里 WebContent 进程数不应随"打开过的篇数"线性增长
 
 ## 十四、风险
@@ -338,7 +377,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **基线 CSS 的覆盖顺序**：必须靠 DOM 顺序（基线在前）保证模型能覆盖，不能靠 `!important`，否则模型想定制会被锁死。
 - **截断**：已由校验兜住，但失败率高时白白烧 token（也是改成"传文件路径"的信号）。
 - **宽度错配**：模型按 1000px 设计 → 右栏横向滚。靠工具描述里的 760px 约定 + 基线 CSS 兜底。
-- **体积**：十几 KB 没问题；图片 base64 内联后单页几百 KB，参数变长更容易出错，v1 不做。
+- **体积**：正文十几 KB 没问题；带图页面按图片体积走（base64 ×1.33），单图 ≤4MB、单页 ≤8MB。参数不会变长（模型只写 `image:<id>`），但 DB 行会变大——这是"自包含换过期免疫"的代价。
+- **图片不可回溯**：内联保证已生成页面永久有效，但源图若在生成前已被 TTL 清掉就找不回来；CSS 背景图（`url(image:...)`）v1 不支持，只能走 `<img>`。
+- **分享会连带公开私有图**：artifact 目前只有鉴权接口（`router.go` 里没有公开分享路由），所以内联的聊天私有图不会外泄。**哪天加 artifact 分享，内联进正文的私有图会跟着一起公开**，届时要么分享前剥离图片，要么接受这条。
 - **修订会堆卡**：v1 没有"改这一版"的入口，用户说"再改改"等于重新生成一条新回复 + 一条新 artifact。旧的不算过期内容（它是上一轮的真实产物），但连改五版就是五张长得很像的卡。存储无所谓（100KB 量级），烦的是聊天流。解法在 v2：`artifact_id` 入参 + `supersedes_id` + 渲染只显示链条末端。
 - **分享**：消息分享（`MessageShare`）会把卡片带出去，但正文需要鉴权取不到 → 打开是空。v1 要么分享时隐藏卡片，要么把 HTML 一起打包（未定，倾向隐藏）。
 - **修订闭环**：主模型没有眼睛，用户说"这版太满"它只拿到 id，只能靠文字描述瞎改。v1 只支持"带 id 重新生成一版"，不做局部改；把修订交给带风格库上下文的子 agent 是 v2 的事。
@@ -365,3 +406,20 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：**基线改到客户端加载时注入**（服务端只存清洗结果 + CSP）。理由：基线是表现层，写进库没法回溯，改一次版式要把所有历史页面重新生成。
   - 工具描述补「body 只放底色，容器用 width:100%;max-width:760px」。
   - 影响文件：`Shared/Views/HTMLArtifactView.swift`、`server/.../htmlsanitize/sanitize.go`（+测试）、`server/.../tool/html_artifact.go`。
+- **2026-10-29 · 页面支持图片（生成时内联）**
+  - 需求：手账里放用户上传过的图 / 本条会话发的图；担心源图过保留期被清导致页面丢图。
+  - 决定：模型只写 `<img src="image:<id>">`，服务端在清洗前换成 `data:` URI。**内联发生在生成那一刻，页面从此与源文件解耦**，源图之后被 TTL 清掉也不影响已生成的页面（比"引用 id + 渲染时取 + pin 保活"少一套机制，也保住自包含）。
+  - 决定：**不做压缩**。单图 >4MB、单页内联 >8MB 直接报错。压缩要引 `golang.org/x/image` 并处理 EXIF 方向（iPhone 竖拍会横躺），v1 不值得。
+  - 决定：任一引用失败（已过期/越权/超大）整次生成失败并点名 id，不静默少图；页面不入库、不扣单轮配额。
+  - 内联成功后对这些图 `MarkReferenced`（保留期续 15 天，方便后续修订），**不改全局 TTL、不加豁免**。
+  - `image.list_images` 增加 `scope`（`turn` / `all`）并返回 `<img>` 片段；本轮附件 id 由 `ExecuteContext.UserImageIDs` 提供。
+  - 不支持 CSS `background-image: url(image:...)`（`cleanCSS` 仍会清成 `none`），v1 只能走 `<img>`。
+  - 影响文件：`server/.../util/htmlsanitize/sanitize.go`（+测试）、`service/image_store.go`、`tool/html_artifact.go`（+测试）、`tool/image.go`、`tool/tool.go`、`agent/orchestrator.go`、`appinit/tools.go`。客户端无需改动（`data:` 本来就被允许）。
+- **2026-10-29 · 第三轮审查修正**（审查报告 `docs/code-review/html-artifact/2026-10-29.md` §九）
+  - 内联加**张数与累计字节闸**（≤12 张 / ≤8MB），在 `resolve` 闭包里就地判：原先只在整页 Render 之后判，模型引用几十张大图时会白读几十个文件、压几百 MB base64 再报错。
+  - CSS 背景图从"被静默清掉"改为**报错点名**（`url(image:...)` 扫 `<style>` 与 `style` 属性），工具描述同步写明只能放 `<img>`。
+  - `DataURI` 先 `os.Stat` 再读：上传上限 32MB，不再为判 4MB 把整个文件读进内存。
+  - 删掉没有生产调用方的 `htmlsanitize.Process`（生产只走 `ProcessWithImages`），测试同步。
+  - 修正「源图被清理」用例的恒真断言：改为删除后**重新查库**再断言。
+  - **已知上限**：8MB 总量 ÷（4MB×1.33）≈ 1.5 张满配图，两张 4MB 原图仍会失败。真机撞得多时优先调 `MaxInlineBytes`，不加压缩。
+  - 影响文件：`util/htmlsanitize/sanitize.go`（+测试）、`service/image_store.go`（+测试）、`tool/html_artifact.go`（+测试）。

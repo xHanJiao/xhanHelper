@@ -3,6 +3,7 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,9 @@ const (
 	maxArtifactsPerTurn = 3
 	maxArtifactTitleLen = 80
 	maxArtifactSumLen   = 200
+	// maxInlineImages — 单页最多内联几张图。真正兜体积的是 MaxInlineBytes，
+	// 这个只管"别为一张页读几十个文件"（一页手账放 12 张已经是极限）。
+	maxInlineImages = 12
 	// turnCounterTTL — 计数表清理阈值（同一 turn 的实际生命周期是秒级）。
 	turnCounterTTL = 10 * time.Minute
 )
@@ -29,7 +33,8 @@ const (
 // 正文落 artifacts 表，工具只回 {artifact_id, title, summary}；聊天里显示一张引用卡，
 // 点开在右栏渲染（见 docs/design/html-artifact/design.md）。
 type HTMLArtifactTool struct {
-	repo *service.ArtifactRepo
+	repo   *service.ArtifactRepo
+	images *service.ImageStore
 
 	mu        sync.Mutex
 	turnCount map[string]turnCounter
@@ -40,8 +45,14 @@ type turnCounter struct {
 	at time.Time
 }
 
-func NewHTMLArtifactTool(repo *service.ArtifactRepo) *HTMLArtifactTool {
-	return &HTMLArtifactTool{repo: repo, turnCount: make(map[string]turnCounter)}
+func NewHTMLArtifactTool(repo *service.ArtifactRepo, images *service.ImageStore) *HTMLArtifactTool {
+	if repo == nil {
+		panic("html_artifact: nil repo (wiring bug)")
+	}
+	if images == nil {
+		panic("html_artifact: nil image store (wiring bug)")
+	}
+	return &HTMLArtifactTool{repo: repo, images: images, turnCount: make(map[string]turnCounter)}
 }
 
 func (t *HTMLArtifactTool) Name() string { return "html" }
@@ -67,6 +78,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"拿不准就不要用。一次只生成一张，需要多张先问用户。",
 			"调用之后，正文只写结论/推荐/下一步，不要再用 markdown 复述页面里的内容。",
 			"页面要求：按 760px 宽设计、不要横向滚动。body 只放底色，内容放进自己的容器（如 .page{width:100%;max-width:760px;margin:0 auto;padding:...}）；不要给 body 写 width/max-width/margin——渲染器会在外层保留桌面底色，并把容器限制在 760px 内。可以内联 <style>，但不要写 script、iframe，也不要用外链图片或字体（会被删除）。",
+			"放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片内联进页面，别自己写 base64。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单张 ≤4MB、单页最多 12 张且图片总量 ≤8MB，超了会报错。",
 			"观感参考（手账只是其中一种，别套模板、别固定风格）：手账风＝米色纸底 + 胶带/时间轴 + 手写感标题；对比页＝两栏并排 + 色块区分优劣；时间线＝左侧时间列 + 竖向连线；一页纸总结＝大标题 + 三块要点。留白充足、统一配色，别做满屏边框。",
 			"summary 必须一句话说清这页讲了什么（用户据此决定点不点），不要写「以下是对比」「详见下图」。",
 		}, "\n"),
@@ -115,10 +127,40 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 
 	// 先校验、清洗，再扣配额：截断是最常见的失败（全链路没有 finish_reason 处理），
 	// 失败也扣次数会让模型连撞三次后整轮报废。
-	clean, err := htmlsanitize.Process(req.HTML)
+	//
+	// 图片在这里内联：模型只写 <img src="image:<id>">，服务端换成 data: URI。
+	// 生成后页面与源文件解耦，源图之后被 TTL 清掉也不影响（设计文档 §4.3）。
+	// 任何一张图失败 → 整页失败，不静默少图。
+	//
+	// 张数/字节在闭包里就地挡：整页 8MB 的闸在 Render 之后才判，
+	// 只靠它会让几十张大图先被读完、base64 一遍再报错（内存和 IO 都白花）。
+	resolved := make(map[string]string)
+	var inlined []string
+	var inlinedBytes int64
+	clean, err := htmlsanitize.ProcessWithImages(req.HTML, func(id string) (string, error) {
+		if uri, ok := resolved[id]; ok {
+			return uri, nil
+		}
+		if len(resolved) >= maxInlineImages {
+			return "", fmt.Errorf("页面引用的图片超过 %d 张，少放几张", maxInlineImages)
+		}
+		uri, err := t.images.DataURI(ec.Ctx, ec.UserID, id)
+		if err != nil {
+			return "", err
+		}
+		inlinedBytes += int64(len(uri))
+		if inlinedBytes > htmlsanitize.MaxInlineBytes {
+			return "", fmt.Errorf("页面内联图片总量超过 %d 字节，少放几张或换小图", htmlsanitize.MaxInlineBytes)
+		}
+		resolved[id] = uri
+		inlined = append(inlined, id)
+		return uri, nil
+	})
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
+	// 配额在这里判（内联之后）：最坏情况是本轮第 4 次 create 先读了几张图才被拒，
+	// 这是拿到"失败不扣配额"的代价，换的是截断重试不会把一轮额度耗光。
 	if !t.allowOne(ec.TurnID) {
 		return &Result{Success: false, Error: fmt.Sprintf("本轮已生成 %d 张页面，够了；如需更多请先问用户", maxArtifactsPerTurn)}
 	}
@@ -133,6 +175,15 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 	}
 	if err := t.repo.Create(ec.Ctx, a); err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("保存页面失败: %v", err)}
+	}
+
+	// 被页面用到的图续一次保留期（15 天），方便同一会话隔几天再修订；不改全局 TTL。
+	// 本轮附件已由 orchestrator 在开头标过，这里真正起作用的是 scope=all 取来的老图。
+	// 失败只影响"以后还能不能用同一张图"，页面本身已内联，不影响本次结果。
+	if len(inlined) > 0 {
+		if err := t.images.Repo().MarkReferenced(ec.Ctx, inlined, ec.UserID); err != nil {
+			log.Printf("[html] mark inlined images referenced failed: %v", err)
+		}
 	}
 
 	data, err := json.Marshal(map[string]any{

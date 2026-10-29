@@ -94,4 +94,52 @@ final class ToolConfirmPolicyTests: XCTestCase {
     func testUnknownHigherLevelStaysHardened() {
         XCTAssertEqual(ToolConfirmPolicy.requirement(level: 5, isFileSystemTool: false), .hardened)
     }
+
+    // MARK: 完全信任（全局开关）
+
+    /// 全信任跳过静态等级：fs 写（L3）与 L4（shell 写/执行、browser 写盘/注入事件）都不再确认。
+    func testFullTrustSkipsStaticConfirmations() {
+        XCTAssertEqual(
+            ToolConfirmPolicy.requirement(level: 3, isFileSystemTool: true, fullTrust: true), .none)
+        XCTAssertEqual(
+            ToolConfirmPolicy.requirement(level: 4, isFileSystemTool: false, fullTrust: true), .none)
+        XCTAssertEqual(
+            ToolConfirmPolicy.requirement(level: 5, isFileSystemTool: true, fullTrust: true), .none)
+    }
+
+    /// 防注入升级（forcedL3）任何档位都不跳过：全信任下仍是常规确认，L4 仍是红色确认。
+    func testForcedL3AlwaysConfirmsEvenUnderFullTrust() {
+        XCTAssertEqual(
+            ToolConfirmPolicy.requirement(level: 3, isFileSystemTool: false, forcedL3: true, fullTrust: true),
+            .confirm)
+        XCTAssertEqual(
+            ToolConfirmPolicy.requirement(level: 4, isFileSystemTool: false, forcedL3: true, fullTrust: true),
+            .hardened)
+        XCTAssertEqual(
+            ToolConfirmPolicy.requirement(level: 3, isFileSystemTool: true, forcedL3: true),
+            .confirm)
+    }
+
+    // MARK: fs 未授权目录（免确认 ≠ 替你授权）
+
+    /// 全信任下碰到未授权目录 → 拒绝，不自动授权。
+    func testFullTrustBlocksUnauthorizedFsPaths() {
+        XCTAssertEqual(
+            ToolConfirmPolicy.fsUnauthorizedAction(unauthorized: ["/Users/me/Documents"], fullTrust: true),
+            .block)
+    }
+
+    /// 没有未授权路径时无事可拒（常驻为空 → 交给后面的临时授权循环，空转）。
+    func testAuthorizedFsPathsNeverBlock() {
+        XCTAssertEqual(
+            ToolConfirmPolicy.fsUnauthorizedAction(unauthorized: [], fullTrust: true),
+            .authorizeTemporarily)
+    }
+
+    /// 非全信任：用户已在确认条上点了允许 → 照旧临时授权。
+    func testConfirmingUserStillGrantsTemporaryAccess() {
+        XCTAssertEqual(
+            ToolConfirmPolicy.fsUnauthorizedAction(unauthorized: ["/Users/me/Documents"], fullTrust: false),
+            .authorizeTemporarily)
+    }
 }

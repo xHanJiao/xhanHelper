@@ -63,7 +63,7 @@
 
 | 状态 | 表现 |
 |---|---|
-| 当前文档在 `documents` 里 | 该行 accent 底色 + 加粗 + 勾；进入时 `withAnimation(.easeInOut(0.2)) { scrollTo(anchor: .top) }` 把当前文档**带动画地**对齐到列表顶部（⚠️ **待真机确认**：`LazyVStack` 对未物化行 `scrollTo` 可能静默不生效，见 §五与后续变更） |
+| 当前文档在 `documents` 里 | 该行 accent 底色 + 加粗 + 勾；进入时 `withAnimation(.easeInOut(0.2)) { scrollTo(anchor: UnitPoint(y: 0.12)) }` 把当前文档**带动画地**放到视口上方约 12% 处（上面留两三行上下文，见文末「后续变更」）（⚠️ **待真机确认**：`LazyVStack` 对未物化行 `scrollTo` 可能静默不生效，见 §五与后续变更） |
 | 当前文档**不在** `documents` 里 | 顶部钉一行当前文档（同样式）+ Divider，下面才是列表 |
 | `documents` 为空 | 钉行 + 空态「当前筛选下没有文档」 |
 
@@ -87,7 +87,7 @@
 
 - **切到无标题文档不再消失侧栏**，代价是这类文档的正文宽少 220（可手动收起，`xhan_doc_toc_collapsed` 已记忆）。
 - **钉行只钉一条**：当前文档不在列表里时不会把它插回列表的正确位置（列表按服务端 `updated_at DESC` 排，位置还得靠拉页）。导航够用。
-- **换篇必然把侧栏滚回顶部**：外层 `.id(doc.id)`（`DocumentListView.body`）重建整个详情子树，含侧栏 ScrollView —— 这是 `.id` 的既有语义（那句注释原话就是「滚动位置 / 查找栏 / 目录展开态归零」），不是本次引入。所以列表用 `scrollTo(anchor: .top)` 把当前项对齐到顶部（**不用 `.center`**：点哪条哪条往中间跑，手感像列表自己乱动）。真正的「点了不跳、列表也不回顶」需要**把左侧栏移出 `.id(doc.id)` 子树**（让侧栏滚动位置跨篇保留），代价是重新切分 `DocumentFullView` 里那堆 per-doc `@State`（reader / 查找栏 / 匹配计数 / 连线…）—— **独立重构，本次明确不做**，只记账。
+- **换篇必然把侧栏滚回顶部**：外层 `.id(doc.id)`（`DocumentListView.body`）重建整个详情子树，含侧栏 ScrollView —— 这是 `.id` 的既有语义（那句注释原话就是「滚动位置 / 查找栏 / 目录展开态归零」），不是本次引入。所以列表用 `scrollTo(anchor: UnitPoint(y: 0.12))` 把当前项放到视口上方约 12% 处（**既不贴 `.top`** —— 把上方上下文全顶出去，用户得手动再拉；**也不用 `.center`** —— 点哪条哪条往中间跑，手感像列表自己乱动）。真正的「点了不跳、列表也不回顶」需要**把左侧栏移出 `.id(doc.id)` 子树**（让侧栏滚动位置跨篇保留），代价是重新切分 `DocumentFullView` 里那堆 per-doc `@State`（reader / 查找栏 / 匹配计数 / 连线…）—— **独立重构，本次明确不做**，只记账。
 - ⚠️ **滚动定位未真机验证**：`documentNavList` 的 `onAppear` 里 `proxy.scrollTo(document.id, anchor: .top)` 依赖该行已被 `LazyVStack` 物化。**可达的失败路径**：侧栏滚到底触发 `loadMore` 到若干页（`documents` 有上百条）→ 点靠底部的某篇 → 外层 `.id(doc.id)` 重建 → 列表从顶部重新渲染、当前行未物化 → `scrollTo` 静默不滚（用户以为"没定位到我"）。注意这与 SM-5 是两回事：SM-5 那种「不在 `documents` 里」走钉行、天然可见。**退化方案（确认不生效后择一）**：① 取消 `scrollTo`，当前文档一律顶部钉行（复用 SM-5 组件，净删代码，代价是当前行在列表里出现两次）；② 先滚到已加载末行再 `loadMore`（**不推荐**：循环 + 时序都脆）。`anchor` 改 `.top` 不改变这条判断。
 - **列行次信息与 `parseTags` 同源**：`documentNavSubtitle` 复用 `DocumentFullView.parseTags(_:)` 取标签文本，不再手写第三份切分。注意两者口径有细微差别：`parseTags` 不丢「纯空白字段」（会产出 `text == ""` 的 TagBadge），手写版会丢 —— 服务端不存这种数据，实际无差。
 - **列表页与侧栏列表是同一份数组**，所以详情页里对文档的增删（目前详情页没有删除入口）不影响一致性。
@@ -147,3 +147,10 @@
 - **决定**：包 `withAnimation(.easeInOut(duration: 0.2))`（与房子其它侧栏/面板动效同值）。
 - **不变**：`anchor: .top`、`documentInOpenList` 守卫、未物化行那条待确认项，均不受影响。
 - **影响文件**：`DocumentListView.swift`（同一处 `onAppear`）。
+
+### 2026-10-29 · 定位不再贴顶：`.top` → `UnitPoint(y: 0.12)`（用户拍板）
+
+- **背景**：用户真机反馈 —— 点列表里靠下的一篇，当前项被顶到**第一行**，上面刚看过的几条全被顶出视野，每次都得手动往回拉。原话「希望上升，但是不要直接到顶部，可以到第二三个的位置」。
+- **决定**：`anchor` 改 `UnitPoint(x: 0, y: 0.12)`（视口高度的 ~12%，约两三行）：当前项落在视口上方三分之一以内、上方仍留上下文。点最上面那一两篇时会自然贴顶（上方没内容可留），属边界、不特判。
+- **不变**：`.center` 仍不选；`documentInOpenList` 守卫、`withAnimation(0.2)`、未物化行 `scrollTo` 待确认那条均不受影响。
+- **影响文件**：`DocumentListView.swift`（`documentNavList` 的 `onAppear`，一行 + 注释）。

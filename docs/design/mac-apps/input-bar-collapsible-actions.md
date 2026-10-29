@@ -65,3 +65,10 @@ macOS 聊天输入框按钮过密。除**计划模式**与**智能体**常驻外
 - 真正被拿掉的只有 **pro 档模型**与 **≤500 字约束**。「思考」本来就不由客户端说了算：`thinkingMode` 只是 `llm_thinking`（服务端 llm 配置的本地镜像，`refreshAndCacheLLMConfig` 写入）的态，且请求体里的 `thinking` 服务端**根本不读** —— `controller/chat.go` 构造 `RunRequest` 时只取 `DeepMode` / `BriefAnswer` / `VerifyEnabled` / `HiddenRound`。
 - 折叠行现存按钮：**无痕 / 附件**；常驻行仍是 **计划 / 智能体 / chevron / 发送**。
 - 未受影响：`InputBar.swift` 零改动（它头部「增删按钮不改本文件」的约定继续成立）；输入栏双态、12s 自动收起、常驻/收起的右键菜单照旧（唯一改动是 `#Preview` 里那颗 `ModelPill` 换成了 `EphemeralPill`，否则预览会少一格）。
+
+### 2026-10-29 · 加回「完全信任」一颗按钮（用户拍板）
+
+- 新增 `InputBarButtonID.trust`（macOS `allCases` 排在 `.agent` 后、默认**收起**），`TrustPill`：关=灰 `shield.lefthalf.filled`，开=红 `shield.slash.fill`。
+- **开着时强制常驻**：`ChatView` 用 `isPinnedInStatusRow(_:)` 让它在常驻行显示、并从展开行排除。具体是：**常驻行的过滤是内联条件**（`!isCollapsed($0) || isPinnedInStatusRow($0)`），**展开行与 chevron 的判定走 `collapsedInExtras`**（`isCollapsed && !isPinned`）。被钉住时按钮也不挂右键菜单（「收起」对它无效）。
+- `InputBarLayoutState.init` 的「缺失即补入」补上 `.trust`，老用户的持久化布局不会让它意外常驻。
+- 语义见 `docs/design/chat-stop-and-tool-risk-levels.md` 的 2026-10-29 条：只跳过静态风险确认，`forcedL3`（防注入）与硬拦截不变。

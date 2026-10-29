@@ -21,6 +21,7 @@ struct InputBarContext {
 enum InputBarButtonID: String, CaseIterable {
     case mode
     case agent
+    case trust
     case model
     case brief
     case ephemeral
@@ -31,15 +32,16 @@ enum InputBarButtonID: String, CaseIterable {
     /// 2026-10 下架：model / brief / handoff（三颗 pill 已 hidden）。
     static var allCases: [InputBarButtonID] {
         #if os(macOS)
-        return [.mode, .agent, .ephemeral, .attach]
+        return [.mode, .agent, .trust, .ephemeral, .attach]
         #else
         return [.mode, .agent, .attach]
         #endif
     }
 
     /// 首次运行（无持久化配置）时的收起集合，等价于旧硬编码布局。
-    /// 无痕（ephemeral）与附件是低频开关，默认收起。
-    static let defaultCollapsed: Set<InputBarButtonID> = [.ephemeral, .attach]
+    /// 无痕（ephemeral）与附件是低频开关，默认收起；完全信任（trust）同理——
+    /// 但它是持久化开关，开着时 ChatView 会强制把它显在常驻行，状态不能被藏起来。
+    static let defaultCollapsed: Set<InputBarButtonID> = [.trust, .ephemeral, .attach]
 }
 
 /// 按钮可见性声明。每个按钮自己决定何时出现/隐藏，

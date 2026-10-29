@@ -36,6 +36,9 @@ struct ChatView: View {
     @State private var extrasCollapseTask: Task<Void, Never>?
     /// 每个按钮常驻/收起的配置（右键菜单切换，持久化，主/PiP 实例共享）。
     @ObservedObject private var inputBarLayout = InputBarLayoutState.shared
+    /// 完全信任开关（全局持久化，主/PiP 共享）+ 开启前的二次确认。
+    @ObservedObject private var trustStore = ToolTrustStore.shared
+    @State private var showTrustEnableConfirm = false
 
     /// 底部浮层栈（AskUserBar/计划便签/子任务面板/L3 确认条/输入栏）的实测高度。
     /// 用于把「回到最新」按钮上推到浮层之上（基座消息区现在铺满整高）。
@@ -73,6 +76,15 @@ struct ChatView: View {
         }
 #else
         content
+            .confirmationDialog("开启「完全信任」？", isPresented: $showTrustEnableConfirm) {
+                Button("开启完全信任", role: .destructive) {
+                    trustStore.fullTrust = true
+                    ToastCenter.shared.show("已进入完全信任：fs 写 / shell 写等高危工具也不再确认")
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("本地工具不再弹确认：fs 写文件、shell 写/执行命令（含高危）都直接执行。\n只对已授权目录生效——范围外目录不会自动授权，会直接报错让你去「设置 → 文件访问授权」添加。\n硬拦截（白名单外命令、高危路径、敏感文件名）与防注入确认仍然生效。\n开关对本机该 macOS 用户下的所有 app 账号生效。")
+            }
 #endif
     }
 
@@ -361,11 +373,11 @@ struct ChatView: View {
     private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
         HStack(spacing: 4) {
-            ForEach(InputBarButtonID.allCases.filter { !inputBarLayout.isCollapsed($0) }, id: \.self) { id in
+            ForEach(InputBarButtonID.allCases.filter { !inputBarLayout.isCollapsed($0) || isPinnedInStatusRow($0) }, id: \.self) { id in
                 inputBarButton(id, ctx: ctx)
             }
             // 更多操作：有按钮被收起时才提供 chevron（否则全常驻，无展开行）。
-            if !inputBarLayout.collapsed.isEmpty {
+            if !collapsedInExtras.isEmpty {
                 ExpandPill(context: ctx, isExpanded: inputBarExtrasExpanded) {
                     toggleInputBarExtras()
                 }
@@ -379,10 +391,10 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarExtrasRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        if inputBarExtrasExpanded && !inputBarLayout.collapsed.isEmpty {
+        if inputBarExtrasExpanded && !collapsedInExtras.isEmpty {
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
-                ForEach(InputBarButtonID.allCases.filter { inputBarLayout.isCollapsed($0) }, id: \.self) { id in
+                ForEach(collapsedInExtras, id: \.self) { id in
                     inputBarButton(id, ctx: ctx)
                 }
             }
@@ -391,15 +403,30 @@ struct ChatView: View {
         #endif
     }
 
+    /// 完全信任开着时强制常驻：它是安全状态指示，不能因为按钮被收起就看不见。
+    private func isPinnedInStatusRow(_ id: InputBarButtonID) -> Bool {
+        id == .trust && trustStore.fullTrust
+    }
+
+    /// 真正收进「更多操作」行的按钮（被强制常驻的不算，否则会出现两处入口/空展开行）。
+    private var collapsedInExtras: [InputBarButtonID] {
+        InputBarButtonID.allCases.filter { inputBarLayout.isCollapsed($0) && !isPinnedInStatusRow($0) }
+    }
+
     /// 单个输入栏按钮：按 id 构造对应控件，并挂右键菜单切换常驻/收起。
+    /// 被钉在常驻行的按钮（完全信任开着）不挂菜单——「收起」对它无效，是个点了没反应的哑操作。
     @ViewBuilder
     private func inputBarButton(_ id: InputBarButtonID, ctx: InputBarContext) -> some View {
-        inputBarButtonContent(id, ctx: ctx)
-            .contextMenu {
-                Button(inputBarLayout.isCollapsed(id) ? "常驻" : "收起") {
-                    withAnimation(.easeOut(duration: 0.18)) { inputBarLayout.toggle(id) }
+        if isPinnedInStatusRow(id) {
+            inputBarButtonContent(id, ctx: ctx)
+        } else {
+            inputBarButtonContent(id, ctx: ctx)
+                .contextMenu {
+                    Button(inputBarLayout.isCollapsed(id) ? "常驻" : "收起") {
+                        withAnimation(.easeOut(duration: 0.18)) { inputBarLayout.toggle(id) }
+                    }
                 }
-            }
+        }
     }
 
     /// 按钮本体（不含右键菜单）。
@@ -433,6 +460,17 @@ struct ChatView: View {
                         Task { await loadAgentPickerPage(cursor: pickerCursor) }
                     }
                 )
+            }
+        case .trust:
+            // 完全信任（全局持久化）：开→点即关；关→先二次确认再开。
+            TrustPill(context: ctx, isOn: trustStore.fullTrust) {
+                if trustStore.fullTrust {
+                    trustStore.fullTrust = false
+                    ToastCenter.shared.show("已关闭完全信任：fs 写 / shell 写仍会确认")
+                } else {
+                    showTrustEnableConfirm = true
+                }
+                resetExtrasAutoCollapse()
             }
         case .model:
             ModelPill(context: ctx, isDeep: viewModel.deepMode) {

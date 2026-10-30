@@ -16,7 +16,7 @@ func TestBuildMessagesForFlash_RestoresReasoningContent(t *testing.T) {
 		{Role: "user", Content: "问题"},
 		{Role: "assistant", Content: "回复", ReasoningContent: strPtr("思考过程")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs, got %d", len(msgs))
@@ -30,7 +30,7 @@ func TestBuildMessagesForFlash_NoReasoningStaysEmpty(t *testing.T) {
 	history := []model.Message{
 		{Role: "assistant", Content: "回复"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 	if msgs[0].ReasoningContent != "" {
 		t.Errorf("无 reasoning 的消息应保持为空, got %q", msgs[0].ReasoningContent)
 	}
@@ -41,7 +41,7 @@ func TestBuildMessagesForFlash_ReasoningSerialized(t *testing.T) {
 	history := []model.Message{
 		{Role: "assistant", Content: "回复", ReasoningContent: strPtr("思考过程")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 	b, err := json.Marshal(msgs[0])
 	if err != nil {
 		t.Fatalf("marshal error: %v", err)
@@ -58,7 +58,7 @@ func TestBuildMessagesForFlash_ReasoningWithNativeFCToolCall(t *testing.T) {
 			ToolCallsJSON: strPtr(`[{"id":"call_1","function":{"name":"note__record_note","arguments":"{\"topic\":\"t\"}"}}]`)},
 		{Role: "tool", Content: `{"success":true}`, ToolCallID: strPtr("call_1")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs, got %d", len(msgs))
@@ -81,8 +81,8 @@ func TestBuildMessagesForFlash_ReplayByteStable(t *testing.T) {
 		{Role: "assistant", Content: "回复", ReasoningContent: strPtr("思考"), ToolCallsJSON: strPtr(`[{"id":"call_1","function":{"name":"a__b","arguments":"{}"}}]`)},
 		{Role: "tool", Content: `{"success":true}`, ToolCallID: strPtr("call_1")},
 	}
-	a := BuildMessagesForFlash(history, 2000, true)
-	b := BuildMessagesForFlash(history, 2000, true)
+	a := BuildMessagesForFlash(history, 2000, true, false)
+	b := BuildMessagesForFlash(history, 2000, true, false)
 
 	ja, _ := json.Marshal(a)
 	jb, _ := json.Marshal(b)

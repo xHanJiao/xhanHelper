@@ -450,10 +450,19 @@ func cleanMessages(msgs []model.Message) []model.Message {
 func injectToolResult(msg *model.Message, resultJSON string) {
 	var tcs []map[string]interface{}
 	if err := json.Unmarshal([]byte(*msg.ToolCallsJSON), &tcs); err != nil {
+		log.Printf("[conv] parse tool_calls_json for downlink failed: msg=%s err=%v", msg.ID, err)
 		return
 	}
+	// 下标与 tcs 对齐：只有 html.get(full) 的整页会被换 stub，其余原样下发（下发不按大小截断）。
 	for i := range tcs {
 		if _, ok := tcs[i]["result"]; !ok {
+			name := ""
+			if fn, ok := tcs[i]["function"].(map[string]interface{}); ok {
+				name, _ = fn["name"].(string)
+			}
+			if stub, ok := agent.StubToolResultForHistory(resultJSON, name, 0); ok {
+				resultJSON = stub
+			}
 			var result interface{}
 			if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
 				tcs[i]["result"] = resultJSON

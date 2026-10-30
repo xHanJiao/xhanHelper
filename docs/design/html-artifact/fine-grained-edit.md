@@ -381,6 +381,7 @@ patch
 - **rich 块被拒**：含内联标记的段落只能整页改，可能多花一次 token；这是「不静默丢格式」的代价。
 - **CSS 整段替换**：改一个小颜色也要传 5 KB 左右；等真嫌大再做「按规则改」。
 - **样式清洗**：模型写的 CSS 经过 `htmlsanitize` 的 CSS 清洗，可能和预期有出入（现有行为，不是新增风险）。
+- **跨轮拿旧副本整页重写**：乐观锁只覆盖单次请求的读→写；历史里那份 `get(full)` 在第一次 `patch` 后就过期。由 `docs/design/tool-result-history/design.md` 的「回放时把 `get(full)` 换成 stub（当轮仍是全文）」兜住，模型下一轮只能重新 `get(outline)`。
 
 ---
 
@@ -450,3 +451,4 @@ patch
   - 修：`patch` 删空整页的文案补工具层用例（`TestHTMLArtifactRemoveLastBlockSaysPageWouldBeEmpty`）。
   - 修：`class` 截断附 `class_truncated`，并补用例。
   - 影响文件：`util/htmlpatch/htmlpatch.go` + 测试、`tool/html_artifact.go` + 测试、`design.md`、本文件。
+- **2026-10-30 · 跨轮旧副本**：工具结果历史回放的 `get(full)` stub 已实现在 `agent/history_stub.go`（见 `docs/design/tool-result-history/design.md`），本文件 §八 补一条交叉引用。

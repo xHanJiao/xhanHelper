@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"xhan-helper/internal/model"
@@ -617,5 +618,35 @@ func TestMergeConsecutiveAssistant_NoMergeAtStart(t *testing.T) {
 	result := mergeConsecutiveAssistant(msgs)
 	if len(result) != 3 {
 		t.Fatalf("expected 3, got %d", len(result))
+	}
+}
+
+// 下发不按大小截断：只有 html.get(full) 的整页换 stub，其余原样。
+func TestInjectToolResult_StubsOnlyHTMLFull(t *testing.T) {
+	page, _ := json.Marshal(map[string]any{
+		"success": true,
+		"data":    map[string]any{"artifact_id": "a1", "html": strings.Repeat("<p>正文</p>", 500)},
+	})
+	big, _ := json.Marshal(map[string]any{
+		"success": true,
+		"data":    map[string]any{"items": []string{strings.Repeat("结", 20000)}},
+	})
+
+	tcs := `[{"id":"c1","function":{"name":"html__get"}},{"id":"c2","function":{"name":"message_search__search_by_range"}}]`
+	msg := &model.Message{ID: "m1", ToolCallsJSON: &tcs}
+	injectToolResult(msg, string(page))
+	injectToolResult(msg, string(big))
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(*msg.ToolCallsJSON), &got); err != nil {
+		t.Fatalf("注入后应是合法 JSON: %v", err)
+	}
+	r0, _ := json.Marshal(got[0]["result"])
+	if !strings.Contains(string(r0), `"html_omitted":true`) {
+		t.Fatalf("html full 应换 stub，实际 %.120s", r0)
+	}
+	r1, _ := json.Marshal(got[1]["result"])
+	if !strings.Contains(string(r1), "结结结") {
+		t.Fatal("30KB 的普通结果应原样下发（下发不截断）")
 	}
 }

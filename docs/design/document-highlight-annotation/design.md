@@ -68,7 +68,7 @@
 | D17 | 配额 | ✅ 单条 quote ≤ 500 字符、批注 ≤ 2000 字符、单文档 ≤ 500 条 |
 | D18 | 全局快捷键 | ❌ 无 |
 | D19 | LLM 改写时正在阅读 | ⚠️ **2026-10-14 修订**：**正文显示**仍不自动刷新（不跳走），但补了三个"该校正文"的时机 —— ① 客户端发现不一致（划线画不出来 / 服务端夹逼改写了 quote）② 回到前台 ③ 一轮对话结束（agent 刚改过）。见文末「后续变更 · 正文旧了要自己发现」 |
-| D20 | 顶栏入口 | ✅ 分享 / 导出 PDF / 下载 `.md` **保持**在窗口顶栏 `document-actions` 组（`DocumentSelectionCoordinator.swift:50-69`）。文档详情页**不再有自己的二级顶栏**（2026-10-30 并入右侧栏页头，见文末「详情页顶栏并进页头」）。mockup 顶栏把两组画在了一起，属预览简化，实现以本条为准 |
+| D20 | 顶栏入口 | ✅ 分享 / 下载 `.md` 在窗口顶栏 `document-actions` 组（`DocumentSelectionCoordinator.swift:50-69`）；导出 PDF 2026-10-30 下架（见 `artifact-topbar-actions`）。文档详情页**不再有自己的二级顶栏**（2026-10-30 并入右侧栏页头，见文末「详情页顶栏并进页头」）。mockup 顶栏把两组画在了一起，属预览简化，实现以本条为准 |
 
 ---
 
@@ -1134,3 +1134,8 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **不变**：页头本来就是所有浏览面板共用的 `BrowsePanelView.panelHeader(_:)`，这次只加了 `isDocDetail` 两个 trailing 分支 + 返回动作判断，没有新抽象。
 - **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentListView.swift`（顶部 HStack 包 `#if !os(macOS)`、`showFindBar` 改 AppStorage、删 `toggleAnnotationPanel`）；`BrowsePanelView.swift`（`isDocDetail` / `backHelp` / 两个 trailing 按钮 / 返回动作）。
 - **自查**：`xcrun swiftc -typecheck` macOS 26.3 + iOS 26.0 双 target 0 error；真机观感由用户在 Xcode 复核。
+
+### 2026-10-30 · 文档「导出 PDF」下架（用户拍板）
+
+- **决定**：顶栏 `document-actions` 的导出 PDF 胶囊与文档卡片 `⋯` 里的 dev 专项一并撤掉；`DocumentSelectionCoordinator.exportPDF(_:)` 与 `DocumentPDFExporter` 实现保留，恢复只需加回入口。D20 已同步。
+- **影响文件**：`Shared/Services/DocumentSelectionCoordinator.swift`、`Shared/Views/DocumentListView.swift`；背景见 `docs/design/artifact-topbar-actions/design.md`。

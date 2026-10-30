@@ -42,8 +42,9 @@
   |----|----|--------|--------|----------|
   | `default-right` | right | 5 | `TopBarView.swift:91-124` | 恒真（按钮各自 gated） |
   | `default-utility` | right | 5 | `:133-160`（macOS） | 恒真 |
-  | `browser-actions` | **center** | 10 | `BrowserToolProvider.swift:2185-2225` | `activeTabId != nil && tabs 非空 && isOpen` |
+  | `browser-actions` | **center** | 10 | `BrowserToolProvider.swift:2185-2225` | `activeTabId != nil && tabs 非空 && isOpen`，且 active tab 不是灵阅（`artifact:` 前缀） |
   | `document-actions` | center | 8 | `DocumentSelectionCoordinator.swift:93-118` | 文档面板选中某篇时 |
+  | `artifact-actions` | center | 8 | `ArtifactOpenCoordinator.swift`（`ensureRegisteredGroup`） | 右栏 active tab 是灵阅（`artifact:` 前缀）且右栏打开 |
 
 - **`TopBarButton` 只支持图标**（`TopBarRegistry.swift:11-36`，`icon: () -> String`），无文字、无 popover 内容；`CapsuleButton/CapsuleGroup/CapsuleIcon` 是 `TopBarView.swift` 内 **private**（同文件内可复用）。
 - **`navLeadingOffset` 是死代码**：`ContentView.swift:429` 硬编码传 `0`；`ContentView.swift:592/659` 的注释仍称它随左栏宽变（**已过期**）；`docs/bugs/014` 的宽度分析同样基于旧值。
@@ -361,3 +362,6 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
     **不动胶囊高度**（仍 28）、不进宽度账 → 上面的派生数值与三处宽度表全部不变。
     影响文件：`LayoutConstants.swift`、`Views/TopBarView.swift`（`CapsuleButtonBackground`）、
     `../mac-apps/topbar-slot-system.md`（§五）。
+- **2026-10-30 · 灵阅详情接入顶栏中心槽 + 浏览器组排除灵阅 tab**（`../artifact-topbar-actions/design.md`）。
+  - 决定：`ArtifactOpenCoordinator` 注册 `artifact-actions`（center / 8 / autoOverflow，下载 + 分享）；`browser-actions` 的 `visible` 增加「active tab 不是灵阅」——否则 priority 10 会顶掉灵阅组，产物页上也会误显示浏览器工具组。
+  - 影响文件：`Shared/Services/ArtifactOpenCoordinator.swift`、`Shared/Tools/BrowserToolProvider.swift`、`Shared/Views/ContentView.swift`、`Shared/Views/{ArtifactListView,HTMLArtifactView,DocumentListView}.swift`、`Shared/Services/DocumentSelectionCoordinator.swift`。

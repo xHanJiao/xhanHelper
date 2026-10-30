@@ -47,7 +47,7 @@ struct ArtifactDetailView: View {
     @ViewBuilder
     private var page: some View {
         if let html {
-            HTMLArtifactView(id: id, title: title, html: html)
+            HTMLArtifactView(html: html)
                 .ignoresSafeArea()
         } else {
             ArtifactLoadingView(title: title)

@@ -127,11 +127,11 @@
   - 首次打开一篇（列表还没加载完）就立刻切到别的 tab → 灵阅面板**不应**出现「加载失败 + 重试」（取消不算失败）；
   - 右栏拖窄到 < 600 → 自动收成窄条；拖宽恢复展开（硬地板收起不写回存储）；手动收起后拖宽仍收起；窄条点击展开、重启后收起态保留；
   - 滚到底自动加载第 31 条；当前页不在首页时顶部有钉行；
-  - 右上分享按钮仍在、白底、无横向滚动；让 agent 改版同一页 → 内容换新版、侧栏不重置。
+  - 顶栏出现「下载 / 分享」胶囊（2026-10-30 起；原来的右上角浮钮已撤，见 `artifact-topbar-actions`），页面白底、无横向滚动；让 agent 改版同一页 → 内容换新版、侧栏不重置。
 - 服务端无改动，无需起后端。
 
 ---
 
 ## 后续变更
 
-（暂无）
+- **2026-10-30 详情页分享改走窗口顶栏**：右上角浮动分享钮撤掉，详情页顶栏同位置出现「下载 / 分享」胶囊组（`ArtifactOpenCoordinator.ensureRegisteredGroup`）；撤销分享迁到灵阅卡片 `⋯`。详见 `docs/design/artifact-topbar-actions/design.md`。影响文件：`Services/ArtifactOpenCoordinator.swift`、`Views/HTMLArtifactView.swift`、`Views/ArtifactListView.swift`、`Views/ContentView.swift`。

@@ -10,14 +10,14 @@
 
 改法是：**卡片右上角放一颗 `⋯`，点开下拉菜单，管理类动作全在里面**。页脚不再放管理按钮。
 
-- **文档卡片**：`⋯` = 分享链接 / 下载 Markdown / 导出 PDF（仅 dev 构建）/ ─── / 删除（**仅 macOS**，见 §3.4）
-- **灵阅卡片**：`⋯` = 分享链接 / 下载 HTML / 导出 PDF（仅 dev 构建）/ ─── / 删除
+- **文档卡片**：`⋯` = 分享链接 / 下载 Markdown / ─── / 删除（**仅 macOS**，见 §3.4）
+- **灵阅卡片**：`⋯` = 分享链接 / 撤销分享 / 下载 HTML / 导出 PDF（仅 dev 构建）/ ─── / 删除
 - **记忆卡片**：不变（页脚 👍/👎，**不加 `⋯`**；记忆不做删除）
 - 智能体卡片：编辑 / 删除也走 `⋯`（2026-10-30 补齐，见 §10）；回收站的「恢复」：不变
 
-**范围只限卡片列表页。详情页（文档全文页、灵阅产物页）一行代码不碰**：顶栏那 3 颗文档按钮、灵阅详情右上浮的分享菜单全部保留原样。所以卡片上的 `⋯` 是**新增的第二入口**，不撤任何现有按钮。
+**范围只限卡片列表页。详情页（文档全文页、灵阅产物页）一行代码不碰**（2026-10-30 起作废，见 §11）：顶栏那 3 颗文档按钮、灵阅详情右上浮的分享菜单全部保留原样。所以卡片上的 `⋯` 是**新增的第二入口**，不撤任何现有按钮。
 
-已拍的三个决定（2026-10-30）：灵阅菜单**不放撤销分享**；文档与灵阅菜单项**完全一致**（分享/下载/导出/删除）；记忆**不要删除**，因此也不加 `⋯`。
+已拍的三个决定（2026-10-30）：灵阅菜单**不放撤销分享**（2026-10-30 晚起改为放，见 §11）；文档与灵阅菜单项**完全一致**（分享/下载/导出/删除）；记忆**不要删除**，因此也不加 `⋯`。
 
 ## 2. 为什么是「右上角菜单」而不是别的摆法
 
@@ -56,10 +56,10 @@
 |---|---|---|
 | 分享链接 | `DocumentSelectionCoordinator.shared.share(doc)` | 现成方法，幂等（先查旧链再建） |
 | 下载 Markdown | `...download(doc)` | 现成方法（`NSSavePanel`） |
-| 导出 PDF | `...exportPDF(doc)` | **需参数化**，见下 |
+| 导出 PDF | `...exportPDF(doc)` | **需参数化**，见下；2026-10-30 起入口下架、实现保留（见 §11） |
 | 删除 | `pendingDelete = doc` | 与右键菜单共用同一个确认弹窗和文案 |
 
-`Shared/Services/DocumentSelectionCoordinator.swift`：`exportPDF()` 由无参私有改成 `exportPDF(_ doc: Document)`——卡片上的文档不是「当前选中」的那篇。顶栏按钮改成先取 `selectedDocument` 再传参，行为不变。
+`Shared/Services/DocumentSelectionCoordinator.swift`：`exportPDF()` 由无参私有改成 `exportPDF(_ doc: Document)`——卡片上的文档不是「当前选中」的那篇。顶栏按钮改成先取 `selectedDocument` 再传参，行为不变（顶栏那颗已于 2026-10-30 下架，见 §11）。
 
 右键菜单**保留**（macOS 习惯），与 `⋯` 共用 `pendingDelete`。
 
@@ -70,13 +70,14 @@
 | 项 | 实现 |
 |---|---|
 | 分享链接 | `ArtifactOpenCoordinator.shared.copyShareLink(id:)`（新增） |
+| 撤销分享 | `ArtifactOpenCoordinator.shared.revokeShare(id:)`（2026-10-30 新增，详情页浮钮撤掉后这里是唯一入口，见 §11） |
 | 下载 HTML | `ArtifactOpenCoordinator.shared.downloadHTML(id:title:)`（新增） |
 | 导出 PDF | `ArtifactOpenCoordinator.shared.exportPDF(id:title:)`（新增） |
 | 删除 | 原样：`pendingDeletion = .one(item)` |
 
 `Shared/Services/ArtifactOpenCoordinator.swift` 新增三个方法：
 
-- `copyShareLink(id:)`：复用现成的 `share(id:)`（服务端幂等：有 token 就复用）→ `copyToPasteboard` → toast。这段逻辑现在长在 `HTMLArtifactView.copyShareLink` 里，详情页那颗浮钮保持不动（两份实现共存，见「明确不做」）。
+- `copyShareLink(id:)`：复用现成的 `share(id:)`（服务端幂等：有 token 就复用）→ `copyToPasteboard` → toast。这段逻辑当时长在 `HTMLArtifactView.copyShareLink` 里（2026-10-30 浮钮撤掉后只剩 coordinator 这一份，见 §11）。
 - `downloadHTML(id:title:)`：`getArtifact(id:)` 拿正文（列表接口不含 html）→ `NSSavePanel` → 存 `.html`。
 - `exportPDF(id:title:)`：`getArtifact(id:)` → `injectingBaseline(html)`（与屏幕同一份版式基线，`HTMLArtifactView.swift` 里现有的私有函数放宽为 internal）→ `DocumentPDFExporter.exportHTML` → `NSSavePanel`。
 
@@ -90,14 +91,14 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 
 ### 3.4 平台差异
 
-- 分享链接：两端都能用（`copyToPasteboard` 有 iOS 分支）。
-- 下载 / 导出 PDF：依赖 `NSSavePanel`，**macOS only**；iOS 的灵阅菜单里只出现「分享链接 / 删除」。
-- **文档卡片整颗 `⋯` 仅 macOS**：文档的分享/下载/导出在 `DocumentSelectionCoordinator` 里本身是 `#if os(macOS)`，删除的确认弹窗（`confirmationDialog`）也是 macOS-only——iOS 放出来就是几个点了没反应的项，所以 iOS 文档卡片保持现状（无 `⋯`）。
+- 分享链接：两端都能用（`copyToPasteboard` 有 iOS 分支）；撤销分享同样两端可用（`DELETE /share`）。
+- 下载 / 导出 PDF：依赖 `NSSavePanel`，**macOS only**；iOS 的灵阅菜单里只出现「分享链接 / 撤销分享 / 删除」。
+- **文档卡片整颗 `⋯` 仅 macOS**：文档的分享/下载在 `DocumentSelectionCoordinator` 里本身是 `#if os(macOS)`，删除的确认弹窗（`confirmationDialog`）也是 macOS-only——iOS 放出来就是几个点了没反应的项，所以 iOS 文档卡片保持现状（无 `⋯`）。
 
 ## 4. 影响面
 
 - 主链路？否。纯客户端展示层 + 一张新菜单；**后端零改动**（`artifacts` 的 share/unshare/delete、`documents` 的 share/delete 都已存在）。
-- 详情页行为不变（灵阅详情那颗浮钮、文档顶栏三颗胶囊都不动），所以不存在「同一动作两处文案打架」的新问题。
+- 详情页（2026-10-30 起已改，见 §11）：灵阅详情改走顶栏下载/分享组、浮钮撤掉；文档顶栏只剩下载/分享两颗。卡片 `⋯` 与详情页共用 coordinator 实现，不存在「同一动作两处文案打架」。
 - 记忆卡片零改动。
 - DB / 接口 / 配置：无。
 
@@ -105,8 +106,8 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 
 1. `xcrun swiftc -typecheck`（Shared + xHelperMac 两个源集，带项目设置）。
 2. 真机（必须）：
-   - 文档卡片 `⋯` 四项都能跑通；删除走原有确认弹窗，删完进回收站；回收站卡片仍只有「恢复」。
-   - 灵阅卡片 `⋯` 四项；下载的 `.html` 用 Safari 打开观感与右栏一致；导出的 PDF 分页正常（见风险 2）。
+   - 文档卡片 `⋯` 三项都能跑通（导出 PDF 2026-10-30 下架，见 §11）；删除走原有确认弹窗，删完进回收站；回收站卡片仍只有「恢复」。
+   - 灵阅卡片 `⋯` 五项；撤销分享三种结果提示正确；下载的 `.html` 用 Safari 打开观感与右栏一致；导出的 PDF 分页正常（见风险 2）。
    - 灵阅多选态：`⋯` 让位给勾选圈、不误触。
    - **点 `⋯` 不会连带打开卡片**（见风险 1）。
    - 记忆卡片页脚 👍/👎 行为不变、无 `⋯`。
@@ -114,9 +115,9 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 
 ## 6. 明确不做
 
-- 不动详情页（文档顶栏三颗胶囊、灵阅详情浮的分享菜单）。
+- 不动详情页（文档顶栏三颗胶囊、灵阅详情浮的分享菜单）—— **2026-10-30 作废，见 §11**。
 - 不做记忆删除；记忆卡片不加 `⋯`。
-- 不合并两处分享实现（`HTMLArtifactView.copyShareLink` 与 coordinator 的 `copyShareLink` 暂时并存）。
+- 不合并两处分享实现（`HTMLArtifactView.copyShareLink` 与 coordinator 的 `copyShareLink` 暂时并存）—— **2026-10-30 作废：浮钮撤掉后只剩 coordinator 一份，见 §11**。
 - 不统一「分享链接 host 规则」（文档用 `DeviceManager.webBaseURL`、灵阅用 API base；两者都是 `/api/share/...`，dev 走 Vite 代理、线上同源，当前都可用；自定义后端场景才分叉，另开票）。
 - 不做按宽度自动折叠（卡片宽度档位太少，不值）。
 - ~~智能体卡片的编辑/删除不搬进 `⋯`（后续想搬是零成本，改传 `menuActions` 即可）~~ —— 2026-10-30 已搬，见 §10。
@@ -169,3 +170,14 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 **影响文件**：`Shared/Views/AgentListView.swift`。组件层零改动。
 
 **详见**：`docs/design/right-sidebar-consistency/design.md`（同一轮里灵阅多选并进页头）。
+## 11. 灵阅详情改走顶栏胶囊，撤销分享迁入卡片菜单（2026-10-30）
+
+**背景**：本文 §1 写的「详情页一行代码不碰」已作废。文档详情顶栏有下载/分享胶囊组，灵阅详情只有页面右上角一颗浮动分享钮（带撤销分享），下载无入口；两个详情页形态不一致。
+
+**决定**：
+
+- 灵阅详情在窗口顶栏注册 `artifact-actions` 组：下载 HTML + 分享链接（不导出 PDF）。详见 `docs/design/artifact-topbar-actions/design.md`。
+- 撤掉灵阅详情右上角浮动分享钮；原菜单里的**撤销分享**挪进灵阅卡片 `⋯`（`分享链接 / 撤销分享 / 下载 HTML / [导出 PDF（仅 dev）] / 删除`）。§2 里「灵阅菜单不放撤销分享」随之作废。
+- 文档「导出 PDF」的顶栏胶囊与本文 §9 的卡片 `⋯` dev 专项**一起下架**；`DocumentSelectionCoordinator.exportPDF(_:)` 与 `DocumentPDFExporter` 实现保留，恢复只需加回按钮。§9「prod 照常显示顶栏那颗」不再成立。
+
+**影响文件**：`Shared/Views/ArtifactListView.swift`、`Shared/Views/HTMLArtifactView.swift`、`Shared/Views/DocumentListView.swift`、`Shared/Services/ArtifactOpenCoordinator.swift`、`Shared/Services/DocumentSelectionCoordinator.swift`、`Shared/Views/ContentView.swift`。

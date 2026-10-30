@@ -2220,7 +2220,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             ],
             visible: { [weak self] in
                 guard let rs = self?.rightSidebar else { return false }
-                return rs.activeTabId != nil && !rs.tabs.isEmpty && rs.isOpen
+                // 灵阅 tab 也占 activeTabId，但它不是网页：浏览器工具组不该出现在产物页上，
+                // 也不该以更高优先级顶掉灵阅自己的 `artifact-actions` 组。
+                return rs.isOpen && rs.activeTabId != nil && !rs.tabs.isEmpty
+                    && !RightSidebarManager.isArtifactTab(rs.activeTabId)
             },
             // 放不下时允许"留一部分 + 末尾 ⋯"（自动省略），见 docs/design/overflow-collapse
             autoOverflow: true

@@ -396,7 +396,7 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 - **为什么直接吐 HTML 而不是像文档那样返回 JSON + Vue 页**：产物本身就是完整自包含文档，前端再渲染一层纯属多写一个页面。
 - **为什么挂在 `/api/` 下**：nginx 只转发 `/api/` 与 `/images/`，因此零部署改动（想要 `/a/xxx` 短链才需要动线上配置）。
 - 链接**永久有效、可随时撤销**；不做有效期、不做访问密码、不做访问计数。
-- **v1 只有 macOS 有分享入口**（产物页右上角浮钮）：iOS 的 sheet 里没有，`HTMLArtifactView` 已按两端都能编译写，补的话是在 `ChatView` 的 sheet `.toolbar` 里放同一个按钮。
+- **v1 只有 macOS 有分享入口**（2026-10-30 起在窗口顶栏的下载/分享胶囊组，见 `artifact-topbar-actions`；更早是产物页右上角浮钮）：iOS 的 sheet 里没有，补的话是在 `ChatView` 的 sheet `.toolbar` 里放同一组按钮。
 
 安全（两层）：
 
@@ -505,7 +505,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 客户端（新增）：
 
 - `Shared/Views/HTMLArtifactCard.swift`（照 `DocumentRefCard`）
-- `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底 + 分享按钮）
+- `Shared/Views/HTMLArtifactView.swift`（WKWebView + 关 JS + 取消导航 + 版式基线注入 + 不透明底；详情页的下载/分享在窗口顶栏 `artifact-actions` 组，见 `docs/design/artifact-topbar-actions`）
 - `Shared/Views/ArtifactLoadingView.swift`（大页面的骨架态：spinner + 标题；失败时直接关掉 tab）
 - `Shared/Views/ArtifactListView.swift`（右栏「灵阅」列表：`PageContainer` + `CardGridView` + 单条删除 + 多选批量删除）
 - `Shared/ViewModels/ArtifactViewModel.swift`（分页加载，30/页；`delete` / `deleteMany`）
@@ -556,7 +556,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - CSS 背景图：页面里写 `url(image:<id>)`，确认工具报错而不是页面静默少图
 - 图片张数：一页塞 13 张，确认报错而不去读第 13 个文件
 - 内存：连开关五篇，活动监视器里 WebContent 进程数不应随"打开过的篇数"线性增长
-- **分享（macOS）**：产物页右上角点分享 → 复制到链接 → 浏览器无痕窗口打开，页面完整、图片在、控制台无报错；`curl -i` 确认 `Content-Security-Policy: sandbox`、`Cache-Control: no-store`
+- **分享（macOS）**：灵阅详情顶栏点分享 → 复制到链接 → 浏览器无痕窗口打开，页面完整、图片在、控制台无报错；`curl -i` 确认 `Content-Security-Policy: sandbox`、`Cache-Control: no-store`
 - **分享撤销**：`DELETE .../share` 后同一个链接 404；再点分享得到**新** token（旧链接不会复活）
 - **分享与删除**：分享着的一条产物删掉后，链接立刻 404
 - **分享与无痕**：无痕会话里生成的页面，会话销毁后链接 404
@@ -706,3 +706,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：多选状态从 `ArtifactListView` 的 `@State` 搬进 `ArtifactViewModel`（页头才读得到），入口改成页头 `checkmark.circle`，选中态用 `BrowsePanelView` 的共享 `SelectionToolbar`；内容区那行自绘工具条删除。灵阅多选跨端保留（判断放在 `#if os(macOS)` 之外）。
   - 影响文件：`client/.../ViewModels/ArtifactViewModel.swift`（+多选状态与 `deleteSelected`）、`Views/BrowsePanelView.swift`（+入口/工具条/批量确认框）、`Views/ArtifactListView.swift`（删本地选择态与工具栏）。
   - 详见 `docs/design/right-sidebar-consistency/design.md`。
+- **2026-10-30 · 灵阅详情接入顶栏胶囊组（下载 / 分享）**
+  - 起因：文档详情有顶栏 `document-actions` 胶囊组，灵阅详情没有（分享靠页面右上角浮钮、下载无入口），两个详情页形态不一致。
+  - 决定：`ArtifactOpenCoordinator` 注册 `artifact-actions` 组（center / priority 8 / autoOverflow），按钮 = 下载 HTML + 分享链接；`visible` = 右栏打开且 active tab 带 `artifact:` 前缀，id / 标题都从该 tab 取。
+  - 决定：撤掉页面右上角浮动分享钮；撤销分享挪进灵阅卡片 `⋯`（此前「不进卡片菜单」的决定作废），`HTMLArtifactView` 回归纯 WKWebView。
+  - 决定：文档「导出 PDF」的顶栏胶囊与卡片 `⋯` 里的 dev 专项一起下架，实现（`DocumentSelectionCoordinator.exportPDF` / `DocumentPDFExporter`）保留。
+  - 影响文件：`client/.../Services/ArtifactOpenCoordinator.swift`（+`ensureRegisteredGroup` / `revokeShare`）、`Views/ContentView.swift`（+ 注册调用）、`Views/HTMLArtifactView.swift`（−浮钮）、`Views/ArtifactListView.swift`（+撤销分享）、`Services/DocumentSelectionCoordinator.swift`（−PDF 按钮）、`Views/DocumentListView.swift`（−PDF 菜单项）；详见 `docs/design/artifact-topbar-actions/design.md`。

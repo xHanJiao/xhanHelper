@@ -71,12 +71,17 @@ struct ArtifactListView: View {
         )
     }
 
-    /// 卡片右上角「⋯」：分享 / 下载 / 导出 PDF / 删除（见 `docs/design/card-more-menu`）。
-    /// 分享链接两端都有（`copyToPasteboard` 有 iOS 分支）；下载与 PDF 依赖 `NSSavePanel`，仅 macOS。
+    /// 卡片右上角「⋯」：分享 / 撤销分享 / 下载 / 导出 PDF / 删除（见 `docs/design/card-more-menu`）。
+    /// 分享与撤销链接两端都有（`copyToPasteboard` 有 iOS 分支）；下载与 PDF 依赖 `NSSavePanel`，仅 macOS。
     private func menuActions(for item: ArtifactSummary) -> [CardAction] {
         var actions: [CardAction] = [
             CardAction(label: "分享链接", icon: "link", role: .normal) {
                 Task { await ArtifactOpenCoordinator.shared.copyShareLink(id: item.id) }
+            },
+            // 详情页右上浮钮撤掉后，这里是撤销分享的唯一入口（见 `artifact-topbar-actions`）。
+            // role 用 normal：卡片菜单只在第一颗 destructive（删除）前插分隔线，这里红了会切错位置。
+            CardAction(label: "撤销分享", icon: "xmark.circle", role: .normal) {
+                Task { await ArtifactOpenCoordinator.shared.revokeShare(id: item.id) }
             },
         ]
         #if os(macOS)

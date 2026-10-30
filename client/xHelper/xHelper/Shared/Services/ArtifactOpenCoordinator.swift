@@ -33,6 +33,10 @@ final class ArtifactOpenCoordinator: ObservableObject {
 
     private var baseURL = ""
     private var token = ""
+    /// 按 id 记录进行中的分享 / 撤销，避免连点重复请求（跨条目互不阻塞）
+    private var sharingIDs: Set<String> = []
+    private var revokingIDs: Set<String> = []
+    private var groupRegistered = false
 
     func configure(baseURL: String, token: String) {
         self.baseURL = baseURL
@@ -44,6 +48,54 @@ final class ArtifactOpenCoordinator: ObservableObject {
     private func tabID(_ id: String) -> String {
         "\(RightSidebarManager.artifactTabPrefix)\(id)"
     }
+
+    // MARK: - 顶栏胶囊组（与文档详情同口径）
+
+    /// 注册灵阅详情顶栏组（幂等，参照 `DocumentSelectionCoordinator` 的「注册一次 + visible 闭包」）。
+    /// 只在右栏前台正显示某个灵阅 tab 时出现；id / 标题都从那个 tab 取。
+    #if os(macOS)
+    func ensureRegisteredGroup() {
+        guard !groupRegistered else { return }
+        groupRegistered = true
+        TopBarRegistry.shared.register(TopBarGroup(
+            id: "artifact-actions",
+            slot: .center,
+            priority: 8,
+            buttons: [
+                TopBarButton(id: "artifact-download", icon: { "arrow.down.circle" },
+                             enabled: { true },
+                             action: { [weak self] in
+                                 guard let (id, title) = self?.currentArtifact else { return }
+                                 Task { await self?.downloadHTML(id: id, title: title) }
+                             },
+                             help: { "下载页面 (.html)" }),
+                TopBarButton(id: "artifact-share", icon: { "link" },
+                             enabled: { true },
+                             action: { [weak self] in
+                                 guard let (id, _) = self?.currentArtifact else { return }
+                                 Task { await self?.copyShareLink(id: id) }
+                             },
+                             help: { "分享页面（获得链接者无需登录即可查看）" }),
+            ],
+            visible: { [weak self] in self?.isArtifactDetailVisible ?? false },
+            // 放不下时允许"留一部分 + 末尾 ⋯"（自动省略），见 docs/design/overflow-collapse
+            autoOverflow: true
+        ))
+    }
+
+    /// 右栏前台显示的灵阅 tab：(id, 标题)。标题在正文加载后已由 `updateTabTitle` 写成真实标题。
+    private var currentArtifact: (id: String, title: String)? {
+        let prefix = RightSidebarManager.artifactTabPrefix
+        guard let rs = rightSidebar,
+              let tabID = rs.activeTabId, tabID.hasPrefix(prefix),
+              let tab = rs.tabs.first(where: { $0.id == tabID }) else { return nil }
+        return (String(tabID.dropFirst(prefix.count)), tab.title)
+    }
+
+    private var isArtifactDetailVisible: Bool {
+        rightSidebar?.isOpen == true && currentArtifact != nil
+    }
+    #endif
 
     func open(id: String, title: String) {
         let tabID = tabID(id)
@@ -223,9 +275,25 @@ final class ArtifactOpenCoordinator: ObservableObject {
 
     /// 生成或复用分享链接 → 复制到剪贴板 → toast。失败由 `share(id:)` 自己 toast。
     func copyShareLink(id: String) async {
+        // 顶栏是单颗按钮，双击别发两次分享请求；按 id 判重，不同页面的分享互不阻塞
+        guard !sharingIDs.contains(id) else { return }
+        sharingIDs.insert(id)
+        defer { sharingIDs.remove(id) }
         guard let url = await share(id: id) else { return }
         copyToPasteboard(url)
         ToastCenter.shared.show("分享链接已复制，获得链接者无需登录即可查看")
+    }
+
+    /// 撤销分享 → 把三种结果 toast 出来（灵阅卡片 `⋯` 入口）。`.none` 的失败已由 `unshare` toast。
+    func revokeShare(id: String) async {
+        guard !revokingIDs.contains(id) else { return }
+        revokingIDs.insert(id)
+        defer { revokingIDs.remove(id) }
+        switch await unshare(id: id) {
+        case .some(true): ToastCenter.shared.show("已撤销分享，旧链接已失效")
+        case .some(false): ToastCenter.shared.show("当前页面尚未生成分享链接")
+        case .none: break
+        }
     }
 
     #if os(macOS)

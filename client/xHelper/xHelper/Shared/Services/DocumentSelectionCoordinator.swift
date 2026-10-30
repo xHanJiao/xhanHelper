@@ -91,13 +91,6 @@ final class DocumentSelectionCoordinator: ObservableObject {
                                  self?.download(doc)
                              },
                              help: { "下载文档 (.md)" }),
-                TopBarButton(id: "document-export-pdf", icon: { "doc.richtext" },
-                             enabled: { true },
-                             action: { [weak self] in
-                                 guard let doc = self?.selectedDocument else { return }
-                                 self?.exportPDF(doc)
-                             },
-                             help: { "导出 PDF（排版）" }),
                 TopBarButton(id: "document-share", icon: { "link" },
                              enabled: { true },
                              action: { [weak self] in

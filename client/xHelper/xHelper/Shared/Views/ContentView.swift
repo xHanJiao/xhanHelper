@@ -506,6 +506,7 @@ struct ContentView: View {
                     ArtifactOpenCoordinator.shared.rightSidebar = rightSidebar
                     ArtifactOpenCoordinator.shared.artifactVM = artifactVM
                     ArtifactOpenCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+                    ArtifactOpenCoordinator.shared.ensureRegisteredGroup()
                     registerAppShortcutBridge()
                 }
                 .onDisappear {

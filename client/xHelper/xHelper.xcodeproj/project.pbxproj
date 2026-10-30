@@ -464,9 +464,9 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "xhanHelper dev";
 				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "读取你的日历来回答日程问题，并把提醒写成日历事件（iCloud 会同步到你的其他设备）";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "需要访问本地网络以连接 xhanHelper 服务";
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "读取你的日历来回答日程问题，并把提醒写成日历事件（iCloud 会同步到你的其他设备）";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -504,9 +504,9 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "读取你的日历来回答日程问题，并把提醒写成日历事件（iCloud 会同步到你的其他设备）";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "需要访问本地网络以连接 xhanHelper 服务";
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "读取你的日历来回答日程问题，并把提醒写成日历事件（iCloud 会同步到你的其他设备）";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

@@ -22,7 +22,10 @@ pre,code{white-space:pre-wrap;word-break:break-word}
 
 /// 把基线插到 `<head>` 开头。服务端保证每页都有 head（`htmlsanitize.ensureHead`），
 /// 兜底分支只是别让万一缺 head 的页面白屏。
-private func injectingBaseline(_ html: String) -> String {
+///
+/// 非 private：灵阅卡片「⋯」导出 PDF 时要用同一份基线（`ArtifactOpenCoordinator.exportPDF`），
+/// 否则 PDF 和右栏的列宽/留白对不上。
+func injectingBaseline(_ html: String) -> String {
     let style = "<style>\(baselineCSS)</style>"
     guard let headStart = html.range(of: "<head", options: .caseInsensitive),
           let tagEnd = html[headStart.lowerBound...].firstIndex(of: ">") else {

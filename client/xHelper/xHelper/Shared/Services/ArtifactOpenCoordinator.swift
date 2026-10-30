@@ -1,5 +1,9 @@
 import Combine
 import SwiftUI
+#if os(macOS)
+import AppKit
+import UniformTypeIdentifiers
+#endif
 
 /// 打开一条 HTML 产物：拉正文 → 在右栏开 tab（macOS）/ sheet（iOS）。
 ///
@@ -125,4 +129,51 @@ final class ArtifactOpenCoordinator: ObservableObject {
             return nil
         }
     }
+
+    // MARK: - 卡片「⋯」菜单（docs/design/card-more-menu）
+
+    /// 生成或复用分享链接 → 复制到剪贴板 → toast。失败由 `share(id:)` 自己 toast。
+    func copyShareLink(id: String) async {
+        guard let url = await share(id: id) else { return }
+        copyToPasteboard(url)
+        ToastCenter.shared.show("分享链接已复制：拿到链接的人无需登录即可查看")
+    }
+
+    #if os(macOS)
+    /// 下载正文为 `.html` 单文件：列表接口不含正文，先按 id 拉。
+    func downloadHTML(id: String, title: String) async {
+        do {
+            let html = try await api.getArtifact(id: id).html
+            guard let url = saveURL(title: title, ext: "html", contentType: .html) else { return }
+            try html.write(to: url, atomically: true, encoding: .utf8)
+            ToastCenter.shared.show("已下载 \(url.lastPathComponent)")
+        } catch {
+            LogBuffer.shared.error("ArtifactOpenCoordinator.downloadHTML id=\(id): \(error)")
+            ToastCenter.shared.show("下载失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 导出正文为排版 PDF：复用 `DocumentPDFExporter` 的打印分页（与文档导出同一条管线）。
+    func exportPDF(id: String, title: String) async {
+        do {
+            let html = try await api.getArtifact(id: id).html
+            guard let url = saveURL(title: title, ext: "pdf", contentType: .pdf) else { return }
+            // 与屏幕同一份版式基线，否则 PDF 和右栏观感不一致
+            try await DocumentPDFExporter.exportHTML(injectingBaseline(html), to: url)
+            ToastCenter.shared.show("已导出 \(url.lastPathComponent)")
+        } catch {
+            LogBuffer.shared.error("ArtifactOpenCoordinator.exportPDF id=\(id): \(error)")
+            ToastCenter.shared.show("导出 PDF 失败")
+        }
+    }
+
+    /// 统一的保存面板；用户取消返回 nil。
+    private func saveURL(title: String, ext: String, contentType: UTType) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = ext == "pdf" ? "导出 PDF" : "下载页面"
+        panel.nameFieldStringValue = (title.isEmpty ? "页面" : title) + ".\(ext)"
+        panel.allowedContentTypes = [contentType]
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+    #endif
 }

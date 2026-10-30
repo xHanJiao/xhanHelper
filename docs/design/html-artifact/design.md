@@ -668,3 +668,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：服务端校验是硬要求（归属/nid/hash/rich/图片/样式体积/乐观锁，见 `fine-grained-edit.md` §4.5），不只依赖提示词；系统提示常驻「改版动作选择」。
   - 决定：客户端 `patch` 结果与 `create` 一样挂卡并刷新右栏（`reloadIfOpen`）。
   - 影响文件：`server/internal/util/htmlpatch/`（新）+测试、`tool/html_artifact.go`、`service/artifact_repo.go`（+`UpdateIfSourceUnchanged`）+测试、`agent/promptbuilder/static.go` + `builder.go`、`client/.../ViewModels/ChatViewModel.swift`。
+- **2026-10-30 · 灵阅卡片的动作收进右上角「⋯」**
+  - 起因：卡片页脚要同时放日期、分享、下载、导出、删除，260 宽的三列卡片放不下；且这几个动作在文档卡片上是另一套摆法（页脚 / 顶栏 / 右键各一处）。
+  - 决定：卡片右上角加一颗 `⋯`（`CardConfig.menuActions`，见 `docs/design/card-more-menu/design.md`），菜单项 = 分享链接 / 下载 HTML / 导出 PDF / ─── / 删除；页脚不再放删除按钮。选择态传空数组让位给勾选圈。
+  - 决定：撤销分享**不进卡片菜单**（灵阅详情页右上那颗浮钮里的「撤销分享」保持原样，详情页本次零改动）。
+  - 决定：下载 = 存 `.html` 单文件、导出 = 走 `DocumentPDFExporter.exportHTML`（与文档 PDF 同一条打印分页管线，加载前注入同一份版式基线）。
+  - 影响文件：`client/.../Views/CardStyle.swift`、`CardView.swift`、`ArtifactListView.swift`、`HTMLArtifactView.swift`（基线函数放宽为 internal）、`Services/ArtifactOpenCoordinator.swift`（+`copyShareLink` / `downloadHTML` / `exportPDF`）、`DocumentPDFExporter.swift`（+`exportHTML`）。

@@ -143,6 +143,8 @@ struct DocumentListView: View {
             tags: parseTags(doc.tags),
             footerText: formatConversationDate(doc.updatedAt),
             style: .document,
+            // 选择态让位给勾选圈（两者都占右上角）
+            menuActions: selecting ? [] : documentMenuActions(doc),
             onTap: {
                 if selecting {
                     viewModel.toggleDocumentSelection(doc.id)
@@ -186,6 +188,32 @@ struct DocumentListView: View {
                 Label("删除", systemImage: "trash")
             }
         }
+        #endif
+    }
+
+    /// 卡片右上角「⋯」：分享 / 下载 / 导出 PDF / ─── / 删除。
+    /// 前三项与顶栏那三颗胶囊共用同一套 coordinator 实现（详情页入口保持不变）。
+    /// 整个菜单仅 macOS：coordinator 的实现是 macOS-only，删除的确认弹窗也是 `#if os(macOS)`，
+    /// iOS 上放出来就是三个点了没反应的项 —— iOS 文档卡片保持现状（无 `⋯`）。
+    private func documentMenuActions(_ doc: Document) -> [CardAction] {
+        #if os(macOS)
+        return [
+            CardAction(label: "分享链接", icon: "link", role: .normal) {
+                DocumentSelectionCoordinator.shared.share(doc)
+            },
+            CardAction(label: "下载 Markdown", icon: "arrow.down.circle", role: .normal) {
+                DocumentSelectionCoordinator.shared.download(doc)
+            },
+            CardAction(label: "导出 PDF", icon: "doc.richtext", role: .normal) {
+                DocumentSelectionCoordinator.shared.exportPDF(doc)
+            },
+            // 与右键菜单共用同一个确认弹窗和文案
+            CardAction(label: "删除", icon: "trash", role: .destructive) {
+                pendingDelete = doc
+            },
+        ]
+        #else
+        return []
         #endif
     }
 

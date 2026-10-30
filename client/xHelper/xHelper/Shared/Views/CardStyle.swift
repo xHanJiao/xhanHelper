@@ -7,19 +7,30 @@ struct TagBadge: Identifiable {
 }
 
 struct CardAction: Identifiable {
-    let id = UUID()
+    /// 稳定身份：同一张卡片每次重新求值不该换 id（`UUID()` 会让 `ForEach` 当新视图重建）。
+    var id: String { "\(icon)|\(label)" }
     let label: String
     let icon: String
     let role: CardActionRole
     /// 选中态（如反馈按钮已赞/已踩）：底色加重，图标由调用方传 `.fill` 版。
     let isActive: Bool
+    /// tooltip / 无障碍名。留空时纯图标按钮（页脚反馈）也要有个名字。
+    let help: String?
     let action: () -> Void
 
-    init(label: String, icon: String, role: CardActionRole, isActive: Bool = false, action: @escaping () -> Void) {
+    init(
+        label: String,
+        icon: String,
+        role: CardActionRole,
+        isActive: Bool = false,
+        help: String? = nil,
+        action: @escaping () -> Void
+    ) {
         self.label = label
         self.icon = icon
         self.role = role
         self.isActive = isActive
+        self.help = help
         self.action = action
     }
 }
@@ -38,6 +49,10 @@ struct CardConfig {
     let style: CardStyle
     let titleColorOverride: Color?
     let actions: [CardAction]
+    /// 右上角「⋯」菜单里的管理类动作（分享/下载/导出/删除）。
+    /// 与 `actions` 分工：`actions` 是页脚按钮（一级操作，如 👍/👎 要一眼见状态），
+    /// `menuActions` 是收进菜单的二级操作。选择态由调用方传 `[]` 让位给勾选圈。
+    let menuActions: [CardAction]
     let onTap: (() -> Void)?
 
     init(
@@ -49,6 +64,7 @@ struct CardConfig {
         style: CardStyle,
         titleColorOverride: Color? = nil,
         actions: [CardAction] = [],
+        menuActions: [CardAction] = [],
         onTap: (() -> Void)? = nil
     ) {
         self.title = title
@@ -59,6 +75,7 @@ struct CardConfig {
         self.style = style
         self.titleColorOverride = titleColorOverride
         self.actions = actions
+        self.menuActions = menuActions
         self.onTap = onTap
     }
 }

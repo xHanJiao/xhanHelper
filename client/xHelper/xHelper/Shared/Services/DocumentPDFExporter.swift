@@ -38,6 +38,13 @@ enum DocumentPDFExporter {
 
     // MARK: - 私有
 
+    /// 导出任意单文件 HTML（灵阅产物）到 PDF：与文档导出共用 `renderPDF` 的打印分页。
+    /// `html` 需已含版式基线（调用方传 `injectingBaseline(...)`）；产物自包含，`baseURL` 传 nil。
+    static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async throws {
+        let data = try await Self.renderPDF(html: html, baseURL: baseURL)
+        try data.write(to: url, options: .atomic)
+    }
+
     /// 组装导出 HTML：mermaid 段渲染为 data URI，markdown 段拼接后交给 marked 运行时转 HTML。
     private static func buildHTML(title: String, tags: String, markdown: String) throws -> String {
         guard let markedJS = MarkdownWebUtils.markedJS() else {

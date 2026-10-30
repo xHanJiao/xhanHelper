@@ -93,7 +93,10 @@ final class DocumentSelectionCoordinator: ObservableObject {
                              help: { "下载文档 (.md)" }),
                 TopBarButton(id: "document-export-pdf", icon: { "doc.richtext" },
                              enabled: { true },
-                             action: { [weak self] in self?.exportPDF() },
+                             action: { [weak self] in
+                                 guard let doc = self?.selectedDocument else { return }
+                                 self?.exportPDF(doc)
+                             },
                              help: { "导出 PDF（排版）" }),
                 TopBarButton(id: "document-share", icon: { "link" },
                              enabled: { true },
@@ -136,9 +139,9 @@ final class DocumentSelectionCoordinator: ObservableObject {
         #endif
     }
 
-    /// 导出当前文档为排版 PDF（macOS NSSavePanel + WebKit 分页导出）
-    private func exportPDF() {
-        guard let doc = selectedDocument else { return }
+    /// 导出文档为排版 PDF（macOS NSSavePanel + WebKit 分页导出）。
+    /// 顶栏按钮传 `selectedDocument`，卡片「⋯」传自己那张 —— 两处共用。
+    func exportPDF(_ doc: Document) {
         #if os(macOS)
         let fileName = (doc.title.isEmpty ? doc.id : doc.title) + ".pdf"
         let panel = NSSavePanel()

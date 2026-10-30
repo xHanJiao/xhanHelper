@@ -18,7 +18,7 @@ struct DocumentListView: View {
                     viewModel: viewModel,
                     onBack: { viewModel.openDocument = nil }
                 )
-                // 换篇重建：滚动位置 / 查找栏 / 目录展开态归零
+                // 换篇重建：滚动位置 / 目录展开态归零（查找栏是 @AppStorage，跨篇保留）
                 .id(doc.id)
             } else {
                 #if os(macOS)
@@ -487,6 +487,9 @@ private struct DocumentFullView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // macOS 不再有这条二级顶栏：返回 / 划线与批注 / 查找都已并入右侧栏页头
+            // （`BrowsePanelView.panelHeader`，见 docs/design/document-highlight-annotation D20）
+            #if !os(macOS)
             HStack(spacing: 8) {
                 Button(action: onBack) {
                     HStack(spacing: 4) {
@@ -501,16 +504,6 @@ private struct DocumentFullView: View {
 
                 Spacer()
 
-                #if os(macOS)
-                Button { toggleAnnotationPanel() } label: {
-                    Image(systemName: "list.bullet.rectangle")
-                        .font(.system(size: 12))
-                        .foregroundColor(annotOpen ? Color("appAccent") : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("划线与批注面板")
-                #endif
-
                 Button { toggleFind() } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12))
@@ -523,11 +516,12 @@ private struct DocumentFullView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
+            Divider()
+            #endif
+
             if showFindBar {
                 findBar
             }
-
-            Divider()
 
             HStack(alignment: .top, spacing: 0) {
                 // macOS：侧栏常驻（没标题也有「列表」可切，入口不能消失）；iOS 仍只在有标题时显示
@@ -676,7 +670,9 @@ private struct DocumentFullView: View {
     @AppStorage("xhan_doc_toc_collapsed") private var tocCollapsed = true
     /// 侧栏模式（目录 / 列表）。持久化：换篇会走外层 `.id(doc.id)` 重建，@State 留不住。
     @AppStorage("xhan_doc_sidebar_mode") private var sidebarMode: DocSidebarMode = .toc
-    @State private var showFindBar = false
+    /// 查找栏开合：macOS 的开关在右侧栏页头（`BrowsePanelView.panelHeader`），
+    /// 两处得读同一个 key，所以走 @AppStorage 而不是 @State。
+    @AppStorage("xhan_doc_find_open") private var showFindBar = false
     /// 侧栏「文档列表」行鼠标悬停项（仅 macOS 用；hover 底色与顶栏会话下拉同源）
     #if os(macOS)
     @State private var hoveredDocID: String?
@@ -1215,13 +1211,6 @@ private struct DocumentFullView: View {
     private func toggleFind() {
         if showFindBar { closeFind() } else { showFindBar = true }
     }
-
-    #if os(macOS)
-    /// 顶栏按钮：开/合常驻批注面板（全局记忆。空间不够时仍会留在窄条）。
-    private func toggleAnnotationPanel() {
-        withAnimation { annotOpen.toggle() }
-    }
-    #endif
 
     private func closeFind() {
         showFindBar = false

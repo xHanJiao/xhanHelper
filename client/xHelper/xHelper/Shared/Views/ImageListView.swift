@@ -121,12 +121,7 @@ struct ImageListView: View {
             .clipped()
             .overlay(alignment: .topTrailing) {
                 if selecting {
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 18))
-                        .foregroundStyle(selected ? Color("appAccent") : .secondary.opacity(0.5))
-                        .background(Circle().fill(.white).padding(1))
-                        .padding(5)
-                        .allowsHitTesting(false)
+                    CardSelectionBadge(isSelected: selected)
                 } else {
                     deleteButton(item)
                 }
@@ -162,13 +157,6 @@ struct ImageListView: View {
             }
         }
         .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            if selecting && selected {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color("appAccent"), lineWidth: 2)
-                    .allowsHitTesting(false)
-            }
-        }
         .contentShape(Rectangle())
         .onTapGesture {
             if selecting {

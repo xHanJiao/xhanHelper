@@ -225,3 +225,34 @@ private struct CardMoreMenu: View {
         .accessibilityLabel("更多操作")
     }
 }
+
+/// 多选态右上角的勾选圈：文档 / 灵阅 / 图片三处共用。
+///
+/// 口径（2026-10-30 拍板）：**只有这一颗圈** —— 无底色、也不给整卡描边。
+/// 此前三处各写一份（18pt/17pt、有/无材质底、两处额外描 2pt accent 边），观感对不上。
+struct CardSelectionBadge: View {
+    let isSelected: Bool
+
+    var body: some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 18))
+            .foregroundColor(isSelected ? Color("appAccent") : .secondary)
+            .padding(10)
+            // 整张卡已经是切换命中区；圈只是指示器，别让它截走角落的点击
+            .allowsHitTesting(false)
+            .accessibilityLabel(isSelected ? "已选中" : "未选中")
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension View {
+    /// 多选态：右上角挂勾选圈。overlay 常挂、内部判 `isSelecting`，
+    /// 进出选择态不改变视图结构（写 `if isSelecting { self.overlay… } else { self }` 会换身份、重建卡片）。
+    func cardSelection(isSelecting: Bool, isSelected: Bool) -> some View {
+        overlay(alignment: .topTrailing) {
+            if isSelecting {
+                CardSelectionBadge(isSelected: isSelected)
+            }
+        }
+    }
+}

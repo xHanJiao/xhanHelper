@@ -34,7 +34,8 @@
 | RS-3 | 灵阅多选**跨端保留** | 文档/图片的多选入口在 `#if os(macOS)` 里，灵阅那行工具条原本两端都有。判断放在平台分支之外，iOS 不倒退 |
 | RS-4 | 批量删除确认放 `BrowsePanelView` | 与文档（batch）/图片同一处；灵阅单条删除的 alert 仍留在 `ArtifactListView` |
 | RS-5 | 智能体删除**加二次确认** | 设定不可恢复；文档/灵阅/图片都有确认，只有它没有 |
-| RS-6 | 勾选圈样式、图片角 ✕、回收站「恢复」、文档「全选」**本次不动** | 用户 2026-10-30 拍板只做前两项，其余留以后 |
+| RS-6 | 图片角 ✕、回收站「恢复」、文档「全选」**本次不动** | 用户 2026-10-30 拍板只做前两项，其余留以后 |
+| RS-7 | 勾选态统一成**一颗圈、无底色、无整卡描边** | 用户 2026-10-30 拍板「要么都有要么都没 → 都没」。此前三处各写一份（18/17pt、有/无材质底、两处多描 2pt 边） |
 
 ## 3. 技术方案
 
@@ -44,6 +45,8 @@
 | `Shared/Views/BrowsePanelView.swift` | `body` 里灵阅选中态的判断提到 `#if os(macOS)` 之前；`panelHeader` 公共段加灵阅入口图标；新增 `artifactSelectionHeader`（复用 `SelectionToolbar`）+ `isConfirmingArtifactBatchDelete`；`onChange(of: browsePanelSelection)` 补 `artifactVM.exitSelection()`；`ArtifactPage` 子树挂批量删除确认框 |
 | `Shared/Views/ArtifactListView.swift` | 删掉本地 `@State selecting/selected`、`toolbar`、`toggle`、`toggleAll`、`exitSelection`、`PendingDeletion.many`；卡片改读 VM；单条删除 alert 保留 |
 | `Shared/Views/AgentListView.swift` | `actions` → `menuActions: [编辑, 删除]`；新增 `pendingDelete` + `confirmationDialog` |
+| `Shared/Views/CardView.swift` | 新增 `CardSelectionBadge`（18pt 无底圈，含无障碍名）+ `View.cardSelection(isSelecting:isSelected:)`（overlay 常挂、内部判选择态，进出不换视图身份）；文档 / 灵阅 / 图片三处改用 |
+| `Shared/Views/DocumentListView.swift`、`ArtifactListView.swift`、`ImageListView.swift` | 各自那份勾选圈（及文档/图片的 2pt 选中描边）删掉，改挂 `.cardSelection(...)`；图片瓦片的删除 ✕ 分支不变 |
 
 工具条动作：`取消 | 已选 N 页 | 全选 + 删除`（`删除` 红字、空选或删除在飞时置灰）。批量删除文案：「选中的 N 页将被删除，不能恢复；已分享的链接会立即失效。」成功后 toast「已删除 N 页」（与文档/图片一致）。入口图标补了 `.accessibilityLabel`：iOS 不显示 `.help`，纯图标按钮没有无障碍名。
 
@@ -59,11 +62,10 @@
 
 1. `xcrun swiftc -typecheck`：macOS（`Shared/**` + `xHelperMac/*.swift`）与 iOS 各一次，带项目真实设置。
 2. 真机（macOS + iOS 各一次）：macOS 上灵阅入口在页头、Esc 退出、全选/取消全选/删除/取消四态、删完对应右栏 tab 一并关闭、翻页后勾选不留幽灵 id；iOS 上确认灵阅入口图标够显眼（`.help` 不显示，只有 `.accessibilityLabel`）、多选点卡切换与删除可用。智能体 `⋯` 两项、删除有确认、取消不删、编辑弹窗照旧（两端）。
-3. 深浅色各看一次 `⋯` 与勾选圈。
+3. 深浅色各看一次 `⋯` 与勾选圈；**图片缩略图**上重点看圈（无底色，压在照片上最吃亏；看不清就只调未选中色一个常量，不动结构）。
 
 ## 6. 明确不做
 
-- 勾选圈/描边三套样式合一（文档 18pt 无底、图片 18pt 白圆底、灵阅 17pt 材质圆底）。
 - 图片瓦片右上角 ✕ 收进 `⋯`（瓦片不是 `CardView`，要另做一套菜单）。
 - 回收站「恢复」收进 `⋯`（页脚只有一颗按钮，收进去反而多点一次）。
 - 文档工具条补「全选」。

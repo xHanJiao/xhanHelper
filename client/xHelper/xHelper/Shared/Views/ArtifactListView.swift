@@ -45,23 +45,12 @@ struct ArtifactListView: View {
         }
     }
 
-    @ViewBuilder
     private func cardContent(for item: ArtifactSummary) -> some View {
-        ZStack(alignment: .topTrailing) {
-            CardView(config: cardConfig(for: item))
-            if viewModel.isSelecting {
-                Image(systemName: viewModel.selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 17))
-                    .foregroundColor(viewModel.selectedIDs.contains(item.id) ? Color("appAccent") : .secondary)
-                    .padding(5)
-                    .background(.thinMaterial, in: Circle())
-                    .padding(10)
-                    // 整张卡已经是切换命中区；圈只是指示器，别让它截走角落的点击
-                    .allowsHitTesting(false)
-                    .accessibilityLabel(viewModel.selectedIDs.contains(item.id) ? "已选中" : "未选中")
-                    .accessibilityAddTraits(viewModel.selectedIDs.contains(item.id) ? .isSelected : [])
-            }
-        }
+        CardView(config: cardConfig(for: item))
+            .cardSelection(
+                isSelecting: viewModel.isSelecting,
+                isSelected: viewModel.selectedIDs.contains(item.id)
+            )
     }
 
     private func cardConfig(for item: ArtifactSummary) -> CardConfig {

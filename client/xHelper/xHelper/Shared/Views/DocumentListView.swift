@@ -132,7 +132,7 @@ struct DocumentListView: View {
     }
     #endif
 
-    /// 文档卡片：多选态点击切换勾选（不再进详情），右上角勾选圈 + 选中描边。
+    /// 文档卡片：多选态点击切换勾选（不再进详情），右上角一颗勾选圈（无底色、无整卡描边）。
     private func documentCard(_ doc: Document) -> some View {
         let selecting = viewModel.isSelectingDocuments
         let selected = viewModel.selectedDocumentIDs.contains(doc.id)
@@ -153,22 +153,7 @@ struct DocumentListView: View {
                 }
             }
         ))
-        .overlay(alignment: .topTrailing) {
-            if selecting {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundColor(selected ? Color("appAccent") : .secondary.opacity(0.4))
-                    .padding(10)
-                    .allowsHitTesting(false)
-            }
-        }
-        .overlay {
-            if selected {
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color("appAccent"), lineWidth: 2)
-                    .allowsHitTesting(false)
-            }
-        }
+        .cardSelection(isSelecting: selecting, isSelected: selected)
         #if os(macOS)
         .contextMenu {
             Button {

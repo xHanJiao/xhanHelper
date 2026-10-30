@@ -33,6 +33,28 @@ func (r *ArtifactRepo) GetByID(ctx context.Context, userID, id string) (*model.A
 	return &a, nil
 }
 
+// GetForRead — `html.get` 用：只取标题/摘要/原文，避开最大 8MB 的 html 列。
+// 原文为空（这次改动之前生成的页面）时，调用方再决定要不要读正文。
+func (r *ArtifactRepo) GetForRead(ctx context.Context, userID, id string) (*model.Artifact, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).
+		Select("id", "title", "summary", "source_html").
+		Where("id = ? AND user_id = ?", id, userID).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// GetMeta — 只取 id/title/summary（改版沿用旧标题摘要用，不碰正文）。
+func (r *ArtifactRepo) GetMeta(ctx context.Context, userID, id string) (*model.Artifact, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).Select("id", "title", "summary").
+		Where("id = ? AND user_id = ?", id, userID).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // FindRefsByIDs 批量取标题/摘要，返回 id → ref。空入参返回空 map（不打 DB）。
 func (r *ArtifactRepo) FindRefsByIDs(ctx context.Context, ids []string) (map[string]model.ArtifactRef, error) {
 	out := make(map[string]model.ArtifactRef, len(ids))
@@ -87,26 +109,27 @@ func (r *ArtifactRepo) Delete(ctx context.Context, userID, id string) (int64, er
 
 // Update — 原地覆盖一页（「改这一版」，见 design §4.2）。
 //
-// 返回 false 表示不存在或不属于该用户。**不能拿 RowsAffected 判存在**：
-// MySQL 在新值与原值相同时返回 0，会把一次成功的空改误判成 404。
-// 所以先 Count 一次再更新（多一次索引查询，换掉一类隐蔽误判）。
-func (r *ArtifactRepo) Update(ctx context.Context, userID, id, title, summary, html string) (bool, error) {
+// 返回 false 表示不存在或不属于该用户。先直接 UPDATE，只有 0 行时才回查一次：
+// MySQL 在新值与原值相同时 RowsAffected 也是 0，不能单凭它判「不存在」。
+// 常见路径（内容真的变了）只走一条 SQL。
+func (r *ArtifactRepo) Update(ctx context.Context, userID, id, title, summary, html, sourceHTML string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]any{"title": title, "summary": summary, "html": html, "source_html": sourceHTML})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected > 0 {
+		return true, nil
+	}
+	// 0 行：要么内容没变（行还在），要么真的不存在
 	var exists int64
 	if err := r.db.WithContext(ctx).Model(&model.Artifact{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Count(&exists).Error; err != nil {
 		return false, err
 	}
-	if exists == 0 {
-		return false, nil
-	}
-	err := r.db.WithContext(ctx).Model(&model.Artifact{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Updates(map[string]any{"title": title, "summary": summary, "html": html}).Error
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return exists > 0, nil
 }
 
 // DeleteMany — 批量软删（灵阅多选删除）。只删属于该用户的，返回实际删除行数。

@@ -29,6 +29,54 @@ func setupArtifactRepo(t *testing.T) (*ArtifactRepo, *gorm.DB, func()) {
 	}
 }
 
+// 老库升级：artifacts 已在、没有 source_html。SQLite 不接受「ADD COLUMN NOT NULL 无默认值」，
+// 所以这列必须是可空的，且旧行读出来是空串（get 据此判断「没有原文」）。
+func TestArtifactAutoMigrateAddsSourceHTMLOnExistingTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "legacy.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		if sqlDB, _ := db.DB(); sqlDB != nil {
+			sqlDB.Close()
+		}
+	}()
+
+	// 升级前的表结构（没有 source_html）
+	if err := db.Exec(`CREATE TABLE artifacts (
+		id text PRIMARY KEY,
+		user_id text NOT NULL,
+		conversation_id text NOT NULL,
+		title text NOT NULL,
+		summary text NOT NULL,
+		html text NOT NULL,
+		share_token text,
+		created_at datetime,
+		deleted_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO artifacts (id, user_id, conversation_id, title, summary, html)
+		VALUES ('old-1', 'u1', 'c1', '旧页', '旧摘要', '<html><body>旧</body></html>')`).Error; err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	if err := db.AutoMigrate(&model.Artifact{}); err != nil {
+		t.Fatalf("AutoMigrate 应能在已有表上加列: %v", err)
+	}
+
+	var a model.Artifact
+	if err := db.First(&a, "id = ?", "old-1").Error; err != nil {
+		t.Fatalf("读旧行: %v", err)
+	}
+	if a.SourceHTML != "" {
+		t.Fatalf("旧行的 source_html 应为空串，实际 %q", a.SourceHTML)
+	}
+	if a.HTML == "" {
+		t.Fatal("旧行正文不该丢")
+	}
+}
+
 // 列表按时间倒序、分页、只取五列（不带正文）、软删不出现、越权看不到。
 func TestArtifactRepoListByUser(t *testing.T) {
 	repo, db, cleanup := setupArtifactRepo(t)
@@ -94,7 +142,7 @@ func TestArtifactRepoUpdateInPlace(t *testing.T) {
 		}
 	}
 
-	ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>")
+	ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>", "<html>源</html>")
 	if err != nil || !ok {
 		t.Fatalf("Update 应成功，ok=%v err=%v", ok, err)
 	}
@@ -105,16 +153,19 @@ func TestArtifactRepoUpdateInPlace(t *testing.T) {
 	if a.Title != "新标题" || a.Summary != "新摘要" || a.HTML != "<html>新</html>" {
 		t.Fatalf("覆盖没生效：%+v", a)
 	}
+	if a.SourceHTML != "<html>源</html>" {
+		t.Fatalf("原文也要一起覆盖（get 读的是它）：%q", a.SourceHTML)
+	}
 
 	// 内容完全相同再改一次：MySQL 的 RowsAffected 会是 0，不能拿它判存在
-	if ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>"); err != nil || !ok {
+	if ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>", "<html>源</html>"); err != nil || !ok {
 		t.Fatalf("同值更新也应返回 true，ok=%v err=%v", ok, err)
 	}
 	// 越权 / 不存在
-	if ok, err := repo.Update(ctx, "u1", "c2", "t", "s", "<html>y</html>"); err != nil || ok {
+	if ok, err := repo.Update(ctx, "u1", "c2", "t", "s", "<html>y</html>", "<html>y</html>"); err != nil || ok {
 		t.Fatalf("越权更新应返回 false，ok=%v err=%v", ok, err)
 	}
-	if ok, err := repo.Update(ctx, "u1", "nope", "t", "s", "<html>y</html>"); err != nil || ok {
+	if ok, err := repo.Update(ctx, "u1", "nope", "t", "s", "<html>y</html>", "<html>y</html>"); err != nil || ok {
 		t.Fatalf("不存在应返回 false，ok=%v err=%v", ok, err)
 	}
 }

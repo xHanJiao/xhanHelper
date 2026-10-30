@@ -114,6 +114,18 @@ func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility stri
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
 	if existing, err := s.repo.FindBySHA(ctx, userID, digest); err == nil && existing != nil {
+		// 记录在、文件没了（导库不带 images / 换机 / 外部删除）：用这次上传的字节补回去。
+		// 不补的话 DataURI 会一直报「图片文件已丢失」，而且每次重传都命中这条坏记录。
+		path := s.FilePath(existing)
+		if _, statErr := os.Stat(path); statErr != nil {
+			if err := os.MkdirAll(s.dir, 0o755); err != nil {
+				return nil, fmt.Errorf("create image dir: %w", err)
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return nil, fmt.Errorf("restore image file: %w", err)
+			}
+			log.Printf("[image] restored missing file for %s", shortID(existing.ID))
+		}
 		// 老图（本功能上线前入库）没有描述，补齐一次
 		if existing.DescriptionAt == nil {
 			s.describeAsync(*existing)

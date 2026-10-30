@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -72,6 +73,12 @@ func reviseArgs(title, summary, html, id string) json.RawMessage {
 	return b
 }
 
+// reviseHTMLArgs — 改版只给 html（标题/摘要沿用旧页）。
+func reviseHTMLArgs(html, id string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"html": html, "artifact_id": id})
+	return b
+}
+
 func artifactIDFrom(t *testing.T, res *Result) string {
 	t.Helper()
 	var out struct {
@@ -81,6 +88,134 @@ func artifactIDFrom(t *testing.T, res *Result) string {
 		t.Fatalf("decode result: %v", err)
 	}
 	return out.ArtifactID
+}
+
+// list：跨会话也能看到（换窗口说「改刚才那页」时靠它找 id），倒序、只给自己的、不碰正文。
+func TestHTMLArtifactListAcrossConversations(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	base := time.Now().Add(-time.Hour)
+	seed := []model.Artifact{
+		{ID: "p1", UserID: "u1", ConversationID: "c1", Title: "10.18 手账", Summary: "s1", HTML: samplePage, CreatedAt: base},
+		{ID: "p2", UserID: "u1", ConversationID: "c2", Title: "10.19 手账", Summary: "s2", HTML: samplePage, CreatedAt: base.Add(time.Minute)},
+		{ID: "p3", UserID: "u2", ConversationID: "c3", Title: "别人的", Summary: "s3", HTML: samplePage, CreatedAt: base.Add(2 * time.Minute)},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	// 故意用一个全新的会话 id：证明 list 不受当前会话限制
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c9", TurnID: "turn-list"}
+	res := tl.Execute(ec, "list", json.RawMessage(`{}`))
+	if !res.Success {
+		t.Fatalf("list failed: %s", res.Error)
+	}
+
+	var out struct {
+		Items []struct {
+			ArtifactID string `json:"artifact_id"`
+			Title      string `json:"title"`
+			Summary    string `json:"summary"`
+			CreatedAt  string `json:"created_at"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if out.Total != 2 || len(out.Items) != 2 {
+		t.Fatalf("应只列出 u1 的 2 页，实际 total=%d len=%d", out.Total, len(out.Items))
+	}
+	if out.Items[0].ArtifactID != "p2" || out.Items[1].ArtifactID != "p1" {
+		t.Fatalf("应按时间倒序，实际 %+v", out.Items)
+	}
+	if out.Items[0].Title != "10.19 手账" || out.Items[0].CreatedAt == "" {
+		t.Fatalf("标题/时间应返回，实际 %+v", out.Items[0])
+	}
+
+	// 拿 list 给的 id 能直接改
+	res2 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c9", TurnID: "turn-list-2"},
+		"create", reviseArgs("改过", "s", samplePage, out.Items[0].ArtifactID))
+	if !res2.Success {
+		t.Fatalf("用 list 的 id 改版失败: %s", res2.Error)
+	}
+}
+
+// get：读回模型给的原文（图片仍是 `image:<id>`，不是几 MB 的 data:），越权/不存在报错。
+func TestHTMLArtifactGetReturnsSource(t *testing.T) {
+	tl, _, images, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	asset, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, tinyPNG(t))
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	page := strings.Replace(samplePage, "</body>", `<img src="image:`+asset.ID+`" alt="图"></body>`, 1)
+
+	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-get"},
+		"create", artArgs("带图", "一页带图", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	res2 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get",
+		json.RawMessage(`{"artifact_id":"`+id+`"}`))
+	if !res2.Success {
+		t.Fatalf("get failed: %s", res2.Error)
+	}
+	var out struct {
+		ArtifactID string `json:"artifact_id"`
+		Title      string `json:"title"`
+		Summary    string `json:"summary"`
+		HTML       string `json:"html"`
+	}
+	if err := json.Unmarshal(res2.Data, &out); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if out.ArtifactID != id || out.Title != "带图" || out.Summary != "一页带图" {
+		t.Fatalf("get 元数据不对: %+v", out)
+	}
+	if out.HTML != page {
+		t.Fatal("应原样返回模型给的原文（改版要在这份上改）")
+	}
+	if !strings.Contains(out.HTML, "image:"+asset.ID) || strings.Contains(out.HTML, "data:image") {
+		t.Fatal("读回的图片必须是 image: 引用，不能是内联 base64")
+	}
+
+	// 越权：别人的 id 按不存在处理
+	if res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u2"}, "get",
+		json.RawMessage(`{"artifact_id":"`+id+`"}`)); res.Success {
+		t.Fatal("越权读取应失败")
+	}
+	if res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get",
+		json.RawMessage(`{"artifact_id":"nope"}`)); res.Success {
+		t.Fatal("不存在的 id 应失败")
+	}
+	if res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get",
+		json.RawMessage(`{}`)); res.Success {
+		t.Fatal("缺 artifact_id 应失败")
+	}
+}
+
+// list 是只读函数：plan 模式也要能查（ReadOnlyFuncs 声明必须与 Functions 一致）。
+func TestHTMLArtifactListIsReadOnly(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+
+	ro := tl.ReadOnlyFuncs()
+	if !ro["list"] || !ro["get"] || ro["create"] {
+		t.Fatalf("只应声明 list/get 为只读，实际 %+v", ro)
+	}
+	// 声明与 Functions() 不一致会 panic（ValidateReadOnlyFuncs 的契约）
+	reg := NewRegistry()
+	reg.Register(tl)
+	reg.ValidateReadOnlyFuncs()
 }
 
 // 改版 = 原地覆盖：同一个 id、行数不变、正文/标题换掉（灵阅里不会多一条）。
@@ -123,6 +258,153 @@ func TestHTMLArtifactReviseOverwritesInPlace(t *testing.T) {
 	}
 	if strings.Contains(got.HTML, "三方案对比") {
 		t.Fatal("旧正文应被替换")
+	}
+}
+
+// list 的 limit：>30 应钳到 30，而不是静默降到默认 10。
+func TestHTMLArtifactListLimitClamp(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	base := time.Now().Add(-time.Hour)
+	for i := 0; i < 15; i++ {
+		if err := db.Create(&model.Artifact{
+			ID: fmt.Sprintf("l%02d", i), UserID: "u1", ConversationID: "c1",
+			Title: "t", Summary: "s", HTML: samplePage, CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		}).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "list", json.RawMessage(`{"limit":30}`))
+	if !res.Success {
+		t.Fatalf("list failed: %s", res.Error)
+	}
+	var out struct {
+		Items []struct {
+			ArtifactID string `json:"artifact_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(out.Items) != 15 {
+		t.Fatalf("limit=30 应返回全部 15 条（钳到 30），实际 %d 条（被降到 10 就会是这个数）", len(out.Items))
+	}
+}
+
+// get 的两个分支：超过读回上限要报错；老页面（没有 source_html）退回 html 列。
+func TestHTMLArtifactGetLimitsAndLegacy(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// 老页面：只写 html，source_html 为空
+	legacy := &model.Artifact{
+		ID: "legacy1", UserID: "u1", ConversationID: "c1",
+		Title: "旧页", Summary: "旧摘要", HTML: samplePage,
+	}
+	if err := db.Create(legacy).Error; err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", json.RawMessage(`{"artifact_id":"legacy1"}`))
+	if !res.Success {
+		t.Fatalf("get legacy failed: %s", res.Error)
+	}
+	var out struct {
+		HTML string `json:"html"`
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.HTML != samplePage {
+		t.Fatal("没有 source_html 的老页面应退回 html 列")
+	}
+
+	// 原文超过 128KB：拒绝（不截断——截断的 HTML 改完会坏）
+	huge := strings.Replace(samplePage, "</body>", strings.Repeat("<p>填充内容</p>", 20000)+"</body>", 1)
+	res2 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-big"},
+		"create", artArgs("大页", "很大的一页", huge))
+	if !res2.Success {
+		t.Fatalf("create huge failed: %s", res2.Error)
+	}
+	id := artifactIDFrom(t, res2)
+	res3 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", json.RawMessage(`{"artifact_id":"`+id+`"}`))
+	if res3.Success {
+		t.Fatal("超过读回上限应拒绝")
+	}
+	if !strings.Contains(res3.Error, "太大") {
+		t.Fatalf("错误应说明太大，实际 %q", res3.Error)
+	}
+}
+
+// 改版不传 title/summary：沿用旧页的（它们描述「这一页是什么」，不是「这次改了什么」）。
+func TestHTMLArtifactReviseKeepsTitleSummary(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-k1"},
+		"create", artArgs("日本之行 · 10.19", "四页手账：原宿、代代木、银座。", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	revised := strings.Replace(samplePage, "三方案对比", "改过的标题", 1)
+	res2 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-k2"},
+		"create", reviseHTMLArgs(revised, id))
+	if !res2.Success {
+		t.Fatalf("revise failed: %s", res2.Error)
+	}
+	if got := artifactIDFrom(t, res2); got != id {
+		t.Fatalf("改版应返回同一个 id，实际 %s != %s", got, id)
+	}
+
+	var out struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(res2.Data, &out); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if out.Title != "日本之行 · 10.19" || out.Summary != "四页手账：原宿、代代木、银座。" {
+		t.Fatalf("改版应沿用旧标题/摘要，实际 %+v", out)
+	}
+
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Title != "日本之行 · 10.19" || got.Summary != "四页手账：原宿、代代木、银座。" {
+		t.Fatalf("库里标题/摘要被改掉了：%q / %q", got.Title, got.Summary)
+	}
+	if !strings.Contains(got.HTML, "改过的标题") {
+		t.Fatal("正文应已更新")
+	}
+}
+
+// 新建仍然必须给 title/summary（只有改版才允许省略）。
+func TestHTMLArtifactCreateRequiresTitleAndSummary(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	args, err := json.Marshal(map[string]string{"html": samplePage})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-req"}, "create", args)
+	if res.Success {
+		t.Fatal("新建缺 title/summary 应失败")
+	}
+	if !strings.Contains(res.Error, "title / summary") {
+		t.Fatalf("错误应点名缺字段，实际 %q", res.Error)
+	}
+	var count int64
+	if err := db.Model(&model.Artifact{}).Count(&count).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("失败不应入库，实际 %d 行", count)
 	}
 }
 
@@ -304,6 +586,9 @@ func TestHTMLArtifactMissingImageFails(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "not-exist") {
 		t.Fatalf("错误应点名 id: %s", res.Error)
+	}
+	if !strings.Contains(res.Error, "去掉") {
+		t.Fatalf("错误应给出下一步（去掉这张/换一张）: %s", res.Error)
 	}
 	var n int64
 	if err := db.Model(&model.Artifact{}).Count(&n).Error; err != nil {

@@ -18,6 +18,15 @@ type Artifact struct {
 	Title          string `gorm:"size:200;not null" json:"title"`
 	Summary        string `gorm:"size:500;not null" json:"summary"`
 	HTML           string `gorm:"type:longtext;not null" json:"-"`
+	// SourceHTML — 模型给的原文（清洗前、图片仍是 `image:<id>` 引用）。
+	// 只给 `html.get` 读回用：模型要改版时得拿到整页 HTML，而 HTML 列里图片已内联成
+	// 几 MB 的 data: URI，塞进上下文既不现实也浪费（见 design §4.2 / §8.5）。
+	//
+	// **不要加 not null**：老库升级走 ALTER TABLE ADD COLUMN，SQLite 不接受
+	// 「NOT NULL 且无默认值」的新列（Cannot add a NOT NULL column with default value NULL），
+	// 本地版会直接起不来。旧行读出来是 NULL，GORM 落到 string 就是 ""，
+	// `get` 已经把空串当「没有原文」处理。
+	SourceHTML string `gorm:"type:longtext" json:"-"`
 	// ShareToken — 公开分享链接的凭证（空 = 未分享）。1:1、永久、可撤销（见 design §9.6）。
 	ShareToken string         `gorm:"size:64;index" json:"-"`
 	CreatedAt  time.Time      `gorm:"autoCreateTime" json:"created_at"`

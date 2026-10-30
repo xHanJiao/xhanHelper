@@ -261,6 +261,7 @@ patch
 - 同一 nid 不能同时出现在 `ops` 和 `remove`（删和改一次做不了，提示分两次）；
 - 插入片段：非空、≤64KB、顶层只允许块级标签（`script/style/iframe/meta/link/form` 直接拒绝；散文本也拒绝）；
 - 插入片段顶层的 `tr/td/th/thead/tbody/tfoot/col/colgroup/caption` → 明确报「表格行列不能单独插入，请整张 `<table>` 一起插」（这些标签在 `<div>` 上下文里会被 HTML5 静默丢弃，不单独拦会报成「散文本」误导模型）；
+- **锚点所在容器**：`insert.after` 的父节点是 `table/thead/tbody/tfoot/tr` → 拒绝（`ErrBadAnchor`）。锚在 `td/th/caption` 上插块级片段会写成 `<tr><td>x</td><p>…</p></tr>`，浏览器 foster-parent 把内容挤出表格、位置和样式静默跳走（而 `outline` 看起来一切正常）。文案指出两条出路：加段落锚在**整张 `<table>` 之后的块**上，加行/加格只能整页重写；
 - **空容器收缩**（`remove` 之后）：从父节点向上，逐层删掉「已经只剩残渣」的容器，**停在 `<body>`（body/html 永不删）**。两档判据：
   - 删节点时顺手清掉相邻的纯空白文本节点，源码不留空白行（`get(full)` 读回来仍是原缩进）；
   - 通用：子树里没有 `img/picture/svg/video/audio/canvas/iframe/embed/object/hr`，也没有 `figcaption`/`caption` 之外的非空文本；
@@ -322,7 +323,7 @@ patch
 - `get(outline)` 结果带 `tip`，并写死「div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 `view="full"` 整页重写」——模型每次看 outline 都会看到；
 - `patch` 的描述里同样写一句（防止模型不读 tip）：只有语义块有 nid，别拿不存在的 nid 反复试；
 - `patch` 带了 `insert` / `remove` 时回一句「块编号已重排，继续改请重新 `get(view="outline")`」——hash 是按内容算的、没变，变的是「第几块」；
-- 锚点规则写进描述 + tip：**加在页面末尾要锚在页脚之前那块**（锚在页脚块上会插进页脚里）；**别锚在 `td/th` 上**（会插出 `<tr><td>x</td><p>…</p></tr>` 这种非法结构，浏览器重解析后位置会跳）；
+- 锚点规则写进描述 + tip：**加在页面末尾要锚在页脚之前那块**（锚在页脚块上会插进页脚里）；**别锚在 `td/th` 上**（会插出 `<tr><td>x</td><p>…</p></tr>` 这种非法结构，浏览器重解析后位置会跳）——这条服务端也硬拒（§4.5 `ErrBadAnchor`），提示词只负责让模型少撞一次；
 - 插入片段的 `class` **照抄相邻块**（`get(outline)` 每块都带 `class`）——间距/配色都在 class 上，不抄就是紧贴上一段的裸标签；
 - `create` 改版成功且整页 > 10 KB 时附 `tip: 下次改文字用 html.patch`；
 - `patch` 结果只回摘要，不回整页。
@@ -452,3 +453,8 @@ patch
   - 修：`class` 截断附 `class_truncated`，并补用例。
   - 影响文件：`util/htmlpatch/htmlpatch.go` + 测试、`tool/html_artifact.go` + 测试、`design.md`、本文件。
 - **2026-10-30 · 跨轮旧副本**：工具结果历史回放的 `get(full)` stub 已实现在 `agent/history_stub.go`（见 `docs/design/tool-result-history/design.md`），本文件 §八 补一条交叉引用。
+- **2026-10-30 · 锚点侧校验（第五轮复审 P1）**
+  - 起因：真机回归里 `insert.after` 指向表格单元格时服务端成功返回，把 `<p>` 写进 `<tr>`；浏览器 foster-parent 把内容挤出表格、位置跳走，而紧接着的 `outline` 把那个 `<p>` 当普通段落，**看起来完全正常**。前四轮只补了片段侧（`rejectTableParts`），漏了锚点侧。
+  - 决定：`insert` 校验段加「锚点父节点 ∈ {table,thead,tbody,tfoot,tr} → `ErrBadAnchor`」，文案给出两条出路（锚到整张 table 之后的块 / 加行加格整页重写）。只拦表格族：`<ul>` 里塞 `<p>` 之类位置不乱，不做内容模型推导。
+  - 决定：不做已落库坏页的自动修复（读取侧不重写结构），只能 `view="full"` + `create` 重建。
+  - 影响文件：`util/htmlpatch/htmlpatch.go`（`tableContextTags` + `ErrBadAnchor` + insert 校验）+测试、`tool/html_artifact.go`（`patchErrorMessage`）+测试、本文件。

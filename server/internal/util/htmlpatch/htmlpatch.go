@@ -62,8 +62,16 @@ var (
 	ErrNoStyle       = errors.New("页面里没有 <style>")
 	ErrStyleHash     = errors.New("样式 hash 不匹配")
 	ErrBadFragment   = errors.New("插入内容不合法")
+	ErrBadAnchor     = errors.New("锚点位置不能插块")
 	ErrEditConflict  = errors.New("同一块不能同时修改和删除")
 )
+
+// tableContextTags — 子节点只能是表格结构的容器。在它们内部插块级片段会产出
+// <tr><p> 这类非法结构，浏览器重解析时会 foster-parent 把内容挤出表格，位置和
+// 样式静默跳走（源码里却一切正常），所以只能拒绝。
+var tableContextTags = map[string]bool{
+	"table": true, "thead": true, "tbody": true, "tfoot": true, "tr": true,
+}
 
 // Block — 一个可定位的块（给 get outline 用）。
 type Block struct {
@@ -191,6 +199,12 @@ func ApplyEdit(source string, edit Edit) (string, []string, error) {
 		}
 		if ins.Hash != a.Hash {
 			return "", nil, fmt.Errorf("%w: %s（插入锚点）", ErrHashMismatch, ins.After)
+		}
+		// 锚点在表格结构里（td/th 的父节点是 tr，caption 的是 table）：插块级片段
+		// 会写成 <tr><p>…</p></tr>，浏览器把内容挤出表格，位置静默错位。
+		// 片段侧的表格族由 rejectTableParts 拦，这里补的是锚点侧。
+		if p := a.node.Parent; p != nil && tableContextTags[p.Data] {
+			return "", nil, fmt.Errorf("%w: %s 在 <%s> 里", ErrBadAnchor, ins.After, p.Data)
 		}
 		nodes, err := parseFragment(ins.HTML)
 		if err != nil {

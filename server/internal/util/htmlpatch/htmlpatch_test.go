@@ -367,6 +367,31 @@ func TestInsertRejectsStaleAnchor(t *testing.T) {
 	}
 }
 
+func TestInsertRejectsTableAnchor(t *testing.T) {
+	page := `<html><body><p>正文</p><table><caption>表题</caption>` +
+		`<thead><tr><th>项目</th></tr></thead><tbody><tr><td>甲</td><td>乙</td></tr></tbody></table></body></html>`
+	blocks := mustScan(t, page)
+	// caption 的父是 table，th/td 的父是 tr —— 在它们后面插块级片段都会写成 <tr><p>
+	for _, nid := range []string{"t2", "t3", "t4"} {
+		out, _, err := ApplyEdit(page, Edit{
+			Inserts: []InsertOp{{After: nid, Hash: findBlock(t, blocks, nid).Hash, HTML: `<p class="lead">插入</p>`}},
+		})
+		if !errors.Is(err, ErrBadAnchor) {
+			t.Fatalf("锚 %s 在表格里应拒绝，实际 %v", nid, err)
+		}
+		if out != "" {
+			t.Fatalf("校验失败不能有部分写入: %q", out)
+		}
+	}
+	// 整张 table 仍能插在表格外的块旁边（推荐路径不受影响）
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "t1", Hash: findBlock(t, blocks, "t1").Hash, HTML: `<table><tr><td>新格</td></tr></table>`}},
+	})
+	if err != nil || strings.Count(out, "<table") != 2 {
+		t.Fatalf("锚在表格外应能插整张 table: err=%v out=%s", err, out)
+	}
+}
+
 func TestRemoveTextBlock(t *testing.T) {
 	blocks := mustScan(t, samplePage)
 	out, changed, err := ApplyEdit(samplePage, Edit{

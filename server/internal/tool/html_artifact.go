@@ -604,6 +604,8 @@ func patchErrorMessage(err error) string {
 		return fmt.Sprintf("%v；改和删分成两次 patch 做", err)
 	case errors.Is(err, htmlpatch.ErrBadFragment):
 		return err.Error()
+	case errors.Is(err, htmlpatch.ErrBadAnchor):
+		return fmt.Sprintf("%v；加段落请锚在整张 <table> 之后的块上，加行/加格只能 view=\"full\" 后整页重写", err)
 	case errors.Is(err, htmlpatch.ErrTextTooLong),
 		errors.Is(err, htmlpatch.ErrDuplicateNID),
 		errors.Is(err, htmlpatch.ErrMixedOp),

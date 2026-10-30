@@ -1338,3 +1338,50 @@ func TestHTMLArtifactOutlineMarksTruncatedClass(t *testing.T) {
 		t.Fatalf("应标 class_truncated 并截到 %d 字，实际 %+v", maxOutlineClassRunes, b)
 	}
 }
+
+// 锚点在表格单元格里：必须拒（不然源码写成 <tr><p>，浏览器把内容挤出表格），
+// 且文案要指出两条出路；页面本身不能被改。
+func TestHTMLArtifactPatchRejectsTableAnchor(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-td-anchor"}
+
+	page := `<html><head><style>td{padding:4px}</style></head><body>` +
+		`<p>表格前的正文，长度要够一个完整页面（内联校验要求至少 200 字节）。</p>` +
+		`<table><tr><td>甲</td><td>乙</td></tr></table></body></html>`
+	res := tl.Execute(ec, "create", artArgs("表格", "两列", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	td := outlineByNID(t, getOutlineResult(t, tl, id), "t2")
+	if td.Tag != "td" {
+		t.Fatalf("t2 应是单元格: %+v", td)
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"insert":      []map[string]string{{"after": "t2", "hash": td.Hash, "html": `<p class="lead">新段落</p>`}},
+	})
+	pres := tl.Execute(ec, "patch", args)
+	if pres.Success {
+		t.Fatal("锚在 td 上插段落应被拒绝")
+	}
+	for _, want := range []string{"<table>", `view="full"`} {
+		if !strings.Contains(pres.Error, want) {
+			t.Fatalf("文案应给出路（缺 %q）：%s", want, pres.Error)
+		}
+	}
+
+	fullArgs, _ := json.Marshal(map[string]any{"artifact_id": id, "view": "full"})
+	fres := tl.Execute(ec, "get", fullArgs)
+	var full struct {
+		HTML string `json:"html"`
+	}
+	if err := json.Unmarshal(fres.Data, &full); err != nil {
+		t.Fatalf("decode full: %v", err)
+	}
+	if strings.Contains(full.HTML, "新段落") || full.HTML != page {
+		t.Fatalf("失败不能改动页面:\n%s", full.HTML)
+	}
+}

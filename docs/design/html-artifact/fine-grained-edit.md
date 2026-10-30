@@ -260,13 +260,14 @@ patch
 - `insert.after` 必须存在、hash 匹配、且不在 `remove` 里；`remove.nid` 必须存在且 hash 匹配；
 - 同一 nid 不能同时出现在 `ops` 和 `remove`（删和改一次做不了，提示分两次）；
 - 插入片段：非空、≤64KB、顶层只允许块级标签（`script/style/iframe/meta/link/form` 直接拒绝；散文本也拒绝）；
+- 片段**子树里**出现会被安全清洗删掉的标签（`script/iframe/object/embed/form/input/…`，与 `htmlsanitize.dropTags` 同一组）→ 直接拒，文案说明「会被安全清洗删掉」。否则「插入成功」其实是内容被清洗没了，模型会以为插进去了；
 - 插入片段顶层的 `tr/td/th/thead/tbody/tfoot/col/colgroup/caption` → 明确报「表格行列不能单独插入，请整张 `<table>` 一起插」（这些标签在 `<div>` 上下文里会被 HTML5 静默丢弃，不单独拦会报成「散文本」误导模型）；
-- **锚点落在容器之后**：锚点是 `figure/ul/ol/dl/picture` 的**直接子块**时，落点抬到该容器**之后**（容器兄弟层级）——锚在图注上插段落，内容落在整个 `figure` 之后，不会并进图里；锚在列表项上插段落，落在整个列表之后，不会产出 `<ul><p>`。布局用的 `div` 不抬（卡片里加段落就该留在卡片里）。
+- **锚点落在容器之后**：锚点是 `ul/ol/dl/picture` 的**直接子块**时，落点一律抬到容器**之后**（容器兄弟层级）——锚在列表项上插段落，落在整个列表之后，不会产出 `<ul><p>`。`figure` 只在**锚点是 `figcaption`/`caption`** 时抬（插在图注之后会变成「图注后面还有内容」，非法）；锚在照片上照旧插在 `figure` 内，方便「照片下面加一句说明」并沿用 figure 的内部样式。布局用的 `div` 不抬（卡片里加段落就该留在卡片里）。
 - **锚点在表格结构里**：`insert.after` 的父节点是 `table/thead/tbody/tfoot/tr` → 拒绝（`ErrBadAnchor`）。锚在 `td/th/caption` 上插块级片段会写成 `<tr><td>x</td><p>…</p></tr>`，浏览器 foster-parent 把内容挤出表格、位置和样式静默跳走（而 `outline` 看起来一切正常）。文案指出两条出路：加段落锚在**整张 `<table>` 之后的块**上，加行/加格只能整页重写；
 - **空容器收缩**（`remove` 之后）：从父节点向上，逐层删掉「已经只剩残渣」的容器，**停在 `<body>`（body/html 永不删）**。两档判据：
   - 删节点时顺手清掉相邻的纯空白文本节点，源码不留空白行（`get(full)` 读回来仍是原缩进）；
   - 通用：子树里没有 `img/picture/svg/video/audio/canvas/iframe/embed/object/hr`，也没有 `figcaption`/`caption` 之外的非空文本；
-  - **图注按语义标记认，不按「有没有 nid」放宽**：`figcaption` / `caption` 标签，以及 **class 带 `cap` 词根**（`.cap` / `.caption` / `.cap-note`）且本身不是语义块的元素，里面的文字不算内容（跟着图一起收）。其余文字一律算内容——模型写在 `<div>` 里的正文不会因为删图被带走（见 §五）；
+  - **图注按语义标记认，不按「有没有 nid」放宽**：`figcaption` / `caption` 标签，以及 **class 带 `cap` 词根**（`.cap` / `.caption` / `.cap-note`）且本身不是语义块的元素，里面的**文字**不算内容（跟着图一起收）；但子树里的**图片/视频仍算内容**——图注里放一张小图时，删主图不能把它一起带走。其余文字一律算内容——模型写在 `<div>` 里的正文不会因为删图被带走（见 §五）；
 - 数量上限：`ops ≤50`、`insert ≤10`、`remove ≤20`。
 
 **内容**
@@ -324,7 +325,7 @@ patch
 - `get(outline)` 结果带 `tip`，并写死「div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 `view="full"` 整页重写」——模型每次看 outline 都会看到；
 - `patch` 的描述里同样写一句（防止模型不读 tip）：只有语义块有 nid，别拿不存在的 nid 反复试；
 - `patch` 带了 `insert` / `remove` 时回一句「块编号已重排，继续改请重新 `get(view="outline")`」——hash 是按内容算的、没变，变的是「第几块」；
-- 锚点规则写进描述 + tip：**加在页面末尾锚在页脚块上即可**（插入落在锚点之后，不会插进页脚里）；**别锚在 `td/th` 上**（会插出 `<tr><td>x</td><p>…</p></tr>` 这种非法结构，浏览器重解析后位置会跳）——这条服务端也硬拒（§4.5 `ErrBadAnchor`），提示词只负责让模型少撞一次；
+- 锚点规则写进描述 + tip：**加在页面末尾就锚在页脚之前那块**（锚在 `<footer>` 内部的块上会插进页脚里，样式跟着页脚走）；**别锚在 `td/th` 上**（会插出 `<tr><td>x</td><p>…</p></tr>` 这种非法结构，浏览器重解析后位置会跳）——这条服务端也硬拒（§4.5 `ErrBadAnchor`），提示词只负责让模型少撞一次；
 - 插入片段的 `class` **照抄相邻块**（`get(outline)` 每块都带 `class`）——间距/配色都在 class 上，不抄就是紧贴上一段的裸标签；
 - `create` 改版成功且整页 > 10 KB 时附 `tip: 下次改文字用 html.patch`；
 - `patch` 结果只回摘要，不回整页。
@@ -342,11 +343,12 @@ patch
 - **`div` 段落 / 单元格不参与 patch**：`textTags` 只收语义块级元素（h1–h6/p/li/td/th/figcaption/blockquote/dt/dd/caption）。现有页面里用 `<div>` 拼的表格、时间线标签只能整页改——刻意不做，`div` 多为布局容器，放开会误伤结构。**已在 `get(outline)` 的 tip 与 `patch` 描述里写死**，模型不会拿着不存在的 nid 反复试；
 - **`pre` 不参与 patch**：缩进是内容，归一化会压平；
 - **多段 `<style>` 只认第一段**（`get(style)` 与 `patch(style)` 都是）：模型正常只写一段，多段属异常；
-- **图注跟着图走**：写成 `<figcaption>` / `<caption>` 或 class 带 `cap`（`.cap` / `.caption` / `.cap-note`）的说明文字，删图时会跟整个相框一起收掉（它们没有 nid，模型删不掉）。其余文字（哪怕写在 `<div>` 里、没有 nid）都算内容，删图不会带走它；想保住图注就写成 `<p>` / `<h3>`（有 nid），相框会保留、模型自己再 `remove`；
+- **图注跟着图走**：写成 `<figcaption>` / `<caption>` 或 class 带 `cap`（`.cap` / `.caption` / `.cap-note`）的说明文字，删图时会跟整个相框一起收掉（它们没有 nid，模型删不掉）；但图注里的**图片/视频**算内容，会保住相框。其余文字（哪怕写在 `<div>` 里、没有 nid）都算内容，删图不会带走它；想保住图注就写成 `<p>` / `<h3>`（有 nid），相框会保留、模型自己再 `remove`；
 - **`remove` 允许删单个 `td/th/caption`**：会得到列数不齐的表（HTML 仍合法、位置不跳），和 `insert` 侧「表格里不许插」不对称。清空单元格建议把 `text` 改成空串；删行/删列属于结构重排，请整页重写。暂不放宽成硬拒（删表头多余的列是真实需求）；
 - **删掉某格/某卡里唯一的内容，那一格/那张卡会一起消失**：`<td><p>甲</p></td>` 删掉 `甲` 就是整格没了（表格会少一列），`<div class="cell"><p>甲</p></div>` 同理。卡片网格上这是想要的（删卡即整张卡消失）；要只清空文字而不删格，得整页改；
 - **删到整页不足 200 字节会被拦**：`patch` 会回「删完这页就空了：至少留一块，或用 create 重建整页」；
 - **`insert` 不幂等**：同一次 insert 重复提交会插两份（响应丢了 + 模型重试才会踩到）；
+- **表格是最后一个块时没法往后追加**：`table` 没有 nid、不能当锚点，而 `insert` 只支持「锚在某块之后」；这种页面只能整页重写（描述里已写明）；
 - **把块删光后没有锚点可用了**：只能 `get(full)` + `create` 重建；
 - **结构改动后 nid 会顺移**：删掉一块，后面所有块的编号前移（hash 是按内容算的、不变，变的是 nid→hash 的配对），所以 `insert`/`remove` 之后必须重新 `get(outline)`；
 - **patch 会把整页图片重新内联**：源图超过 15 天保留期且期间没续期的，改一句话也会因为「图片已过期」整页失败（错误点名 id）。这是沿用现有内联管线的结果，暂不做「从成品 data: 复用」的优化——真频繁触发再做。
@@ -373,7 +375,7 @@ patch
 8. **大页**：19 KB 的页改一句 → `patch` 前后上下文占用 < 2 KB（对比当前 8 KB+）。
 9. **老页面**：对无 `source_html` 的页 `get` → 明确报「早期格式，只能重做」。
 10. **删空表格**：把一张表的单元格全删 → `<table>` 骨架一起消失，不留空行。
-11. **加到末尾**：说「最后加一节总结」→ 锚在页脚块上，新内容落在页脚**之后**（不是页脚里面，也不是页脚之前）。
+11. **加到末尾**：说「最后加一节总结」→ 锚在页脚之前那块，新内容落在正文末尾、页脚**之前**（锚在页脚内部的块上会插进页脚里）。
 
 ---
 
@@ -473,3 +475,10 @@ patch
   - 决定：`remove` 单个 `td/th/caption` 保持允许（清空单元格用 `text=""`，删行列走整页），写进 §五 已知限制；不改硬拒。
   - 澄清：12 张上限按不同 `image:<id>` 计，描述与 `design.md` 表改为「不同图片」。
   - 影响文件：`util/htmlpatch/htmlpatch.go`（`captionLike` + `residue` 简化 + `Style`/`ReplaceStyle` 新建分支）+测试、`tool/html_artifact.go`（getStyle / patch 校验 / 描述）+测试、`design.md`、本文件。
+- **2026-10-30 · 审查 §七 收尾（图注媒体 / figure 抬升 / 片段危险标签）**
+  - 修：收缩判据递归进图注子树——图注里的**文字**仍不算内容，但图片/视频算，删主图不再连带删掉图注里的图（与第二轮「删一张连带删另一张」同源）。
+  - 修：`figure` 的抬升按锚点类型细分——只有锚在 `figcaption`/`caption` 上才抬出去；锚在照片上留在 figure 内（figure 允许 flow content，figcaption 仍保持首/尾）。`ul/ol/dl/picture` 照旧一律抬。
+  - 修：插入片段子树里出现会被清洗的标签（`script/iframe/object/form/…`）直接拒，不再「插入成功但内容被清洗没了」。
+  - 修：`insertPlan.after` 死字段删除；`ErrNoStyle` 改名 `ErrNoHead`（`Style()` 无样式已改为返回空）；幂等重放连 `updated` 一起清空。
+  - 改：页脚文案改回「锚在页脚之前那块」——锚在 `<footer>` 内部的块上会插进页脚（`TestInsertInsideFooterStaysInside` 钉住）；描述补一句「表格是最后一个块时只能整页重写」。
+  - 影响文件：`util/htmlpatch/htmlpatch.go`（`contentOf` 递归、`liftAlways`、`dangerousTags`、`insertPlan`、`ErrNoHead`）+测试、`tool/html_artifact.go`（描述、幂等分支）+测试、`tool/image.go` + `service/image_store.go`（`available`）、本文件。

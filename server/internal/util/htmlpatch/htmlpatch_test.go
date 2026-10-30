@@ -854,8 +854,8 @@ func TestInsertAfterListItemLandsAfterList(t *testing.T) {
 	}
 }
 
-// 锚在页脚块上：落在页脚之后（真机实测，文档原先说会插进页脚里，是错的）。
-func TestInsertAfterFooterLandsAfterFooter(t *testing.T) {
+// 锚在 <footer> 内部的块上：落在页脚内末尾（所以推荐锚在页脚之前那块）。
+func TestInsertInsideFooterStaysInside(t *testing.T) {
 	page := `<html><body><p>正文</p><footer><p>页脚</p></footer></body></html>`
 	blocks := mustScan(t, page)
 	out, _, err := ApplyEdit(page, Edit{
@@ -865,7 +865,22 @@ func TestInsertAfterFooterLandsAfterFooter(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	if !strings.Contains(out, "页脚</p><p>新增</p></footer>") {
-		t.Fatalf("应落在页脚之后: %s", out)
+		t.Fatalf("锚在页脚内的块上会插进页脚: %s", out)
+	}
+}
+
+// 推荐路径：锚在页脚之前那块 → 新内容落在页脚外、正文之后。
+func TestInsertBeforeFooterLandsOutside(t *testing.T) {
+	page := `<html><body><p>正文</p><footer><p>页脚</p></footer></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "t1", Hash: findBlock(t, blocks, "t1").Hash, HTML: `<p>新增</p>`}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !strings.Contains(out, "<p>新增</p><footer>") {
+		t.Fatalf("应落在页脚之前: %s", out)
 	}
 }
 
@@ -896,5 +911,52 @@ func TestInsertedBlockSurvivesFigurePrune(t *testing.T) {
 	}
 	if !strings.Contains(out2, `class="tape"`) {
 		t.Fatalf("之前插入的装饰块不该被收缩卷走: %s", out2)
+	}
+}
+
+// 图注里还有一张图：删主图不能把图注里的图一起收走（审查 §七 P2-1）。
+func TestRemoveImageKeepsMediaInsideCaption(t *testing.T) {
+	page := `<html><body><p>正文</p><figure><img src="image:a" alt="主图">` +
+		`<figcaption>图注 <img src="image:icon" alt="小图"></figcaption></figure></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{Removes: []RemoveOp{{NID: "img1", Hash: findBlock(t, blocks, "img1").Hash}}})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if !strings.Contains(out, "image:icon") {
+		t.Fatalf("图注里的图不该被连带删: %s", out)
+	}
+}
+
+// 锚在照片上：说明要留在 figure 里（figure 允许 flow content），别抬出去丢样式。
+func TestInsertAfterFigureImageStaysInside(t *testing.T) {
+	page := `<html><body><p>正文</p><figure class="fig"><img src="image:a" alt="照片"><figcaption>图注</figcaption></figure></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "img1", Hash: findBlock(t, blocks, "img1").Hash, HTML: `<p class="cap">新说明</p>`}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !strings.Contains(out, `<p class="cap">新说明</p><figcaption>`) {
+		t.Fatalf("说明应留在 figure 内、图注之前: %s", out)
+	}
+}
+
+// 片段里嵌套会被安全清洗删掉的标签：直接拒，别「插入成功」但内容没了。
+func TestInsertRejectsNestedDangerousTag(t *testing.T) {
+	blocks := mustScan(t, samplePage)
+	h := findBlock(t, blocks, "t1").Hash
+	for _, frag := range []string{
+		`<div><iframe src="x"></iframe></div>`,
+		`<div><script>alert(1)</script></div>`,
+		`<section><img src="image:a"><form></form></section>`,
+	} {
+		_, _, err := ApplyEdit(samplePage, Edit{
+			Inserts: []InsertOp{{After: "t1", Hash: h, HTML: frag}},
+		})
+		if !errors.Is(err, ErrBadFragment) || !strings.Contains(err.Error(), "安全清洗") {
+			t.Fatalf("片段 %q 应拒绝，实际 %v", frag, err)
+		}
 	}
 }

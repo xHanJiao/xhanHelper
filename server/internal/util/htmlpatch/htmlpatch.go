@@ -59,7 +59,7 @@ var (
 	ErrAltTooLong    = errors.New("图片说明太长")
 	ErrMixedOp       = errors.New("同一项不能同时改文字和图片")
 	ErrEmptyOp       = errors.New("这一项既没有 text，也没有 image/alt")
-	ErrNoStyle       = errors.New("页面里没有 <style>")
+	ErrNoHead        = errors.New("页面缺少 <head>，没法新建 <style>")
 	ErrStyleHash     = errors.New("样式 hash 不匹配")
 	ErrBadFragment   = errors.New("插入内容不合法")
 	ErrBadAnchor     = errors.New("锚点位置不能插块")
@@ -73,13 +73,14 @@ var tableContextTags = map[string]bool{
 	"table": true, "thead": true, "tbody": true, "tfoot": true, "tr": true,
 }
 
-// tightContainers — 内容模型受限的语义容器：锚点是它们的直接子块时，插块要落到容器
-// **之后**（容器兄弟层级），而不是容器内部紧跟锚点。否则「锚在图注上」会把段落塞进
-// <figure>、锚在列表项上会把 <p> 塞进 <ul> —— 视觉上并进了别的容器，结构也不合法。
+// liftAlways — 内容模型只收特定子元素的容器：锚点是它们的直接子块时，插块要落到
+// 容器**之后**（容器兄弟层级）。否则「锚在列表项上」会把 <p> 塞进 <ul>，结构非法。
 // 布局用的 div 不在此列：卡片里加段落就该留在卡片里。
-var tightContainers = map[string]bool{
-	"figure": true, "ul": true, "ol": true, "dl": true, "picture": true,
-}
+//
+// figure 不在里面：figure 允许 flow content，只有 figcaption 必须首/尾，所以
+// 「锚在照片上、在照片下面加一句说明」应该留在 figure 内；只有锚点是图注本身时才抬
+// （插在图注之后会变成「图注后面还有内容」，非法）。
+var liftAlways = map[string]bool{"ul": true, "ol": true, "dl": true, "picture": true}
 
 // Block — 一个可定位的块（给 get outline 用）。
 type Block struct {
@@ -193,8 +194,7 @@ func ApplyEdit(source string, edit Edit) (string, []string, error) {
 	}
 
 	type insertPlan struct {
-		after  string
-		target *html.Node // 实际落点：锚点本身，或锚点所在的语义容器
+		target *html.Node // 实际落点：锚点本身，或要抬出去的那层容器
 		nodes  []*html.Node
 	}
 	plans := make([]insertPlan, 0, len(edit.Inserts))
@@ -220,10 +220,12 @@ func ApplyEdit(source string, edit Edit) (string, []string, error) {
 			return "", nil, fmt.Errorf("%s: %w", ins.After, err)
 		}
 		target := a.node
-		if p := target.Parent; p != nil && tightContainers[p.Data] {
-			target = p
+		if p := target.Parent; p != nil {
+			if liftAlways[p.Data] || (p.Data == "figure" && (a.Tag == "figcaption" || a.Tag == "caption")) {
+				target = p
+			}
 		}
-		plans = append(plans, insertPlan{after: ins.After, target: target, nodes: nodes})
+		plans = append(plans, insertPlan{target: target, nodes: nodes})
 	}
 
 	// ---- 应用 ----
@@ -344,6 +346,9 @@ func parseFragment(frag string) ([]*html.Node, error) {
 			if !insertTags[n.Data] {
 				return nil, fmt.Errorf("%w: 不允许插入 <%s>", ErrBadFragment, n.Data)
 			}
+			if err := rejectDangerousTags(n); err != nil {
+				return nil, err
+			}
 			out = append(out, n)
 		}
 	}
@@ -361,6 +366,31 @@ var insertTags = map[string]bool{
 	"ul": true, "ol": true, "li": true, "table": true,
 	"blockquote": true, "hr": true, "pre": true,
 	"figcaption": true, "span": true, "a": true,
+}
+
+// dangerousTags — 嵌套在合法块里也会被入库清洗删掉的标签（与 htmlsanitize.dropTags
+// 保持一致）。片段里出现就直接拒：否则「插入成功」实际是内容被清洗没了，模型会以为
+// 插进去了。顶层同名标签本来就不在 insertTags 里。
+var dangerousTags = map[string]bool{
+	"script": true, "iframe": true, "object": true, "embed": true, "applet": true,
+	"frame": true, "frameset": true, "link": true, "meta": true, "base": true,
+	"form": true, "input": true, "button": true, "select": true, "textarea": true,
+}
+
+// rejectDangerousTags — 片段子树里出现会被清洗的标签就报错（顶层已由 insertTags 挡）。
+func rejectDangerousTags(n *html.Node) error {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode {
+			continue
+		}
+		if dangerousTags[c.Data] {
+			return fmt.Errorf("%w: 片段里不能有 <%s>（会被安全清洗删掉）", ErrBadFragment, c.Data)
+		}
+		if err := rejectDangerousTags(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // tablePartTags — 只能活在 <table> 里的标签。以 <div> 为上下文解析时它们会被静默丢弃，
@@ -452,33 +482,33 @@ type content struct {
 
 func contentOf(n *html.Node) content {
 	var c content
-	var walk func(*html.Node)
-	walk = func(x *html.Node) {
+	var walk func(*html.Node, bool)
+	walk = func(x *html.Node, inCaption bool) {
 		for ch := x.FirstChild; ch != nil; ch = ch.NextSibling {
 			switch ch.Type {
 			case html.TextNode:
-				if strings.TrimSpace(ch.Data) != "" {
+				if !inCaption && strings.TrimSpace(ch.Data) != "" {
 					c.text = true
 				}
 			case html.ElementNode:
-				switch {
-				case mediaTags[ch.Data]:
+				if mediaTags[ch.Data] {
 					c.media = true
-				case captionLike(ch):
-					// 图注/表说明跟着图走，本身不算内容（否则删图永远收不掉相框）
-				default:
-					walk(ch)
+					continue
 				}
+				// 图注里的文字跟着图走，但里面的图/视频照常算内容——
+				// 不能因为「图注不算内容」把用户还要的元素一起收走。
+				walk(ch, inCaption || captionLike(ch))
 			}
 		}
 	}
-	walk(n)
+	walk(n, false)
 	return c
 }
 
 // captionLike — 图注/说明：`figcaption`/`caption` 标签，或 class 里带 `cap` 词根
 // （`.cap`、`.caption`、`.cap-note`）。只按语义标记认，不看文字长短：这样
 // 「删图时连悬空图注一起收」和「别把模型写在 div 里的正文一起收」可以同时成立。
+// 只影响「文字算不算内容」，子树仍会被遍历（里面的图片/视频仍是内容）。
 func captionLike(n *html.Node) bool {
 	switch n.Data {
 	case "figcaption", "caption":
@@ -538,7 +568,7 @@ func ReplaceStyle(source, css, expectHash string) (string, error) {
 		}
 		head := findHead(doc)
 		if head == nil {
-			return "", ErrNoStyle
+			return "", ErrNoHead
 		}
 		style := &html.Node{Type: html.ElementNode, Data: "style", DataAtom: atom.Style}
 		style.AppendChild(&html.Node{Type: html.TextNode, Data: css})

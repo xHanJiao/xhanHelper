@@ -136,7 +136,7 @@ type Artifact struct {
 
 > 同一张图被多页引用时的重复体积 vs 外链 + 调 TTL 的取舍，见 `image-retention.md`（备忘，2026-10-30，未决策）。
 
-模型怎么发现图片：`image.list_images` 增加 `scope`（`turn` = 本轮附件、`all` = 全库分页），结果里直接给 `<img src="image:<id>">` 片段。本轮附件的 id 由 orchestrator 通过 `ExecuteContext.UserImageIDs` 带进工具。
+模型怎么发现图片：`image.list_images` 增加 `scope`（`turn` = 本轮附件、`all` = 全库分页），结果里直接给 `<img src="image:<id>">` 片段；每条带 `available`（文件还在不在）——迁移/外部删除留下的「死图」会被标 `false`，并在 `hint` 里提示别用。本轮附件的 id 由 orchestrator 通过 `ExecuteContext.UserImageIDs` 带进工具。
 
 ## 五、卡片：数据源跟消息走，不跟设备走
 

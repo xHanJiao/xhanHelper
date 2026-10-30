@@ -100,6 +100,13 @@ func (s *ImageStore) FilePath(a *model.ImageAsset) string {
 	return filepath.Join(s.dir, a.ID+"."+a.Ext)
 }
 
+// HasFile — 记录在、磁盘文件还在。给 list_images 标「死图」用：导库只搬 DB、
+// 换机、外部删除都会留下这种记录；不标出来，模型会挑中它再在 create 里整笔失败。
+func (s *ImageStore) HasFile(a *model.ImageAsset) bool {
+	_, err := os.Stat(s.FilePath(a))
+	return err == nil
+}
+
 // Upload 落盘 + 建记录。同用户内容相同则直接复用已有记录（去重）。
 func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility string, data []byte) (*model.ImageAsset, error) {
 	if int64(len(data)) > s.maxBytes {

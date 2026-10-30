@@ -1486,3 +1486,47 @@ func TestHTMLArtifactPatchStyleOnPageWithoutStyle(t *testing.T) {
 		t.Fatalf("已有样式时缺 hash 应拒绝，实际 %q", pres.Error)
 	}
 }
+
+// 幂等重放（同一个 patch 又来一次）：updated 也要清空，别报「改了但什么都没发生」。
+func TestHTMLArtifactPatchReplayClearsUpdated(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-replay"}
+
+	res := tl.Execute(ec, "create", artArgs("两段", "幂等", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "新标题"}},
+	})
+	first := tl.Execute(ec, "patch", args)
+	if !first.Success {
+		t.Fatalf("patch: %s", first.Error)
+	}
+	// 用新鲜 hash 把同一段文字再写一遍：内容没变 → 走幂等分支
+	t1 = outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+	args, _ = json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "新标题"}},
+	})
+	second := tl.Execute(ec, "patch", args)
+	if !second.Success {
+		t.Fatalf("replay: %s", second.Error)
+	}
+	var pr struct {
+		Updated  []string `json:"updated"`
+		Inserted int      `json:"inserted"`
+		Removed  int      `json:"removed"`
+	}
+	if err := json.Unmarshal(second.Data, &pr); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(pr.Updated) != 0 || pr.Inserted != 0 || pr.Removed != 0 {
+		t.Fatalf("幂等重放不该报任何变更: %+v", pr)
+	}
+}

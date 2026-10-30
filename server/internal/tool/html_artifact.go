@@ -179,8 +179,8 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"报「页面已变」说明另一处改过（或你拿的是旧 hash）：重新 get 拿新 nid/hash，别拿旧值硬试。",
 			"rich=true 的块含高亮/链接等内联格式，patch 文字会压平格式，服务端会拒绝；这种块只能 get(view=\"full\") 后整页重写。",
 			"只有语义块（标题/段落/列表项/表格单元格/图注/引用）有 nid；div 里的文字不在清单里，改它请 get(view=\"full\") 整页重写，别拿不存在的 nid 反复试。",
-			"锚点位置：插块落在锚点所在语义容器之后——锚在图注/列表项上，段落会落到整个 figure/列表之后；要加在页面末尾就锚在页脚块上（就落在页脚之后）。别锚在表格单元格（td/th）上，那会插出非法结构。",
-			"整张 <table> 可以插；单独插 tr/td 不行，要增删行列请整页重写。",
+			"锚点位置：插块落在锚点之后——锚在图注/列表项上会落到整个 figure/列表之后（锚在照片上仍留在 figure 里）；要加在页面末尾就锚在页脚之前那块（锚在页脚内部的块上会插进页脚里）。别锚在表格单元格（td/th）上，那会插出非法结构。",
+			"整张 <table> 可以插；单独插 tr/td 不行，要增删行列请整页重写。表格若是页面最后一个块（后面没有块可当锚点），往后追加只能整页重写。",
 			"换图必须是 image:<id> 引用（先用 image.list_images 拿 id）。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
@@ -343,7 +343,7 @@ func (t *HTMLArtifactTool) getOutline(src string, a *model.Artifact) *Result {
 	styleBytes := 0
 	if css, _, err := htmlpatch.Style(src); err == nil {
 		styleBytes = len(css)
-	} else if !errors.Is(err, htmlpatch.ErrNoStyle) {
+	} else {
 		log.Printf("[html] get outline style id=%s: %v", a.ID, err)
 	}
 	return resultJSON(map[string]any{
@@ -353,7 +353,7 @@ func (t *HTMLArtifactTool) getOutline(src string, a *model.Artifact) *Result {
 		"blocks":      items,
 		"style_bytes": styleBytes,
 		"page_bytes":  len(src),
-		"tip":         "改文字/换图/加图/删块都用 html.patch（ops / insert / remove），不要重传整页；改样式先 get(view=\"style\") 再 patch(style=…)。插入新块时把相邻块的 class 照抄到片段上（每块都带 class），否则没有间距/配色。div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 view=\"full\" 整页重写。加到末尾锚在页脚块上即可（新内容落在它之后）",
+		"tip":         "改文字/换图/加图/删块都用 html.patch（ops / insert / remove），不要重传整页；改样式先 get(view=\"style\") 再 patch(style=…)。插入新块时把相邻块的 class 照抄到片段上（每块都带 class），否则没有间距/配色。div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 view=\"full\" 整页重写。加到末尾锚在页脚之前那块",
 	})
 }
 
@@ -540,14 +540,15 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	// 两处返回同一组字段（没有 tip 的幂等分支也不例外）
 	patchResult := func(pageBytes int, changedNow bool, tip string) *Result {
 		inserted, removed := len(req.Insert), len(req.Remove)
+		updated := changed
 		if !changedNow {
-			inserted, removed = 0, 0 // 幂等重放：这一轮什么都没做
+			inserted, removed, updated = 0, 0, nil // 幂等重放：这一轮什么都没做
 		}
 		out := map[string]any{
 			"artifact_id":   id,
 			"title":         a.Title,
 			"summary":       a.Summary,
-			"updated":       changed,
+			"updated":       updated,
 			"inserted":      inserted,
 			"removed":       removed,
 			"style_updated": req.Style != nil,
@@ -605,8 +606,8 @@ func patchErrorMessage(err error) string {
 		return fmt.Sprintf("%v；要改它请 view=\"full\" 后整页重写", err)
 	case errors.Is(err, htmlpatch.ErrNoSuchBlock):
 		return fmt.Sprintf("%v；先用 html.get(view=\"outline\") 看现有块", err)
-	case errors.Is(err, htmlpatch.ErrNoStyle):
-		return "页面缺少 <head>，没法新建 <style>；只能 view=\"full\" 后整页改"
+	case errors.Is(err, htmlpatch.ErrNoHead):
+		return err.Error() + "；只能 view=\"full\" 后整页改"
 	case errors.Is(err, htmlpatch.ErrEditConflict):
 		return fmt.Sprintf("%v；改和删分成两次 patch 做", err)
 	case errors.Is(err, htmlpatch.ErrBadFragment):

@@ -289,7 +289,8 @@ rightSidebar.openTab(
     id: "artifact:\(artifact.id)",     // 以 id 为键 → 再点同一张是切回去，不开第二份
     title: artifact.title,
     icon: "doc.richtext",
-    content: AnyView(HTMLArtifactView(html: artifact.html))
+    // 2026-10-30 起包一层 ArtifactDetailView：左 220 侧栏（灵阅列表）+ 页面
+    content: AnyView(ArtifactDetailView(html: artifact.html))
 )
 ```
 
@@ -422,7 +423,7 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 
 现象：内联 13 张图的页面接近 8MB 上限，点开时「拉 JSON → 解析 → 注入基线 → `loadHTMLString`」全在主线程（`-default-isolation MainActor`），期间**没有任何反馈**，用户看到的就是"点了没反应"。
 
-做法：`ArtifactOpenCoordinator.open` **先开一个骨架 tab**（spinner + 标题），拉到正文后 `updateTabContent` 换成 `HTMLArtifactView`；失败则**关掉骨架 tab** 并 toast 说清原因（留一个永远白屏的 tab 比没有更糟）。
+做法：`ArtifactOpenCoordinator.open` **先开一个骨架 tab**（spinner + 标题），拉到正文后 `updateTabContent` 换成 `ArtifactDetailView`（2026-10-30 起：左栏换篇列表 + 页面；骨架态同样是 `ArtifactDetailView(html: nil)`，侧栏先可用）；失败则**关掉骨架 tab** 并 toast 说清原因（留一个永远白屏的 tab 比没有更糟）。
 
 - 骨架走的是右栏既有的 tab 机制（`tabs[i].content` 是 `var`，已有 `updateTabTitle` 同款写法），不新造容器。
 - iOS 的 sheet 保持原位（先弹出再显示加载态），无需 tab。

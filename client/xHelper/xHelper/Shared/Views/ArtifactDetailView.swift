@@ -117,6 +117,8 @@ private struct ArtifactNavList: View {
     let onLoadMore: () -> Void
 
     @State private var hoveredID: String?
+    /// 本次进入是否已经自动定位过（只定位一次，别在续拉 / 刷新时抢用户的手动滚动）
+    @State private var didAutoScroll = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -166,13 +168,25 @@ private struct ArtifactNavList: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 6)
             }
-            .onAppear {
-                guard currentInList else { return }
-                // 与文档侧栏同款：当前项放到视口上方约 12%（上面留两三行上下文）。
-                // shortcut: LazyVStack 对未物化行 scrollTo 可能静默不生效，退化方案是顶部钉行（未预置，真被咬到再加）
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    proxy.scrollTo(currentID, anchor: UnitPoint(x: 0, y: 0.12))
-                }
+            .onAppear { autoScroll(to: proxy) }
+            // 从聊天卡片首次打开时，onAppear 那一刻列表还是空的（`.task` 里的 load 还没回来）。
+            // 只认「0 → N」这一次：等首次加载完成后补一次定位；续拉 / 面板刷新别抢用户的手动滚动。
+            .onChange(of: items.count) { old, new in
+                guard old == 0, new > 0 else { return }
+                autoScroll(to: proxy)
+            }
+        }
+    }
+
+    /// 把当前项放到视口上方约 12%（上面留两三行上下文），本次进入只做一次。
+    private func autoScroll(to proxy: ScrollViewProxy) {
+        guard !didAutoScroll, currentInList else { return }
+        didAutoScroll = true
+        // 刚插入的行可能还没布局（首次 load 完成就在同一个更新里），延后一个 runloop 再滚；
+        // shortcut: LazyVStack 对未物化行 scrollTo 仍可能静默不生效，退化方案是顶部钉行（未预置）
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                proxy.scrollTo(currentID, anchor: UnitPoint(x: 0, y: 0.12))
             }
         }
     }

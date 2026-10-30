@@ -38,7 +38,7 @@
 | AN-1 | 侧栏长在哪 | ✅ 长在 **tab 内容里**（`ArtifactDetailView` 包住 `HTMLArtifactView`）。文档那种「面板内页 + 侧栏」不适用，理由见 §一 |
 | AN-2 | 换篇语义 | ✅ 行点击 → `ArtifactOpenCoordinator.open(id:title:)`：已开着就切过去（同 id 不重建），没开就新开。**tab 会累积**，这是选定的语义（可用于左右对照），也避免新增 tab 身份迁移逻辑 |
 | AN-3 | 列表数据源 | ✅ 复用 `ContentView` 里那份 **`ArtifactViewModel`**（照 `DocumentSelectionCoordinator.shared.documentVM` 注入 `ArtifactOpenCoordinator.shared.artifactVM`）。灵阅没有筛选条件，所以不存在文档 SM-1 那种「同筛选结果」的额外要求 |
-| AN-4 | 列表没加载过 | ✅ 侧栏 `.task` 里 `if items.isEmpty { await load() }`。从聊天卡片直接打开 tab 时列表可能是空的（面板从没进过），补这一刀；已有数据不重拉（不重置面板翻的页） |
+| AN-4 | 列表没加载过 | ✅ 侧栏 `.task` 里 `if items.isEmpty && !isLoading { await load() }`（`!isLoading` 避免与面板并发双拉）。从聊天卡片直接打开 tab 时列表可能是空的（面板从没进过），补这一刀；已有数据不重拉（不重置面板翻的页）。首次加载完成后补一次定位（见 AN-13） |
 | AN-5 | 行内容 | ✅ 两行：标题（空则「未命名页面」，限 1 行）+ 「相对时间 · 摘要」（`formatConversationDate` + 摘要压空白后 `lineLimit(1)`）。用户 2026-10-30 拍板 |
 | AN-6 | 当前项不在列表里 | ✅ 顶部**钉一行**（副信息「当前页面」，不可点）+ Divider，下接列表。典型：从聊天打开一篇不在首页的产物 |
 | AN-7 | 分页 | ✅ 末行 `onAppear` → `viewModel.loadMore()`（与 `CardGridView` / 文档侧栏同套路）。`shortcut:` 只续拉，不做跳页 |
@@ -47,6 +47,8 @@
 | AN-10 | 组件复用 | ✅ 从 `DocumentListView` 抽出 `SidebarNavRow`（行）与 `SidebarCollapsedStrip`（窄条）成公共组件，两处共用。模式菜单 / 目录大纲 / 批注面板**不抽**（灵阅无对应物） |
 | AN-11 | 刷新 | ✅ 侧栏跟共享 VM 走：浏览面板页头的「刷新」`artifactVM.load()` 会一起更新（同时把列表回到第一页，与文档侧栏同代价） |
 | AN-12 | 服务端 | ✅ 零改动。不新增接口、不加字段 |
+| AN-13 | 首次定位时机 | ✅ 定位只做一次（`didAutoScroll`）：`onAppear` 时列表已有数据就直接滚；否则等 `items.count` 从 **0 → N** 那一次补上。**不能只挂在 `onAppear`** —— 从聊天卡片首次打开时那一刻列表还是空的，当前行永远不定位（第二轮审查 N1）。续拉 / 面板刷新不触发定位，别抢用户的手动滚动 |
+| AN-14 | `artifactVM` 为 nil | ✅ 视为接线 bug，`ArtifactOpenCoordinator.tabContent` 直接 `fatalError`（它与 `rightSidebar` 同一处注入）。不做「没有侧栏的页面」这种半边降级 —— 用户会当成正常、没人会报（第二轮审查 N2） |
 
 ---
 
@@ -88,7 +90,8 @@
    页面照样能打开）。侧栏列铺 `.regularMaterial` 纸底（右栏本身没有卡片底；用材质而不是 `Color.white`，
    深色模式下 `.primary` 文字才读得出来）；`.ignoresSafeArea()` 只加在**页面列**上，别把侧栏也拽出安全区。
 3. **`ArtifactOpenCoordinator`**：加 `weak var artifactVM: ArtifactViewModel?`；骨架与最终内容都走
-   `tabContent`（有 VM 才包 `ArtifactDetailView`）。iOS 分支、失败关 tab、分享 / 下载 / 导出 PDF 全部不动。
+   `tabContent` → `ArtifactDetailView`，VM 缺失直接 `fatalError`（必需依赖，见 AN-14）。iOS 分支、
+   失败关 tab、分享 / 下载 / 导出 PDF 全部不动。
 4. **`ContentView.onAppear`**：`ArtifactOpenCoordinator.shared.artifactVM = artifactVM` 一行。
 5. **`ArtifactViewModel`**：`total` 由 `private` 改 `private(set)`（「· N 篇」用）。
 6. **`Layout`**：加 `artifactNavHardFloor = docTocExpandedWidth + rightSidebarMinWidth`（= 600；
@@ -118,7 +121,7 @@
 - 真机（用户 Xcode 复核）：
   - 灵阅面板点卡 → 右栏 tab 左侧出现侧栏，当前项高亮并停在上方约 12%；
   - 点另一篇 → 新开 tab、新侧栏高亮；再点回第一篇 → 切回旧 tab（不重复开）；
-  - 从聊天卡片直接打开 → 侧栏也能拉到列表（首次自动 load）；
+  - 从聊天卡片直接打开 **一篇不在首页、且靠后**的产物 → 侧栏列表加载完成后，当前行被定位到视口（不留在顶部）；
   - 右栏拖窄到 < 600 → 自动收成窄条；拖宽恢复展开（硬地板收起不写回存储）；手动收起后拖宽仍收起；窄条点击展开、重启后收起态保留；
   - 滚到底自动加载第 31 条；当前页不在首页时顶部有钉行；
   - 右上分享按钮仍在、白底、无横向滚动；让 agent 改版同一页 → 内容换新版、侧栏不重置。

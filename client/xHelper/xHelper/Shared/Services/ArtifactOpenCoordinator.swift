@@ -19,7 +19,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
     /// macOS 右栏（ContentView 注入）
     weak var rightSidebar: RightSidebarManager?
     /// 灵阅列表（ContentView 注入）：详情页左侧换篇栏共用浏览面板那份数据。
-    /// nil 时详情退化成纯页面（没有侧栏）—— 注入时序问题不该让页面打不开。
+    /// 必需依赖，与 `rightSidebar` 同处注入；为 nil 时 `tabContent` 直接炸（接线 bug，不静默降级）。
     weak var artifactVM: ArtifactViewModel?
     /// iOS 用 sheet 展示当前这篇
     @Published var presented: ArtifactPayload?
@@ -82,16 +82,19 @@ final class ArtifactOpenCoordinator: ObservableObject {
         }
     }
 
-    /// tab 内容（macOS）：有列表数据时包一层左栏换篇，否则只给页面 / 骨架。
+    /// tab 内容（macOS）：必带左栏换篇（骨架态也一样，见 `ArtifactDetailView(html: nil)`）。
     #if os(macOS)
     private func tabContent(id: String, title: String, html: String?) -> AnyView {
-        if let artifactVM {
-            return AnyView(ArtifactDetailView(id: id, title: title, html: html, viewModel: artifactVM))
+        AnyView(ArtifactDetailView(id: id, title: title, html: html, viewModel: requiredArtifactVM))
+    }
+
+    /// 必需依赖：`artifactVM` 与 `rightSidebar` 在同一处（`ContentView.onAppear`）注入，
+    /// 走到这里还是 nil 就是接线 bug —— 让它炸在明处，别降级成一个「看起来正常、功能缺一半」的页面。
+    private var requiredArtifactVM: ArtifactViewModel {
+        guard let artifactVM else {
+            fatalError("ArtifactOpenCoordinator: artifactVM 未注入（应在 ContentView.onAppear 接线）")
         }
-        if let html {
-            return AnyView(HTMLArtifactView(id: id, title: title, html: html))
-        }
-        return AnyView(ArtifactLoadingView(title: title))
+        return artifactVM
     }
     #endif
 

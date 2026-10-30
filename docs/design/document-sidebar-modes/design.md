@@ -161,3 +161,10 @@
 - **决定**：macOS 删掉详情页那条，页头的「返回」在详情态改为**回文档列表**（再按一次才回网格），`划线与批注` / `查找` 搬到页头 trailing。
 - **对本节的影响**：「切文档只剩 返回 → 再点开」这条路**仍然成立**，只是入口从详情页顶栏换成了右侧栏页头；侧栏「文档列表」模式的定位与换篇行为**零改动**。
 - **细节与影响文件**：见 `docs/design/document-highlight-annotation/design.md` 文末「详情页顶栏并进页头」。
+
+### 2026-10-30 · 行与窄条抽成公共组件（灵阅侧栏复用）
+
+- **背景**：灵阅详情页要加同款换篇侧栏（`docs/design/artifact-nav-sidebar/design.md`），列表行与收起窄条完全一致。
+- **决定**：`documentNavRow` 的行样式抽成 `SidebarNavRow`（title / subtitle / isCurrent / isHovered），`tocCollapsedStrip` 抽成 `SidebarCollapsedStrip`，两处共用；`tocSidebar` 的裸值 `220` 改用 `Layout.docTocExpandedWidth`。模式菜单、`本文目录` 大纲、批注面板**不抽**（灵阅无对应物）。
+- **对本节的影响**：开头那句「`DocumentListView.swift` 单文件内完成」已不成立（行 / 窄条在 `Shared/Views/SidebarNavRow.swift`）；SM 各条判断、`DocSidebarMode` 枚举、行为与样式均不变。
+- **影响文件**：`client/.../Views/SidebarNavRow.swift`（新）、`DocumentListView.swift`（`documentNavRow` / `tocCollapsedStrip` / `tocSidebar`）。

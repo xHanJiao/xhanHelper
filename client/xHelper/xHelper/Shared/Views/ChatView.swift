@@ -62,6 +62,7 @@ struct ChatView: View {
         .sheet(item: $artifactOpener.presented) { payload in
             NavigationStack {
                 HTMLArtifactView(id: payload.id, title: payload.title, html: payload.html)
+                    .ignoresSafeArea()
                     .navigationTitle(payload.title)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {

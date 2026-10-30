@@ -43,6 +43,8 @@ func injectingBaseline(_ html: String) -> String {
 ///
 /// 内存约定：**不要**把这个视图塞进 `RightSidebarTab.content` 的构造参数、也不要进
 /// `keptAliveTabIds`——切走即销毁，切回来重新 `loadHTMLString`（页面无 JS 无网络，重载可忽略）。
+///
+/// 铺满（`.ignoresSafeArea()`）由外层负责：macOS 在 `ArtifactDetailView`，iOS 在 `ChatView` 的 sheet。
 struct HTMLArtifactView: View {
     let id: String
     let title: String
@@ -70,7 +72,6 @@ struct HTMLArtifactView: View {
                 .allowsHitTesting(false)
             }
         }
-        .ignoresSafeArea()
         // 换一篇/重新生成：失败态跟着重置，别把上一次的错误留在新页上
         .onChange(of: html) { _, _ in loadFailed = false }
         #if os(macOS)

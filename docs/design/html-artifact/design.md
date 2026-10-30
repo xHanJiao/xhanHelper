@@ -289,7 +289,8 @@ rightSidebar.openTab(
     id: "artifact:\(artifact.id)",     // 以 id 为键 → 再点同一张是切回去，不开第二份
     title: artifact.title,
     icon: "doc.richtext",
-    content: AnyView(HTMLArtifactView(html: artifact.html))
+    // 2026-10-30 起包一层 ArtifactDetailView：左 220 侧栏（灵阅列表）+ 页面
+    content: AnyView(ArtifactDetailView(html: artifact.html))
 )
 ```
 
@@ -422,7 +423,7 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 
 现象：内联 13 张图的页面接近 8MB 上限，点开时「拉 JSON → 解析 → 注入基线 → `loadHTMLString`」全在主线程（`-default-isolation MainActor`），期间**没有任何反馈**，用户看到的就是"点了没反应"。
 
-做法：`ArtifactOpenCoordinator.open` **先开一个骨架 tab**（spinner + 标题），拉到正文后 `updateTabContent` 换成 `HTMLArtifactView`；失败则**关掉骨架 tab** 并 toast 说清原因（留一个永远白屏的 tab 比没有更糟）。
+做法：`ArtifactOpenCoordinator.open` **先开一个骨架 tab**（spinner + 标题），拉到正文后 `updateTabContent` 换成 `ArtifactDetailView`（2026-10-30 起：左栏换篇列表 + 页面；骨架态同样是 `ArtifactDetailView(html: nil)`，侧栏先可用）；失败则**关掉骨架 tab** 并 toast 说清原因（留一个永远白屏的 tab 比没有更糟）。
 
 - 骨架走的是右栏既有的 tab 机制（`tabs[i].content` 是 `var`，已有 `updateTabTitle` 同款写法），不新造容器。
 - iOS 的 sheet 保持原位（先弹出再显示加载态），无需 tab。
@@ -675,3 +676,10 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：下载 = 存 `.html` 单文件、导出 = 走 `DocumentPDFExporter.exportHTML`（与文档 PDF 同一条打印分页管线，加载前注入同一份版式基线）。
   - 影响文件：`client/.../Views/CardStyle.swift`、`CardView.swift`、`ArtifactListView.swift`、`HTMLArtifactView.swift`（基线函数放宽为 internal）、`Services/ArtifactOpenCoordinator.swift`（+`copyShareLink` / `downloadHTML` / `exportPDF`）、`DocumentPDFExporter.swift`（+`exportHTML`）。
   - **2026-10-30 补充**：卡片菜单里的「导出 PDF」**只在 Debug（dev）构建出现**（`LocalPaths.isDev`）——大产物的分页/图片解码还没验够，Release 不带；「下载 HTML」照常开放。放开只需删掉调用点的 `if`（见 `docs/design/card-more-menu` §9）。
+- **2026-10-30 · 灵阅详情左侧加换篇列表**
+  - 起因：灵阅攒成库后，从一篇看另一篇只能回面板再点，还要重新找位置；文档详情早有左侧「文档列表」侧栏。
+  - 决定：tab 内容包一层 `ArtifactDetailView`（左 220 侧栏 + 页面），侧栏只有「灵阅列表」一种形态（灵阅是任意 HTML 且 `javaScriptEnabled = false`，没有标题大纲可做）；收起态 / 窄栏自动收 / 当前项钉行 / 滚到底续拉，交互与样式沿用 `document-sidebar-modes`。
+  - 决定：点行 = `ArtifactOpenCoordinator.open(id:title:)`（已开切过去、没开新开 tab），**不做原地替换 tab**——避免给 `RightSidebarManager` 加 tab 身份迁移，也保住「两篇并排对照」。
+  - 决定：列表数据复用 `ContentView` 那份 `ArtifactViewModel`（coordinator 注入），侧栏在 `items.isEmpty` 时自己补一次 `load()`；骨架 tab 也带侧栏，点开就能连续翻。
+  - 决定：`HTMLArtifactView` / `ArtifactLoadingView` 的 `.ignoresSafeArea()` 上移到容器（macOS 在 `ArtifactDetailView`，iOS 在 `ChatView` 的 sheet 补一个），行为不变。
+  - 影响文件：`client/.../Views/{ArtifactDetailView(新),SidebarNavRow(新),DocumentListView,HTMLArtifactView,ArtifactLoadingView,ChatView,ContentView,LayoutConstants}.swift`、`Services/ArtifactOpenCoordinator.swift`、`ViewModels/ArtifactViewModel.swift`（`total` 公开读）；详见 `docs/design/artifact-nav-sidebar/design.md`。

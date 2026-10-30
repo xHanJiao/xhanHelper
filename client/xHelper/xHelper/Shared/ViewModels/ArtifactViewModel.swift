@@ -25,15 +25,18 @@ final class ArtifactViewModel: ObservableObject {
     func load() async {
         isLoading = true
         errorMessage = nil
+        defer { isLoading = false }
         do {
             let resp = try await apiClient.listArtifacts(limit: Self.pageSize)
             items = resp.items
             total = resp.total
+        } catch where Self.isCancellation(error) {
+            // 切 tab / 关面板会让 `.task` 被取消。取消不是加载失败：别把「已取消」写进
+            // 共享的 errorMessage（灵阅面板会据此显示「加载失败 + 重试」）。
         } catch {
             LogBuffer.shared.error("ArtifactViewModel.load: \(error)")
             errorMessage = error.localizedDescription
         }
-        isLoading = false
     }
 
     /// 滚到底自动加载下一页；失败只记日志 + toast，已显示的列表不动。
@@ -48,10 +51,17 @@ final class ArtifactViewModel: ObservableObject {
             let known = Set(items.map(\.id))
             items.append(contentsOf: resp.items.filter { !known.contains($0.id) })
             total = resp.total
+        } catch where Self.isCancellation(error) {
+            // 同上：切走导致的取消不 toast、不记错误
         } catch {
             LogBuffer.shared.error("ArtifactViewModel.loadMore: \(error)")
             ToastCenter.shared.show("加载更多失败：\(error.localizedDescription)")
         }
+    }
+
+    /// 取消（切 tab / 关面板）与真失败必须分开：取消不能污染共享列表状态。
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     /// 删除一条（软删，无回收站）。成功后就地移除，不重拉整页——列表会跳动。

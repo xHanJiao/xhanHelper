@@ -238,10 +238,38 @@ func TestStyleRejectsStaleHash(t *testing.T) {
 	}
 }
 
-func TestStyleMissing(t *testing.T) {
-	noStyle := `<html><body><p>x</p></body></html>`
-	if _, _, err := Style(noStyle); !errors.Is(err, ErrNoStyle) {
-		t.Fatalf("没有 style 应报错，实际 %v", err)
+// 没有 <style> 不算错误：get(style) 回空，patch(style) 新建一段。
+func TestStyleMissingIsCreatable(t *testing.T) {
+	noStyle := `<html><head></head><body><p>x</p></body></html>`
+	css, hash, err := Style(noStyle)
+	if err != nil || css != "" || hash != "" {
+		t.Fatalf("没有 style 应回空: %q / %q / %v", css, hash, err)
+	}
+	out, err := ReplaceStyle(noStyle, "body{color:#111}", "")
+	if err != nil {
+		t.Fatalf("首次写样式: %v", err)
+	}
+	got, newHash, err := Style(out)
+	if err != nil || got != "body{color:#111}" || newHash == "" {
+		t.Fatalf("新建的样式读不回来: %q / %q / %v", got, newHash, err)
+	}
+	// 已有样式时，hash 不符仍要拒绝
+	if _, err := ReplaceStyle(out, "body{}", "deadbeef"); !errors.Is(err, ErrStyleHash) {
+		t.Fatalf("旧样式 hash 不符应拒绝，实际 %v", err)
+	}
+}
+
+// 删图时：裸文字 div 算内容（保住），class 带 cap 的 div 算图注（跟图一起收）。
+func TestRemoveImageKeepsPlainTextDiv(t *testing.T) {
+	page := `<html><body><p>正文够长够长够长</p>` +
+		`<figure><img src="image:a" alt="x"><figcaption>图注</figcaption><div>图里还有一句正文</div></figure></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{Removes: []RemoveOp{{NID: "img1", Hash: findBlock(t, blocks, "img1").Hash}}})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if !strings.Contains(out, "图里还有一句正文") {
+		t.Fatalf("非图注的 div 文字不该被收走: %s", out)
 	}
 }
 

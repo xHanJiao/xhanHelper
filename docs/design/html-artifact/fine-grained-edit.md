@@ -266,7 +266,7 @@ patch
 - **空容器收缩**（`remove` 之后）：从父节点向上，逐层删掉「已经只剩残渣」的容器，**停在 `<body>`（body/html 永不删）**。两档判据：
   - 删节点时顺手清掉相邻的纯空白文本节点，源码不留空白行（`get(full)` 读回来仍是原缩进）；
   - 通用：子树里没有 `img/picture/svg/video/audio/canvas/iframe/embed/object/hr`，也没有 `figcaption`/`caption` 之外的非空文本；
-  - **删的是图片时再放宽一档**：没有画面、也**没有可寻址的文本块**（`textTags`，图注/说明除外）就算残渣。原因是 `.cap` 这种 div 写的图注没有 nid，模型删不掉，留着就是悬空图注 + 空白（见 §五）；
+  - **图注按语义标记认，不按「有没有 nid」放宽**：`figcaption` / `caption` 标签，以及 **class 带 `cap` 词根**（`.cap` / `.caption` / `.cap-note`）且本身不是语义块的元素，里面的文字不算内容（跟着图一起收）。其余文字一律算内容——模型写在 `<div>` 里的正文不会因为删图被带走（见 §五）；
 - 数量上限：`ops ≤50`、`insert ≤10`、`remove ≤20`。
 
 **内容**
@@ -336,13 +336,14 @@ patch
 - **只有「重排版式」走整页**：增删段落/图片用 `insert` / `remove`；换版式、整页重构才用 `get(full)` + `create(artifact_id)`；
 - 表格只能改单元格文字，不能增删行列（行列属于结构重排；整张 `<table>` 可以插）；
 - **rich 块不能 patch 文本**：含内联高亮/链接的段落要整页改（以后的扩展点是「按内联片段编辑」）；
-- `style` 是整段替换，不能只改一条 CSS 规则；
+- `style` 是整段替换，不能只改一条 CSS 规则；页面原本没有 `<style>` 时，`get(style)` 回空 hash，带 `style_hash=""` 的 `patch(style=…)` 会**新建**一段（不必整页重写）；
 - nid 不跨版本：`get` 之后页面被改过，旧 nid/hash 失效；
 - 图片只能是 `image:<id>` 引用，早期页面里的 `data:` 图片不支持 patch（outline/block 只给 `legacy + image_bytes`，**不回传 base64**）；
 - **`div` 段落 / 单元格不参与 patch**：`textTags` 只收语义块级元素（h1–h6/p/li/td/th/figcaption/blockquote/dt/dd/caption）。现有页面里用 `<div>` 拼的表格、时间线标签只能整页改——刻意不做，`div` 多为布局容器，放开会误伤结构。**已在 `get(outline)` 的 tip 与 `patch` 描述里写死**，模型不会拿着不存在的 nid 反复试；
 - **`pre` 不参与 patch**：缩进是内容，归一化会压平；
 - **多段 `<style>` 只认第一段**（`get(style)` 与 `patch(style)` 都是）：模型正常只写一段，多段属异常；
-- **删图时「非语义块的文字」会跟着走**：图注/说明写成 `<div class="cap">`、`<div class="note">` 时（没有 nid、模型删不掉），删掉图后整个相框连它们一起收缩掉。想留着就写成 `<p>` / `<h3>`（有 nid）；此时相框会保留，模型自己再 `remove` 那一块即可——**收缩只清理模型没法寻址的东西**；
+- **图注跟着图走**：写成 `<figcaption>` / `<caption>` 或 class 带 `cap`（`.cap` / `.caption` / `.cap-note`）的说明文字，删图时会跟整个相框一起收掉（它们没有 nid，模型删不掉）。其余文字（哪怕写在 `<div>` 里、没有 nid）都算内容，删图不会带走它；想保住图注就写成 `<p>` / `<h3>`（有 nid），相框会保留、模型自己再 `remove`；
+- **`remove` 允许删单个 `td/th/caption`**：会得到列数不齐的表（HTML 仍合法、位置不跳），和 `insert` 侧「表格里不许插」不对称。清空单元格建议把 `text` 改成空串；删行/删列属于结构重排，请整页重写。暂不放宽成硬拒（删表头多余的列是真实需求）；
 - **删掉某格/某卡里唯一的内容，那一格/那张卡会一起消失**：`<td><p>甲</p></td>` 删掉 `甲` 就是整格没了（表格会少一列），`<div class="cell"><p>甲</p></div>` 同理。卡片网格上这是想要的（删卡即整张卡消失）；要只清空文字而不删格，得整页改；
 - **删到整页不足 200 字节会被拦**：`patch` 会回「删完这页就空了：至少留一块，或用 create 重建整页」；
 - **`insert` 不幂等**：同一次 insert 重复提交会插两份（响应丢了 + 模型重试才会踩到）；
@@ -465,3 +466,10 @@ patch
   - 决定：页脚锚点文案改正——锚在页脚块上，新内容落在页脚之后。
   - 决定：`updated` 只列 `ops` 命中的 nid；删除看 `removed` 计数，插入看 `inserted`。
   - 影响文件：`util/htmlpatch/htmlpatch.go`（`tightContainers` + `insertPlan.target`）+测试、`tool/html_artifact.go`（描述、`get(outline)` tip）+测试、本文件。
+- **2026-10-30 · 真机第七轮（收缩判据 / 首次样式 / 表格删除）**
+  - 起因：① 删图时容器里模型写在 `<div>` 里的正文被一起收走（旧判据「没有可寻址文本块就算残渣」）；② 页面原本没有 `<style>` 时改样式死锁——`get(style)` 报错、`patch(style)` 又硬要 `style_hash`；③ 删单个 `td` 被当成漏洞报上来；④ 「单页最多 12 张」被理解成 `<img>` 标签数。
+  - 决定：删图收缩不再按「有没有 nid」放宽，改成按语义标记认图注（`figcaption`/`caption` 标签 + class 含 `cap` 词根的非语义块），其余文字一律算内容。
+  - 决定：没有 `<style>` 的页允许 `patch(style=…, style_hash="")` 新建一段；`get(style)` 回空 CSS + 空 hash + 提示，不再报错。
+  - 决定：`remove` 单个 `td/th/caption` 保持允许（清空单元格用 `text=""`，删行列走整页），写进 §五 已知限制；不改硬拒。
+  - 澄清：12 张上限按不同 `image:<id>` 计，描述与 `design.md` 表改为「不同图片」。
+  - 影响文件：`util/htmlpatch/htmlpatch.go`（`captionLike` + `residue` 简化 + `Style`/`ReplaceStyle` 新建分支）+测试、`tool/html_artifact.go`（getStyle / patch 校验 / 描述）+测试、`design.md`、本文件。

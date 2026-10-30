@@ -1434,3 +1434,55 @@ func TestHTMLArtifactPatchUpdatedOnlyCoversOps(t *testing.T) {
 		t.Fatalf("改文字应把 nid 列进 updated: %+v", pr)
 	}
 }
+
+// 没有 <style> 的页也能改样式：get(style) 回空 hash，patch 新建一段（不再死锁）。
+func TestHTMLArtifactPatchStyleOnPageWithoutStyle(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-nostyle"}
+	page := `<html><body><p>` + strings.Repeat("正文", 100) + `</p></body></html>`
+
+	res := tl.Execute(ec, "create", artArgs("无样式", "改样式不该死锁", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	getArgs, _ := json.Marshal(map[string]any{"artifact_id": id, "view": "style"})
+	sres := tl.Execute(ec, "get", getArgs)
+	if !sres.Success {
+		t.Fatalf("无 style 时 get(style) 不该报错: %s", sres.Error)
+	}
+	var st struct {
+		Style     string `json:"style"`
+		StyleHash string `json:"style_hash"`
+		Tip       string `json:"tip"`
+	}
+	if err := json.Unmarshal(sres.Data, &st); err != nil {
+		t.Fatalf("decode style: %v", err)
+	}
+	if st.Style != "" || st.StyleHash != "" || st.Tip == "" {
+		t.Fatalf("应回空样式 + 新建提示: %+v", st)
+	}
+
+	css := "body{background:#fafafa;color:#222}"
+	pargs, _ := json.Marshal(map[string]any{"artifact_id": id, "style": css, "style_hash": ""})
+	pres := tl.Execute(ec, "patch", pargs)
+	if !pres.Success {
+		t.Fatalf("首次写样式应成功: %s", pres.Error)
+	}
+
+	sres = tl.Execute(ec, "get", getArgs)
+	if err := json.Unmarshal(sres.Data, &st); err != nil {
+		t.Fatalf("decode style 2: %v", err)
+	}
+	if st.Style != css || st.StyleHash == "" {
+		t.Fatalf("新建的样式应能读回: %+v", st)
+	}
+
+	// 现在有样式了，再不带 hash 就该拒绝（防并发覆盖）
+	pres = tl.Execute(ec, "patch", pargs)
+	if pres.Success || !strings.Contains(pres.Error, "style_hash") {
+		t.Fatalf("已有样式时缺 hash 应拒绝，实际 %q", pres.Error)
+	}
+}

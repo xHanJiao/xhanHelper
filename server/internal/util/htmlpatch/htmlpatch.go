@@ -404,20 +404,20 @@ func removeBlock(b *scanned) {
 	dropAdjacentSpace(b.node)
 	removeNode(b.node)
 	if parent != nil {
-		pruneEmptyAncestors(parent, b.Tag == "img")
+		pruneEmptyAncestors(parent)
 	}
 }
 
 // pruneEmptyAncestors — 从 n 起向上删掉「已经没内容」的容器（含 n 本身），停在 <body>。
-func pruneEmptyAncestors(n *html.Node, mediaRemoved bool) {
+func pruneEmptyAncestors(n *html.Node) {
 	if n == nil || n.Type != html.ElementNode || n.Data == "body" || n.Data == "html" {
 		return
 	}
-	if !residue(n, mediaRemoved) {
+	if !residue(n) {
 		return
 	}
 	top := n
-	for p := n.Parent; p != nil && p.Type == html.ElementNode && p.Data != "body" && p.Data != "html" && residue(p, mediaRemoved); p = p.Parent {
+	for p := n.Parent; p != nil && p.Type == html.ElementNode && p.Data != "body" && p.Data != "html" && residue(p); p = p.Parent {
 		top = p
 	}
 	if top.Parent != nil {
@@ -444,20 +444,14 @@ var mediaTags = map[string]bool{
 	"canvas": true, "iframe": true, "embed": true, "object": true, "hr": true,
 }
 
-// content 是子树里「算不算内容」的三个信号。
+// content 是子树里「算不算内容」的两个信号。
 type content struct {
-	media       bool // 有画面（图片/视频/装饰线）
-	text        bool // 有文字（图注/说明除外）
-	addressable bool // 有 nid 的文本块（模型能自己 remove 的那种）
+	media bool // 有画面（图片/视频/装饰线）
+	text  bool // 有文字（图注/说明除外）
 }
 
 func contentOf(n *html.Node) content {
 	var c content
-	// 容器本身就是可寻址的文本块（`<p>文字 <img></p>`）：里面的文字模型自己能改能删，
-	// 删图不该顺手把这一整段带走。
-	if textTags[n.Data] && n.Data != "figcaption" && n.Data != "caption" {
-		c.addressable = true
-	}
 	var walk func(*html.Node)
 	walk = func(x *html.Node) {
 		for ch := x.FirstChild; ch != nil; ch = ch.NextSibling {
@@ -470,12 +464,9 @@ func contentOf(n *html.Node) content {
 				switch {
 				case mediaTags[ch.Data]:
 					c.media = true
-				case ch.Data == "figcaption" || ch.Data == "caption":
-					// 图注/表说明跟着图走，本身不算内容
+				case captionLike(ch):
+					// 图注/表说明跟着图走，本身不算内容（否则删图永远收不掉相框）
 				default:
-					if textTags[ch.Data] {
-						c.addressable = true
-					}
 					walk(ch)
 				}
 			}
@@ -485,18 +476,29 @@ func contentOf(n *html.Node) content {
 	return c
 }
 
-// residue — 这个容器已经只剩「删完的残渣」。
-//
-// 完全空（没画面、没文字）当然是残渣。删的是图片时再放宽一档：没有画面、也没有
-// 模型能寻址的文本块，也算残渣——`.cap` 这种 div 写的图注没有 nid，模型删不掉，
-// 留着就是一条悬空图注 + 一段空白。反过来，卡片里还有 h3/p（有 nid）就不算残渣，
-// 模型想删自己会删（判据自洽：收缩只清理「模型没法寻址」的东西）。
-func residue(n *html.Node, mediaRemoved bool) bool {
-	c := contentOf(n)
-	if !c.media && !c.text {
+// captionLike — 图注/说明：`figcaption`/`caption` 标签，或 class 里带 `cap` 词根
+// （`.cap`、`.caption`、`.cap-note`）。只按语义标记认，不看文字长短：这样
+// 「删图时连悬空图注一起收」和「别把模型写在 div 里的正文一起收」可以同时成立。
+func captionLike(n *html.Node) bool {
+	switch n.Data {
+	case "figcaption", "caption":
 		return true
 	}
-	return mediaRemoved && !c.media && !c.addressable
+	if textTags[n.Data] {
+		return false // 可寻址的块（p/h3/li…）由模型自己删，别替它决定
+	}
+	for _, tok := range strings.Fields(strings.ToLower(attr(n, "class"))) {
+		if tok == "cap" || tok == "caption" || strings.HasPrefix(tok, "cap-") || strings.HasPrefix(tok, "caption-") {
+			return true
+		}
+	}
+	return false
+}
+
+// residue — 这个容器已经只剩「删完的残渣」：没画面、也没（图注以外的）文字。
+func residue(n *html.Node) bool {
+	c := contentOf(n)
+	return !c.media && !c.text
 }
 
 func removeNode(n *html.Node) {
@@ -514,7 +516,7 @@ func Style(source string) (css string, hash string, err error) {
 	}
 	n := findStyleNode(doc)
 	if n == nil {
-		return "", "", ErrNoStyle
+		return "", "", nil // 没有 <style> 不是错误：patch(style=…) 会新建一段
 	}
 	css = rawText(n)
 	return css, hashOf(css), nil
@@ -529,7 +531,19 @@ func ReplaceStyle(source, css, expectHash string) (string, error) {
 	}
 	n := findStyleNode(doc)
 	if n == nil {
-		return "", ErrNoStyle
+		// 页面原本没有 <style>：允许第一次写入（否则「无样式页改样式」只能整页重写）。
+		// 带了 hash 说明调用方以为有旧样式，判为过期。
+		if expectHash != "" {
+			return "", ErrStyleHash
+		}
+		head := findHead(doc)
+		if head == nil {
+			return "", ErrNoStyle
+		}
+		style := &html.Node{Type: html.ElementNode, Data: "style", DataAtom: atom.Style}
+		style.AppendChild(&html.Node{Type: html.TextNode, Data: css})
+		head.AppendChild(style)
+		return render(doc)
 	}
 	if expectHash != "" && expectHash != hashOf(rawText(n)) {
 		return "", ErrStyleHash
@@ -596,6 +610,23 @@ func parse(source string) (*html.Node, []scanned, error) {
 	}
 	walk(doc)
 	return doc, blocks, nil
+}
+
+// findHead — 文档里的 <head>（html.Parse 总会补一个；拿不到才让 patch(style) 失败）。
+func findHead(doc *html.Node) *html.Node {
+	var found *html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil && found == nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c.Data == "head" {
+				found = c
+				return
+			}
+			walk(c)
+		}
+	}
+	walk(doc)
+	return found
 }
 
 func findStyleNode(doc *html.Node) *html.Node {

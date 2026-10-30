@@ -99,7 +99,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"get 读回的 HTML 里图片是 `image:<id>` 引用，改完原样留着即可，服务端会重新内联。",
 			"**改版时不要传 title / summary**：它们描述的是「这一页是什么」，不是「这次改了什么」。不传会自动沿用旧页的标题和摘要。只有整页主题真的变了（比如三页变四页）才传，传了也必须是一句话的整页摘要，别写「本次修改/其余沿用上一版」这类修改记录。",
 			"页面要求：按 760px 宽设计、不要横向滚动。body 只放底色，内容放进自己的容器（如 .page{width:100%;max-width:760px;margin:0 auto;padding:...}）；不要给 body 写 width/max-width/margin——渲染器会在外层保留桌面底色，并把容器限制在 760px 内。可以内联 <style>，但不要写 script、iframe，也不要用外链图片或字体（会被删除）。",
-			fmt.Sprintf("放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片压到适合屏幕的尺寸（最长边 %d）再内联进页面，别自己写 base64、也不用担心原图多大。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单页最多 %d 张且内联后的图片总量 ≤%dMB。", service.InlineMaxEdge, maxInlineImages, htmlsanitize.MaxInlineBytes>>20),
+			fmt.Sprintf("放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片压到适合屏幕的尺寸（最长边 %d）再内联进页面，别自己写 base64、也不用担心原图多大。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单页最多 %d 张不同图片（同一张重复引用只算一张）且内联后的图片总量 ≤%dMB。", service.InlineMaxEdge, maxInlineImages, htmlsanitize.MaxInlineBytes>>20),
 			"观感参考（手账只是其中一种，别套模板、别固定风格）：手账风＝米色纸底 + 胶带/时间轴 + 手写感标题；对比页＝两栏并排 + 色块区分优劣；时间线＝左侧时间列 + 竖向连线；一页纸总结＝大标题 + 三块要点。留白充足、统一配色，别做满屏边框。",
 			"summary 必须一句话说清这页讲了什么（用户据此决定点不点），不要写「以下是对比」「详见下图」，也不要在里面记修改历史。",
 		}, "\n"),
@@ -171,7 +171,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 		Display: "局部修改页面",
 		Description: strings.Join([]string{
 			"按块或样式做局部修改，不重传整页。改文字、数字、换图、改 CSS 必须用它。",
-			"流程：html.get(view=\"outline\") 拿 nid + hash → patch。改样式：get(view=\"style\") 拿 css + hash → patch(style=…)。",
+			"流程：html.get(view=\"outline\") 拿 nid + hash → patch。改样式：get(view=\"style\") 拿 css + hash → patch(style=…)；这页还没有 <style> 时 hash 为空，style_hash 留空即可新建。",
 			"ops 每项：{nid, hash, text} 改文字；{nid, hash, image, alt} 换图。hash 必须原样带上（页面版本凭证）。",
 			"加一段 / 加一张图：insert [{after, hash, html}]，after 是锚点块 nid，html 给块级片段（图片写 <img src=\"image:<id>\">，并复用页面已有的 class），服务端会清洗并内联。",
 			"删一段 / 删一张图：remove [{nid, hash}]。删完会顺手收掉因此变空的容器（figure / div 相框、空表格骨架），不用自己再删壳；反过来，删掉某格/某卡里唯一的内容，那一格/那张卡也会一起消失。",
@@ -239,7 +239,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 				},
 				"style_hash": map[string]interface{}{
 					"type":        "string",
-					"description": "get(view=\"style\") 返回的 hash，原样带上",
+					"description": "get(view=\"style\") 返回的 hash，原样带上；页面还没有 <style> 时留空（会新建一段）",
 				},
 			},
 			"required": []string{"artifact_id"},
@@ -416,13 +416,14 @@ func blockJSON(b htmlpatch.Block, textLimit int) map[string]any {
 func (t *HTMLArtifactTool) getStyle(src string) *Result {
 	css, hash, err := htmlpatch.Style(src)
 	if err != nil {
-		if errors.Is(err, htmlpatch.ErrNoStyle) {
-			return &Result{Success: false, Error: "这页没有 <style>（样式可能写在内联属性里），只能 view=\"full\" 整页改"}
-		}
 		log.Printf("[html] get style: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("读取样式失败: %v", err)}
 	}
-	return resultJSON(map[string]any{"style": css, "style_hash": hash, "bytes": len(css)})
+	out := map[string]any{"style": css, "style_hash": hash, "bytes": len(css)}
+	if hash == "" {
+		out["tip"] = "这页没有 <style>：直接 patch(style=…, style_hash=\"\") 会新建一段"
+	}
+	return resultJSON(out)
 }
 
 // patch — 按块或样式做局部修改，不重传整页（docs/design/html-artifact/fine-grained-edit.md）。
@@ -470,10 +471,6 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	if req.Style != nil && len(*req.Style) > maxStyleBytes {
 		return &Result{Success: false, Error: fmt.Sprintf("样式太长（%d 字节，上限 %d）", len(*req.Style), maxStyleBytes)}
 	}
-	if req.Style != nil && strings.TrimSpace(req.StyleHash) == "" {
-		// 没有 hash 就没法发现「模型拿的是上一轮的样式」，并发时会把别人的改动覆盖掉
-		return &Result{Success: false, Error: "改样式必须带 style_hash；先 html.get(view=\"style\") 拿 CSS 和 hash"}
-	}
 
 	a, err := t.repo.GetForRead(ec.Ctx, ec.UserID, id)
 	if err != nil {
@@ -486,6 +483,16 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	src := a.SourceHTML
 	if src == "" {
 		return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块改；只能整页重做"}
+	}
+	if req.Style != nil && strings.TrimSpace(req.StyleHash) == "" {
+		// 页面本来没有 <style> 时允许新建；有旧样式就必须带 hash，否则并发改会互相覆盖
+		_, hash, err := htmlpatch.Style(src)
+		if err != nil {
+			return &Result{Success: false, Error: fmt.Sprintf("读取样式失败: %v", err)}
+		}
+		if hash != "" {
+			return &Result{Success: false, Error: "改样式必须带 style_hash；先 html.get(view=\"style\") 拿 CSS 和 hash"}
+		}
 	}
 
 	newSrc := src
@@ -599,7 +606,7 @@ func patchErrorMessage(err error) string {
 	case errors.Is(err, htmlpatch.ErrNoSuchBlock):
 		return fmt.Sprintf("%v；先用 html.get(view=\"outline\") 看现有块", err)
 	case errors.Is(err, htmlpatch.ErrNoStyle):
-		return "这页没有 <style>（样式可能写在内联属性里），只能 view=\"full\" 后整页改"
+		return "页面缺少 <head>，没法新建 <style>；只能 view=\"full\" 后整页改"
 	case errors.Is(err, htmlpatch.ErrEditConflict):
 		return fmt.Sprintf("%v；改和删分成两次 patch 做", err)
 	case errors.Is(err, htmlpatch.ErrBadFragment):

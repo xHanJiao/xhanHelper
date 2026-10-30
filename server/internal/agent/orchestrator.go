@@ -1717,6 +1717,11 @@ func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
 		if r.result == nil || !r.result.Success || len(r.result.Data) == 0 {
 			continue
 		}
+		// 只认「写页面」：get 的 outline / block / full 也带 artifact_id，
+		// 但只是读一下不该在聊天里多挂一张卡。
+		if r.tc.Tool != "html" || (r.tc.Function != "create" && r.tc.Function != "patch") {
+			continue
+		}
 		var d struct {
 			ArtifactID string `json:"artifact_id"`
 			Type       string `json:"type"`

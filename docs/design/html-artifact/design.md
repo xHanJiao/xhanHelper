@@ -2,6 +2,7 @@
 
 > 日期：2026-10-29
 > 状态：**已实现**（2026-10-29，`feat/html-artifact`），代码审查见 `docs/code-review/html-artifact/2026-10-29.md`
+> 改版省 token（细粒度节点读写，2026-10-30 设计）：见同目录 `fine-grained-edit.md`
 > 来源：2026-10-29 讨论纪要（`~/Desktop/HTML产物展示机制-讨论纪要-20261029.md`）
 > 前情：已经用模型自由生成验证过效果（四版手账风格），卡在落地——目前 HTML 只是输出到本地目录，demo 可用，不能实际使用。
 
@@ -86,9 +87,10 @@ type Artifact struct {
 **模型怎么拿到 id、又怎么读到旧内容**：不能假设它记得。同一个工具上有一对只读函数：
 
 - `html.list` — 最近 10 页（`artifact_id` / 标题 / 摘要 / 创建时间，**用户级、不按会话过滤**，换了窗口也查得到）。
-- `html.get` — 读回一整页的 HTML。读的是 `artifacts.source_html`（模型给的原文，图片仍是 `image:<id>` 引用），**不是** `html` 列——那列里图片已内联成几 MB 的 `data:`，整页塞回上下文不现实。读回上限 128KB，超了直接报错让模型问用户。
+- `html.get` — 按 `view` 读取（默认 `outline`）：块清单（nid / 首 60 字 / hash）、单块全文、`<style>`、整页原文。读的是 `artifacts.source_html`（模型给的原文，图片仍是 `image:<id>` 引用），**不是** `html` 列——那列里图片已内联成几 MB 的 `data:`，整页塞回上下文不现实。整页读回上限 128KB。
+- `html.patch` — 按 nid / style 做局部修改，不重传整页（改文字、换图、改 CSS 走它，见 `fine-grained-edit.md`）。
 
-工具描述写死改版三步：`list` 找 id → `get` 拿原文 → 在原文上改并带 `artifact_id` 调 `create`。这一条是 2026-10-29 真机撞出来的：工具原先只有 `create` 一个写入口，换个窗口说「改一下刚才的灵阅」，模型既不知道是哪一页、也读不到旧 HTML，只能新建或反问。
+工具描述写死改版动作：改文字/换图用 `get(view="outline")` + `patch(ops)`；加/删段落与图片用 `patch(insert / remove)`；改样式用 `get(view="style")` + `patch(style=…)`；只有重排版式、整页换结构才 `get(view="full")` + `create(artifact_id)`。`list` 找 id 这条是 2026-10-29 真机撞出来的：工具原先只有 `create` 一个写入口，换个窗口说「改一下刚才的灵阅」，模型既不知道是哪一页、也读不到旧 HTML，只能新建或反问。
 
 代价（明确接受）：旧版本不再可回溯，翻回三天前的消息看到的是今天的版式；同理已分享的链接会跟着变成新版。能接受的前提是产物定位为**可再生成的成品**而非快照记录。真需要版本历史时再引 `supersedes_id` 链（只显示链条末端那种）。
 
@@ -131,6 +133,8 @@ type Artifact struct {
 失败口径：**任一引用解析失败（已过期 / 不存在 / 越权 / 像素超限 / 超过张数或总量 / 写成了 CSS 背景图）→ 整次 `html.create` 失败**，错误里点名是哪个 id。页面不入库、不扣单轮配额。理由：用户明确要求"把这张图放进去"，静默少一张比报错更糟。
 
 内联成功后对这些 id 调 `MarkReferenced`，把源图保留期续 15 天——便于同一会话隔几天再修订一版；**不改全局 TTL、不加豁免**。页面本身不依赖这一步。
+
+> 同一张图被多页引用时的重复体积 vs 外链 + 调 TTL 的取舍，见 `image-retention.md`（备忘，2026-10-30，未决策）。
 
 模型怎么发现图片：`image.list_images` 增加 `scope`（`turn` = 本轮附件、`all` = 全库分页），结果里直接给 `<img src="image:<id>">` 片段。本轮附件的 id 由 orchestrator 通过 `ExecuteContext.UserImageIDs` 带进工具。
 
@@ -200,7 +204,7 @@ type Artifact struct {
 
 ## 八、工具 v1
 
-名字：`html`。三个函数：`create`（写：`title` / `summary` / `html`，外加可选的 `artifact_id`）、`list`（读：最近 10 页的 id/标题/时间）、`get`（读：一整页的原文）。
+名字：`html`。四个函数：`create`（写：`title` / `summary` / `html`，外加可选的 `artifact_id`）、`list`（读：最近 10 页的 id/标题/时间）、`get`（按 view 读：outline / block / style / full）、`patch`（局部改：nid / 图片 / CSS，见 `fine-grained-edit.md`）。
 
 ### 8.1 什么时候该用（工具描述里必须写死）
 
@@ -255,12 +259,15 @@ type Artifact struct {
 
 `get` 走 `source_html`（新增列，建页时把模型给的原文存一份）。这样「改版」才是真的改：模型读到的就是它当初写的 `<style>` 和结构，图片保持 `image:<id>` 引用，改完重交一遍由服务端重新内联。
 
+**2026-10-30 起，改版优先走细粒度 `patch`**：`get(view="outline")` 拿 nid/hash → `patch` 改文字 / 换图 / 插入片段 / 删除块；改样式只读写 `<style>`。整页 `get` + `create` 只留给重排版式。契约、校验清单与选型依据见 `fine-grained-edit.md`。
+
 | 项 | 值 |
 |---|---|
 | `list` 返回条数 | 默认 10，最多 30 |
 | `get` 读回上限 | 128KB（超过报错，不截断——截断的 HTML 改完会坏） |
 | 跨轮使用 | 历史回放按 `llm.max_tool_result_chars`（20000 字符）截断工具结果，所以读回的 HTML **只在当前轮算数**；下一轮要改就重新 `get`（工具描述已写死） |
-| 老页面（没有 `source_html`） | 退回 `html` 列；带图的基本都会超 128KB，读不回来 |
+| 老页面（没有 `source_html`） | `get` 的非 full 视图与 `patch` 直接拒绝（只能重做）；`view="full"` 退回 `html` 列，带图的基本都会超 128KB |
+| `patch` 单次上限 | 50 个块 / CSS 64KB；nid 与 hash 必须匹配（防错位） |
 
 ### 8.6 其他
 
@@ -268,9 +275,9 @@ type Artifact struct {
 - 每轮 ≤3 张；模型 HTML ≤2MB，内联图片后 ≤8MB；单张不设原字节上限（内联前压到最长边 1600，§4.3）。
 - 描述里写清配图写法（`<img src="image:<id>">`），并明确"不要自己写 base64"。
 - 改版：用户说"再改改/换版式"时传 `artifact_id` 原地覆盖，不要新建（§4.2）。
-- 不知道 id 时先调 `html.list`（只读，用户级最近 10 页），别猜、别新建；要动内容就先 `html.get` 读回原文。
+- 不知道 id 时先调 `html.list`（只读，用户级最近 10 页），别猜、别新建；要动内容先 `html.get`（默认 `outline`，改样式用 `style`，只有重排版式/整页换结构才 `full`）。
 - 模型能稳定输出十几 KB，真遇到截断再改成"传文件路径"。
-- 只读声明：`list` / `get`（plan 模式可用）；`create` 写库。
+- 只读声明：`list` / `get`（plan 模式可用）；`create` / `patch` 写库。
 - 失败即失败，不静默降级。
 
 ## 九、打开：右栏 tab + WKWebView
@@ -548,6 +555,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **卡片槽**：一轮里同时生成文档和 HTML 页 → 两张卡在**同一条横排**、且在本轮**开头**（你的消息之后、正文之前）；再发一轮 → 新的一槽；单张卡仍是原样整卡；分享多选态仍能逐条选中
 - **同一页只留最新卡**：连改同一页三次 → 聊天流里**只有一张**卡（在最新那轮**开头**），上面的旧卡自动不显示；页面对应的右栏 tab 仍自动变新版
 - **流式不跳**：让模型边生成边出卡（先 html.create 再写正文）→ 卡片出现在本轮开头后**不回跳、不闪**，正文在它下面往下长
+- **细粒度改版**：改一句话 → 日志里只有 `html.get(view="outline")` + `html.patch`，不出现整页 `create`；改样式只有 `get(view="style")` + `patch(style=…)`（完整剧本见 `fine-grained-edit.md` §七）
 
 ## 十四、风险
 
@@ -654,3 +662,9 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 起因：§9.9 最初把槽放在本轮末尾，真机观感是「卡片贴在输入框上方、正文说完了才出现」，与改版前「卡片在助手消息上方」的直觉相反。用户：「原来位置挺好的」。
   - 决定：槽仍按轮收（混排不变），但插到**本轮 user 消息之后、正文之前**；流式期间卡片到达时槽原地增长、正文往下让。
   - 影响文件：`client/.../Views/MessageListView.swift`（`displayRows` 的 `roundStart` + `rows.insert`）；`docs/design/html-artifact/design.md`（§9.9、§13）。
+- **2026-10-30 · 细粒度编辑（省 token）**
+  - 起因：改版整页进出（读 15–30KB + 写 15–30KB），调五次样式就是 20–40k tokens，且每次都在重写没要动的段落、容易改坏格式。
+  - 决定：`get` 增加 `outline` / `block` / `style` / `full` 四种视图；新增 `html.patch`（nid + hash 改文字/换图/CSS，后续同日又加 insert / remove：加删段落与图片也走局部）。nid 现场编号、不落库；hash + 乐观锁防错位；rich 块拒绝文本 patch。
+  - 决定：服务端校验是硬要求（归属/nid/hash/rich/图片/样式体积/乐观锁，见 `fine-grained-edit.md` §4.5），不只依赖提示词；系统提示常驻「改版动作选择」。
+  - 决定：客户端 `patch` 结果与 `create` 一样挂卡并刷新右栏（`reloadIfOpen`）。
+  - 影响文件：`server/internal/util/htmlpatch/`（新）+测试、`tool/html_artifact.go`、`service/artifact_repo.go`（+`UpdateIfSourceUnchanged`）+测试、`agent/promptbuilder/static.go` + `builder.go`、`client/.../ViewModels/ChatViewModel.swift`。

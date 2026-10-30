@@ -75,6 +75,24 @@ const replyFormRule = `默认第一档；仅当用户明确说"多说点 / 展�
 
 例外（只有这两种可以超）：用户明确要求展开；准则 7 的安全提醒不受篇幅限制。`
 
+// artifactEditRule — HTML 页面改版的动作选择。常驻注入：html 工具是渐进暴露的，
+// 这条规则必须在模型 enable 它之前就生效（见 docs/design/html-artifact/fine-grained-edit.md §4.7）。
+const artifactEditRule = `改 HTML 页面（html 工具）时按改动大小选动作，不要默认重传整页：
+- 改文字、数字、换图 → html.get(view="outline") 找 nid → html.patch(ops)
+- 加一段/加一张图 → html.patch(insert)；删一段/删一张图 → html.patch(remove)
+- 改颜色、字体、间距 → html.get(view="style") → html.patch(style=…)
+- 只有重排版式、整页换结构才 html.get(view="full") + create(artifact_id)
+
+反例（禁止）：为改一句话读回整页 20KB 再整页重传——慢、贵，还容易改坏没要动的段落。`
+
+type artifactEditProvider struct{}
+
+func (p *artifactEditProvider) Name() string         { return "artifact_edit" }
+func (p *artifactEditProvider) SectionTitle() string { return "HTML 页面改版" }
+func (p *artifactEditProvider) Render(ctx context.Context) string {
+	return artifactEditRule
+}
+
 type replyFormProvider struct{}
 
 func (p *replyFormProvider) Name() string         { return "reply_form" }

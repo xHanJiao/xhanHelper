@@ -25,6 +25,10 @@ const (
 	MinBytes = 200
 )
 
+// ErrTooShort — 短于 MinBytes。patch 删块删空整页时用它给出下一步，
+// 而不是让模型看到「不像一个完整页面」这种对删除操作毫无提示的文案。
+var ErrTooShort = errors.New("HTML 太短")
+
 // dropTags — 必须删掉的标签。`script` 关 JS 后虽然惰性，留着也是脏数据；
 // iframe/object/embed 在 file:// 或任意页面里都能把本机内容框进来，必须删。
 var dropTags = map[string]bool{
@@ -58,7 +62,7 @@ func ProcessWithImages(raw string, resolve func(id string) (string, error)) (str
 		return "", fmt.Errorf("HTML 太大（%d 字节，上限 %d）", len(raw), MaxBytes)
 	}
 	if len(strings.TrimSpace(raw)) < MinBytes {
-		return "", fmt.Errorf("HTML 太短（不足 %d 字节），不像一个完整页面", MinBytes)
+		return "", fmt.Errorf("%w（不足 %d 字节），不像一个完整页面", ErrTooShort, MinBytes)
 	}
 	// 截断的第一信号：没有收尾标签。项目没有 finish_reason==length 处理，
 	// max_tokens 触顶是静默硬截断，半张页面绝不能入库。

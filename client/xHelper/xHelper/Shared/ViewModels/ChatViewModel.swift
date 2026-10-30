@@ -1183,8 +1183,10 @@ class ChatViewModel: ObservableObject {
                 // 聊天里的文档卡片：agent 建/改过的文档派生成本地产物，独立成一条
                 // local_tool_result 消息并落盘（切屏/重载后按时间重放）。只认 create/update，
                 // 同轮多次触达同一篇就地合并更新（后写覆盖、缺省保留）。
-                // HTML 产物：卡片立刻挂到当前这条回复上（服务端字段要等重载才有）
-                if pending.tool == "html", pending.function == "create", tr.success,
+                // HTML 产物：卡片立刻挂到当前这条回复上（服务端字段要等重载才有）。
+                // create（新建/整页覆盖）与 patch（局部改）都要挂：patch 后同 id 的卡
+                // 按「只留最新」收敛到本轮，右栏 tab 也要静默重拉。
+                if pending.tool == "html", pending.function == "create" || pending.function == "patch", tr.success,
                    let aid = tr.data?["artifact_id"] as? String {
                     let title = tr.data?["title"] as? String ?? ""
                     appendArtifactRef(ArtifactRef(
@@ -1193,7 +1195,7 @@ class ChatViewModel: ObservableObject {
                         title: title,
                         summary: tr.data?["summary"] as? String ?? ""
                     ))
-                    // 改版（原地覆盖）时 id 不变：若这页正开在右栏，静默重拉一次，
+                    // 原地覆盖 / 局部修改都不产生新 id：若这页正开在右栏，静默重拉一次，
                     // 否则用户看到的是旧版、以为没改成。新建时 tab 不存在，天然 no-op。
                     ArtifactOpenCoordinator.shared.reloadIfOpen(id: aid, title: title)
                 }
@@ -1567,12 +1569,17 @@ class ChatViewModel: ObservableObject {
         return err
     }
 
-    /// 把 HTML 产物引用挂到当前流式回复上（幂等：同 id 只留一张）。
+    /// 把 HTML 产物引用挂到当前流式回复上（幂等：同 id 只留一张；同轮再改则就地更新摘要）。
     /// 只改内存，不落盘——重载后由消息字段接管（服务端是唯一事实来源）。
     private func appendArtifactRef(_ ref: ArtifactRef) {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        guard !messages[idx].artifactRefs.contains(where: { $0.id == ref.id }) else { return }
-        messages[idx].artifacts = messages[idx].artifactRefs + [ref]
+        var refs = messages[idx].artifactRefs
+        if let i = refs.firstIndex(where: { $0.id == ref.id }) {
+            refs[i] = ref
+        } else {
+            refs.append(ref)
+        }
+        messages[idx].artifacts = refs
     }
 
     // MARK: Local Tool Results

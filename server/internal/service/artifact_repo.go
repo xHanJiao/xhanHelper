@@ -132,6 +132,24 @@ func (r *ArtifactRepo) Update(ctx context.Context, userID, id, title, summary, h
 	return exists > 0, nil
 }
 
+// UpdateIfSourceUnchanged — 细粒度 patch 专用：只在原文未变时更新（乐观锁）。
+//
+// 返回 false 表示页面不存在、不属于该用户，或已被另一处改过。
+// oldSource 是 patch 开始前读到的 source_html：它变了说明 nid/hash 已经错位，
+// 这次写入必须失败（见 docs/design/html-artifact/fine-grained-edit.md §4.5）。
+//
+// 注意：MySQL 在「新旧值完全相同」时 RowsAffected 也是 0；调用方应先判断
+// newSource == oldSource 直接返回成功，别把幂等重放误判成并发冲突。
+func (r *ArtifactRepo) UpdateIfSourceUnchanged(ctx context.Context, userID, id, oldSource, html, sourceHTML string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ? AND source_html = ?", id, userID, oldSource).
+		Updates(map[string]any{"html": html, "source_html": sourceHTML})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // DeleteMany — 批量软删（灵阅多选删除）。只删属于该用户的，返回实际删除行数。
 // 空入参直接返回 0：`IN ()` 在部分方言里是语法错误，别让空选择变成 500。
 func (r *ArtifactRepo) DeleteMany(ctx context.Context, userID string, ids []string) (int64, error) {

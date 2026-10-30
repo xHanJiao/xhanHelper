@@ -15,6 +15,7 @@ import (
 
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/util/htmlpatch"
 	"xhan-helper/internal/util/htmlsanitize"
 )
 
@@ -33,6 +34,13 @@ const (
 	// 注意它比历史回放的截断阈值（llm.max_tool_result_chars = 20000 字符）大：同一轮内不受影响，
 	// 跨轮必须重新 get（见 get 的描述）。
 	maxReadBytes = 128 << 10
+	// outlineTextChars — get(outline) 每块给多少字（够认出是哪一段；全文走 view=block）。
+	outlineTextChars = 60
+	// maxOutlineClassRunes — outline 里 class 的截断长度（工具类框架可能很长，但插入时照抄开头通常够）。
+	maxOutlineClassRunes = 80
+	// maxPatchOps / maxStyleBytes — patch 单次上限，挡住「把整页拆成几百块」这类误用。
+	maxPatchOps   = 50
+	maxStyleBytes = 64 << 10
 )
 
 // HTMLArtifactTool — 让 LLM 生成「更好看更好读」的独立页面（手账/对比表/时间线/一页纸总结…）。
@@ -69,10 +77,10 @@ func (t *HTMLArtifactTool) Description() string {
 }
 
 func (t *HTMLArtifactTool) Catalog() (CatalogEntry, bool) {
-	return CatalogEntry{ShortDesc: "生成/修改/读取可打开的 HTML 页面（对比/时间线/总结）", Funcs: []string{"create", "list", "get"}}, true
+	return CatalogEntry{ShortDesc: "生成/修改/读取可打开的 HTML 页面（对比/时间线/总结）", Funcs: []string{"create", "list", "get", "patch"}}, true
 }
 
-// ReadOnlyFuncs — `list` / `get` 只读，plan 模式也能用；`create` 写库。
+// ReadOnlyFuncs — `list` / `get` 只读，plan 模式也能用；`create` / `patch` 写库。
 func (t *HTMLArtifactTool) ReadOnlyFuncs() map[string]bool {
 	return map[string]bool{"list": true, "get": true}
 }
@@ -87,7 +95,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"不要用：纯文字、代码、短列表、单张表、需要用户复制走的内容——这些直接用 markdown。内容少于 200 字不要用。",
 			"拿不准就不要用。一次只生成一张，需要多张先问用户。",
 			"调用之后，正文只写结论/推荐/下一步，不要再用 markdown 复述页面里的内容。",
-			"用户说「再改改 / 换版式 / 调一下样式」时，**不要新建**。改版三步：① 不知道是哪一页就先 html.list 找 id（换了窗口、上下文里没有都算）；② html.get 读回那一页的 HTML；③ 在它的基础上改，带 artifact_id 调 create 原地覆盖。只有在没有旧页、确实要做新的一页时才不传 artifact_id。",
+			"用户说「再改改 / 换版式 / 调一下样式」时，**不要新建**。改版按改动大小选动作：① 改文字/数字/换图 → html.get(view=\"outline\") 找 nid → html.patch；② 加/删段落与图片 → html.patch(insert / remove)；③ 改颜色/字体/间距 → html.get(view=\"style\") → html.patch(style=…)；④ 只有重排版式、整页换结构才 html.get(view=\"full\") 后带 artifact_id 调 create 整页覆盖。**不要为改一句话重传整页。**不知道是哪一页就先 html.list 找 id（换了窗口、上下文里没有都算）。只有在没有旧页、确实要做新的一页时才不传 artifact_id。",
 			"get 读回的 HTML 里图片是 `image:<id>` 引用，改完原样留着即可，服务端会重新内联。",
 			"**改版时不要传 title / summary**：它们描述的是「这一页是什么」，不是「这次改了什么」。不传会自动沿用旧页的标题和摘要。只有整页主题真的变了（比如三页变四页）才传，传了也必须是一句话的整页摘要，别写「本次修改/其余沿用上一版」这类修改记录。",
 			"页面要求：按 760px 宽设计、不要横向滚动。body 只放底色，内容放进自己的容器（如 .page{width:100%;max-width:760px;margin:0 auto;padding:...}）；不要给 body 写 width/max-width/margin——渲染器会在外层保留桌面底色，并把容器限制在 760px 内。可以内联 <style>，但不要写 script、iframe，也不要用外链图片或字体（会被删除）。",
@@ -114,7 +122,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 		Display: "查看页面",
 		Description: strings.Join([]string{
 			"列出最近生成的页面（就是用户说的「灵阅」/手账/那张页），按时间倒序，带 artifact_id。",
-			"用途：用户要改某一页但没给 id、或换了窗口不记得 id 时，先调它认出是哪一页，再带 artifact_id 调 create 原地改。",
+			"用途：用户要改某一页但没给 id、或换了窗口不记得 id 时，先调它认出是哪一页，再用 html.get + html.patch 改（只有重排版式才 create 整页覆盖）。",
 			"只读：不会新建、不会修改。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
@@ -130,11 +138,14 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 		Name:    "get",
 		Display: "读取页面",
 		Description: strings.Join([]string{
-			"读回一整页的 HTML（含 <style>）和标题摘要，用来在它基础上改版。",
-			"改版流程：html.list 找 id → html.get 拿原文 → 改 → 带 artifact_id 调 html.create。",
-			"返回的 HTML 里图片是 `image:<id>` 引用（不是几 MB 的 base64），原样保留即可。",
-			"页面超过 128KB 读不回来（会报错）；这种情况直接问用户要改哪里，别硬猜。",
-			"读回的内容只在当前这一轮算数（历史回放会把超长工具结果截断）：下一轮要再改，重新 get，别凭记忆或历史里的残片改。",
+			"读取一页，按 view 返回不同粒度。改版先读最小的那层，别默认读整页。",
+			"view=\"outline\"（默认）：块清单（nid / 标签 / 首 60 字 / hash / 是否含内联格式）。改文字、换图先看它。",
+			"view=\"block\" + nid：该块的全文。",
+			"view=\"style\"：<style> 里的 CSS 与 hash，改颜色/字体/间距用。",
+			"view=\"full\"：整页原文（含 <style>）。只有重排版式、整页换结构才用（增删块用 patch 的 insert/remove）；超过 128KB 读不回来。",
+			"图片是 `image:<id>` 引用（不是几 MB 的 base64），原样保留即可。",
+			"hash 是页面的版本凭证：传给 html.patch，页面被别处改过时会拒绝，防止改错段。",
+			"读回的内容只在当前这一轮算数（历史回放会截断超长工具结果）：下一轮要再改，重新 get。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
 			"type": "object",
@@ -142,6 +153,93 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 				"artifact_id": map[string]interface{}{
 					"type":        "string",
 					"description": "要读的页面 id（html.list 里的 artifact_id）",
+				},
+				"view": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"outline", "block", "style", "full"},
+					"description": "默认 outline；改文字/换图/加删段落用 outline（配 patch），改样式用 style，只有重排版式才 full",
+				},
+				"nid": map[string]interface{}{
+					"type":        "string",
+					"description": "view=block 时必填：outline 里给的块编号（如 t3 / img1）",
+				},
+			},
+			"required": []string{"artifact_id"},
+		},
+	}, {
+		Name:    "patch",
+		Display: "局部修改页面",
+		Description: strings.Join([]string{
+			"按块或样式做局部修改，不重传整页。改文字、数字、换图、改 CSS 必须用它。",
+			"流程：html.get(view=\"outline\") 拿 nid + hash → patch。改样式：get(view=\"style\") 拿 css + hash → patch(style=…)。",
+			"ops 每项：{nid, hash, text} 改文字；{nid, hash, image, alt} 换图。hash 必须原样带上（页面版本凭证）。",
+			"加一段 / 加一张图：insert [{after, hash, html}]，after 是锚点块 nid，html 给块级片段（图片写 <img src=\"image:<id>\">，并复用页面已有的 class），服务端会清洗并内联。",
+			"删一段 / 删一张图：remove [{nid, hash}]。删完会顺手收掉因此变空的容器（figure / div 相框、空表格骨架），不用自己再删壳；反过来，删掉某格/某卡里唯一的内容，那一格/那张卡也会一起消失。",
+			"ops / insert / remove / style 至少给一个；单次最多 50 op / 10 段插入 / 20 块删除。",
+			"报「页面已变」说明另一处改过（或你拿的是旧 hash）：重新 get 拿新 nid/hash，别拿旧值硬试。",
+			"rich=true 的块含高亮/链接等内联格式，patch 文字会压平格式，服务端会拒绝；这种块只能 get(view=\"full\") 后整页重写。",
+			"只有语义块（标题/段落/列表项/表格单元格/图注/引用）有 nid；div 里的文字不在清单里，改它请 get(view=\"full\") 整页重写，别拿不存在的 nid 反复试。",
+			"锚点位置：要加在页面末尾就锚在页脚之前那块（锚在页脚块上会插进页脚里）；别锚在表格单元格（td/th）上，那会插出非法结构。",
+			"整张 <table> 可以插；单独插 tr/td 不行，要增删行列请整页重写。",
+			"换图必须是 image:<id> 引用（先用 image.list_images 拿 id）。",
+		}, "\n"),
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"artifact_id": map[string]interface{}{
+					"type":        "string",
+					"description": "要改的页面 id（html.list 里的 artifact_id）",
+				},
+				"ops": map[string]interface{}{
+					"type":     "array",
+					"maxItems": 50,
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"nid":   map[string]interface{}{"type": "string", "description": "块编号，如 t3 / img1"},
+							"hash":  map[string]interface{}{"type": "string", "description": "get 结果里该块的 hash，原样带上"},
+							"text":  map[string]interface{}{"type": "string", "description": "新的块文字（可含换行；空字符串＝清空）"},
+							"image": map[string]interface{}{"type": "string", "description": "新的图片引用，如 image:<id>"},
+							"alt":   map[string]interface{}{"type": "string", "description": "图片说明"},
+						},
+						"required": []string{"nid", "hash"},
+					},
+					"description": "要替换的块；改文字给 text，换图给 image（/alt）",
+				},
+				"insert": map[string]interface{}{
+					"type":     "array",
+					"maxItems": 10,
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"after": map[string]interface{}{"type": "string", "description": "插到哪个块之后（outline 里的 nid）"},
+							"hash":  map[string]interface{}{"type": "string", "description": "锚点块的 hash，原样带上"},
+							"html":  map[string]interface{}{"type": "string", "description": "块级 HTML 片段（figure/div/p/img…）；图片写 <img src=\"image:<id>\">，并复用页面已有 class"},
+						},
+						"required": []string{"after", "hash", "html"},
+					},
+					"description": "要插入的片段（加图、加段落）",
+				},
+				"remove": map[string]interface{}{
+					"type":     "array",
+					"maxItems": 20,
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"nid":  map[string]interface{}{"type": "string", "description": "要删的块编号"},
+							"hash": map[string]interface{}{"type": "string", "description": "该块的 hash，原样带上"},
+						},
+						"required": []string{"nid", "hash"},
+					},
+					"description": "要删除的块（变空的容器会被一并收掉）",
+				},
+				"style": map[string]interface{}{
+					"type":        "string",
+					"description": "新的整段 CSS（替换 <style> 内容）。改颜色/字体/间距用",
+				},
+				"style_hash": map[string]interface{}{
+					"type":        "string",
+					"description": "get(view=\"style\") 返回的 hash，原样带上",
 				},
 			},
 			"required": []string{"artifact_id"},
@@ -157,18 +255,22 @@ func (t *HTMLArtifactTool) Execute(ec *ExecuteContext, funcName string, args jso
 		return t.list(ec, args)
 	case "get":
 		return t.get(ec, args)
+	case "patch":
+		return t.patch(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("未知函数: %s", funcName)}
 	}
 }
 
-// get — 读回一页的原文（图片仍是 `image:<id>` 引用）。
+// get — 按 view 返回页面内容：outline（默认）/ block / style / full。
 //
-// 为什么读原文而不是 `HTML` 列：那列里图片已经内联成几 MB 的 data: URI，
-// 整页塞回模型上下文不现实（也是"工具只能写、不知道改啥"的另一半）。
+// 读的是 `source_html`（图片仍是 `image:<id>`）：`HTML` 列里图片已内联成几 MB 的 data: URI，
+// 整页塞回模型上下文不现实。定位规则见 docs/design/html-artifact/fine-grained-edit.md。
 func (t *HTMLArtifactTool) get(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
 		ArtifactID string `json:"artifact_id"`
+		View       string `json:"view"`
+		NID        string `json:"nid"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
 		return &Result{Success: false, Error: err.Error()}
@@ -177,7 +279,12 @@ func (t *HTMLArtifactTool) get(ec *ExecuteContext, args json.RawMessage) *Result
 	if id == "" {
 		return &Result{Success: false, Error: "artifact_id 必填（先用 html.list 查）"}
 	}
-	// 先取窄行（不带最大 8MB 的 html 列）；只有老页面回退时才去读正文
+	view := strings.TrimSpace(req.View)
+	if view == "" {
+		view = "outline"
+	}
+
+	// 先取窄行（不带最大 8MB 的 html 列）；只有老页面整页读回时才去读正文
 	a, err := t.repo.GetForRead(ec.Ctx, ec.UserID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -188,7 +295,10 @@ func (t *HTMLArtifactTool) get(ec *ExecuteContext, args json.RawMessage) *Result
 	}
 	src := a.SourceHTML
 	if src == "" {
-		// 这次改动之前生成的页面没存原文：只能退回内联后的正文（带图基本都会超限）
+		// 这次改动之前生成的页面没存原文：按块读写不可用，只有整页读回这一条路（带图基本都会超限）
+		if view != "full" {
+			return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块读写；只能 view=\"full\" 整页读回或重新生成"}
+		}
 		full, err := t.repo.GetByID(ec.Ctx, ec.UserID, id)
 		if err != nil {
 			log.Printf("[html] get html fallback id=%s user=%s: %v", id, ec.UserID, err)
@@ -196,15 +306,318 @@ func (t *HTMLArtifactTool) get(ec *ExecuteContext, args json.RawMessage) *Result
 		}
 		src = full.HTML
 	}
-	if len(src) > maxReadBytes {
-		return &Result{Success: false, Error: fmt.Sprintf("这页太大（%d 字节，读回上限 %d），没法整页读回来；直接问用户要改哪一块", len(src), maxReadBytes)}
+
+	switch view {
+	case "outline":
+		return t.getOutline(src, a)
+	case "block":
+		return t.getBlock(src, strings.TrimSpace(req.NID))
+	case "style":
+		return t.getStyle(src)
+	case "full":
+		if len(src) > maxReadBytes {
+			return &Result{Success: false, Error: fmt.Sprintf("这页太大（%d 字节，读回上限 %d），没法整页读回来；改用 view=\"outline\" 按块改，或直接问用户要改哪一块", len(src), maxReadBytes)}
+		}
+		return resultJSON(map[string]any{
+			"artifact_id": a.ID,
+			"title":       a.Title,
+			"summary":     a.Summary,
+			"html":        src,
+		})
+	default:
+		return &Result{Success: false, Error: fmt.Sprintf("未知 view: %s（可选 outline / block / style / full）", view)}
 	}
-	data, err := json.Marshal(map[string]any{
+}
+
+// getOutline — 块清单。每块给 nid/tag/hash + 首 60 字，改文字/换图先看它（1–3KB）。
+func (t *HTMLArtifactTool) getOutline(src string, a *model.Artifact) *Result {
+	blocks, err := htmlpatch.Scan(src)
+	if err != nil {
+		log.Printf("[html] get outline id=%s: %v", a.ID, err)
+		return &Result{Success: false, Error: fmt.Sprintf("解析页面失败: %v", err)}
+	}
+	items := make([]map[string]any, 0, len(blocks))
+	for _, b := range blocks {
+		items = append(items, blockJSON(b, outlineTextChars))
+	}
+	styleBytes := 0
+	if css, _, err := htmlpatch.Style(src); err == nil {
+		styleBytes = len(css)
+	} else if !errors.Is(err, htmlpatch.ErrNoStyle) {
+		log.Printf("[html] get outline style id=%s: %v", a.ID, err)
+	}
+	return resultJSON(map[string]any{
 		"artifact_id": a.ID,
 		"title":       a.Title,
 		"summary":     a.Summary,
-		"html":        src,
+		"blocks":      items,
+		"style_bytes": styleBytes,
+		"page_bytes":  len(src),
+		"tip":         "改文字/换图/加图/删块都用 html.patch（ops / insert / remove），不要重传整页；改样式先 get(view=\"style\") 再 patch(style=…)。插入新块时把相邻块的 class 照抄到片段上（每块都带 class），否则没有间距/配色。div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 view=\"full\" 整页重写。加到末尾请锚在页脚之前那块",
 	})
+}
+
+// getBlock — 某一块的全文（outline 里文本被截断时用）。
+func (t *HTMLArtifactTool) getBlock(src, nid string) *Result {
+	if nid == "" {
+		return &Result{Success: false, Error: "view=\"block\" 需要 nid（先用 view=\"outline\" 看块清单）"}
+	}
+	blocks, err := htmlpatch.Scan(src)
+	if err != nil {
+		log.Printf("[html] get block parse: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("解析页面失败: %v", err)}
+	}
+	for _, b := range blocks {
+		if b.NID == nid {
+			return resultJSON(blockJSON(b, 0))
+		}
+	}
+	return &Result{Success: false, Error: fmt.Sprintf("没有这个块 %s；先用 html.get(view=\"outline\") 看现有块", nid)}
+}
+
+// blockJSON — 块 → 上下文里的形态。两类硬约束都在这儿：
+//   - data: 图片只给字节数，绝不回传 base64（一张 3–5MB 的照片会把 outline 变成几 MB）；
+//   - textLimit > 0 时截断文字（outline 用），0 表示给全文（view=block 用）。
+func blockJSON(b htmlpatch.Block, textLimit int) map[string]any {
+	out := map[string]any{"nid": b.NID, "tag": b.Tag, "hash": b.Hash}
+	if b.Class != "" {
+		// 插入新块时要照抄相邻块的 class（间距/配色都写在 class 上），给模型现成的
+		out["class"] = truncateRunes(b.Class, maxOutlineClassRunes)
+		if utf8.RuneCountInString(b.Class) > maxOutlineClassRunes {
+			out["class_truncated"] = true // 截断了就别整个照抄，抄到半截类名对不上
+		}
+	}
+	if b.Tag == "img" {
+		if b.Legacy {
+			out["legacy"] = true
+			out["image_bytes"] = len(b.Image)
+		} else {
+			out["image"] = b.Image
+			if b.Alt != "" {
+				out["alt"] = b.Alt
+			}
+		}
+		return out
+	}
+	out["chars"] = b.CharCount
+	if b.Rich {
+		out["rich"] = true
+	}
+	if textLimit > 0 && b.CharCount > textLimit {
+		out["text"] = truncateRunes(b.Text, textLimit)
+		out["truncated"] = true
+	} else {
+		out["text"] = b.Text
+	}
+	return out
+}
+
+// getStyle — <style> 里的 CSS 与 hash，改颜色/字体/间距用。
+func (t *HTMLArtifactTool) getStyle(src string) *Result {
+	css, hash, err := htmlpatch.Style(src)
+	if err != nil {
+		if errors.Is(err, htmlpatch.ErrNoStyle) {
+			return &Result{Success: false, Error: "这页没有 <style>（样式可能写在内联属性里），只能 view=\"full\" 整页改"}
+		}
+		log.Printf("[html] get style: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("读取样式失败: %v", err)}
+	}
+	return resultJSON(map[string]any{"style": css, "style_hash": hash, "bytes": len(css)})
+}
+
+// patch — 按块或样式做局部修改，不重传整页（docs/design/html-artifact/fine-grained-edit.md）。
+func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		ArtifactID string `json:"artifact_id"`
+		Ops        []struct {
+			NID   string  `json:"nid"`
+			Hash  string  `json:"hash"`
+			Text  *string `json:"text"`
+			Image *string `json:"image"`
+			Alt   *string `json:"alt"`
+		} `json:"ops"`
+		Insert []struct {
+			After string `json:"after"`
+			Hash  string `json:"hash"`
+			HTML  string `json:"html"`
+		} `json:"insert"`
+		Remove []struct {
+			NID  string `json:"nid"`
+			Hash string `json:"hash"`
+		} `json:"remove"`
+		Style     *string `json:"style"`
+		StyleHash string  `json:"style_hash"`
+	}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	id := strings.TrimSpace(req.ArtifactID)
+	if id == "" {
+		return &Result{Success: false, Error: "artifact_id 必填（先用 html.list 查）"}
+	}
+	if len(req.Ops) == 0 && len(req.Insert) == 0 && len(req.Remove) == 0 && req.Style == nil {
+		return &Result{Success: false, Error: "ops / insert / remove / style 至少给一个"}
+	}
+	if len(req.Ops) > maxPatchOps {
+		return &Result{Success: false, Error: fmt.Sprintf("一次最多改 %d 个块（收到 %d 个）", maxPatchOps, len(req.Ops))}
+	}
+	if len(req.Insert) > htmlpatch.MaxInsertOps {
+		return &Result{Success: false, Error: fmt.Sprintf("一次最多插入 %d 段（收到 %d 段）", htmlpatch.MaxInsertOps, len(req.Insert))}
+	}
+	if len(req.Remove) > htmlpatch.MaxRemoveOps {
+		return &Result{Success: false, Error: fmt.Sprintf("一次最多删 %d 块（收到 %d 块）", htmlpatch.MaxRemoveOps, len(req.Remove))}
+	}
+	if req.Style != nil && len(*req.Style) > maxStyleBytes {
+		return &Result{Success: false, Error: fmt.Sprintf("样式太长（%d 字节，上限 %d）", len(*req.Style), maxStyleBytes)}
+	}
+	if req.Style != nil && strings.TrimSpace(req.StyleHash) == "" {
+		// 没有 hash 就没法发现「模型拿的是上一轮的样式」，并发时会把别人的改动覆盖掉
+		return &Result{Success: false, Error: "改样式必须带 style_hash；先 html.get(view=\"style\") 拿 CSS 和 hash"}
+	}
+
+	a, err := t.repo.GetForRead(ec.Ctx, ec.UserID, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &Result{Success: false, Error: fmt.Sprintf("读不到页面 %s（可能已被删除）；先用 html.list 看看还有哪些", id)}
+		}
+		log.Printf("[html] patch id=%s user=%s: %v", id, ec.UserID, err)
+		return &Result{Success: false, Error: fmt.Sprintf("读页面失败: %v", err)}
+	}
+	src := a.SourceHTML
+	if src == "" {
+		return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块改；只能整页重做"}
+	}
+
+	newSrc := src
+	var changed []string
+	hasStructure := len(req.Ops) > 0 || len(req.Insert) > 0 || len(req.Remove) > 0
+	if hasStructure {
+		edit := htmlpatch.Edit{
+			Ops:     make([]htmlpatch.Op, 0, len(req.Ops)),
+			Inserts: make([]htmlpatch.InsertOp, 0, len(req.Insert)),
+			Removes: make([]htmlpatch.RemoveOp, 0, len(req.Remove)),
+		}
+		for _, o := range req.Ops {
+			edit.Ops = append(edit.Ops, htmlpatch.Op{
+				NID:   strings.TrimSpace(o.NID),
+				Hash:  strings.TrimSpace(o.Hash),
+				Text:  o.Text,
+				Image: o.Image,
+				Alt:   o.Alt,
+			})
+		}
+		for _, ins := range req.Insert {
+			edit.Inserts = append(edit.Inserts, htmlpatch.InsertOp{
+				After: strings.TrimSpace(ins.After),
+				Hash:  strings.TrimSpace(ins.Hash),
+				HTML:  ins.HTML,
+			})
+		}
+		for _, rm := range req.Remove {
+			edit.Removes = append(edit.Removes, htmlpatch.RemoveOp{
+				NID:  strings.TrimSpace(rm.NID),
+				Hash: strings.TrimSpace(rm.Hash),
+			})
+		}
+		newSrc, changed, err = htmlpatch.ApplyEdit(newSrc, edit)
+		if err != nil {
+			return &Result{Success: false, Error: patchErrorMessage(err)}
+		}
+	}
+	if req.Style != nil {
+		newSrc, err = htmlpatch.ReplaceStyle(newSrc, *req.Style, strings.TrimSpace(req.StyleHash))
+		if err != nil {
+			return &Result{Success: false, Error: patchErrorMessage(err)}
+		}
+	}
+	// 两处返回同一组字段（没有 tip 的幂等分支也不例外）
+	patchResult := func(pageBytes int, changedNow bool, tip string) *Result {
+		inserted, removed := len(req.Insert), len(req.Remove)
+		if !changedNow {
+			inserted, removed = 0, 0 // 幂等重放：这一轮什么都没做
+		}
+		out := map[string]any{
+			"artifact_id":   id,
+			"title":         a.Title,
+			"summary":       a.Summary,
+			"updated":       changed,
+			"inserted":      inserted,
+			"removed":       removed,
+			"style_updated": req.Style != nil,
+			"page_bytes":    pageBytes,
+		}
+		if tip != "" {
+			out["tip"] = tip
+		}
+		return resultJSON(out)
+	}
+
+	if newSrc == src {
+		// 幂等重放（同一个 patch 又来一次）：内容没变，直接当成功
+		return patchResult(len(src), false, "")
+	}
+
+	// 重新清洗 + 内联：patch 改的是原文，成品也要跟着重算
+	clean, inlined, err := t.inlineImages(ec, newSrc)
+	if err != nil {
+		if errors.Is(err, htmlsanitize.ErrTooShort) {
+			return &Result{Success: false, Error: "删完这页就空了（不足 200 字节）：至少留一块，或用 create 重建整页"}
+		}
+		return &Result{Success: false, Error: err.Error()}
+	}
+
+	ok, err := t.repo.UpdateIfSourceUnchanged(ec.Ctx, ec.UserID, id, src, clean, newSrc)
+	if err != nil {
+		log.Printf("[html] patch save id=%s user=%s: %v", id, ec.UserID, err)
+		return &Result{Success: false, Error: fmt.Sprintf("保存页面失败: %v", err)}
+	}
+	if !ok {
+		return &Result{Success: false, Error: "页面已变（另一处改过或已删除），请重新 html.get 拿新 nid/hash"}
+	}
+	if len(inlined) > 0 {
+		if err := t.images.Repo().MarkReferenced(ec.Ctx, inlined, ec.UserID); err != nil {
+			log.Printf("[html] patch mark referenced failed: %v", err)
+		}
+	}
+	tip := "已只改这一块；下次改文字继续用 patch，不要重传整页"
+	if len(req.Insert) > 0 || len(req.Remove) > 0 {
+		// 增删块之后 nid 会顺移（content hash 没变，变的是「第几块」），旧 nid/hash 配对失效
+		tip = "已改结构；块编号已重排，继续改请重新 get(view=\"outline\") 拿新 nid/hash，不要重传整页"
+	}
+	return patchResult(len(newSrc), true, tip)
+}
+
+// patchErrorMessage — 把 htmlpatch 的错误翻成模型能照着自愈的话。
+func patchErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, htmlpatch.ErrHashMismatch):
+		return "页面已变（另一处改过），请重新 html.get 拿新 nid/hash"
+	case errors.Is(err, htmlpatch.ErrStyleHash):
+		return "样式已变（另一处改过），请重新 html.get(view=\"style\")"
+	case errors.Is(err, htmlpatch.ErrRichBlock):
+		return fmt.Sprintf("%v；要改它请 view=\"full\" 后整页重写", err)
+	case errors.Is(err, htmlpatch.ErrNoSuchBlock):
+		return fmt.Sprintf("%v；先用 html.get(view=\"outline\") 看现有块", err)
+	case errors.Is(err, htmlpatch.ErrNoStyle):
+		return "这页没有 <style>（样式可能写在内联属性里），只能 view=\"full\" 后整页改"
+	case errors.Is(err, htmlpatch.ErrEditConflict):
+		return fmt.Sprintf("%v；改和删分成两次 patch 做", err)
+	case errors.Is(err, htmlpatch.ErrBadFragment):
+		return err.Error()
+	case errors.Is(err, htmlpatch.ErrTextTooLong),
+		errors.Is(err, htmlpatch.ErrDuplicateNID),
+		errors.Is(err, htmlpatch.ErrMixedOp),
+		errors.Is(err, htmlpatch.ErrNotTextBlock),
+		errors.Is(err, htmlpatch.ErrNotImageBlock),
+		errors.Is(err, htmlpatch.ErrBadImageRef):
+		return err.Error()
+	default:
+		return fmt.Sprintf("修改页面失败: %v", err)
+	}
+}
+
+func resultJSON(v map[string]any) *Result {
+	data, err := json.Marshal(v)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("结果序列化失败: %v", err)}
 	}
@@ -240,14 +653,7 @@ func (t *HTMLArtifactTool) list(ec *ExecuteContext, args json.RawMessage) *Resul
 			"created_at":  a.CreatedAt.Format("2006-01-02 15:04"),
 		})
 	}
-	data, err := json.Marshal(map[string]any{
-		"items": items,
-		"total": total,
-	})
-	if err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("结果序列化失败: %v", err)}
-	}
-	return &Result{Success: true, Data: data}
+	return resultJSON(map[string]any{"items": items, "total": total})
 }
 
 func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Result {
@@ -346,16 +752,17 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 		}
 	}
 
-	data, err := json.Marshal(map[string]any{
+	out := map[string]any{
 		"artifact_id": id,
 		"type":        model.ArtifactTypeHTML,
 		"title":       req.Title,
 		"summary":     req.Summary,
-	})
-	if err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("结果序列化失败: %v", err)}
 	}
-	return &Result{Success: true, Data: data}
+	// 大页整页覆盖时顺手推一把：下次改文字走 patch，别重传整页（docs/design/html-artifact/fine-grained-edit.md §4.7）
+	if revising && len(req.HTML) > 10<<10 {
+		out["tip"] = "下次改文字用 html.patch（先 get view=\"outline\" 拿 nid），不要重传整页"
+	}
+	return resultJSON(out)
 }
 
 // inlineImages — 把 <img src="image:<id>"> 换成 data: URI，返回清洗后的 HTML 与被内联的图片 id。

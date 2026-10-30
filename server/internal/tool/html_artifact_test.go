@@ -165,7 +165,7 @@ func TestHTMLArtifactGetReturnsSource(t *testing.T) {
 	id := artifactIDFrom(t, res)
 
 	res2 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get",
-		json.RawMessage(`{"artifact_id":"`+id+`"}`))
+		json.RawMessage(`{"artifact_id":"`+id+`","view":"full"}`))
 	if !res2.Success {
 		t.Fatalf("get failed: %s", res2.Error)
 	}
@@ -305,7 +305,7 @@ func TestHTMLArtifactGetLimitsAndLegacy(t *testing.T) {
 	if err := db.Create(legacy).Error; err != nil {
 		t.Fatalf("seed legacy: %v", err)
 	}
-	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", json.RawMessage(`{"artifact_id":"legacy1"}`))
+	res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", json.RawMessage(`{"artifact_id":"legacy1","view":"full"}`))
 	if !res.Success {
 		t.Fatalf("get legacy failed: %s", res.Error)
 	}
@@ -327,7 +327,7 @@ func TestHTMLArtifactGetLimitsAndLegacy(t *testing.T) {
 		t.Fatalf("create huge failed: %s", res2.Error)
 	}
 	id := artifactIDFrom(t, res2)
-	res3 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", json.RawMessage(`{"artifact_id":"`+id+`"}`))
+	res3 := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", json.RawMessage(`{"artifact_id":"`+id+`","view":"full"}`))
 	if res3.Success {
 		t.Fatal("超过读回上限应拒绝")
 	}
@@ -633,5 +633,708 @@ func TestHTMLArtifactRejectsTooManyImages(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "超过") || !strings.Contains(res.Error, "张") {
 		t.Fatalf("错误应说明张数上限: %s", res.Error)
+	}
+}
+
+// ---------- 细粒度读写（get view / patch） ----------
+
+// 富文本页：含 span 的段落（rich），用来验证 patch 会拒绝压平格式。
+const richPage = `<html><head><style>h1{color:#333} .tag{color:#a08a6c}</style></head><body>
+<h1>标题</h1>
+<p>含<span class="tag">标签</span>的段落，长度要够一个完整页面（内联校验要求至少 200 字节，这里纯粹是为了过闸）。</p>
+</body></html>`
+
+type outlineBlock struct {
+	NID      string `json:"nid"`
+	Tag      string `json:"tag"`
+	Class    string `json:"class"`
+	ClassCut bool   `json:"class_truncated"`
+	Hash     string `json:"hash"`
+	Text     string `json:"text"`
+	Chars    int    `json:"chars"`
+	Rich     bool   `json:"rich"`
+	Image    string `json:"image"`
+	Alt      string `json:"alt"`
+}
+
+type outlineResult struct {
+	ArtifactID string         `json:"artifact_id"`
+	Blocks     []outlineBlock `json:"blocks"`
+	StyleBytes int            `json:"style_bytes"`
+	PageBytes  int            `json:"page_bytes"`
+	Tip        string         `json:"tip"`
+}
+
+func getOutlineResult(t *testing.T, tl *HTMLArtifactTool, id string) outlineResult {
+	t.Helper()
+	args, _ := json.Marshal(map[string]string{"artifact_id": id})
+	res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if !res.Success {
+		t.Fatalf("get outline failed: %s", res.Error)
+	}
+	var out outlineResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("decode outline: %v", err)
+	}
+	return out
+}
+
+func outlineByNID(t *testing.T, out outlineResult, nid string) outlineBlock {
+	t.Helper()
+	for _, b := range out.Blocks {
+		if b.NID == nid {
+			return b
+		}
+	}
+	t.Fatalf("outline 里没有 %s: %+v", nid, out.Blocks)
+	return outlineBlock{}
+}
+
+func TestHTMLArtifactGetOutlineBlockStyle(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-outline"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	out := getOutlineResult(t, tl, id)
+	if len(out.Blocks) != 2 {
+		t.Fatalf("应有 2 块（h1 + p），实际 %+v", out.Blocks)
+	}
+	if b := outlineByNID(t, out, "t1"); b.Tag != "h1" || b.Hash == "" || b.Text != "三方案对比" {
+		t.Fatalf("t1 不对: %+v", b)
+	}
+	if out.StyleBytes == 0 {
+		t.Fatal("style_bytes 应大于 0")
+	}
+	if out.Tip == "" {
+		t.Fatal("outline 应带 tip")
+	}
+
+	// block：拿到全文
+	args, _ := json.Marshal(map[string]string{"artifact_id": id, "view": "block", "nid": "t2"})
+	blockRes := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if !blockRes.Success {
+		t.Fatalf("get block failed: %s", blockRes.Error)
+	}
+	var block struct {
+		NID  string `json:"nid"`
+		Text string `json:"text"`
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(blockRes.Data, &block); err != nil {
+		t.Fatalf("decode block: %v", err)
+	}
+	if block.NID != "t2" || !strings.Contains(block.Text, "内容内容") || block.Hash == "" {
+		t.Fatalf("block 内容不对: %+v", block)
+	}
+
+	// style：拿到 CSS + hash
+	args, _ = json.Marshal(map[string]string{"artifact_id": id, "view": "style"})
+	styleRes := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if !styleRes.Success {
+		t.Fatalf("get style failed: %s", styleRes.Error)
+	}
+	var style struct {
+		CSS  string `json:"style"`
+		Hash string `json:"style_hash"`
+	}
+	if err := json.Unmarshal(styleRes.Data, &style); err != nil {
+		t.Fatalf("decode style: %v", err)
+	}
+	if !strings.Contains(style.CSS, "color:#333") || style.Hash == "" {
+		t.Fatalf("style 内容不对: %+v", style)
+	}
+}
+
+func TestHTMLArtifactPatchTextAndStyle(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-patch"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	out := getOutlineResult(t, tl, id)
+	t1 := outlineByNID(t, out, "t1")
+
+	patchArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops": []map[string]string{
+			{"nid": "t1", "hash": t1.Hash, "text": "改过的标题"},
+		},
+	})
+	pres := tl.Execute(ec, "patch", patchArgs)
+	if !pres.Success {
+		t.Fatalf("patch failed: %s", pres.Error)
+	}
+
+	// 库里原文换了、成品也换了
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !strings.Contains(got.SourceHTML, "改过的标题") {
+		t.Fatal("source_html 没更新")
+	}
+	if !strings.Contains(got.HTML, "改过的标题") {
+		t.Fatal("html 成品没更新")
+	}
+	// 再读 outline：hash 变了、文字变了
+	after := getOutlineResult(t, tl, id)
+	if b := outlineByNID(t, after, "t1"); b.Text != "改过的标题" || b.Hash == t1.Hash {
+		t.Fatalf("outline 没反映修改: %+v", b)
+	}
+
+	// 改样式（只给 style）
+	patchArgs, _ = json.Marshal(map[string]any{
+		"artifact_id": id,
+		"style":       "h1{color:#900}",
+		"style_hash":  styleHashOf(t, tl, id),
+	})
+	pres = tl.Execute(ec, "patch", patchArgs)
+	if !pres.Success {
+		t.Fatalf("patch style failed: %s", pres.Error)
+	}
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !strings.Contains(got.SourceHTML, "color:#900") {
+		t.Fatal("样式没写进 source_html")
+	}
+	// 正文没被样式改动影响
+	if !strings.Contains(got.SourceHTML, "改过的标题") {
+		t.Fatal("改样式不该动正文")
+	}
+}
+
+func styleHashOf(t *testing.T, tl *HTMLArtifactTool, id string) string {
+	t.Helper()
+	args, _ := json.Marshal(map[string]string{"artifact_id": id, "view": "style"})
+	res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if !res.Success {
+		t.Fatalf("get style failed: %s", res.Error)
+	}
+	var style struct {
+		Hash string `json:"style_hash"`
+	}
+	if err := json.Unmarshal(res.Data, &style); err != nil {
+		t.Fatalf("decode style: %v", err)
+	}
+	return style.Hash
+}
+
+func TestHTMLArtifactPatchRejectsStaleHash(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-stale"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	// 模拟另一处先改了一版
+	simulated := strings.Replace(samplePage, "三方案对比", "别人改过", 1)
+	if err := db.Model(&model.Artifact{}).Where("id = ?", id).
+		Update("source_html", simulated).Error; err != nil {
+		t.Fatalf("simulate concurrent edit: %v", err)
+	}
+
+	// 拿旧页面的 nid/hash 去 patch：必须被拒
+	patchArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": "deadbeef", "text": "不该写入"}},
+	})
+	pres := tl.Execute(ec, "patch", patchArgs)
+	if pres.Success {
+		t.Fatal("旧 hash 应拒绝")
+	}
+	if !strings.Contains(pres.Error, "页面已变") {
+		t.Fatalf("错误应说明页面已变，实际 %q", pres.Error)
+	}
+	if got := mustLoad(t, db, id); got.SourceHTML != simulated {
+		t.Fatal("被拒的 patch 不该动库")
+	}
+}
+
+// mustLoad 读整行。
+func mustLoad(t *testing.T, db *gorm.DB, id string) model.Artifact {
+	t.Helper()
+	var a model.Artifact
+	if err := db.First(&a, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	return a
+}
+
+func TestHTMLArtifactPatchRejectsRichBlock(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-rich"}
+
+	res := tl.Execute(ec, "create", artArgs("标题", "含内联格式", richPage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	out := getOutlineResult(t, tl, id)
+	var rich outlineBlock
+	for _, b := range out.Blocks {
+		if b.Rich {
+			rich = b
+		}
+	}
+	if rich.NID == "" {
+		t.Fatalf("应有一块 rich: %+v", out.Blocks)
+	}
+	patchArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": rich.NID, "hash": rich.Hash, "text": "新的"}},
+	})
+	pres := tl.Execute(ec, "patch", patchArgs)
+	if pres.Success {
+		t.Fatal("rich 块写文字应拒绝")
+	}
+	if !strings.Contains(pres.Error, "内联格式") {
+		t.Fatalf("错误应说明内联格式，实际 %q", pres.Error)
+	}
+}
+
+func TestHTMLArtifactPatchRejectsLegacyPage(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// 早期页面：只有 html，没有 source_html
+	legacy := &model.Artifact{
+		ID: "legacy-1", UserID: "u1", ConversationID: "c1",
+		Title: "旧页", Summary: "旧摘要", HTML: samplePage,
+	}
+	if err := db.Create(legacy).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	patchArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": "legacy-1",
+		"ops":         []map[string]string{{"nid": "t1", "hash": "x", "text": "新的"}},
+	})
+	pres := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "patch", patchArgs)
+	if pres.Success {
+		t.Fatal("老页面 patch 应拒绝")
+	}
+	if !strings.Contains(pres.Error, "早期格式") {
+		t.Fatalf("错误应说明早期格式，实际 %q", pres.Error)
+	}
+	// outline 也拒绝；full 仍可读回（这里 html 列小，不超限）
+	args, _ := json.Marshal(map[string]string{"artifact_id": "legacy-1"})
+	if res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", args); res.Success {
+		t.Fatal("老页面 outline 应拒绝")
+	}
+	args, _ = json.Marshal(map[string]string{"artifact_id": "legacy-1", "view": "full"})
+	if res := tl.Execute(&ExecuteContext{Ctx: ctx, UserID: "u1"}, "get", args); !res.Success {
+		t.Fatalf("老页面 full 应可读回: %s", res.Error)
+	}
+}
+
+func TestHTMLArtifactPatchRequiresOpsOrStyle(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-empty"}
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	args, _ := json.Marshal(map[string]any{"artifact_id": id})
+	pres := tl.Execute(ec, "patch", args)
+	if pres.Success {
+		t.Fatal("什么都不传应拒绝")
+	}
+}
+
+// 换图：patch 图片块后，原文保留 image: 引用、成品重新内联成 data:。
+func TestHTMLArtifactPatchImage(t *testing.T) {
+	tl, db, images, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-img"}
+
+	first, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, tinyPNG(t))
+	if err != nil {
+		t.Fatalf("upload first: %v", err)
+	}
+	second, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, tinyPNG(t))
+	if err != nil {
+		t.Fatalf("upload second: %v", err)
+	}
+
+	page := strings.Replace(samplePage, "</body>", `<img src="image:`+first.ID+`" alt="旧图"></body>`, 1)
+	page = strings.Replace(page, "<h1>三方案对比</h1>", `<h1>三方案对比</h1><p>换图测试的正文，长度够过闸。</p>`, 1)
+	res := tl.Execute(ec, "create", artArgs("带图", "一页带图", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	img := outlineByNID(t, getOutlineResult(t, tl, id), "img1")
+	patchArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops": []map[string]string{
+			{"nid": "img1", "hash": img.Hash, "image": "image:" + second.ID, "alt": "新图"},
+		},
+	})
+	pres := tl.Execute(ec, "patch", patchArgs)
+	if !pres.Success {
+		t.Fatalf("patch image failed: %s", pres.Error)
+	}
+	got := mustLoad(t, db, id)
+	if !strings.Contains(got.SourceHTML, "image:"+second.ID) {
+		t.Fatal("原文里应换成新的 image: 引用")
+	}
+	if strings.Contains(got.SourceHTML, "data:image") {
+		t.Fatal("原文不该出现 base64")
+	}
+	if !strings.Contains(got.HTML, "data:image") {
+		t.Fatal("成品应重新内联成 data:")
+	}
+}
+
+func TestHTMLArtifactPatchLimits(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-limits"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	// ops 超过 50
+	ops := make([]map[string]string, 0, maxPatchOps+1)
+	for i := 0; i < maxPatchOps+1; i++ {
+		ops = append(ops, map[string]string{"nid": "t1", "hash": t1.Hash, "text": "x"})
+	}
+	args, _ := json.Marshal(map[string]any{"artifact_id": id, "ops": ops})
+	if pres := tl.Execute(ec, "patch", args); pres.Success || !strings.Contains(pres.Error, "最多改") {
+		t.Fatalf("ops 超限应拒绝，实际 success=%v err=%q", pres.Success, pres.Error)
+	}
+
+	// style 超过 64KB
+	args, _ = json.Marshal(map[string]any{
+		"artifact_id": id,
+		"style":       strings.Repeat("a", maxStyleBytes+1),
+		"style_hash":  styleHashOf(t, tl, id),
+	})
+	if pres := tl.Execute(ec, "patch", args); pres.Success || !strings.Contains(pres.Error, "样式太长") {
+		t.Fatalf("style 超限应拒绝，实际 success=%v err=%q", pres.Success, pres.Error)
+	}
+
+	// 改样式不带 style_hash
+	args, _ = json.Marshal(map[string]any{"artifact_id": id, "style": "h1{color:#000}"})
+	if pres := tl.Execute(ec, "patch", args); pres.Success || !strings.Contains(pres.Error, "style_hash") {
+		t.Fatalf("缺 style_hash 应拒绝，实际 success=%v err=%q", pres.Success, pres.Error)
+	}
+}
+
+func TestHTMLArtifactPatchOpsAndStyleTogether(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-both"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "一起改的标题"}},
+		"style":       "h1{color:#123}",
+		"style_hash":  styleHashOf(t, tl, id),
+	})
+	if pres := tl.Execute(ec, "patch", args); !pres.Success {
+		t.Fatalf("同时改正文和样式应成功: %s", pres.Error)
+	}
+	got := mustLoad(t, db, id)
+	if !strings.Contains(got.SourceHTML, "一起改的标题") || !strings.Contains(got.SourceHTML, "color:#123") {
+		t.Fatal("正文和样式都应写入")
+	}
+}
+
+func TestHTMLArtifactGetBlockUnknownNID(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-unknown"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	args, _ := json.Marshal(map[string]string{"artifact_id": id, "view": "block", "nid": "t99"})
+	pres := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if pres.Success {
+		t.Fatal("不存在的 nid 应失败")
+	}
+	if !strings.Contains(pres.Error, "没有这个块") {
+		t.Fatalf("错误应说明没有这个块，实际 %q", pres.Error)
+	}
+}
+
+// base64 直写的图片不能把整段塞进 outline / block（一张 3–5MB 的图会把 1KB 变成几 MB）。
+func TestHTMLArtifactOutlineNeverLeaksBase64(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-b64"}
+
+	page := strings.Replace(samplePage, "</body>",
+		`<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" alt="直写"></body>`, 1)
+	res := tl.Execute(ec, "create", artArgs("直写图", "base64 图", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	args, _ := json.Marshal(map[string]string{"artifact_id": id})
+	got := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if !got.Success {
+		t.Fatalf("outline failed: %s", got.Error)
+	}
+	raw := string(got.Data)
+	if strings.Contains(raw, "iVBORw0KGgo") {
+		t.Fatal("outline 不该回传 base64")
+	}
+	if !strings.Contains(raw, "image_bytes") || !strings.Contains(raw, "legacy") {
+		t.Fatalf("应给 legacy + image_bytes: %s", raw)
+	}
+
+	// block 视图同样不能漏
+	args, _ = json.Marshal(map[string]string{"artifact_id": id, "view": "block", "nid": "img1"})
+	got = tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "get", args)
+	if !got.Success {
+		t.Fatalf("block failed: %s", got.Error)
+	}
+	if strings.Contains(string(got.Data), "iVBORw0KGgo") {
+		t.Fatal("block 不该回传 base64")
+	}
+}
+
+func TestHTMLArtifactPatchInsertImage(t *testing.T) {
+	tl, db, images, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-ins"}
+
+	asset, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, tinyPNG(t))
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	frag := `<figure><img src="image:` + asset.ID + `" alt="新图"><figcaption>图注</figcaption></figure>`
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"insert": []map[string]string{
+			{"after": "t1", "hash": t1.Hash, "html": frag},
+		},
+	})
+	if pres := tl.Execute(ec, "patch", args); !pres.Success {
+		t.Fatalf("insert failed: %s", pres.Error)
+	} else if !strings.Contains(string(pres.Data), "块编号已重排") {
+		t.Fatalf("结构改动后应提示重新 get(outline): %s", pres.Data)
+	}
+	got := mustLoad(t, db, id)
+	if !strings.Contains(got.SourceHTML, "image:"+asset.ID) {
+		t.Fatal("原文里应插入 image: 引用")
+	}
+	if !strings.Contains(got.HTML, "data:image") {
+		t.Fatal("成品应已内联")
+	}
+	// h1 之后应该多出图片块
+	after := getOutlineResult(t, tl, id)
+	if len(after.Blocks) < 2 || after.Blocks[1].Tag != "img" {
+		t.Fatalf("插入位置不对: %+v", after.Blocks)
+	}
+}
+
+func TestHTMLArtifactPatchRemoveImage(t *testing.T) {
+	tl, db, images, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1", ConvID: "c1", TurnID: "turn-rm"}
+
+	asset, err := images.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, tinyPNG(t))
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	page := strings.Replace(samplePage, "</body>",
+		`<figure><img src="image:`+asset.ID+`" alt="待删"><figcaption>这张要删</figcaption></figure></body>`, 1)
+	res := tl.Execute(ec, "create", artArgs("带图", "待删一张", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	img := outlineByNID(t, getOutlineResult(t, tl, id), "img1")
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"remove":      []map[string]string{{"nid": "img1", "hash": img.Hash}},
+	})
+	if pres := tl.Execute(ec, "patch", args); !pres.Success {
+		t.Fatalf("remove failed: %s", pres.Error)
+	}
+	got := mustLoad(t, db, id)
+	if strings.Contains(got.SourceHTML, "<figure") || strings.Contains(got.SourceHTML, "<img") {
+		t.Fatal("图应连 figure 一起删掉")
+	}
+	if !strings.Contains(got.SourceHTML, "三方案对比") {
+		t.Fatal("其余内容不该动")
+	}
+}
+
+func TestHTMLArtifactPatchStructureLimits(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-slimit"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	inserts := make([]map[string]string, 0, 11)
+	for i := 0; i < 11; i++ {
+		inserts = append(inserts, map[string]string{"after": "t1", "hash": t1.Hash, "html": "<p>x</p>"})
+	}
+	args, _ := json.Marshal(map[string]any{"artifact_id": id, "insert": inserts})
+	if pres := tl.Execute(ec, "patch", args); pres.Success || !strings.Contains(pres.Error, "最多插入") {
+		t.Fatalf("插入超限应拒绝，实际 success=%v err=%q", pres.Success, pres.Error)
+	}
+
+	removes := make([]map[string]string, 0, 21)
+	for i := 0; i < 21; i++ {
+		removes = append(removes, map[string]string{"nid": "t1", "hash": t1.Hash})
+	}
+	args, _ = json.Marshal(map[string]any{"artifact_id": id, "remove": removes})
+	if pres := tl.Execute(ec, "patch", args); pres.Success || !strings.Contains(pres.Error, "最多删") {
+		t.Fatalf("删除超限应拒绝，实际 success=%v err=%q", pres.Success, pres.Error)
+	}
+}
+
+func TestHTMLArtifactPatchEditConflict(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-conf"}
+
+	res := tl.Execute(ec, "create", artArgs("对比", "三方案", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "改"}},
+		"remove":      []map[string]string{{"nid": "t1", "hash": t1.Hash}},
+	})
+	if pres := tl.Execute(ec, "patch", args); pres.Success || !strings.Contains(pres.Error, "同时修改和删除") {
+		t.Fatalf("同时改删应拒绝，实际 success=%v err=%q", pres.Success, pres.Error)
+	}
+}
+
+// outline 要带 class：插入新块时照抄相邻块的 class 才有间距/配色。
+func TestHTMLArtifactOutlineCarriesClass(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-class"}
+
+	page := `<html><head><style>h1{color:#333}</style></head><body>` +
+		`<h1 class="title">标题</h1><p class="sec lead">正文内容</p>` +
+		`<div class="fig"><img class="photo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" alt="照片"></div></body></html>`
+	res := tl.Execute(ec, "create", artArgs("带类", "class 透出", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	out := getOutlineResult(t, tl, artifactIDFrom(t, res))
+	if got := outlineByNID(t, out, "t1").Class; got != "title" {
+		t.Fatalf("h1 的 class 应透出，实际 %q", got)
+	}
+	if got := outlineByNID(t, out, "t2").Class; got != "sec lead" {
+		t.Fatalf("段落的 class 应透出，实际 %q", got)
+	}
+	// 图片块同样要带（insert 一张新图时照抄它）
+	if got := outlineByNID(t, out, "img1").Class; got != "photo" {
+		t.Fatalf("图片的 class 应透出，实际 %q", got)
+	}
+}
+
+// 删完这页就空了：不能报「HTML 太短，不像一个完整页面」（模型没法自愈）。
+func TestHTMLArtifactRemoveLastBlockSaysPageWouldBeEmpty(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-empty"}
+
+	body := strings.Repeat("正文", 90) // 180 字 ≈ 540 字节，删掉后整页只剩骨架
+	page := `<html><head><style>h1{color:#333}</style></head><body><p>` + body + `</p></body></html>`
+	res := tl.Execute(ec, "create", artArgs("只剩一段", "删空测试", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"remove":      []map[string]string{{"nid": "t1", "hash": t1.Hash}},
+	})
+	pres := tl.Execute(ec, "patch", args)
+	if pres.Success {
+		t.Fatal("删空整页应被拒绝")
+	}
+	if !strings.Contains(pres.Error, "删完这页就空了") {
+		t.Fatalf("文案要指向下一步，实际 %q", pres.Error)
+	}
+}
+
+// class 截断时给标记：整段照抄会抄到半截类名。
+func TestHTMLArtifactOutlineMarksTruncatedClass(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-classcut"}
+
+	long := strings.Repeat("c", maxOutlineClassRunes+10)
+	page := `<html><head><style>h1{color:#333}</style></head><body><h1 class="` + long + `">标题</h1>` +
+		`<p>` + strings.Repeat("正文", 60) + `</p></body></html>`
+	res := tl.Execute(ec, "create", artArgs("长类名", "截断标记", page))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	out := getOutlineResult(t, tl, artifactIDFrom(t, res))
+	b := outlineByNID(t, out, "t1")
+	if !b.ClassCut || len([]rune(b.Class)) != maxOutlineClassRunes {
+		t.Fatalf("应标 class_truncated 并截到 %d 字，实际 %+v", maxOutlineClassRunes, b)
 	}
 }

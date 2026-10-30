@@ -266,3 +266,45 @@ func TestArtifactRepoDeleteAndShare(t *testing.T) {
 		t.Fatalf("撤销后旧 token 应失效，实际 err=%v", err)
 	}
 }
+
+// 乐观锁：只有「读到的原文」仍是库里那份时才写入；被另一处改过 → 0 行，不覆盖。
+func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := &model.Artifact{
+		ID: "a1", UserID: "u1", ConversationID: "c1",
+		Title: "t", Summary: "s", HTML: "<html>v1</html>", SourceHTML: "v1",
+	}
+	if err := db.Create(a).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2")
+	if err != nil || !ok {
+		t.Fatalf("原文匹配应写入: ok=%v err=%v", ok, err)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.SourceHTML != "v2" || got.HTML != "<html>v2</html>" {
+		t.Fatalf("更新不对: %+v", got)
+	}
+
+	// 拿旧原文再写一次 → 拒绝，库不动
+	ok, err = repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v3</html>", "v3")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ok {
+		t.Fatal("旧原文不应写入")
+	}
+	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.SourceHTML != "v2" {
+		t.Fatalf("被拒后库不该变: %q", got.SourceHTML)
+	}
+}

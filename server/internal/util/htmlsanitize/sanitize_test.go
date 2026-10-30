@@ -144,3 +144,10 @@ func TestProcessRejectsOversizedInlineTotal(t *testing.T) {
 		t.Fatalf("错误应说明体积超限: %v", err)
 	}
 }
+
+func TestTooShortIsSentinel(t *testing.T) {
+	_, err := ProcessWithImages(`<html><body></body></html>`, func(string) (string, error) { return "", nil })
+	if !errors.Is(err, ErrTooShort) {
+		t.Fatalf("短页面应能 errors.Is(ErrTooShort)，实际 %v", err)
+	}
+}

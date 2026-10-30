@@ -17,6 +17,13 @@ struct ArtifactPayload: Codable, Identifiable {
     let html: String
 }
 
+/// `GET /api/artifacts/:id/html` 的结果：304 时 `html == nil`，调用方用本地缓存。
+struct ArtifactHTMLResponse {
+    let notModified: Bool
+    let html: String?
+    let etag: String?
+}
+
 /// `GET /api/artifacts` 的列表项（右栏「灵阅」）：**不含正文**，点开才按 id 拉。
 struct ArtifactSummary: Codable, Identifiable {
     let id: String

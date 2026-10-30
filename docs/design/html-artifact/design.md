@@ -62,7 +62,7 @@ type Artifact struct {
 |---|---|
 | **同步写**，不做异步队列 | 工具返回值必须带 id，模型下一轮要用、客户端可能立刻点开。异步会开一个"返回了 id 但行没落地"的窗口，用户点得快就是 404。要兜住得预生成 id + 进程内 pending map，为省一次单行 INSERT 不值。**`request_json` 那个异步先例不适用**：它是调试审计数据、且在整条消息行落库之后才提交，落后无所谓 |
 | **消息列表查询必须 `Omit("html")`**（或换不含正文的 DTO） | GORM 默认 `SELECT *`。一旦列表把正文带出来，每次打开会话就是 N 条 × 几十 KB 的持续性开销。这是本方案最容易被写错、且后果最严重的一处 |
-| 正文只在 `GET /api/artifacts/:id` 取 | 同上，唯一的正文出口 |
+| 正文只在 `GET /api/artifacts/:id`（JSON）与 `GET /api/artifacts/:id/html`（裸 HTML，客户端缓存用）取 | 列表永远不带正文；后者是 2026-10-30 加的 ETag 出口（§9.8） |
 | 不建全文索引 / 不做 embedding | 纪要里"不强约束槽位"的前提：搜索走别处，不碰 `html` |
 
 无痕销毁时**软删阶段只改 `deleted_at` 一列**，LONGTEXT（存在溢出页）不会被重写，几乎零 IO；物理删在 Stage B 随批进行。
@@ -325,7 +325,7 @@ webView.loadHTMLString(html, baseURL: nil)    // 页面自包含，不需要 bas
 
 - **不进 `keptAliveTabIds`**。那个名单是给视频/音频续播的。手账这类页面切走就销毁，切回来重新 `loadHTMLString`，无 JS 无网络，重载代价可以忽略。常驻的代价是每篇一个 WebContent 进程（几十 MB 量级）。
 - **WKWebView 用 `@StateObject` 持有**，别塞进 `RightSidebarTab.content` 的构造参数——后者会让实例跟着 tab 结构体一直活着。
-- **不要全局缓存 HTML 正文**。要缓存就放 tab/选择项里（几百 KB 字符串可接受），别做"最近 N 篇"的 map。
+- **不要全局缓存 HTML 正文**。要缓存就放 tab/选择项里（几百 KB 字符串可接受），别做"最近 N 篇"的 map。**这条说的是内存常驻**；磁盘上的正文缓存见 §9.8（落 Caches、按 ETag 失效），两者不是一回事。
 
 其他：
 
@@ -429,6 +429,15 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 - iOS 的 sheet 保持原位（先弹出再显示加载态），无需 tab。
 - 顺带收益：点卡片后立刻有视觉反馈，「点了没反应」这类反馈不会再被误判成 bug。
 
+**2026-10-30 · 正文按 ETag 落本地缓存（重开不再重下整页）**：线上（公网）重开同一个页面仍要重下几 MB，本地 loopback 把这一点掩盖了。现在：
+
+- 服务端 `GET /api/artifacts/:id/html` 直接吐 HTML + `ETag`（只读 `id/title/html`）；带 `If-None-Match` 命中回 304 空响应；CSP 与公开分享共用 `artifactCSP`。
+- 客户端 `ArtifactHTMLCache` 把正文落到 `Caches/com.xhan.xhanHelper/artifacts[-dev]/`（按 `LocalPaths` 分环境；512MB 上限，超了按 mtime 删最旧）。
+- `open` 有缓存就先秒开，再发条件请求确认：304 不重建 WebView，200 才替换；网络失败继续显示缓存。
+- 304 命中会刷新缓存文件的 mtime（`touch`），淘汰按最近使用而不是最近下载，常看的页不会被先清掉。
+- 删产物 / 404 时一并清缓存；系统清 Caches 只是退回一次完整下载，不影响正确性。
+- **无痕边界**：无痕会话生成的正文也会落本机 Caches。服务端 `BeginPurge` + 物理删只保证服务端不残留（灵阅列表、分享链接、其他设备都看不到），**本机这份副本不随会话销毁清理**，要等 404、手动删或 512MB 淘汰——与 `LogBuffer` 落盘同一权限级别。要彻底清就删 `LocalPaths.artifactsCacheDir`。
+
 ### 9.9 聊天里的卡片按轮次成槽
 
 现象：一轮里既生成了文档（文档卡）又生成了 HTML 页（产物卡），两张卡上下堆着，看不出属于同一轮。
@@ -460,9 +469,10 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 
 | 决策 | 结论 | 依据 |
 |---|---|---|
-| 点开时取正文 | **每次拉最新**，不做会话内缓存 | artifact 不可变（改就是新记录），缓存拿到的字节永远一样，只多一套失效逻辑 |
+| 点开时取正文 | **按 ETag 缓存**：有本地副本就先展示，再条件请求确认；304 用缓存、200 才换 | 改版是原地覆盖（§4.2），不能用 id 当版本；ETag 跟着正文走，删产物 / 404 时清缓存 |
 | 无痕会话销毁 | **跟两段式节拍**：Stage A 只改 `deleted_at`（不碰正文，几乎零 IO），Stage B 按 `conversation_id` 随批物理删 | 复用 `ephemeral_destroyer` 的既有节奏；Stage A 直接物理删会在 Stage B 失败时留下坏链 |
 | 无痕是否连带删 | **删 artifact，但不删文档** | artifact 是那条消息的身体；文档是用户级资产，`BeginPurge` 现在也不清它。这个区别别让人照文档的逻辑处理 |
+| 客户端正文缓存与无痕 | **不随会话销毁清理**：服务端删干净即可，本机 Caches 副本留到 404 / 淘汰 / 手动清 | Caches 是 App 私有目录，与 `LogBuffer` 同级；彻底隔离需按 conversation 清（未做，见 §9.8「无痕边界」） |
 | 接入位置 | **`tabs` 池** + 两处守卫 | 见 §9.1；独立模式要自己重画 tab 条，不划算 |
 | 内容去重 | **不做** | 自由生成的 HTML 几乎不可能字节重复，按正文哈希等于写一段永不执行的分支；重试由"每轮 ≤3"兜住 |
 | 同一 id 覆盖正文 | **做**（2026-10-29 拍板，§4.2） | 改版堆积的交互成本高于「快照历史性」；产物是可再生成的成品。代价：旧版不可回溯、分享链接跟新版 |
@@ -683,3 +693,11 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：列表数据复用 `ContentView` 那份 `ArtifactViewModel`（coordinator 注入），侧栏在 `items.isEmpty` 时自己补一次 `load()`；骨架 tab 也带侧栏，点开就能连续翻。
   - 决定：`HTMLArtifactView` / `ArtifactLoadingView` 的 `.ignoresSafeArea()` 上移到容器（macOS 在 `ArtifactDetailView`，iOS 在 `ChatView` 的 sheet 补一个），行为不变。
   - 影响文件：`client/.../Views/{ArtifactDetailView(新),SidebarNavRow(新),DocumentListView,HTMLArtifactView,ArtifactLoadingView,ChatView,ContentView,LayoutConstants}.swift`、`Services/ArtifactOpenCoordinator.swift`、`ViewModels/ArtifactViewModel.swift`（`total` 公开读）；详见 `docs/design/artifact-nav-sidebar/design.md`。
+- **2026-10-30 · 灵阅正文按 ETag 缓存（重复打开不再重下整页）**
+  - 起因：线上（公网）每次打开带图产物都要重下几 MB，同一批页面反复打开仍然慢；本地 loopback 掩盖了这个问题。
+  - 决定：新增 `GET /api/artifacts/:id/html`（裸 HTML + `ETag` + `If-None-Match` → 304），不改表；正文哈希当版本，原地改版自然失效。
+  - 决定：客户端 `ArtifactHTMLCache` 落 `Caches`（dev/prod 分目录，512MB 上限）；有缓存先秒开、再条件请求确认（304 不重建 WebView，200 才替换）；网络失败继续显示缓存；删产物 / 404 清缓存。
+  - 决定：`HTMLArtifactView` 改为接收**已注入基线**的 HTML，注入统一在 `ArtifactOpenCoordinator.show` 做一次，避免每次 SwiftUI 更新复制整页。
+  - 补充（同日代码审查后）：iOS 404 同时关 sheet；304 命中 `touch` 缓存文件（淘汰按最近使用）；`If-None-Match` 改为按逗号拆分 + 去 `W/` 前缀逐项比较；缓存核心抽成可注入目录/上限/日志的 SwiftPM target，补 5 条测试。
+  - 无痕取舍（2026-10-30 拍板）：接受本机 Caches 副本残留——服务端无痕语义不变（物理删后灵阅/分享/其他设备都看不到），本机副本与 `LogBuffer` 同级；已明确写进 §9.8「无痕边界」与 §十一。要彻底隔离再按 conversation 清。
+  - 影响文件：`server/.../controller/artifact.go`（+`ServeArtifactHTML` / `artifactETag` / `etagMatches` / `writeHTML` / `artifactCSP`）、`controller/router.go`、`controller/artifact_test.go`、`service/artifact_repo.go`（+`GetHTML`）；`client/.../Services/ArtifactHTMLCache.swift`（新，核心）、`Services/ArtifactHTMLCache+Shared.swift`（新，app 单例）、`Services/LocalPaths.swift`（+`appCachesRoot` / `artifactsCacheDir`）、`Services/APIClient.swift`（+`fetchArtifactHTML`）、`Models/ArtifactRef.swift`（+`ArtifactHTMLResponse`）、`Services/ArtifactOpenCoordinator.swift`、`Views/HTMLArtifactView.swift`、`Views/ChatView.swift`（iOS sheet 用 `OpenedArtifactPage`）、`ViewModels/ArtifactViewModel.swift`（删除时清缓存）、`client/xHelper/Package.swift` + `Tests/ArtifactHTMLCacheCoreTests/`。

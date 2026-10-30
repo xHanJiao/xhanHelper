@@ -202,6 +202,36 @@ class APIClient {
 		return try await get("/api/artifacts/\(id)")
 	}
 
+	/// 裸 HTML 正文（灵阅本地缓存用）。带 etag 时走 `If-None-Match`：
+	/// 304 → `notModified=true`，调用方直接用本地缓存；200 → 新正文 + 新 etag。
+	func fetchArtifactHTML(id: String, etag: String? = nil) async throws -> ArtifactHTMLResponse {
+		var req = URLRequest(url: URL(string: "\(baseURL)/api/artifacts/\(id)/html")!)
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		if let etag, !etag.isEmpty {
+			req.setValue(etag, forHTTPHeaderField: "If-None-Match")
+		}
+		let (data, resp) = try await URLSession.shared.data(for: req)
+		let http = resp as? HTTPURLResponse
+		switch http?.statusCode ?? 500 {
+		case 304:
+			return ArtifactHTMLResponse(notModified: true, html: nil, etag: etag)
+		case 200:
+			guard let html = String(data: data, encoding: .utf8) else {
+				throw NSError(domain: "APIClient", code: 500,
+					userInfo: [NSLocalizedDescriptionKey: "正文不是 UTF-8"])
+			}
+			return ArtifactHTMLResponse(notModified: false, html: html,
+				etag: http?.value(forHTTPHeaderField: "ETag"))
+		case 401:
+			throw NSError(domain: "APIClient", code: 401,
+				userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+		default:
+			let msg = String(data: data, encoding: .utf8) ?? "unknown"
+			throw NSError(domain: "APIClient", code: http?.statusCode ?? 500,
+				userInfo: [NSLocalizedDescriptionKey: msg])
+		}
+	}
+
 	/// 灵阅列表（右栏「灵阅」）：按时间倒序，不含正文。
 	func listArtifacts(limit: Int = 30, offset: Int = 0) async throws -> ArtifactListResponse {
 		return try await get("/api/artifacts?limit=\(limit)&offset=\(offset)")

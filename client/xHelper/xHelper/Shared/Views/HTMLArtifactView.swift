@@ -38,11 +38,14 @@ func injectingBaseline(_ html: String) -> String {
 
 /// 右栏里的 HTML 产物页。
 ///
+/// `html` **必须已注入版式基线**：由 `ArtifactOpenCoordinator` 在交给视图前注入一次
+/// （`updateNSView` 每次 SwiftUI 更新都会跑，视图里再注入等于每个 tick 复制一遍 8MB）。
+///
 /// 安全靠引擎而不是靠清洗：`javaScriptEnabled = false` + 取消一切导航。
 /// 入库时已经清过危险标签并注入 CSP（docs/design/html-artifact §七），这里是第二道闸。
 ///
 /// 内存约定：**不要**把这个视图塞进 `RightSidebarTab.content` 的构造参数、也不要进
-/// `keptAliveTabIds`——切走即销毁，切回来重新 `loadHTMLString`（页面无 JS 无网络，重载可忽略）。
+/// `keptAliveTabIds`——切走即销毁，切回来重新加载（正文已落本地缓存，不会重新下载）。
 ///
 /// 铺满（`.ignoresSafeArea()`）由外层负责：macOS 在 `ArtifactDetailView`，iOS 在 `ChatView` 的 sheet。
 struct HTMLArtifactView: View {
@@ -151,19 +154,17 @@ private struct ArtifactWebView: NSViewRepresentable {
     let onFail: (String) -> Void
 
     func makeNSView(context: Context) -> WKWebView {
-        makeWebView(html: injectingBaseline(html), delegate: context.coordinator.navigationGuard)
+        makeWebView(html: html, delegate: context.coordinator.navigationGuard)
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         // html 一变（重新生成/切到另一篇）就重载；内容相同不重复 load
-        let page = injectingBaseline(html)
-        guard context.coordinator.loadedHTML != page else { return }
-        context.coordinator.loadedHTML = page
-        webView.loadHTMLString(page, baseURL: nil)
+        guard context.coordinator.loadedHTML != html else { return }
+        context.coordinator.loadedHTML = html
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
-    // 和 makeNSView/makeUIView 加载的是同一串（注入后），否则首次 update 必判「变了」再重载一次
-    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: injectingBaseline(html), onFail: onFail) }
+    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: html, onFail: onFail) }
 
     final class Coordinator {
         var loadedHTML: String
@@ -181,18 +182,16 @@ private struct ArtifactWebView: UIViewRepresentable {
     let onFail: (String) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
-        makeWebView(html: injectingBaseline(html), delegate: context.coordinator.navigationGuard)
+        makeWebView(html: html, delegate: context.coordinator.navigationGuard)
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let page = injectingBaseline(html)
-        guard context.coordinator.loadedHTML != page else { return }
-        context.coordinator.loadedHTML = page
-        webView.loadHTMLString(page, baseURL: nil)
+        guard context.coordinator.loadedHTML != html else { return }
+        context.coordinator.loadedHTML = html
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
-    // 和 makeNSView/makeUIView 加载的是同一串（注入后），否则首次 update 必判「变了」再重载一次
-    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: injectingBaseline(html), onFail: onFail) }
+    func makeCoordinator() -> Coordinator { Coordinator(loadedHTML: html, onFail: onFail) }
 
     final class Coordinator {
         var loadedHTML: String
@@ -224,6 +223,7 @@ private func makeWebView(html: String, delegate: WKNavigationDelegate) -> WKWebV
 }
 
 #Preview("页面") {
-    HTMLArtifactView(id: "preview", title: "预览", html: "<html><body><h1>预览</h1><p>内容</p></body></html>")
+    HTMLArtifactView(id: "preview", title: "预览",
+                     html: injectingBaseline("<html><body><h1>预览</h1><p>内容</p></body></html>"))
         .frame(width: 700, height: 500)
 }

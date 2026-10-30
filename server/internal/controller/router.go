@@ -184,9 +184,10 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/images/:id/file", rc.ImageHandler.ServePrivate)
 		auth.DELETE("/images/:id", rc.ImageHandler.Delete)
 
-		// HTML 产物：正文的唯一出口（消息列表只带摘要，见 docs/design/html-artifact §4.1）
+		// HTML 产物：正文出口（JSON / 裸 HTML + ETag；消息列表只带摘要，见 docs/design/html-artifact §4.1）
 		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)
 		auth.GET("/artifacts/:id", rc.ArtifactHandler.GetArtifact)
+		auth.GET("/artifacts/:id/html", rc.ArtifactHandler.ServeArtifactHTML)
 		auth.DELETE("/artifacts/:id", rc.ArtifactHandler.DeleteArtifact)
 		auth.POST("/artifacts/batch-delete", rc.ArtifactHandler.BatchDeleteArtifacts)
 		auth.POST("/artifacts/:id/share", rc.ArtifactHandler.CreateArtifactShare)

@@ -33,6 +33,16 @@ func (r *ArtifactRepo) GetByID(ctx context.Context, userID, id string) (*model.A
 	return &a, nil
 }
 
+// GetHTML — 裸 HTML 出口用：只取 id/title/html，避开最大 8MB 的 source_html。
+func (r *ArtifactRepo) GetHTML(ctx context.Context, userID, id string) (*model.Artifact, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).Select("id", "title", "html").
+		Where("id = ? AND user_id = ?", id, userID).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // GetForRead — `html.get` 用：只取标题/摘要/原文，避开最大 8MB 的 html 列。
 // 原文为空（这次改动之前生成的页面）时，调用方再决定要不要读正文。
 func (r *ArtifactRepo) GetForRead(ctx context.Context, userID, id string) (*model.Artifact, error) {

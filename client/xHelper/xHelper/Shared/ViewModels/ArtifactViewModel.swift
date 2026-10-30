@@ -103,6 +103,8 @@ final class ArtifactViewModel: ObservableObject {
     /// 就地移除 + 同步总数 + 关掉对应的右栏 tab（被删的页不该留僵尸 tab）。
     private func removeFromList(_ ids: [String]) {
         guard !ids.isEmpty else { return }
+        // 正文缓存跟着一起清：否则删掉的页还能从 Caches 里被翻出来
+        ArtifactHTMLCache.shared.remove(ids: ids)
         let set = Set(ids)
         let removed = items.filter { set.contains($0.id) }.count
         items.removeAll { set.contains($0.id) }

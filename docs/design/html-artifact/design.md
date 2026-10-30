@@ -675,3 +675,10 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：下载 = 存 `.html` 单文件、导出 = 走 `DocumentPDFExporter.exportHTML`（与文档 PDF 同一条打印分页管线，加载前注入同一份版式基线）。
   - 影响文件：`client/.../Views/CardStyle.swift`、`CardView.swift`、`ArtifactListView.swift`、`HTMLArtifactView.swift`（基线函数放宽为 internal）、`Services/ArtifactOpenCoordinator.swift`（+`copyShareLink` / `downloadHTML` / `exportPDF`）、`DocumentPDFExporter.swift`（+`exportHTML`）。
   - **2026-10-30 补充**：卡片菜单里的「导出 PDF」**只在 Debug（dev）构建出现**（`LocalPaths.isDev`）——大产物的分页/图片解码还没验够，Release 不带；「下载 HTML」照常开放。放开只需删掉调用点的 `if`（见 `docs/design/card-more-menu` §9）。
+- **2026-10-30 · 灵阅详情左侧加换篇列表**
+  - 起因：灵阅攒成库后，从一篇看另一篇只能回面板再点，还要重新找位置；文档详情早有左侧「文档列表」侧栏。
+  - 决定：tab 内容包一层 `ArtifactDetailView`（左 220 侧栏 + 页面），侧栏只有「灵阅列表」一种形态（灵阅是任意 HTML 且 `javaScriptEnabled = false`，没有标题大纲可做）；收起态 / 窄栏自动收 / 当前项钉行 / 滚到底续拉，交互与样式沿用 `document-sidebar-modes`。
+  - 决定：点行 = `ArtifactOpenCoordinator.open(id:title:)`（已开切过去、没开新开 tab），**不做原地替换 tab**——避免给 `RightSidebarManager` 加 tab 身份迁移，也保住「两篇并排对照」。
+  - 决定：列表数据复用 `ContentView` 那份 `ArtifactViewModel`（coordinator 注入），侧栏在 `items.isEmpty` 时自己补一次 `load()`；骨架 tab 也带侧栏，点开就能连续翻。
+  - 决定：`HTMLArtifactView` / `ArtifactLoadingView` 的 `.ignoresSafeArea()` 上移到容器（macOS 在 `ArtifactDetailView`，iOS 在 `ChatView` 的 sheet 补一个），行为不变。
+  - 影响文件：`client/.../Views/{ArtifactDetailView(新),SidebarNavRow(新),DocumentListView,HTMLArtifactView,ArtifactLoadingView,ChatView,ContentView,LayoutConstants}.swift`、`Services/ArtifactOpenCoordinator.swift`、`ViewModels/ArtifactViewModel.swift`（`total` 公开读）；详见 `docs/design/artifact-nav-sidebar/design.md`。

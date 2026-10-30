@@ -14,7 +14,8 @@ final class ArtifactViewModel: ObservableObject {
     private static let pageSize = 30 // 服务端默认也是 30（server/.../controller/artifact.go 的 DefaultQuery）
 
     private let apiClient: APIClient
-    private var total = 0
+    /// 列表总数（侧栏节名「· N 篇」用；`loadMore` 的边界也靠它）
+    @Published private(set) var total = 0
     private var isLoadingMore = false
 
     init(apiClient: APIClient) {

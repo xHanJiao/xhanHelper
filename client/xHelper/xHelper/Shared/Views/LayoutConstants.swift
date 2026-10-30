@@ -124,6 +124,12 @@ enum Layout {
     /// 目录兜底收起阈值：比批注更高 → 窄时「先收目录、再收批注」。
     static let docTocHardFloor: CGFloat = docReaderMinWidth + docAnnotPanelWidth + docTocExpandedWidth
 
+    // MARK: - 灵阅详情（左侧换篇列表 / 页面）
+
+    /// 灵阅侧栏兜底收起阈值：侧栏展开宽 + 右栏最小宽（页面可读的底线）。
+    /// 右栏最窄 380 时会自动收成窄条；默认 840 时正文还剩 620。
+    static let artifactNavHardFloor: CGFloat = docTocExpandedWidth + rightSidebarMinWidth
+
     // MARK: - 聊天画中画面板（PiP）
 
     /// 面板默认尺寸（首次进入/未持久化时），可调。

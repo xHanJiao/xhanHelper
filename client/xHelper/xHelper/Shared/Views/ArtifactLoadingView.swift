@@ -19,6 +19,5 @@ struct ArtifactLoadingView: View {
             }
             .padding(24)
         }
-        .ignoresSafeArea()
     }
 }

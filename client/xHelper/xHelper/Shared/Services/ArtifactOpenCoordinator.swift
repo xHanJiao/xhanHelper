@@ -18,6 +18,9 @@ final class ArtifactOpenCoordinator: ObservableObject {
 
     /// macOS 右栏（ContentView 注入）
     weak var rightSidebar: RightSidebarManager?
+    /// 灵阅列表（ContentView 注入）：详情页左侧换篇栏共用浏览面板那份数据。
+    /// nil 时详情退化成纯页面（没有侧栏）—— 注入时序问题不该让页面打不开。
+    weak var artifactVM: ArtifactViewModel?
     /// iOS 用 sheet 展示当前这篇
     @Published var presented: ArtifactPayload?
 
@@ -48,7 +51,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
             id: tabID,
             title: title,
             icon: "doc.richtext",
-            content: AnyView(ArtifactLoadingView(title: title))
+            content: tabContent(id: id, title: title, html: nil)
         )
         guard !alreadyOpen else { return }
         #endif
@@ -63,7 +66,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
             rightSidebar?.updateTabTitle(id: tabID, title: shown)
             rightSidebar?.updateTabContent(
                 id: tabID,
-                content: AnyView(HTMLArtifactView(id: payload.id, title: shown, html: payload.html))
+                content: tabContent(id: payload.id, title: shown, html: payload.html)
             )
             #else
             presented = payload
@@ -78,6 +81,19 @@ final class ArtifactOpenCoordinator: ObservableObject {
             ToastCenter.shared.show(deleted ? "该页面已被删除" : "无法打开页面：\(error.localizedDescription)")
         }
     }
+
+    /// tab 内容（macOS）：有列表数据时包一层左栏换篇，否则只给页面 / 骨架。
+    #if os(macOS)
+    private func tabContent(id: String, title: String, html: String?) -> AnyView {
+        if let artifactVM {
+            return AnyView(ArtifactDetailView(id: id, title: title, html: html, viewModel: artifactVM))
+        }
+        if let html {
+            return AnyView(HTMLArtifactView(id: id, title: title, html: html))
+        }
+        return AnyView(ArtifactLoadingView(title: title))
+    }
+    #endif
 
     /// 改版之后：页面若正开在右栏（macOS tab / iOS sheet），重新拉一遍正文。
     ///

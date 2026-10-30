@@ -860,7 +860,7 @@ private struct DocumentFullView: View {
             tocOutline
             #endif
         }
-        .frame(width: 220)
+        .frame(width: Layout.docTocExpandedWidth)
     }
 
     /// 目录体：本文档标题大纲；无标题时给空态提示（macOS 侧栏常驻，得有说法）。
@@ -955,42 +955,17 @@ private struct DocumentFullView: View {
         viewModel.documents.contains { $0.id == document.id }
     }
 
-    /// 列表行：标题一行 + 「相对时间 · 标签」次信息行，hover / 当前项给圆角底色。
-    /// 取法与顶栏会话下拉同源（`TopBarView.conversationMenuRow`）。
+    /// 列表行：标题一行 + 「相对时间 · 标签」次信息行（样式在 `SidebarNavRow`，
+    /// 与灵阅侧栏共用；取法与顶栏会话下拉同源）。
     private func documentNavRow(_ doc: Document, isCurrent: Bool) -> some View {
-        let isHovered = hoveredDocID == doc.id
-        return Button { viewModel.openDocument = doc } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(doc.title.isEmpty ? "（无标题）" : doc.title)
-                        .font(.system(size: 12, weight: isCurrent ? .semibold : .regular))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    if isCurrent {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(Color("appAccent"))
-                    }
-                    Spacer(minLength: 0)
-                }
-                Text(documentNavSubtitle(doc))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            isCurrent
-                ? Color("appAccent").opacity(0.10)
-                : (isHovered ? Color.primary.opacity(0.06) : .clear),
-            in: RoundedRectangle(cornerRadius: 6)
+        SidebarNavRow(
+            title: doc.title.isEmpty ? "（无标题）" : doc.title,
+            subtitle: documentNavSubtitle(doc),
+            isCurrent: isCurrent,
+            isHovered: hoveredDocID == doc.id,
+            action: { viewModel.openDocument = doc },
+            onHover: { hoveredDocID = $0 ? doc.id : nil }
         )
-        .onHover { hoveredDocID = $0 ? doc.id : nil }
     }
 
     /// 行次信息：相对时间 + 前 3 个标签（都没有则省略该行内容）。
@@ -1002,25 +977,12 @@ private struct DocumentFullView: View {
     }
     #endif
 
-    /// 收起态窄条：保留展开入口，垂直居中一个 chevron.right。
+    /// 收起态窄条：保留展开入口（组件与灵阅侧栏共用）。
     #if os(macOS)
     private var tocCollapsedStrip: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Button {
-                withAnimation { tocCollapsed = false }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("展开侧栏")
-            Spacer()
+        SidebarCollapsedStrip(help: "展开侧栏") {
+            withAnimation { tocCollapsed = false }
         }
-        .frame(width: 32)
     }
     #endif
 

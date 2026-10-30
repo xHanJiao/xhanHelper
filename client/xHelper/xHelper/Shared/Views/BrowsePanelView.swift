@@ -117,6 +117,12 @@ struct BrowsePanelView: View {
     @State private var billSearchOpen = false
     @State private var docSearchDraft = ""
     @State private var billSearchDraft = ""
+    #if os(macOS)
+    /// 文档详情页的两个开关（原本在详情页自己的二级顶栏上，现已并入页头）。
+    /// 与 `DocumentFullView` 共用同一批 key，改一边另一边立刻跟上。
+    @AppStorage("xhan_doc_annot_open") private var docAnnotOpen = true
+    @AppStorage("xhan_doc_find_open") private var docFindOpen = false
+    #endif
     /// 多选删除二次确认。
     @State private var isConfirmingBatchDelete = false
     /// 图片多选删除二次确认。
@@ -414,9 +420,32 @@ struct BrowsePanelView: View {
 
     // MARK: - 浏览页面
 
+    #if os(macOS)
+    /// 文档详情态：页头返回先回文档列表（详情页原来的二级顶栏已并入页头）
+    private var isDocDetail: Bool {
+        manager.browsePanelSelection == .documents && documentVM.openDocument != nil
+    }
+    #endif
+
+    /// 页头返回按钮的 help：文档详情态回列表，其余回网格
+    private var backHelp: String {
+        #if os(macOS)
+        if isDocDetail { return "返回文档列表" }
+        #endif
+        return "返回网格"
+    }
+
     private func panelHeader(_ panel: BrowsePanel) -> some View {
         HStack(spacing: 8) {
             Button {
+                #if os(macOS)
+                if isDocDetail {
+                    // 详情 → 列表；再按一次才回网格（面包屑式两级返回）
+                    docFindOpen = false
+                    documentVM.openDocument = nil
+                    return
+                }
+                #endif
                 manager.browsePanelSelection = nil
             } label: {
                 HStack(spacing: 3) {
@@ -429,7 +458,7 @@ struct BrowsePanelView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("返回网格")
+            .help(backHelp)
 
             Divider()
                 .frame(height: 14)
@@ -578,6 +607,24 @@ struct BrowsePanelView: View {
                 .buttonStyle(.plain)
                 .help("导出 CSV")
             }
+
+            #if os(macOS)
+            // 文档详情页：划线与批注 / 查找并进页头（详情页自己那条二级顶栏已去掉）
+            if isDocDetail {
+                Button {
+                    withAnimation { docAnnotOpen.toggle() }
+                } label: {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.system(size: 12))
+                        .foregroundColor(docAnnotOpen ? Color("appAccent") : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("划线与批注面板")
+
+                headerSearchToggle(active: docFindOpen, help: "在文档中查找（⌘F）") { docFindOpen.toggle() }
+                    .keyboardShortcut("f", modifiers: .command)
+            }
+            #endif
 
             if panel == .documents && documentVM.openDocument == nil && documentVM.mode != .trash {
                 headerSearchToggle(

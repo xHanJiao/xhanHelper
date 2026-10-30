@@ -68,7 +68,7 @@
 | D17 | 配额 | ✅ 单条 quote ≤ 500 字符、批注 ≤ 2000 字符、单文档 ≤ 500 条 |
 | D18 | 全局快捷键 | ❌ 无 |
 | D19 | LLM 改写时正在阅读 | ⚠️ **2026-10-14 修订**：**正文显示**仍不自动刷新（不跳走），但补了三个"该校正文"的时机 —— ① 客户端发现不一致（划线画不出来 / 服务端夹逼改写了 quote）② 回到前台 ③ 一轮对话结束（agent 刚改过）。见文末「后续变更 · 正文旧了要自己发现」 |
-| D20 | 顶栏入口 | ✅ 分享 / 导出 PDF / 下载 `.md` **保持**在窗口顶栏 `document-actions` 组（`DocumentSelectionCoordinator.swift:50-69`），文档详情页顶栏只放「返回文档列表」+ 查找。mockup 顶栏把两组画在了一起，属预览简化，实现以本条为准 |
+| D20 | 顶栏入口 | ✅ 分享 / 导出 PDF / 下载 `.md` **保持**在窗口顶栏 `document-actions` 组（`DocumentSelectionCoordinator.swift:50-69`）。文档详情页**不再有自己的二级顶栏**（2026-10-30 并入右侧栏页头，见文末「详情页顶栏并进页头」）。mockup 顶栏把两组画在了一起，属预览简化，实现以本条为准 |
 
 ---
 
@@ -307,7 +307,7 @@ VStack
 
 ```
 VStack
- ├ HStack(返回文档列表 + 查找)          ← 保留，查找改走 JS
+ ├ HStack(返回文档列表 + 查找)          ← 2026-10-30 起 macOS 已删（并入右侧栏页头），iOS 仍在
  ├ findBar                              ← 保留，改成 JS 查找
  ├ Divider
  └ HStack(alignment: .top, spacing: 0)
@@ -1121,3 +1121,16 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 
 - 「回答长度」那节那颗 `text.alignleft` 的 icon pill 改为 `visibility: .hidden`（`Shared/Views/InputBarButtons.swift`），UI 上不再出现；`briefAnswer` 也不再从会话键恢复（恒为 false，避免旧会话卡在 ≤500 字却关不掉）。
 - **服务端零改动**：`brief_answer` 字段、system prompt 注入、「会话级稳定所以前缀缓存不抖」这套论证全部照旧有效，只是客户端不再有开的那条路。
+
+### 2026-10-30 · 详情页顶栏并进页头（用户拍板）
+
+- **背景**：文档详情页出现两条顶栏 —— 右侧栏页头（`‹ 返回 | 文档 … ⟳`）和详情页自己的（`‹ 返回文档列表 … 划线批注 / 查找`），用户要求合并、去掉后者。
+- **决定**：macOS 删掉 `DocumentFullView` 的二级顶栏（连其下 `Divider`），三样东西各归其位：
+  - **返回列表** → 页头「返回」在详情态改为 `documentVM.openDocument = nil`（help 文案「返回文档列表」），再按一次才回网格（面包屑式两级返回）。**不能**让它继续回网格：列表页的「列表 / 词云 / 回收站 + 读者层级 + 搜索 + 批量选择」那整套入口只有它能到。
+  - **划线与批注** → 页头 trailing 的 `list.bullet.rectangle`，读写 `@AppStorage("xhan_doc_annot_open")`（与详情页同一 key，无需提升状态）。
+  - **查找** → 页头 trailing 的 `headerSearchToggle`，读写 `@AppStorage("xhan_doc_find_open")`，`.keyboardShortcut("f")` 跟着搬，⌘F 不变。
+- **代价**：查找栏开合从 `@State` 改成 `@AppStorage` → 换篇 / 重启不再自动收起（`findQuery` 仍是 `@State`，换篇清空）；详情态回网格变两次点击（右侧栏也可用顶部面板图标直接切走）。
+- **iOS 不变**：仍走 `DocumentFullView` 原来那条（`#if !os(macOS)`）。
+- **不变**：页头本来就是所有浏览面板共用的 `BrowsePanelView.panelHeader(_:)`，这次只加了 `isDocDetail` 两个 trailing 分支 + 返回动作判断，没有新抽象。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentListView.swift`（顶部 HStack 包 `#if !os(macOS)`、`showFindBar` 改 AppStorage、删 `toggleAnnotationPanel`）；`BrowsePanelView.swift`（`isDocDetail` / `backHelp` / 两个 trailing 按钮 / 返回动作）。
+- **自查**：`xcrun swiftc -typecheck` macOS 26.3 + iOS 26.0 双 target 0 error；真机观感由用户在 Xcode 复核。

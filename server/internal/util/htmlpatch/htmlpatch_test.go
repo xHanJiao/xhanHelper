@@ -400,8 +400,8 @@ func TestRemoveTextBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if len(changed) != 1 || changed[0] != "t2" {
-		t.Fatalf("changed: %v", changed)
+	if len(changed) != 0 {
+		t.Fatalf("删除不该混进 updated（那是「内容被替换」的清单）: %v", changed)
 	}
 	if strings.Contains(out, "第一段") {
 		t.Fatal("被删的段落还在")
@@ -793,5 +793,80 @@ func TestPruneLeavesNoBlankLine(t *testing.T) {
 	}
 	if strings.Contains(out, "<figure") {
 		t.Fatalf("空相框该收掉: %s", out)
+	}
+}
+
+// 锚在图注上：段落落到整个 figure 之后，不能并进图里（真机回归第五轮）。
+func TestInsertAfterFigcaptionLandsAfterFigure(t *testing.T) {
+	page := `<html><body><p>正文</p><figure><img src="image:a" alt="x"><figcaption>图注</figcaption></figure><p>页脚</p></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "t2", Hash: findBlock(t, blocks, "t2").Hash, HTML: `<p class="lead">新增</p>`}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !strings.Contains(out, "</figure><p class=\"lead\">新增</p>") {
+		t.Fatalf("段落应在 figure 之后（容器兄弟层级）: %s", out)
+	}
+}
+
+// 锚在列表项上：段落落到整个列表之后，不产出 <ul><p>。
+func TestInsertAfterListItemLandsAfterList(t *testing.T) {
+	page := `<html><body><ul><li>一</li><li>二</li></ul><p>尾</p></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "t2", Hash: findBlock(t, blocks, "t2").Hash, HTML: `<p>新增</p>`}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !strings.Contains(out, "</ul><p>新增</p>") {
+		t.Fatalf("段落应在列表之后: %s", out)
+	}
+}
+
+// 锚在页脚块上：落在页脚之后（真机实测，文档原先说会插进页脚里，是错的）。
+func TestInsertAfterFooterLandsAfterFooter(t *testing.T) {
+	page := `<html><body><p>正文</p><footer><p>页脚</p></footer></body></html>`
+	blocks := mustScan(t, page)
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "t2", Hash: findBlock(t, blocks, "t2").Hash, HTML: `<p>新增</p>`}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !strings.Contains(out, "页脚</p><p>新增</p></footer>") {
+		t.Fatalf("应落在页脚之后: %s", out)
+	}
+}
+
+// 先在图注后插一段装饰，再删掉同一张 figure 的图：装饰块现在落在 figure 之外，
+// 不该跟着「删图收缩空相框」一起消失（真机回归里「插入的 div 莫名没了」）。
+func TestInsertedBlockSurvivesFigurePrune(t *testing.T) {
+	page := `<html><body><div class="wrap"><figure><img src="image:a" alt="x"><figcaption>图注</figcaption></figure><p>页脚</p></div></body></html>`
+	blocks := mustScan(t, page)
+	figcap := findBlock(t, blocks, "t1")
+	out, _, err := ApplyEdit(page, Edit{
+		Inserts: []InsertOp{{After: "t1", Hash: figcap.Hash, HTML: `<div class="tape"></div>`}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !strings.Contains(out, "</figure><div class=\"tape\"></div>") {
+		t.Fatalf("装饰块应在 figure 之后: %s", out)
+	}
+
+	blocks = mustScan(t, out)
+	img := findBlock(t, blocks, "img1")
+	out2, _, err := ApplyEdit(out, Edit{Removes: []RemoveOp{{NID: "img1", Hash: img.Hash}}})
+	if err != nil {
+		t.Fatalf("remove img: %v", err)
+	}
+	if strings.Contains(out2, "<figure") {
+		t.Fatalf("空 figure 应被收缩: %s", out2)
+	}
+	if !strings.Contains(out2, `class="tape"`) {
+		t.Fatalf("之前插入的装饰块不该被收缩卷走: %s", out2)
 	}
 }

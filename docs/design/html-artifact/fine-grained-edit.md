@@ -220,7 +220,7 @@ columns(n, [blocks]) / tag / divider / footer
 - 同一块不能既在 `ops` 又在 `remove`；`insert.after` 也不能是被删的块；
 - 全部校验通过才写入（**事务性**），任何一个失败整次拒绝、不动库；
 - 写完重新走 `htmlsanitize` + `inlineImages`，同时更新 `html` 与 `source_html`；
-- 返回只回摘要：`{"artifact_id", "title", "summary", "updated": ["t3", "img2"], "inserted": 1, "removed": 1, "style_updated": true, "page_bytes": 3620}`。
+- 返回只回摘要：`{"artifact_id", "title", "summary", "updated": ["t3", "img2"], "inserted": 1, "removed": 1, "style_updated": true, "page_bytes": 3620}`。`updated` 只列**内容被替换**的块（`ops` 的 nid）；删除块有自己的计数（`removed`），不再混进 `updated`——删掉的块连 nid 都不存在了，混进去只会让调用方误判「哪块只是改了字」。
   带 `title`/`summary` 是给客户端的：patch 后同 id 的卡要按「只留最新」收敛到本轮，摘要得跟着更新。
 
 #### create
@@ -261,7 +261,8 @@ patch
 - 同一 nid 不能同时出现在 `ops` 和 `remove`（删和改一次做不了，提示分两次）；
 - 插入片段：非空、≤64KB、顶层只允许块级标签（`script/style/iframe/meta/link/form` 直接拒绝；散文本也拒绝）；
 - 插入片段顶层的 `tr/td/th/thead/tbody/tfoot/col/colgroup/caption` → 明确报「表格行列不能单独插入，请整张 `<table>` 一起插」（这些标签在 `<div>` 上下文里会被 HTML5 静默丢弃，不单独拦会报成「散文本」误导模型）；
-- **锚点所在容器**：`insert.after` 的父节点是 `table/thead/tbody/tfoot/tr` → 拒绝（`ErrBadAnchor`）。锚在 `td/th/caption` 上插块级片段会写成 `<tr><td>x</td><p>…</p></tr>`，浏览器 foster-parent 把内容挤出表格、位置和样式静默跳走（而 `outline` 看起来一切正常）。文案指出两条出路：加段落锚在**整张 `<table>` 之后的块**上，加行/加格只能整页重写；
+- **锚点落在容器之后**：锚点是 `figure/ul/ol/dl/picture` 的**直接子块**时，落点抬到该容器**之后**（容器兄弟层级）——锚在图注上插段落，内容落在整个 `figure` 之后，不会并进图里；锚在列表项上插段落，落在整个列表之后，不会产出 `<ul><p>`。布局用的 `div` 不抬（卡片里加段落就该留在卡片里）。
+- **锚点在表格结构里**：`insert.after` 的父节点是 `table/thead/tbody/tfoot/tr` → 拒绝（`ErrBadAnchor`）。锚在 `td/th/caption` 上插块级片段会写成 `<tr><td>x</td><p>…</p></tr>`，浏览器 foster-parent 把内容挤出表格、位置和样式静默跳走（而 `outline` 看起来一切正常）。文案指出两条出路：加段落锚在**整张 `<table>` 之后的块**上，加行/加格只能整页重写；
 - **空容器收缩**（`remove` 之后）：从父节点向上，逐层删掉「已经只剩残渣」的容器，**停在 `<body>`（body/html 永不删）**。两档判据：
   - 删节点时顺手清掉相邻的纯空白文本节点，源码不留空白行（`get(full)` 读回来仍是原缩进）；
   - 通用：子树里没有 `img/picture/svg/video/audio/canvas/iframe/embed/object/hr`，也没有 `figcaption`/`caption` 之外的非空文本；
@@ -323,7 +324,7 @@ patch
 - `get(outline)` 结果带 `tip`，并写死「div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 `view="full"` 整页重写」——模型每次看 outline 都会看到；
 - `patch` 的描述里同样写一句（防止模型不读 tip）：只有语义块有 nid，别拿不存在的 nid 反复试；
 - `patch` 带了 `insert` / `remove` 时回一句「块编号已重排，继续改请重新 `get(view="outline")`」——hash 是按内容算的、没变，变的是「第几块」；
-- 锚点规则写进描述 + tip：**加在页面末尾要锚在页脚之前那块**（锚在页脚块上会插进页脚里）；**别锚在 `td/th` 上**（会插出 `<tr><td>x</td><p>…</p></tr>` 这种非法结构，浏览器重解析后位置会跳）——这条服务端也硬拒（§4.5 `ErrBadAnchor`），提示词只负责让模型少撞一次；
+- 锚点规则写进描述 + tip：**加在页面末尾锚在页脚块上即可**（插入落在锚点之后，不会插进页脚里）；**别锚在 `td/th` 上**（会插出 `<tr><td>x</td><p>…</p></tr>` 这种非法结构，浏览器重解析后位置会跳）——这条服务端也硬拒（§4.5 `ErrBadAnchor`），提示词只负责让模型少撞一次；
 - 插入片段的 `class` **照抄相邻块**（`get(outline)` 每块都带 `class`）——间距/配色都在 class 上，不抄就是紧贴上一段的裸标签；
 - `create` 改版成功且整页 > 10 KB 时附 `tip: 下次改文字用 html.patch`；
 - `patch` 结果只回摘要，不回整页。
@@ -371,7 +372,7 @@ patch
 8. **大页**：19 KB 的页改一句 → `patch` 前后上下文占用 < 2 KB（对比当前 8 KB+）。
 9. **老页面**：对无 `source_html` 的页 `get` → 明确报「早期格式，只能重做」。
 10. **删空表格**：把一张表的单元格全删 → `<table>` 骨架一起消失，不留空行。
-11. **加到末尾**：说「最后加一节总结」→ 新内容落在页脚**之前**，不是页脚里。
+11. **加到末尾**：说「最后加一节总结」→ 锚在页脚块上，新内容落在页脚**之后**（不是页脚里面，也不是页脚之前）。
 
 ---
 
@@ -431,7 +432,7 @@ patch
   - 起因：① 复审 P1——同一 `<figure>` 里删一张图会连带删掉另一张（`figureOnlyHasImage` 只判「有没有非图内容」，另一张 img 不算内容）；② 真机反馈——`div` 相框删图后留空相框 + 孤立图注、表格单元格删光后留 `<table>` 骨架。
   - 决定：三处同一根因，用一条机制修：`remove` 之后从父节点向上收缩「完全空」的容器（无媒体元素、无图注/说明之外的非空文本），停在 `<body>`。删掉 `figureOnlyHasImage` / `enclosingFigure`。
   - 决定：`insertTags` 去掉 `tr/td/th/thead/tbody` 死条目（`<div>` 上下文里会被丢弃），并对表格族首标签单独报「表格行列不能单独插入，请整张 `<table>` 一起插」。
-  - 决定：锚点提示——末尾要锚在页脚之前、别锚在 `td/th` 上；插入片段复用页面已有 class。
+  - 决定：锚点提示——末尾锚在页脚块上（落在其后）、别锚在 `td/th` 上；插入片段复用页面已有 class。
   - 决定：结构改动后回一句「块编号已重排，重新 get」，不直接把新 outline 塞进响应（省 1–3KB，改完就收工时不吃亏）。
   - 影响文件：`util/htmlpatch/htmlpatch.go`（-`figureOnlyHasImage` +`pruneEmptyAncestors` / `isEmptyish` / `rejectTableParts`）+测试、`tool/html_artifact.go`（描述、tip、`patchResult`）+测试。
 - **2026-10-30 · 收缩判据放宽 + body 守卫（复审第三/四轮）**
@@ -458,3 +459,9 @@ patch
   - 决定：`insert` 校验段加「锚点父节点 ∈ {table,thead,tbody,tfoot,tr} → `ErrBadAnchor`」，文案给出两条出路（锚到整张 table 之后的块 / 加行加格整页重写）。只拦表格族：`<ul>` 里塞 `<p>` 之类位置不乱，不做内容模型推导。
   - 决定：不做已落库坏页的自动修复（读取侧不重写结构），只能 `view="full"` + `create` 重建。
   - 影响文件：`util/htmlpatch/htmlpatch.go`（`tableContextTags` + `ErrBadAnchor` + insert 校验）+测试、`tool/html_artifact.go`（`patchErrorMessage`）+测试、本文件。
+- **2026-10-30 · 真机第六轮（落点 / 页脚 / updated）**
+  - 起因：真机回归三处 —— ① 锚在页脚前一块（图注）上，段落直接落进 `<figure>`，页面看着正常但结构错；② 文档与描述说「锚在页脚块上会插进页脚里」，实测落在页脚之后，行为是对的、文案是错的；③ `updated` 语义混乱：把 `remove` 的 nid 也列进去、纯 `insert` 却是空数组，调用方判断不出「哪块只是改了字」。
+  - 决定：锚点是 `figure/ul/ol/dl/picture` 的直接子块时，落点抬到该容器**之后**（容器兄弟层级）；布局 `div` 不抬（卡片里加段落要留在卡片里）。锚在表格结构里仍直接拒绝。
+  - 决定：页脚锚点文案改正——锚在页脚块上，新内容落在页脚之后。
+  - 决定：`updated` 只列 `ops` 命中的 nid；删除看 `removed` 计数，插入看 `inserted`。
+  - 影响文件：`util/htmlpatch/htmlpatch.go`（`tightContainers` + `insertPlan.target`）+测试、`tool/html_artifact.go`（描述、`get(outline)` tip）+测试、本文件。

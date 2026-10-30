@@ -73,6 +73,14 @@ var tableContextTags = map[string]bool{
 	"table": true, "thead": true, "tbody": true, "tfoot": true, "tr": true,
 }
 
+// tightContainers — 内容模型受限的语义容器：锚点是它们的直接子块时，插块要落到容器
+// **之后**（容器兄弟层级），而不是容器内部紧跟锚点。否则「锚在图注上」会把段落塞进
+// <figure>、锚在列表项上会把 <p> 塞进 <ul> —— 视觉上并进了别的容器，结构也不合法。
+// 布局用的 div 不在此列：卡片里加段落就该留在卡片里。
+var tightContainers = map[string]bool{
+	"figure": true, "ul": true, "ol": true, "dl": true, "picture": true,
+}
+
 // Block — 一个可定位的块（给 get outline 用）。
 type Block struct {
 	NID       string `json:"nid"`
@@ -185,8 +193,9 @@ func ApplyEdit(source string, edit Edit) (string, []string, error) {
 	}
 
 	type insertPlan struct {
-		after string
-		nodes []*html.Node
+		after  string
+		target *html.Node // 实际落点：锚点本身，或锚点所在的语义容器
+		nodes  []*html.Node
 	}
 	plans := make([]insertPlan, 0, len(edit.Inserts))
 	for _, ins := range edit.Inserts {
@@ -210,20 +219,26 @@ func ApplyEdit(source string, edit Edit) (string, []string, error) {
 		if err != nil {
 			return "", nil, fmt.Errorf("%s: %w", ins.After, err)
 		}
-		plans = append(plans, insertPlan{after: ins.After, nodes: nodes})
+		target := a.node
+		if p := target.Parent; p != nil && tightContainers[p.Data] {
+			target = p
+		}
+		plans = append(plans, insertPlan{after: ins.After, target: target, nodes: nodes})
 	}
 
 	// ---- 应用 ----
-	changed := make([]string, 0, len(edit.Ops)+len(edit.Removes))
+	// changed 只记「内容被替换的块」（ops）：insert/remove 有自己的计数，调包方不该
+	// 从 updated 里猜「删了哪些」——删掉的块连 nid 都不存在了。
+	changed := make([]string, 0, len(edit.Ops))
 	for _, op := range edit.Ops {
 		applyOp(byNID[op.NID], op)
 		changed = append(changed, op.NID)
 	}
 	// 同锚点多次插入：按数组顺序接在上一条后面（不能都插在锚点后，否则后写在前）
-	tails := make(map[string]*html.Node, len(plans))
+	tails := make(map[*html.Node]*html.Node, len(plans))
 	for _, plan := range plans {
-		insertAfter := byNID[plan.after].node
-		if t, ok := tails[plan.after]; ok {
+		insertAfter := plan.target
+		if t, ok := tails[plan.target]; ok {
 			insertAfter = t
 		}
 		parent := insertAfter.Parent
@@ -231,11 +246,10 @@ func ApplyEdit(source string, edit Edit) (string, []string, error) {
 		for _, n := range plan.nodes {
 			parent.InsertBefore(n, next)
 		}
-		tails[plan.after] = plan.nodes[len(plan.nodes)-1]
+		tails[plan.target] = plan.nodes[len(plan.nodes)-1]
 	}
 	for _, r := range edit.Removes {
 		removeBlock(byNID[r.NID])
-		changed = append(changed, r.NID)
 	}
 
 	out, err := render(doc)

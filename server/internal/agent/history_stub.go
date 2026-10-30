@@ -9,7 +9,7 @@ import (
 // htmlGetToolName 是 html 工具 get 函数的扁平名（原生 FC 用 tool__func 拼接）。
 const htmlGetToolName = "html__get"
 
-const htmlOmittedHint = `整页正文未带入历史（当轮已完整读过）。改文字/换图/加删块先 html.get(view="outline") 拿 nid/hash 再 html.patch（ops / insert / remove）；只有重排版式才用 view="full"`
+const htmlOmittedHint = `整页正文未带入历史（只是历史里不带，重新读就有）。改文字/换图/加删块先 html.get(view="outline") 拿 nid/hash 再 html.patch（ops / insert / remove）；只有重排版式才用 view="full"`
 
 // StubToolResultForHistory 把「不该原样进历史」的工具结果换成 stub。
 // 返回 (内容, 是否替换)。toolName 形如 "html__get"；未知时传 ""。

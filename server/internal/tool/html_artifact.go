@@ -179,7 +179,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"报「页面已变」说明另一处改过（或你拿的是旧 hash）：重新 get 拿新 nid/hash，别拿旧值硬试。",
 			"rich=true 的块含高亮/链接等内联格式，patch 文字会压平格式，服务端会拒绝；这种块只能 get(view=\"full\") 后整页重写。",
 			"只有语义块（标题/段落/列表项/表格单元格/图注/引用）有 nid；div 里的文字不在清单里，改它请 get(view=\"full\") 整页重写，别拿不存在的 nid 反复试。",
-			"锚点位置：要加在页面末尾就锚在页脚之前那块（锚在页脚块上会插进页脚里）；别锚在表格单元格（td/th）上，那会插出非法结构。",
+			"锚点位置：插块落在锚点所在语义容器之后——锚在图注/列表项上，段落会落到整个 figure/列表之后；要加在页面末尾就锚在页脚块上（就落在页脚之后）。别锚在表格单元格（td/th）上，那会插出非法结构。",
 			"整张 <table> 可以插；单独插 tr/td 不行，要增删行列请整页重写。",
 			"换图必须是 image:<id> 引用（先用 image.list_images 拿 id）。",
 		}, "\n"),
@@ -353,7 +353,7 @@ func (t *HTMLArtifactTool) getOutline(src string, a *model.Artifact) *Result {
 		"blocks":      items,
 		"style_bytes": styleBytes,
 		"page_bytes":  len(src),
-		"tip":         "改文字/换图/加图/删块都用 html.patch（ops / insert / remove），不要重传整页；改样式先 get(view=\"style\") 再 patch(style=…)。插入新块时把相邻块的 class 照抄到片段上（每块都带 class），否则没有间距/配色。div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 view=\"full\" 整页重写。加到末尾请锚在页脚之前那块",
+		"tip":         "改文字/换图/加图/删块都用 html.patch（ops / insert / remove），不要重传整页；改样式先 get(view=\"style\") 再 patch(style=…)。插入新块时把相邻块的 class 照抄到片段上（每块都带 class），否则没有间距/配色。div 里的文字没有 nid（只认标题/段落/列表/表格单元格等语义块），改它请 view=\"full\" 整页重写。加到末尾锚在页脚块上即可（新内容落在它之后）",
 	})
 }
 

@@ -111,7 +111,7 @@ else:
   "summary": "一天的时间线手账",
   "html_omitted": true,
   "page_bytes": 19200,
-  "hint": "整页正文未带入历史（当轮已完整读过）。改文字/换图/加删块先 html.get(view=\"outline\") 拿 nid/hash 再 html.patch（ops / insert / remove）；只有重排版式才用 view=\"full\""
+  "hint": "整页正文未带入历史（只是历史里不带，重新读就有）。改文字/换图/加删块先 html.get(view=\"outline\") 拿 nid/hash 再 html.patch（ops / insert / remove）；只有重排版式才用 view=\"full\""
 }
 ```
 
@@ -281,3 +281,6 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
   - 修：html stub 的 marshal 失败改为退回**原文**（原实现落到 `truncateToolResult`，等于又变回头尾残片，与 §4.1 不符）。
   - 补：多条 `tool_calls` 乱序（按 id 映射）、映射缺失的超大 `html.get`（走通用 stub）两条用例。
   - 影响：§4.1 检测口径、§4.3。
+- **2026-10-30 · hint 去掉误导**
+  - 改：html stub 的 hint 原写「（当轮已完整读过）」，模型在后续轮看到时会误以为「这一轮已经读过、现在拿不到」，改成「只是历史里不带，重新读就有」。
+  - 澄清：stub 只作用于**请求开始时拼的历史**；同一轮里 `create` 之后调用 `get(full)` 拿到的仍是全文（该结果直接进当前 msgs，不经过 stub）。

@@ -1385,3 +1385,52 @@ func TestHTMLArtifactPatchRejectsTableAnchor(t *testing.T) {
 		t.Fatalf("失败不能改动页面:\n%s", full.HTML)
 	}
 }
+
+// updated 只列「内容被替换」的块：删块有自己的 removed 计数，不再混进来。
+func TestHTMLArtifactPatchUpdatedOnlyCoversOps(t *testing.T) {
+	tl, _, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-updated"}
+
+	res := tl.Execute(ec, "create", artArgs("两段", "updated 语义", `<html><head><style>h1{color:#333}</style></head><body><h1>标题</h1><p>`+
+		strings.Repeat("正文", 100)+`</p><p>第二段</p></body></html>`))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	out := getOutlineResult(t, tl, id)
+
+	type patchRes struct {
+		Updated  []string `json:"updated"`
+		Inserted int      `json:"inserted"`
+		Removed  int      `json:"removed"`
+	}
+	run := func(args map[string]any) patchRes {
+		b, _ := json.Marshal(args)
+		r := tl.Execute(ec, "patch", b)
+		if !r.Success {
+			t.Fatalf("patch failed: %s", r.Error)
+		}
+		var pr patchRes
+		if err := json.Unmarshal(r.Data, &pr); err != nil {
+			t.Fatalf("decode patch result: %v", err)
+		}
+		return pr
+	}
+
+	t3 := outlineByNID(t, out, "t3")
+	pr := run(map[string]any{"artifact_id": id, "remove": []map[string]string{{"nid": "t3", "hash": t3.Hash}}})
+	if pr.Removed != 1 || len(pr.Updated) != 0 {
+		t.Fatalf("删除不该出现在 updated: %+v", pr)
+	}
+
+	out = getOutlineResult(t, tl, id)
+	t1 := outlineByNID(t, out, "t1")
+	pr = run(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "新标题"}},
+	})
+	if len(pr.Updated) != 1 || pr.Updated[0] != "t1" {
+		t.Fatalf("改文字应把 nid 列进 updated: %+v", pr)
+	}
+}

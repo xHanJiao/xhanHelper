@@ -45,7 +45,7 @@
 
 一句话：校验清单是按**字段**列的，不是按**非法组合**列的。锚点 × 片段的组合里，「表格」这一格始终没人碰。
 
-## 四、修法建议（**未实施**，仅供下轮执行）
+## 四、修法建议（已按此实施，见 §七）
 
 最小改动只落在 `htmlpatch`，不引入内容模型推导：
 
@@ -86,3 +86,67 @@ var tableContextTags = map[string]bool{
 - 只影响「锚点在表格内部」的 `insert`；`ops` / `remove` / `style` 不受影响。
 - 已落库的非法页面不会被自动修（读取侧不做结构重写），只能用 `view="full"` + `create` 重建。
 - 本轮只做审查：没有真机验证修复效果，也没有跑「模型被拒后能否自纠」这一步（修完需要 1 次真机往返）。
+
+---
+
+## 七、修复后复审（同日 · `211ed258` / `430212d0` / `48914598`）
+
+§四 的建议已按原样落地（`ErrBadAnchor` + `tableContextTags` + 两条出路文案 + 用例），同一天还跟了两笔表情——`430212d0`（落点抬到语义容器之后 / `updated` 只报 ops / 页脚文案）与 `48914598`（图注按语义标记识别 / 无 `<style>` 可新建 / 12 张按图片 id 去重）。
+
+表格锚点这条**修复成立**：`td/th/caption` 三种锚点被拒、校验先于任何节点修改、锚在表格外插整张 `table` 不受影响，用例都对得上。`updated` 语义、`get(style)` 空样式返回、图片去重也都与文档一致。
+
+复审这三笔提交，新发现 **2 条 P2 + 5 条 P3**。两个 P2 都是真机探针跑出来的（临时用例跑完即删），不是读代码猜的。
+
+### P2-1 · 图注里的图会被连带删掉（数据丢失）
+
+`contentOf`（`htmlpatch.go:453-476`）遇到 `captionLike` 节点**跳过整个子树**，所以 `<figcaption>` / `.cap` 里的 `<img>` / `<video>` 不算 `media`。删掉同一 figure 的主图后 `residue` 判为残渣 → 整个 figure（含图注里的那张图**和**图注文字）被删。
+
+探针结果：
+
+```html
+<!-- 改前 -->
+<figure><img src="image:a"><figcaption>图注 <img src="image:icon"></figcaption></figure>
+<!-- remove img1 之后 -->
+<body><p>正文</p></body>      <!-- 图注与 icon 一起没了 -->
+```
+
+这正是第二轮 P1（「删一张图连带删掉同 figure 的另一张」）的同类问题在新判据下重现。触发条件窄（图注里放图），后果是静默删掉用户还要的元素。
+
+修法二选一：① `captionLike` 分支仍然递归，只忽略**文字**、保留 `media` 信号；② `residue` 补一条「子树里还有 `media` 就不算残渣」。① 更直接。
+
+测试缺口：现有用例只覆盖「图注是纯文本」（`TestRemoveImageKeepsPlainTextDiv` / `TestPruneLeavesNoBlankLine`），没有「图注里带图」。
+
+### P2-2 · `figure` 的抬升把「给照片加说明」也抬出了 figure（需拍板）
+
+`tightContainers` 按**父容器**判断（`htmlpatch.go:76-85`、`:219-223`），`figure` 的所有直接子块（`img`、`p`）都会被抬到 `</figure>` 之后。探针：
+
+```html
+<figure class="fig"><img src="image:a"><figcaption>图注</figcaption></figure>
+insert after=img1 "<p class='cap'>新说明</p>"
+→ …</figure><p class="cap">新说明</p>…        <!-- 落在 figure 外，拿不到 .fig 的样式 -->
+```
+
+`figure` 的内容模型本来就允许 flow content（只有 `figcaption` 必须首/尾），所以「照片下面加一句说明」这种最常用的编辑现在只能落到 figure 外；页面里 `figure` 带内部卡片样式时观感会变。
+
+若要保留「锚在图注上要抬出去」的修复，建议按**锚点类型**细分，而不是按父容器一刀切：
+
+- `ul` / `ol` / `dl` / `picture` 维持现状（只能装特定子元素，抬出去是对的）；
+- `figure` 只在锚点是 `figcaption` 时抬；锚在 `img` 上照旧插在 figure 内。
+
+这条要真机看一页「figure + 内部样式」的页面才能定，属于待拍板。
+
+### P3
+
+1. **`insertPlan.after` 成了死字段**（`htmlpatch.go:196`）：`tails` 改按 `target` 键之后没人读它，删掉即可。
+2. **`ErrNoStyle` 已不可达**：`Style()` 现在无 style 返回 `("", "", nil)`；`ReplaceStyle` 只在 `findHead == nil` 时返它，而 `html.Parse` 总会补 `<head>`。于是 `getOutline`（`tool/html_artifact.go:346`）的 `!errors.Is(err, htmlpatch.ErrNoStyle)` 条件、`patchErrorMessage`（`:608`）的「页面缺少 `<head>`」分支都是死支。要么删，要么把哨兵改名为 `ErrNoHead` 让语义对上。
+3. **「就落在页脚之后」有歧义**：`TestInsertAfterFooterLandsAfterFooter` 钉住的是「落在 `<footer>` **内部**、最后一块之后」（`页脚</p><p>新增</p></footer>`），描述写成「页脚之后」会被读成 `</footer>` 之后。行为可接受，建议文案改成「锚在页脚的最后一块上，新内容落在页脚内末尾」。
+4. **表格是页面最后一个块时无路可走**：`table` 没有 nid、不能当锚点，而 hint 只给了「锚在 table 之后的块上」。这种页面只能整页重写；建议在 `get(outline)` 的 tip 里承认这条限制，别让模型反复试。
+5. **`updated` 在幂等重放里仍列 nid**：`newSrc == src` 走 `patchResult(..., changedNow=false)` 时 `inserted/removed` 清零、`updated` 仍是 ops 清单，语义上什么都没更新（影响很小，模型只看 `success`）。
+
+**修复状态（同日 · `32a21f71`）**：P2-1 图注里的媒体改为递归保留；P2-2 按锚点类型细分（只有锚在 `figcaption`/`caption` 上才抬，锚在照片上留在 figure 内）；P3 五条全收（死字段、`ErrNoHead`、页脚文案、表格末块提示、幂等 `updated`）。真机复测仍待跑。
+
+### 本轮未做
+
+- 没有跑真机（P2-2 需要一页带 figure 样式的页面才能拍板）；探针用例已删除，仓库无不相关改动。
+- 工具结果历史回放（`5770bc45`）的复审结论另见 `docs/code-review/tool-result-history/2026-10-30.md`。
+

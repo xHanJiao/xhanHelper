@@ -40,8 +40,9 @@ enum DocumentPDFExporter {
 
     /// 导出任意单文件 HTML（灵阅产物）到 PDF：与文档导出共用 `renderPDF` 的打印分页。
     /// `html` 需已含版式基线（调用方传 `injectingBaseline(...)`）；产物自包含，`baseURL` 传 nil。
+    /// 打印前会等图片加载 + 解码（内联 base64 大图在 `didFinish` 后 350ms 内往往没好）。
     static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async throws {
-        let data = try await Self.renderPDF(html: html, baseURL: baseURL)
+        let data = try await Self.renderPDF(html: html, baseURL: baseURL, waitForImages: true)
         try data.write(to: url, options: .atomic)
     }
 
@@ -109,9 +110,32 @@ enum DocumentPDFExporter {
         return "data:image/png;base64," + png.base64EncodedString()
     }
 
+    /// 等页面里所有图片**加载 + 解码**完成。
+    /// `didFinish` 只保证 DOM 就绪，内联 base64 大图（灵阅典型几 MB）此时往往还没解码完，
+    /// 直接打印会印出空框；固定 sleep 猜不准，所以这里确定性等待。
+    private static func waitForImagesDecoded(in webView: WKWebView) async {
+        let script = """
+        const capped = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms))])
+        await Promise.all(Array.from(document.images).map(async (img) => {
+          if (!img.complete) {
+            await capped(new Promise((resolve) => { img.onload = resolve; img.onerror = resolve }), 5000)
+          }
+          if (img.decode) { try { await capped(img.decode(), 5000) } catch (e) {} }
+        }))
+        """
+        do {
+            _ = try await webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page)
+        } catch {
+            // 等不到也照常打印：漏图比导不出来好，原因进日志留痕（可降级，不打断流程）
+            print("[PDFExport] 等待图片解码失败，按当前状态打印: \(error)")
+        }
+    }
+
     /// 离屏 WKWebView 渲染 → WebKit 打印引擎分页 → 读回 PDF Data。
     /// 注意：macOS 上打印/快照都要求 webView 在视图层级中（挂到隐藏 window）。
-    private static func renderPDF(html: String, baseURL: URL?) async throws -> Data {
+    /// `waitForImages`：打印前等所有图片 `complete` + `decode()`（灵阅的内联 base64 大图用；
+    /// 文档导出保持 false，不吃网络图可能挂住的风险）。
+    private static func renderPDF(html: String, baseURL: URL?, waitForImages: Bool = false) async throws -> Data {
         let loadWaiter = PDFLoadWaiter()
         let printWaiter = PDFPrintWaiter()
 
@@ -143,6 +167,9 @@ enum DocumentPDFExporter {
         webView.loadHTMLString(html, baseURL: baseURL)
         print("[PDFExport] webview attached to hidden window, waiting for didFinish")
         await loadWaiter.waitForLoad()
+        if waitForImages {
+            await waitForImagesDecoded(in: webView)
+        }
         // 留给 marked 注入 innerHTML 后的排版/图片解码时间
         try? await Task.sleep(nanoseconds: 350_000_000)
         print("[PDFExport] didFinish/wait done, printing (html=\(html.count) chars)")

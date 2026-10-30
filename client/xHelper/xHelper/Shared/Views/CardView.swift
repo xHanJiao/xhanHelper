@@ -127,7 +127,8 @@ struct CardView: View {
                             .fixedSize()
                     }
 
-                    ForEach(actions) { action in
+                    ForEach(actions.indices, id: \.self) { index in
+                        let action = actions[index]
                         let base = action.role == .destructive ? Color.red : style.accentColor
                         Button {
                             action.action()
@@ -145,7 +146,7 @@ struct CardView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
-                        .help(action.help ?? action.label)
+                        .help(action.help ?? (action.label.isEmpty ? "操作" : action.label))
                     }
                 }
             }
@@ -191,7 +192,8 @@ private struct CardMoreMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
+            ForEach(actions.indices, id: \.self) { index in
+                let action = actions[index]
                 if index == firstDestructive {
                     Divider()
                 }
@@ -204,7 +206,8 @@ private struct CardMoreMenu: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color("assistantText").opacity(isHovered ? 0.75 : 0.4))
+                // 0.55：非文本控件要 3:1，0.4 落在 2.4:1（数值放在这里，别再凭观感往下调）
+                .foregroundColor(Color("assistantText").opacity(isHovered ? 0.75 : 0.55))
                 .frame(width: 22, height: 18)
                 .background(
                     Color("assistantText").opacity(isHovered ? 0.08 : 0),
@@ -219,5 +222,6 @@ private struct CardMoreMenu: View {
         .fixedSize()
         .onHover { isHovered = $0 }
         .help("更多操作")
+        .accessibilityLabel("更多操作")
     }
 }

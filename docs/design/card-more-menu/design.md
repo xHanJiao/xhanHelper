@@ -127,3 +127,20 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 2. **灵阅导出 PDF 的分页**：产物页有 `body{min-height:100vh}`（`HTMLArtifactView` 的 baselineCSS），打印引擎可能把页面拉长或留白。真机看一版；实在不行就让 `exportHTML` 用一个打印专用基线（去掉 `min-height`）。
 3. 卡片 260 宽时右上角 `⋯` 与两行标题的留白可能偏挤——真机截图再调（只改一个 padding 常量）。
 4. 回滚：`menuActions` 有默认值 `[]`，删掉三个调用点传参即回到现状；组件改动本身不影响任何未使用的卡片。
+
+## 8. 审查修正（2026-10-30，`docs/code-review/card-more-menu/2026-10-30.md`）
+
+首版实现通过真机验证后，代码审查提了 4 条 P2 + 5 条 P3；采纳 6 条，改动都在原文件内：
+
+| 审查项 | 处理 |
+|---|---|
+| P2-1 下载的 `.html` 没注入版式基线（与右栏两个样子） | `downloadHTML` 改走 `injectingBaseline(html)` 落盘 |
+| P2-2 先拉正文后弹保存面板（大页面像点了没反应） | 下载 / 导出都改成**先面板后拉**，对齐 `DocumentSelectionCoordinator.download` |
+| P2-3 `⋯` 对比度 ~2.4:1、无无障碍名 | 常态 opacity 0.4→0.55（hover 0.75 不变）+ `.accessibilityLabel("更多操作")` |
+| P2-4 内联 base64 大图可能在 `didFinish + 350ms` 内没解码完 | `renderPDF` 加 `waitForImages`（默认 false，文档链路不变）；`exportHTML` 传 true，打印前用 `callAsyncJavaScript` 等所有图片 `complete` + `decode()` |
+| P3-7 `CardAction.id = "icon|label"` 会撞 | 两处 `ForEach` 改用 `indices`（`CardAction.id` 保留，不再被用于身份） |
+| P3-8 `.help("")` | 兜底 `action.label.isEmpty ? "操作" : action.label` |
+
+不采纳：P3-6（两处分享实现并存，§6 已列为已知债务）、P3-5 / P3-9（`snapshot-chatrows*` 脚本与 `project.pbxproj` 字段顺序都不是本 feature 的改动）。
+
+重验：macOS / iOS 两次 `swiftc -typecheck` 均 0 error；真机只需重点看「大页面导出 PDF 图片是否齐」「`⋯` 加深后是否碍眼」。

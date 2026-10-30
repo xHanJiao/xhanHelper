@@ -141,11 +141,14 @@ final class ArtifactOpenCoordinator: ObservableObject {
 
     #if os(macOS)
     /// 下载正文为 `.html` 单文件：列表接口不含正文，先按 id 拉。
+    /// 顺序是**先弹保存面板再拉正文**（对齐 `DocumentSelectionCoordinator.download`）：
+    /// 大页面（内联多图能到 8MB）先静默拉几秒再弹面板，看起来像点了没反应。
+    /// 落盘的内容走 `injectingBaseline`——与右栏同一份版式基线，否则 Safari 打开就是 Times + 零边距。
     func downloadHTML(id: String, title: String) async {
+        guard let url = saveURL(title: title, ext: "html", contentType: .html) else { return }
         do {
             let html = try await api.getArtifact(id: id).html
-            guard let url = saveURL(title: title, ext: "html", contentType: .html) else { return }
-            try html.write(to: url, atomically: true, encoding: .utf8)
+            try injectingBaseline(html).write(to: url, atomically: true, encoding: .utf8)
             ToastCenter.shared.show("已下载 \(url.lastPathComponent)")
         } catch {
             LogBuffer.shared.error("ArtifactOpenCoordinator.downloadHTML id=\(id): \(error)")
@@ -154,10 +157,11 @@ final class ArtifactOpenCoordinator: ObservableObject {
     }
 
     /// 导出正文为排版 PDF：复用 `DocumentPDFExporter` 的打印分页（与文档导出同一条管线）。
+    /// 同样先面板后拉正文；`waitForImages` 让打印前等内联 base64 大图解码完（见 `exportHTML`）。
     func exportPDF(id: String, title: String) async {
+        guard let url = saveURL(title: title, ext: "pdf", contentType: .pdf) else { return }
         do {
             let html = try await api.getArtifact(id: id).html
-            guard let url = saveURL(title: title, ext: "pdf", contentType: .pdf) else { return }
             // 与屏幕同一份版式基线，否则 PDF 和右栏观感不一致
             try await DocumentPDFExporter.exportHTML(injectingBaseline(html), to: url)
             ToastCenter.shared.show("已导出 \(url.lastPathComponent)")

@@ -14,6 +14,9 @@ import (
 	"xhan-helper/internal/view"
 )
 
+// maxBatchDelete — 单次批量删除上限。灵阅一页 30 条，100 足够，同时挡住"误传整表"。
+const maxBatchDelete = 100
+
 // ArtifactHandler — HTML 产物的唯一正文出口。
 type ArtifactHandler struct {
 	repo *service.ArtifactRepo
@@ -87,6 +90,48 @@ func (h *ArtifactHandler) DeleteArtifact(c *gin.Context) {
 		return
 	}
 	view.JSONOK(c, gin.H{"deleted": true})
+}
+
+// BatchDeleteArtifacts POST /api/artifacts/batch-delete — 灵阅多选删除（软删，见 design §9.7）。
+// 只删属于当前用户的；越权 id 静默跳过（返回实际删除行数），不报 404——
+// 批量删除里一条失效 id 不该让整次操作失败。
+func (h *ArtifactHandler) BatchDeleteArtifacts(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		view.JSONError(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// 去重 + 上限：一次误传整个列表不该把库里所有页面删光
+	seen := make(map[string]struct{}, len(req.IDs))
+	ids := make([]string, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		view.JSONError(c, http.StatusBadRequest, "ids is empty")
+		return
+	}
+	if len(ids) > maxBatchDelete {
+		view.JSONError(c, http.StatusBadRequest, "too many ids")
+		return
+	}
+	rows, err := h.repo.DeleteMany(c.Request.Context(), userID, ids)
+	if err != nil {
+		log.Printf("[artifact] BatchDelete user=%s n=%d: %v", userID, len(ids), err)
+		view.JSONError(c, http.StatusInternalServerError, "delete artifacts failed")
+		return
+	}
+	view.JSONOK(c, gin.H{"deleted": rows})
 }
 
 // CreateArtifactShare POST /api/artifacts/:id/share — 生成或复用分享 token（幂等）。

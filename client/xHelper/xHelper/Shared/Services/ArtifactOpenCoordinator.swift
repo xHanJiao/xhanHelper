@@ -76,6 +76,21 @@ final class ArtifactOpenCoordinator: ObservableObject {
         }
     }
 
+    /// 改版之后：页面若正开在右栏（macOS tab / iOS sheet），重新拉一遍正文。
+    ///
+    /// 原地覆盖不会产生新 id，所以点卡片走的还是 `open` 的「已开着就直接切过去」分支，
+    /// 用户会以为没改成（review P1）。这里补一次静默重载（不显示骨架，不闪）。
+    func reloadIfOpen(id: String, title: String) {
+        #if os(macOS)
+        let tab = tabID(id)
+        guard let rs = rightSidebar, rs.tabs.contains(where: { $0.id == tab }) else { return }
+        Task { await load(id: id, title: title, tabID: tab) }
+        #else
+        guard presented?.id == id else { return }
+        Task { await load(id: id, title: title, tabID: tabID(id)) }
+        #endif
+    }
+
     /// 删除产物时关掉它可能开着的 tab（`ArtifactViewModel.delete` 调）。
     func closeTabIfOpen(id: String) {
         #if os(macOS)

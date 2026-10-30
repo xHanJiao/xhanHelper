@@ -22,7 +22,7 @@ func TestBuildMessagesForFlash_OrphanToolAfterUser(t *testing.T) {
 		{Role: "tool", Content: `{"success":false,"error":"客户端本地工具不可用"}`, ToolCallID: strPtr("call_01_N099")},
 	}
 
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 5 {
 		t.Fatalf("expected 5 msgs, got %d", len(msgs))
@@ -53,7 +53,7 @@ func TestBuildMessagesForFlash_OrphanToolNoPrecedingAssistant(t *testing.T) {
 		{Role: "tool", Content: `{"success":true}`, ToolCallID: strPtr("call_00_zzzz")},
 	}
 
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs, got %d", len(msgs))
@@ -78,7 +78,7 @@ func TestBuildMessagesForFlash_ConsecutiveToolsKept(t *testing.T) {
 		{Role: "assistant", Content: "查完了", ToolCallsJSON: strPtr(`[]`)},
 	}
 
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 5 {
 		t.Fatalf("expected 5 msgs, got %d", len(msgs))
@@ -103,7 +103,7 @@ func TestBuildMessagesForMessages_PartialOrphan(t *testing.T) {
 		{Role: "tool", Content: `{"success":true,"data":"ok2"}`, ToolCallID: strPtr("call_02")},
 	}
 
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 5 {
 		t.Fatalf("expected 5 msgs, got %d", len(msgs))

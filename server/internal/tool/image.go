@@ -13,12 +13,16 @@ import (
 // ImageTool — 图片列表工具：让 LLM 看到用户上传过的图片（含描述），从中挑图写进文档。
 // 只读；图片由上传产生，本工具不新增/删除图片。
 type ImageTool struct {
-	repo *service.ImageAssetRepo
+	repo  *service.ImageAssetRepo
+	store *service.ImageStore
 }
 
 // NewImageTool 创建图片工具
-func NewImageTool(repo *service.ImageAssetRepo) *ImageTool {
-	return &ImageTool{repo: repo}
+func NewImageTool(repo *service.ImageAssetRepo, store *service.ImageStore) *ImageTool {
+	if store == nil {
+		panic("image tool: nil image store (wiring bug)")
+	}
+	return &ImageTool{repo: repo, store: store}
 }
 
 func (t *ImageTool) Name() string { return "image" }
@@ -43,7 +47,7 @@ func (t *ImageTool) Functions() []FuncSchema {
 		{
 			Name:        "list_images",
 			Display:     "图片列表",
-			Description: "列出用户的图片，返回 id、描述、可直接嵌入的片段与来源。scope=turn 只列本轮用户发的图（不分页）；scope=all 列全部（新的在前，默认每页 20 条）。",
+			Description: "列出用户的图片，返回 id、描述、可直接嵌入的片段与来源。scope=turn 只列本轮用户发的图（不分页）；scope=all 列全部（新的在前，默认每页 20 条）。available:false 表示图片文件已丢失（迁移/外部删除遗留），别用，让用户重发。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -89,7 +93,7 @@ func (t *ImageTool) listImages(ec *ExecuteContext, args json.RawMessage) *Result
 	if strings.EqualFold(strings.TrimSpace(req.Scope), "turn") {
 		// 本轮附件：按消息里的 id 顺序返回，不分页（一次最多几张）。
 		if len(ec.UserImageIDs) == 0 {
-			return imageListResult(nil, 0, "本轮没有附件图片；要看用户上传过的其它图，用 scope=all。")
+			return t.listResult(nil, 0, "本轮没有附件图片；要看用户上传过的其它图，用 scope=all。")
 		}
 		assets, err := t.repo.GetByIDsAndUser(ec.Ctx, ec.UserImageIDs, ec.UserID)
 		if err != nil {
@@ -117,10 +121,10 @@ func (t *ImageTool) listImages(ec *ExecuteContext, args json.RawMessage) *Result
 		}
 	}
 
-	return imageListResult(list, total, "文档正文用 markdown 字段原样嵌入；HTML 页面用 html 字段原样嵌入。描述可能暂时为空（尚未生成）。")
+	return t.listResult(list, total, "文档正文用 markdown 字段原样嵌入；HTML 页面用 html 字段原样嵌入。描述可能暂时为空（尚未生成）。")
 }
 
-func imageListResult(list []model.ImageAsset, total int64, hint string) *Result {
+func (t *ImageTool) listResult(list []model.ImageAsset, total int64, hint string) *Result {
 	type item struct {
 		ID          string `json:"id"`
 		Description string `json:"description"`
@@ -128,10 +132,17 @@ func imageListResult(list []model.ImageAsset, total int64, hint string) *Result 
 		HTML        string `json:"html"`
 		Bytes       int64  `json:"bytes"`
 		Source      string `json:"source"`
+		Available   bool   `json:"available"`
 		CreatedAt   string `json:"created_at"`
 	}
 	items := make([]item, 0, len(list))
-	for _, a := range list {
+	missing := 0
+	for i := range list {
+		a := &list[i]
+		ok := t.store.HasFile(a)
+		if !ok {
+			missing++
+		}
 		alt := a.Description
 		if alt == "" {
 			alt = a.Source
@@ -143,10 +154,14 @@ func imageListResult(list []model.ImageAsset, total int64, hint string) *Result 
 			HTML:        fmt.Sprintf("<img src=\"image:%s\" alt=\"%s\">", a.ID, html.EscapeString(alt)),
 			Bytes:       a.Bytes,
 			Source:      a.Source,
+			Available:   ok,
 			CreatedAt:   a.CreatedAt.Format("2006-01-02 15:04"),
 		})
 	}
 
+	if missing > 0 {
+		hint += fmt.Sprintf("其中 %d 张的图片文件已丢失（available:false），别用——让用户重发那张图。", missing)
+	}
 	data, err := json.Marshal(map[string]interface{}{
 		"images": items,
 		"total":  total,

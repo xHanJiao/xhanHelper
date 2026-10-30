@@ -37,7 +37,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(tool.NewProfileTool(repos.UserProfileFact), log.Default()))
 	reg.HideTool("profile")
 	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document, repos.DocumentAnnotation, repos.DocumentAnnotationReply, infra.ImageStore.Repo()), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(tool.NewImageTool(infra.ImageStore.Repo()), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewImageTool(infra.ImageStore.Repo(), infra.ImageStore), log.Default()))
 
 	// 种子内置工具到 tool_registries 表（幂等）
 	if err := tool.SeedBuiltinTools(context.Background(), repos.Tool, infra.Embedder, repos.Embedding); err != nil {

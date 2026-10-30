@@ -100,6 +100,13 @@ func (s *ImageStore) FilePath(a *model.ImageAsset) string {
 	return filepath.Join(s.dir, a.ID+"."+a.Ext)
 }
 
+// HasFile — 记录在、磁盘文件还在。给 list_images 标「死图」用：导库只搬 DB、
+// 换机、外部删除都会留下这种记录；不标出来，模型会挑中它再在 create 里整笔失败。
+func (s *ImageStore) HasFile(a *model.ImageAsset) bool {
+	_, err := os.Stat(s.FilePath(a))
+	return err == nil
+}
+
 // Upload 落盘 + 建记录。同用户内容相同则直接复用已有记录（去重）。
 func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility string, data []byte) (*model.ImageAsset, error) {
 	if int64(len(data)) > s.maxBytes {
@@ -114,6 +121,18 @@ func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility stri
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
 	if existing, err := s.repo.FindBySHA(ctx, userID, digest); err == nil && existing != nil {
+		// 记录在、文件没了（导库不带 images / 换机 / 外部删除）：用这次上传的字节补回去。
+		// 不补的话 DataURI 会一直报「图片文件已丢失」，而且每次重传都命中这条坏记录。
+		path := s.FilePath(existing)
+		if _, statErr := os.Stat(path); statErr != nil {
+			if err := os.MkdirAll(s.dir, 0o755); err != nil {
+				return nil, fmt.Errorf("create image dir: %w", err)
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return nil, fmt.Errorf("restore image file: %w", err)
+			}
+			log.Printf("[image] restored missing file for %s", shortID(existing.ID))
+		}
 		// 老图（本功能上线前入库）没有描述，补齐一次
 		if existing.DescriptionAt == nil {
 			s.describeAsync(*existing)

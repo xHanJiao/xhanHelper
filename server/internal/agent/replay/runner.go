@@ -109,7 +109,7 @@ type PreviewResult struct {
 
 // Preview 构建 system prompt 并返回完整的请求预览
 func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history []model.Message, cfg *Config) (*PreviewResult, error) {
-	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false)
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false, false)
 	msgs = append(msgs, llm.Message{Role: "user", Content: anchorMsg.Content})
 
 	// 1. 静态 system prompt
@@ -180,7 +180,7 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		return nil, err
 	}
 
-	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false)
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false, false)
 
 	temperature := cfg.Temperature
 	maxToolResultChars := cfg.MaxToolResultChars

@@ -111,7 +111,7 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 	}
 
 	systemPrompt := ""
-	messages := agent.BuildMessagesForFlash(history, req.MaxToolResultChars, false)
+	messages := agent.BuildMessagesForFlash(history, req.MaxToolResultChars, false, false)
 	messages = append(messages, llm.Message{Role: "user", Content: anchor.Content})
 	var trace *ctxflow.RetrieveTrace
 
@@ -183,7 +183,7 @@ func (h *ReplayHandler) CompareReplay(c *gin.Context) {
 		RetrievalTrace: resultB.RetrievalTrace,
 	}
 
-	msgs := agent.BuildMessagesForFlash(history, cfgB.MaxToolResultChars, false)
+	msgs := agent.BuildMessagesForFlash(history, cfgB.MaxToolResultChars, false, false)
 
 	view.JSONOK(c, gin.H{
 		"anchor_message":   cleanForDebug(anchor),

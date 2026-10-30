@@ -33,6 +33,8 @@ func NewPromptBuilder(
 	// 必须排在 user_context_trigger 之后：那条 "9. 用户信息深挖" 是行为准则编号列表的续写，
 	// 中间插一个带标题的章节会把它截断
 	preRoleStatic = append(preRoleStatic, &replyFormProvider{})
+	// HTML 页面改版的动作选择：常驻，不依赖渐进暴露（docs/design/html-artifact/fine-grained-edit.md）
+	preRoleStatic = append(preRoleStatic, &artifactEditProvider{})
 	// answer_length 排在最后，仍按 opts.BriefAnswer 条件注入
 	preRoleStatic = append(preRoleStatic, &answerLengthProvider{})
 	// 主聊天只走原生 FC：常驻渐进式工具目录（完整函数定义随请求体 tools 下发）

@@ -1717,6 +1717,11 @@ func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
 		if r.result == nil || !r.result.Success || len(r.result.Data) == 0 {
 			continue
 		}
+		// 只认「写页面」：get 的 outline / block / full 也带 artifact_id，
+		// 但只是读一下不该在聊天里多挂一张卡。
+		if r.tc.Tool != "html" || (r.tc.Function != "create" && r.tc.Function != "patch") {
+			continue
+		}
 		var d struct {
 			ArtifactID string `json:"artifact_id"`
 			Type       string `json:"type"`
@@ -2079,26 +2084,40 @@ func isNativeToolCallID(id string) bool {
 
 // BuildMessagesForFlash 将数据库标准消息转换为 LLM 消息格式。
 // useNativeFC=true 时保留 role=tool 和 tool_call_id（供原生 function calling）。
-func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useNativeFC bool) []llm.Message {
+// stubForHistory=true 时把不该跨轮常驻的工具结果换成 stub（见 history_stub.go）。
+func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useNativeFC, stubForHistory bool) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
+	toolNames := make(map[string]string) // tool_call_id → 函数名，供 tool 行判断该不该 stub
 	for _, m := range history {
 		// 过滤内部系统消息（检验请求/反馈），避免泄露到 LLM 对话
 		if m.Role == "system" {
 			continue
 		}
 		if m.Role == "tool" {
+			content := m.Content
+			toolName := ""
+			if m.ToolCallID != nil {
+				toolName = toolNames[*m.ToolCallID]
+			}
+			stubbed := false
+			if stubForHistory {
+				content, stubbed = StubToolResultForHistory(content, toolName, maxToolResultChars)
+			}
+			if !stubbed {
+				content = truncateToolResult(content, maxToolResultChars)
+			}
 			if useNativeFC && m.ToolCallID != nil && isNativeToolCallID(*m.ToolCallID) {
 				// 原生 FC：保留 role=tool，关联 tool_call_id
 				msgs = append(msgs, llm.Message{
 					Role:       "tool",
-					Content:    truncateToolResult(m.Content, maxToolResultChars),
+					Content:    content,
 					ToolCallID: *m.ToolCallID,
 				})
 			} else {
 				// prompt engineering：包装成 user 消息
 				msgs = append(msgs, llm.Message{
 					Role:    "user",
-					Content: truncateToolResult(m.Content, maxToolResultChars),
+					Content: content,
 				})
 			}
 		} else {
@@ -2126,10 +2145,17 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 			if m.EncryptedContent != nil {
 				msg.EncryptedContent = *m.EncryptedContent
 			}
-			if useNativeFC && m.ToolCallsJSON != nil {
+			if m.ToolCallsJSON != nil && *m.ToolCallsJSON != "" {
 				var tcs []llm.ToolCall
-				if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
-					msg.ToolCalls = tcs
+				if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err != nil {
+					log.Printf("[orch] parse tool_calls for history replay failed: msg=%s err=%v", m.ID, err)
+				} else {
+					for _, tc := range tcs {
+						toolNames[tc.ID] = tc.Function.Name
+					}
+					if useNativeFC {
+						msg.ToolCalls = tcs
+					}
 				}
 			}
 

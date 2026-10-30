@@ -29,6 +29,54 @@ func setupArtifactRepo(t *testing.T) (*ArtifactRepo, *gorm.DB, func()) {
 	}
 }
 
+// 老库升级：artifacts 已在、没有 source_html。SQLite 不接受「ADD COLUMN NOT NULL 无默认值」，
+// 所以这列必须是可空的，且旧行读出来是空串（get 据此判断「没有原文」）。
+func TestArtifactAutoMigrateAddsSourceHTMLOnExistingTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "legacy.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		if sqlDB, _ := db.DB(); sqlDB != nil {
+			sqlDB.Close()
+		}
+	}()
+
+	// 升级前的表结构（没有 source_html）
+	if err := db.Exec(`CREATE TABLE artifacts (
+		id text PRIMARY KEY,
+		user_id text NOT NULL,
+		conversation_id text NOT NULL,
+		title text NOT NULL,
+		summary text NOT NULL,
+		html text NOT NULL,
+		share_token text,
+		created_at datetime,
+		deleted_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO artifacts (id, user_id, conversation_id, title, summary, html)
+		VALUES ('old-1', 'u1', 'c1', '旧页', '旧摘要', '<html><body>旧</body></html>')`).Error; err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	if err := db.AutoMigrate(&model.Artifact{}); err != nil {
+		t.Fatalf("AutoMigrate 应能在已有表上加列: %v", err)
+	}
+
+	var a model.Artifact
+	if err := db.First(&a, "id = ?", "old-1").Error; err != nil {
+		t.Fatalf("读旧行: %v", err)
+	}
+	if a.SourceHTML != "" {
+		t.Fatalf("旧行的 source_html 应为空串，实际 %q", a.SourceHTML)
+	}
+	if a.HTML == "" {
+		t.Fatal("旧行正文不该丢")
+	}
+}
+
 // 列表按时间倒序、分页、只取五列（不带正文）、软删不出现、越权看不到。
 func TestArtifactRepoListByUser(t *testing.T) {
 	repo, db, cleanup := setupArtifactRepo(t)
@@ -75,6 +123,86 @@ func TestArtifactRepoListByUser(t *testing.T) {
 	}
 	if len(rows2) != 0 {
 		t.Fatalf("第二页应为空，实际 %d 条", len(rows2))
+	}
+}
+
+// 原地覆盖：同 id 改内容；越权/不存在返回 false；内容相同也不能被判成不存在。
+func TestArtifactRepoUpdateInPlace(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := []model.Artifact{
+		{ID: "c1", UserID: "u1", ConversationID: "c1", Title: "旧", Summary: "旧", HTML: "<html>旧</html>"},
+		{ID: "c2", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", HTML: "<html>x</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>", "<html>源</html>")
+	if err != nil || !ok {
+		t.Fatalf("Update 应成功，ok=%v err=%v", ok, err)
+	}
+	a, err := repo.GetByID(ctx, "u1", "c1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if a.Title != "新标题" || a.Summary != "新摘要" || a.HTML != "<html>新</html>" {
+		t.Fatalf("覆盖没生效：%+v", a)
+	}
+	if a.SourceHTML != "<html>源</html>" {
+		t.Fatalf("原文也要一起覆盖（get 读的是它）：%q", a.SourceHTML)
+	}
+
+	// 内容完全相同再改一次：MySQL 的 RowsAffected 会是 0，不能拿它判存在
+	if ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>", "<html>源</html>"); err != nil || !ok {
+		t.Fatalf("同值更新也应返回 true，ok=%v err=%v", ok, err)
+	}
+	// 越权 / 不存在
+	if ok, err := repo.Update(ctx, "u1", "c2", "t", "s", "<html>y</html>", "<html>y</html>"); err != nil || ok {
+		t.Fatalf("越权更新应返回 false，ok=%v err=%v", ok, err)
+	}
+	if ok, err := repo.Update(ctx, "u1", "nope", "t", "s", "<html>y</html>", "<html>y</html>"); err != nil || ok {
+		t.Fatalf("不存在应返回 false，ok=%v err=%v", ok, err)
+	}
+}
+
+// 批量删除：混入别人的 id / 空串只删自己的；空入参不打 DB。
+func TestArtifactRepoDeleteMany(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := []model.Artifact{
+		{ID: "d1", UserID: "u1", ConversationID: "c1", Title: "a", Summary: "s", HTML: "<html>1</html>"},
+		{ID: "d2", UserID: "u1", ConversationID: "c1", Title: "b", Summary: "s", HTML: "<html>2</html>"},
+		{ID: "d3", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", HTML: "<html>3</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	rows, err := repo.DeleteMany(ctx, "u1", []string{"d1", "d2", "d3", ""})
+	if err != nil {
+		t.Fatalf("DeleteMany: %v", err)
+	}
+	if rows != 2 {
+		t.Fatalf("只应删掉自己的 2 条，实际 %d", rows)
+	}
+	if _, err := repo.GetByID(ctx, "u2", "d3"); err != nil {
+		t.Fatalf("别人的页面不该被删: %v", err)
+	}
+	if _, err := repo.GetByID(ctx, "u1", "d1"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("d1 应已软删，err=%v", err)
+	}
+
+	if rows, err := repo.DeleteMany(ctx, "u1", nil); err != nil || rows != 0 {
+		t.Fatalf("空入参应返回 0 且不报错，rows=%d err=%v", rows, err)
 	}
 }
 
@@ -136,5 +264,47 @@ func TestArtifactRepoDeleteAndShare(t *testing.T) {
 	}
 	if _, err := repo.GetByShareToken(ctx, "tok-2"); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("撤销后旧 token 应失效，实际 err=%v", err)
+	}
+}
+
+// 乐观锁：只有「读到的原文」仍是库里那份时才写入；被另一处改过 → 0 行，不覆盖。
+func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := &model.Artifact{
+		ID: "a1", UserID: "u1", ConversationID: "c1",
+		Title: "t", Summary: "s", HTML: "<html>v1</html>", SourceHTML: "v1",
+	}
+	if err := db.Create(a).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2")
+	if err != nil || !ok {
+		t.Fatalf("原文匹配应写入: ok=%v err=%v", ok, err)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.SourceHTML != "v2" || got.HTML != "<html>v2</html>" {
+		t.Fatalf("更新不对: %+v", got)
+	}
+
+	// 拿旧原文再写一次 → 拒绝，库不动
+	ok, err = repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v3</html>", "v3")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ok {
+		t.Fatal("旧原文不应写入")
+	}
+	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.SourceHTML != "v2" {
+		t.Fatalf("被拒后库不该变: %q", got.SourceHTML)
 	}
 }

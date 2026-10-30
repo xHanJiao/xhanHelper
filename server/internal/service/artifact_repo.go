@@ -33,6 +33,28 @@ func (r *ArtifactRepo) GetByID(ctx context.Context, userID, id string) (*model.A
 	return &a, nil
 }
 
+// GetForRead — `html.get` 用：只取标题/摘要/原文，避开最大 8MB 的 html 列。
+// 原文为空（这次改动之前生成的页面）时，调用方再决定要不要读正文。
+func (r *ArtifactRepo) GetForRead(ctx context.Context, userID, id string) (*model.Artifact, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).
+		Select("id", "title", "summary", "source_html").
+		Where("id = ? AND user_id = ?", id, userID).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// GetMeta — 只取 id/title/summary（改版沿用旧标题摘要用，不碰正文）。
+func (r *ArtifactRepo) GetMeta(ctx context.Context, userID, id string) (*model.Artifact, error) {
+	var a model.Artifact
+	if err := r.db.WithContext(ctx).Select("id", "title", "summary").
+		Where("id = ? AND user_id = ?", id, userID).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // FindRefsByIDs 批量取标题/摘要，返回 id → ref。空入参返回空 map（不打 DB）。
 func (r *ArtifactRepo) FindRefsByIDs(ctx context.Context, ids []string) (map[string]model.ArtifactRef, error) {
 	out := make(map[string]model.ArtifactRef, len(ids))
@@ -82,6 +104,61 @@ func (r *ArtifactRepo) Delete(ctx context.Context, userID, id string) (int64, er
 	res := r.db.WithContext(ctx).
 		Where("user_id = ?", userID).
 		Delete(&model.Artifact{ID: id})
+	return res.RowsAffected, res.Error
+}
+
+// Update — 原地覆盖一页（「改这一版」，见 design §4.2）。
+//
+// 返回 false 表示不存在或不属于该用户。先直接 UPDATE，只有 0 行时才回查一次：
+// MySQL 在新值与原值相同时 RowsAffected 也是 0，不能单凭它判「不存在」。
+// 常见路径（内容真的变了）只走一条 SQL。
+func (r *ArtifactRepo) Update(ctx context.Context, userID, id, title, summary, html, sourceHTML string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]any{"title": title, "summary": summary, "html": html, "source_html": sourceHTML})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected > 0 {
+		return true, nil
+	}
+	// 0 行：要么内容没变（行还在），要么真的不存在
+	var exists int64
+	if err := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Count(&exists).Error; err != nil {
+		return false, err
+	}
+	return exists > 0, nil
+}
+
+// UpdateIfSourceUnchanged — 细粒度 patch 专用：只在原文未变时更新（乐观锁）。
+//
+// 返回 false 表示页面不存在、不属于该用户，或已被另一处改过。
+// oldSource 是 patch 开始前读到的 source_html：它变了说明 nid/hash 已经错位，
+// 这次写入必须失败（见 docs/design/html-artifact/fine-grained-edit.md §4.5）。
+//
+// 注意：MySQL 在「新旧值完全相同」时 RowsAffected 也是 0；调用方应先判断
+// newSource == oldSource 直接返回成功，别把幂等重放误判成并发冲突。
+func (r *ArtifactRepo) UpdateIfSourceUnchanged(ctx context.Context, userID, id, oldSource, html, sourceHTML string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ? AND user_id = ? AND source_html = ?", id, userID, oldSource).
+		Updates(map[string]any{"html": html, "source_html": sourceHTML})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// DeleteMany — 批量软删（灵阅多选删除）。只删属于该用户的，返回实际删除行数。
+// 空入参直接返回 0：`IN ()` 在部分方言里是语法错误，别让空选择变成 500。
+func (r *ArtifactRepo) DeleteMany(ctx context.Context, userID string, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("user_id = ? AND id IN ?", userID, ids).
+		Delete(&model.Artifact{})
 	return res.RowsAffected, res.Error
 }
 

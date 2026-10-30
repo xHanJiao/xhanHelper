@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -386,6 +387,54 @@ func TestImageStoreDescribeFailureMarksAttempt(t *testing.T) {
 	}
 	if got.DescriptionAt == nil {
 		t.Error("description_at should be marked on failure to stop retries")
+	}
+}
+
+// 去重命中但文件丢了（导库只搬了 DB、没搬 images）：重传同一份字节要把文件补回去，
+// 否则 DataURI 永远报「图片文件已丢失」，重发多少次都一样。
+func TestImageStoreUploadHealsMissingFile(t *testing.T) {
+	store, _, cleanup := setupImageStore(t, 32<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	img.Set(1, 1, color.RGBA{R: 200, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	data := buf.Bytes()
+
+	asset, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, data)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	path := store.FilePath(asset)
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove file: %v", err)
+	}
+
+	// 文件缺失时读不到（现状：内联会报「图片文件已丢失」）
+	if _, err := store.DataURI(ctx, "u1", asset.ID); err == nil {
+		t.Fatal("文件缺失时 DataURI 应报错")
+	}
+
+	again, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, data)
+	if err != nil {
+		t.Fatalf("re-upload: %v", err)
+	}
+	if again.ID != asset.ID {
+		t.Fatalf("同内容应复用同一条记录，实际 %s != %s", again.ID, asset.ID)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("重传应把文件补回去: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("补回的文件内容应与上传字节一致")
+	}
+	if _, err := store.DataURI(ctx, "u1", asset.ID); err != nil {
+		t.Fatalf("补回后应能内联: %v", err)
 	}
 }
 

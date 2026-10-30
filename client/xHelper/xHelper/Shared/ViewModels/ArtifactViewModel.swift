@@ -58,13 +58,47 @@ final class ArtifactViewModel: ObservableObject {
     func delete(id: String) async {
         do {
             try await apiClient.deleteArtifact(id: id)
-            items.removeAll { $0.id == id }
-            total = max(0, total - 1)
-            // 该页若正开在右栏 tab 里，一并关掉，别留一个内容还在的僵尸 tab
-            ArtifactOpenCoordinator.shared.closeTabIfOpen(id: id)
+            removeFromList([id])
         } catch {
             LogBuffer.shared.error("ArtifactViewModel.delete: \(error)")
             ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 批量删除（灵阅多选）。成功就地移除，不重拉整页。返回是否全部成功。
+    func deleteMany(ids: [String]) async -> Bool {
+        guard !ids.isEmpty else { return true }
+        // 服务端单批 ≤100；列表能滚很多页，超了就分块（否则整批 400，一条都删不掉）
+        let chunks = stride(from: 0, to: ids.count, by: 100).map {
+            Array(ids[$0..<min($0 + 100, ids.count)])
+        }
+        var deleted: [String] = []
+        for chunk in chunks {
+            do {
+                try await apiClient.deleteArtifacts(ids: chunk)
+                deleted.append(contentsOf: chunk)
+            } catch {
+                LogBuffer.shared.error("ArtifactViewModel.deleteMany: \(error)")
+                ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+                // 前面的分块已经删掉了：照常从列表移除，别让它们留在界面上
+                removeFromList(deleted)
+                return false
+            }
+        }
+        removeFromList(deleted)
+        return true
+    }
+
+    /// 就地移除 + 同步总数 + 关掉对应的右栏 tab（被删的页不该留僵尸 tab）。
+    private func removeFromList(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let set = Set(ids)
+        let removed = items.filter { set.contains($0.id) }.count
+        items.removeAll { set.contains($0.id) }
+        // 只减真正在列表里的条数：ids 可能含已被删掉的
+        total = max(0, total - removed)
+        for id in ids {
+            ArtifactOpenCoordinator.shared.closeTabIfOpen(id: id)
         }
     }
 }

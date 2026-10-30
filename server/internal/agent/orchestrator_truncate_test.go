@@ -111,7 +111,7 @@ func TestTruncateToolResult_SlightlyOverLimit(t *testing.T) {
 // ==================== BuildMessagesForFlash ====================
 
 func TestBuildMessagesForFlash_Empty(t *testing.T) {
-	msgs := BuildMessagesForFlash(nil, 2000, false)
+	msgs := BuildMessagesForFlash(nil, 2000, false, false)
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 msgs, got %d", len(msgs))
 	}
@@ -122,7 +122,7 @@ func TestBuildMessagesForFlash_NonToolMessages(t *testing.T) {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs, got %d", len(msgs))
@@ -139,7 +139,7 @@ func TestBuildMessagesForFlash_ToolMsgUnderLimit(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: `{"success":true,"data":"ok"}`, ToolCallID: strPtr("tc1")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -158,7 +158,7 @@ func TestBuildMessagesForFlash_ToolMsgOverLimit(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: content},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -180,7 +180,7 @@ func TestBuildMessagesForFlash_ToolMsgMaxLenZero(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: content},
 	}
-	msgs := BuildMessagesForFlash(history, 0, false)
+	msgs := BuildMessagesForFlash(history, 0, false, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -198,7 +198,7 @@ func TestBuildMessagesForFlash_MixedMessages(t *testing.T) {
 		{Role: "tool", Content: `{"success":true,"data":"` + longData + `"}`},
 		{Role: "assistant", Content: "done"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 msgs, got %d", len(msgs))
@@ -218,7 +218,7 @@ func TestBuildMessagesForFlash_AssistantWithToolCallID(t *testing.T) {
 	history := []model.Message{
 		{Role: "assistant", Content: "calling tool", ToolCallID: strPtr("tc-123")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, false)
+	msgs := BuildMessagesForFlash(history, 2000, false, false)
 
 	if msgs[0].ToolCallID != "tc-123" {
 		t.Errorf("expected ToolCallID='tc-123', got '%s'", msgs[0].ToolCallID)
@@ -235,7 +235,7 @@ func TestBuildMessagesForFlash_NativeFC_AllNewFormat(t *testing.T) {
 		{Role: "tool", Content: `{"temp":25}`, ToolCallID: strPtr("call_01")},
 		{Role: "assistant", Content: "今天25度"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 msgs, got %d", len(msgs))
@@ -268,7 +268,7 @@ func TestBuildMessagesForFlash_NativeFC_AllOldFormat(t *testing.T) {
 		{Role: "user", Content: `{"success":true,"data":[{"amount":100}]}`},
 		{Role: "assistant", Content: `{"reply":"查到1笔","tool_calls":[]}`},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 msgs, got %d", len(msgs))
@@ -297,7 +297,7 @@ func TestBuildMessagesForFlash_NativeFC_MixedFormat(t *testing.T) {
 		{Role: "tool", Content: `{"success":true,"data":"new result"}`, ToolCallID: strPtr("call_02")},
 		{Role: "assistant", Content: "新格式回复"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 8 {
 		t.Fatalf("expected 8 msgs, got %d", len(msgs))
@@ -324,7 +324,7 @@ func TestBuildMessagesForFlash_NativeFC_ToolMsgNoToolCallID(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: `{"data":"x"}`, ToolCallID: nil},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -339,7 +339,7 @@ func TestBuildMessagesForFlash_NativeFC_IdgenToolCallID(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: `{"data":"y"}`, ToolCallID: strPtr("1553947499105488896")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000, true)
+	msgs := BuildMessagesForFlash(history, 2000, true, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))

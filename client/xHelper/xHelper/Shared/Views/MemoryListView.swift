@@ -127,13 +127,15 @@ struct MemoryListView: View {
                 label: "",
                 icon: rating == 1 ? "hand.thumbsup.fill" : "hand.thumbsup",
                 role: .normal,
-                isActive: rating == 1
+                isActive: rating == 1,
+                help: "有用"
             ) { rate(memory, to: rating == 1 ? 0 : 1) },
             CardAction(
                 label: "",
                 icon: rating == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown",
                 role: rating == -1 ? .destructive : .normal,
-                isActive: rating == -1
+                isActive: rating == -1,
+                help: "没用"
             ) { rate(memory, to: rating == -1 ? 0 : -1) },
         ]
     }

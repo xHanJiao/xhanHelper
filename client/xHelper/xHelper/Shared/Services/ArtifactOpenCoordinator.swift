@@ -1,5 +1,9 @@
 import Combine
 import SwiftUI
+#if os(macOS)
+import AppKit
+import UniformTypeIdentifiers
+#endif
 
 /// 打开一条 HTML 产物：拉正文 → 在右栏开 tab（macOS）/ sheet（iOS）。
 ///
@@ -125,4 +129,55 @@ final class ArtifactOpenCoordinator: ObservableObject {
             return nil
         }
     }
+
+    // MARK: - 卡片「⋯」菜单（docs/design/card-more-menu）
+
+    /// 生成或复用分享链接 → 复制到剪贴板 → toast。失败由 `share(id:)` 自己 toast。
+    func copyShareLink(id: String) async {
+        guard let url = await share(id: id) else { return }
+        copyToPasteboard(url)
+        ToastCenter.shared.show("分享链接已复制：拿到链接的人无需登录即可查看")
+    }
+
+    #if os(macOS)
+    /// 下载正文为 `.html` 单文件：列表接口不含正文，先按 id 拉。
+    /// 顺序是**先弹保存面板再拉正文**（对齐 `DocumentSelectionCoordinator.download`）：
+    /// 大页面（内联多图能到 8MB）先静默拉几秒再弹面板，看起来像点了没反应。
+    /// 落盘的内容走 `injectingBaseline`——与右栏同一份版式基线，否则 Safari 打开就是 Times + 零边距。
+    func downloadHTML(id: String, title: String) async {
+        guard let url = saveURL(title: title, ext: "html", contentType: .html) else { return }
+        do {
+            let html = try await api.getArtifact(id: id).html
+            try injectingBaseline(html).write(to: url, atomically: true, encoding: .utf8)
+            ToastCenter.shared.show("已下载 \(url.lastPathComponent)")
+        } catch {
+            LogBuffer.shared.error("ArtifactOpenCoordinator.downloadHTML id=\(id): \(error)")
+            ToastCenter.shared.show("下载失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 导出正文为排版 PDF：复用 `DocumentPDFExporter` 的打印分页（与文档导出同一条管线）。
+    /// 同样先面板后拉正文；`waitForImages` 让打印前等内联 base64 大图解码完（见 `exportHTML`）。
+    func exportPDF(id: String, title: String) async {
+        guard let url = saveURL(title: title, ext: "pdf", contentType: .pdf) else { return }
+        do {
+            let html = try await api.getArtifact(id: id).html
+            // 与屏幕同一份版式基线，否则 PDF 和右栏观感不一致
+            try await DocumentPDFExporter.exportHTML(injectingBaseline(html), to: url)
+            ToastCenter.shared.show("已导出 \(url.lastPathComponent)")
+        } catch {
+            LogBuffer.shared.error("ArtifactOpenCoordinator.exportPDF id=\(id): \(error)")
+            ToastCenter.shared.show("导出 PDF 失败")
+        }
+    }
+
+    /// 统一的保存面板；用户取消返回 nil。
+    private func saveURL(title: String, ext: String, contentType: UTType) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = ext == "pdf" ? "导出 PDF" : "下载页面"
+        panel.nameFieldStringValue = (title.isEmpty ? "页面" : title) + ".\(ext)"
+        panel.allowedContentTypes = [contentType]
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+    #endif
 }

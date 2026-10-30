@@ -116,12 +116,8 @@ struct ArtifactListView: View {
             subtitle: item.summary,
             footerText: String(item.createdAt.prefix(10)),
             style: .document,
-            // 选择态里隐藏单条删除，避免误点到「删这一张」的弹窗
-            actions: selecting ? [] : [
-                CardAction(label: "删除", icon: "trash", role: .destructive) {
-                    pendingDeletion = .one(item)
-                }
-            ],
+            // 选择态让位给勾选圈（两者都占右上角）；删除也随菜单一起藏起来，避免误点
+            menuActions: selecting ? [] : menuActions(for: item),
             onTap: {
                 if selecting {
                     toggle(item.id)
@@ -130,6 +126,32 @@ struct ArtifactListView: View {
                 }
             }
         )
+    }
+
+    /// 卡片右上角「⋯」：分享 / 下载 / 导出 PDF / 删除（见 `docs/design/card-more-menu`）。
+    /// 分享链接两端都有（`copyToPasteboard` 有 iOS 分支）；下载与 PDF 依赖 `NSSavePanel`，仅 macOS。
+    private func menuActions(for item: ArtifactSummary) -> [CardAction] {
+        var actions: [CardAction] = [
+            CardAction(label: "分享链接", icon: "link", role: .normal) {
+                Task { await ArtifactOpenCoordinator.shared.copyShareLink(id: item.id) }
+            },
+        ]
+        #if os(macOS)
+        actions.append(CardAction(label: "下载 HTML", icon: "arrow.down.circle", role: .normal) {
+            Task { await ArtifactOpenCoordinator.shared.downloadHTML(id: item.id, title: item.title) }
+        })
+        // 导出 PDF 暂只给 dev 构建（2026-10-30）：大页面的图片/分页还没在真实产物上验够，
+        // 放开只需删掉这个 if（见 docs/design/card-more-menu §9）。
+        if LocalPaths.isDev {
+            actions.append(CardAction(label: "导出 PDF", icon: "doc.richtext", role: .normal) {
+                Task { await ArtifactOpenCoordinator.shared.exportPDF(id: item.id, title: item.title) }
+            })
+        }
+        #endif
+        actions.append(CardAction(label: "删除", icon: "trash", role: .destructive) {
+            pendingDeletion = .one(item)
+        })
+        return actions
     }
 
     private func toggle(_ id: String) {

@@ -10,6 +10,7 @@ struct CardView: View {
     let style: CardStyle
     let titleColorOverride: Color?
     let actions: [CardAction]
+    let menuActions: [CardAction]
     let onTap: (() -> Void)?
 
     init(
@@ -21,6 +22,7 @@ struct CardView: View {
         style: CardStyle,
         titleColorOverride: Color? = nil,
         actions: [CardAction] = [],
+        menuActions: [CardAction] = [],
         onTap: (() -> Void)? = nil
     ) {
         self.title = title
@@ -31,6 +33,7 @@ struct CardView: View {
         self.style = style
         self.titleColorOverride = titleColorOverride
         self.actions = actions
+        self.menuActions = menuActions
         self.onTap = onTap
     }
 
@@ -43,6 +46,7 @@ struct CardView: View {
         self.style = config.style
         self.titleColorOverride = config.titleColorOverride
         self.actions = config.actions
+        self.menuActions = config.menuActions
         self.onTap = config.onTap
     }
 
@@ -81,6 +85,8 @@ struct CardView: View {
                 .font(.system(size: 17 * style.titleScale, weight: style.titleWeight))
                 .foregroundColor(titleColorOverride ?? style.titleColor)
                 .lineLimit(2)
+                // 右上角「⋯」的避让位：两行标题不许钻到菜单按钮底下
+                .padding(.trailing, menuActions.isEmpty ? 0 : 22)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let subtitle = subtitle {
@@ -121,7 +127,8 @@ struct CardView: View {
                             .fixedSize()
                     }
 
-                    ForEach(actions) { action in
+                    ForEach(actions.indices, id: \.self) { index in
+                        let action = actions[index]
                         let base = action.role == .destructive ? Color.red : style.accentColor
                         Button {
                             action.action()
@@ -139,6 +146,7 @@ struct CardView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
+                        .help(action.help ?? (action.label.isEmpty ? "操作" : action.label))
                     }
                 }
             }
@@ -153,11 +161,67 @@ struct CardView: View {
             RoundedRectangle(cornerRadius: style.cornerRadius)
                 .stroke(cardStroke, lineWidth: 1)
         )
+        .overlay(alignment: .topTrailing) {
+            if !menuActions.isEmpty {
+                CardMoreMenu(actions: menuActions)
+                    // 离圆角留一点余量：贴边会压到描边上
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: style.cornerRadius))
         .onTapGesture { onTap?() }
     }
 
     private func tagPill(_ badge: TagBadge) -> some View {
         TagChip(text: badge.text, color: badge.color, font: .caption2, hPad: 6, vPad: 2)
+    }
+}
+
+/// 卡片右上角的「⋯」：管理类动作收进一个下拉菜单（见 `docs/design/card-more-menu`）。
+///
+/// 常显、低对比（不做 hover 才出现）：iOS 没有 hover，隐式按钮等于不可发现。
+/// 危险项前自动插分隔线、走系统红 —— 让删除和上面几项在扫视时就分开。
+private struct CardMoreMenu: View {
+    let actions: [CardAction]
+    @State private var isHovered = false
+
+    private var firstDestructive: Int? {
+        actions.firstIndex { $0.role == .destructive }
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(actions.indices, id: \.self) { index in
+                let action = actions[index]
+                if index == firstDestructive {
+                    Divider()
+                }
+                Button(role: action.role == .destructive ? .destructive : nil) {
+                    action.action()
+                } label: {
+                    Label(action.label, systemImage: action.icon)
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
+                // 0.55：非文本控件要 3:1，0.4 落在 2.4:1（数值放在这里，别再凭观感往下调）
+                .foregroundColor(Color("assistantText").opacity(isHovered ? 0.75 : 0.55))
+                .frame(width: 22, height: 18)
+                .background(
+                    Color("assistantText").opacity(isHovered ? 0.08 : 0),
+                    in: RoundedRectangle(cornerRadius: 5)
+                )
+                .contentShape(Rectangle())
+        }
+        #if os(macOS)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        #endif
+        .fixedSize()
+        .onHover { isHovered = $0 }
+        .help("更多操作")
+        .accessibilityLabel("更多操作")
     }
 }

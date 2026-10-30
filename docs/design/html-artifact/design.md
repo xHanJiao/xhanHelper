@@ -674,3 +674,4 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：撤销分享**不进卡片菜单**（灵阅详情页右上那颗浮钮里的「撤销分享」保持原样，详情页本次零改动）。
   - 决定：下载 = 存 `.html` 单文件、导出 = 走 `DocumentPDFExporter.exportHTML`（与文档 PDF 同一条打印分页管线，加载前注入同一份版式基线）。
   - 影响文件：`client/.../Views/CardStyle.swift`、`CardView.swift`、`ArtifactListView.swift`、`HTMLArtifactView.swift`（基线函数放宽为 internal）、`Services/ArtifactOpenCoordinator.swift`（+`copyShareLink` / `downloadHTML` / `exportPDF`）、`DocumentPDFExporter.swift`（+`exportHTML`）。
+  - **2026-10-30 补充**：卡片菜单里的「导出 PDF」**只在 Debug（dev）构建出现**（`LocalPaths.isDev`）——大产物的分页/图片解码还没验够，Release 不带；「下载 HTML」照常开放。放开只需删掉调用点的 `if`（见 `docs/design/card-more-menu` §9）。

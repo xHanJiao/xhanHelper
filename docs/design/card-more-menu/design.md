@@ -10,8 +10,8 @@
 
 改法是：**卡片右上角放一颗 `⋯`，点开下拉菜单，管理类动作全在里面**。页脚不再放管理按钮。
 
-- **文档卡片**：`⋯` = 分享链接 / 下载 Markdown / 导出 PDF / ─── / 删除（**仅 macOS**，见 §3.4）
-- **灵阅卡片**：`⋯` = 分享链接 / 下载 HTML / 导出 PDF / ─── / 删除
+- **文档卡片**：`⋯` = 分享链接 / 下载 Markdown / 导出 PDF（仅 dev 构建）/ ─── / 删除（**仅 macOS**，见 §3.4）
+- **灵阅卡片**：`⋯` = 分享链接 / 下载 HTML / 导出 PDF（仅 dev 构建）/ ─── / 删除
 - **记忆卡片**：不变（页脚 👍/👎，**不加 `⋯`**；记忆不做删除）
 - 智能体卡片、回收站的「恢复」：不变
 
@@ -144,3 +144,15 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 不采纳：P3-6（两处分享实现并存，§6 已列为已知债务）、P3-5 / P3-9（`snapshot-chatrows*` 脚本与 `project.pbxproj` 字段顺序都不是本 feature 的改动）。
 
 重验：macOS / iOS 两次 `swiftc -typecheck` 均 0 error；真机只需重点看「大页面导出 PDF 图片是否齐」「`⋯` 加深后是否碍眼」。
+
+## 9. 导出 PDF 暂只给 dev 构建（2026-10-30）
+
+**决定**：两张卡片的「导出 PDF」菜单项只在 Debug 构建（`LocalPaths.isDev`）出现，Release 不带。
+
+**为什么**：灵阅产物是几 MB 的内联图页面，分页与图片解码还没在真实大产物上验够（§7-2、审查 P2-4）。与其带着一个没验透的入口上线，不如先只给自己用。下载 HTML 不设限制——它没有这条风险，且产物本来就是单文件 HTML。
+
+**为什么选「dev 开关」而不是「直接下掉」**：下掉会让 `exportHTML` / `waitForImages` / `ArtifactOpenCoordinator.exportPDF` 全部变成死代码（项目里死代码是硬伤），将来要用还得重写一遍；开关只有两行 `if LocalPaths.isDev`，真要用时删掉即可。也顺手保住了 dev 下的验证通道。
+
+**范围**：只收**卡片菜单**里这一项。文档详情页顶栏那颗「导出 PDF」是本次之前就有的老入口，prod 照常显示——那是在 `DocumentSelectionCoordinator` 的 `TopBarButton` 里注册的，本次未改动。若以后要连它一起收，照同一个开关加在注册处即可。
+
+**影响文件**：`Shared/Views/ArtifactListView.swift`（`menuActions(for:)`）、`Shared/Views/DocumentListView.swift`（`documentMenuActions(_:)`）。

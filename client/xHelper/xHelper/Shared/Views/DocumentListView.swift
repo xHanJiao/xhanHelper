@@ -197,21 +197,25 @@ struct DocumentListView: View {
     /// iOS 上放出来就是三个点了没反应的项 —— iOS 文档卡片保持现状（无 `⋯`）。
     private func documentMenuActions(_ doc: Document) -> [CardAction] {
         #if os(macOS)
-        return [
+        var actions = [
             CardAction(label: "分享链接", icon: "link", role: .normal) {
                 DocumentSelectionCoordinator.shared.share(doc)
             },
             CardAction(label: "下载 Markdown", icon: "arrow.down.circle", role: .normal) {
                 DocumentSelectionCoordinator.shared.download(doc)
             },
-            CardAction(label: "导出 PDF", icon: "doc.richtext", role: .normal) {
-                DocumentSelectionCoordinator.shared.exportPDF(doc)
-            },
-            // 与右键菜单共用同一个确认弹窗和文案
-            CardAction(label: "删除", icon: "trash", role: .destructive) {
-                pendingDelete = doc
-            },
         ]
+        // 与灵阅卡片同口径：导出 PDF 暂只给 dev 构建（文档详情顶栏那颗是老入口，不受影响）
+        if LocalPaths.isDev {
+            actions.append(CardAction(label: "导出 PDF", icon: "doc.richtext", role: .normal) {
+                DocumentSelectionCoordinator.shared.exportPDF(doc)
+            })
+        }
+        // 与右键菜单共用同一个确认弹窗和文案
+        actions.append(CardAction(label: "删除", icon: "trash", role: .destructive) {
+            pendingDelete = doc
+        })
+        return actions
         #else
         return []
         #endif

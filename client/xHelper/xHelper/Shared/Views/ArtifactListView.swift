@@ -137,14 +137,16 @@ struct ArtifactListView: View {
             },
         ]
         #if os(macOS)
-        actions.append(contentsOf: [
-            CardAction(label: "下载 HTML", icon: "arrow.down.circle", role: .normal) {
-                Task { await ArtifactOpenCoordinator.shared.downloadHTML(id: item.id, title: item.title) }
-            },
-            CardAction(label: "导出 PDF", icon: "doc.richtext", role: .normal) {
+        actions.append(CardAction(label: "下载 HTML", icon: "arrow.down.circle", role: .normal) {
+            Task { await ArtifactOpenCoordinator.shared.downloadHTML(id: item.id, title: item.title) }
+        })
+        // 导出 PDF 暂只给 dev 构建（2026-10-30）：大页面的图片/分页还没在真实产物上验够，
+        // 放开只需删掉这个 if（见 docs/design/card-more-menu §9）。
+        if LocalPaths.isDev {
+            actions.append(CardAction(label: "导出 PDF", icon: "doc.richtext", role: .normal) {
                 Task { await ArtifactOpenCoordinator.shared.exportPDF(id: item.id, title: item.title) }
-            },
-        ])
+            })
+        }
         #endif
         actions.append(CardAction(label: "删除", icon: "trash", role: .destructive) {
             pendingDeletion = .one(item)

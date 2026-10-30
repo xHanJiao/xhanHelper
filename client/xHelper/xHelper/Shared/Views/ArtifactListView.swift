@@ -42,7 +42,11 @@ struct ArtifactListView: View {
                 )
             }
         }
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            // 重载后可能有条目已被别处删掉：勾选里不能留幽灵 id
+            selected = selected.intersection(Set(viewModel.items.map(\.id)))
+        }
         .alert(
             "删除页面？",
             isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
@@ -61,6 +65,7 @@ struct ArtifactListView: View {
         HStack(spacing: 12) {
             if selecting {
                 Button(selected.count == viewModel.items.count ? "取消全选" : "全选") { toggleAll() }
+                    .foregroundColor(Color("appAccent"))
                 Text("已选 \(selected.count)")
                     .foregroundColor(.secondary)
                 Spacer()
@@ -70,17 +75,18 @@ struct ArtifactListView: View {
                 }
                 .disabled(selected.isEmpty)
                 Button("取消") { exitSelection() }
+                    .foregroundColor(Color("appAccent"))
             } else {
                 Spacer()
                 Button("选择") {
                     selecting = true
                     selected.removeAll()
                 }
+                .foregroundColor(Color("appAccent"))
             }
         }
         .font(.system(size: 12))
         .buttonStyle(.plain)
-        .foregroundColor(Color("appAccent"))
         .padding(.horizontal, 16)
         .padding(.top, 8)
     }
@@ -96,6 +102,10 @@ struct ArtifactListView: View {
                     .padding(5)
                     .background(.thinMaterial, in: Circle())
                     .padding(10)
+                    // 整张卡已经是切换命中区；圈只是指示器，别让它截走角落的点击
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(selected.contains(item.id) ? "已选中" : "未选中")
+                    .accessibilityAddTraits(selected.contains(item.id) ? .isSelected : [])
             }
         }
     }
@@ -154,6 +164,10 @@ struct ArtifactListView: View {
                 // 失败时留在选择态，用户可以直接再点一次（toast 已说明原因）
                 if await viewModel.deleteMany(ids: Array(ids)) {
                     exitSelection()
+                } else {
+                    // 部分成功的分块已经删掉了：从勾选里去掉，别让「已选 N」虚高、
+                    // 也别再把幽灵 id 重发一遍
+                    selected = selected.intersection(Set(viewModel.items.map(\.id)))
                 }
             }
         }

@@ -277,10 +277,13 @@ struct MessageListView: View {
 
         var id: String {
             switch self {
-            case .html(let ref): return "html:\(ref.id)"
+            case .html(let ref): return Self.htmlKey(ref.id)
             case .document(let ref): return "doc:\(ref.id)"
             }
         }
+
+        /// HTML 卡片的去重键（与 `id` 同源，供 `lastCardOwner` 构造键）。
+        static func htmlKey(_ artifactID: String) -> String { "html:\(artifactID)" }
 
         static func cards(from artifact: LocalArtifact) -> [ChatCard] {
             if case .docRefs(let refs) = artifact { return refs.map { .document($0) } }
@@ -288,42 +291,84 @@ struct MessageListView: View {
         }
     }
 
+    /// 卡片 id → 最后一次出现的消息 id。
+    /// 改版是原地覆盖（id 不变），但卡会挂到新一轮的消息上；只在最新一处显示，
+    /// 否则同一页在聊天流里越改越多张（§9.9）。
+    ///
+    /// shortcut: 每次 body 重算都是 O(消息数)（流式期间每个 delta 一次）；几百条消息内够用，
+    /// 真觉得卡了再提到 ViewModel 里按 messages 版本号缓存。
+    private var lastCardOwner: [String: String] {
+        var occurrences: [(cardID: String, messageID: String)] = []
+        for msg in messages {
+            if msg.role == "local_tool_result" {
+                if let artifact = msg.localArtifact, artifact.isCardArtifact {
+                    occurrences.append(contentsOf: ChatCard.cards(from: artifact).map {
+                        (cardID: $0.id, messageID: msg.id)
+                    })
+                }
+            } else if msg.role != "user" {
+                occurrences.append(contentsOf: msg.artifactRefs.map {
+                    (cardID: ChatCard.htmlKey($0.id), messageID: msg.id)
+                })
+            }
+        }
+        return ChatCardDedupe.lastOwner(occurrences)
+    }
+
     private var displayRows: [DisplayRow] {
         guard !isShareSelectMode else { return messages.map { DisplayRow.message($0) } }
         #if os(macOS)
         // 一轮 = 一条 user 消息到该轮结束。本轮所有卡片（文档卡 / HTML 卡）收进同一个槽，
-        // 槽落在这轮的末尾；流式期间本轮就是最后一段，槽在底部随卡片到达而增长。
+        // 槽放在**本轮开头**（user 消息之后、回复正文之前）：先给结果再给解释。
+        // 流式期间卡片到达时槽在原地增长，正文往下让。
         var rows: [DisplayRow] = []
         var cards: [ChatCard] = []
+        var roundStart: Int?
+        let lastOwner = lastCardOwner
         func flush() {
             guard !cards.isEmpty else { return }
             // 按 id 去重：真撞了就是 SwiftUI 的 "ID occurs multiple times" + 可能错行，一行保险
             var seen = Set<String>()
-            rows.append(.cardSlot(cards.filter { seen.insert($0.id).inserted }))
+            let slot = DisplayRow.cardSlot(cards.filter { seen.insert($0.id).inserted })
+            if let start = roundStart {
+                rows.insert(slot, at: start + 1)
+            } else {
+                // 没有本轮 user 消息（历史首段直接是助手消息）→ 只能放末尾
+                rows.append(slot)
+            }
             cards.removeAll()
         }
         for msg in messages {
             if msg.role == "user" {
                 flush()
                 rows.append(.message(msg))
+                roundStart = rows.count - 1
                 continue
             }
             if msg.role == "local_tool_result" {
                 if let artifact = msg.localArtifact, artifact.isCardArtifact {
-                    cards.append(contentsOf: ChatCard.cards(from: artifact))
+                    cards.append(contentsOf: ChatCard.cards(from: artifact).filter { lastOwner[$0.id] == msg.id })
                     continue
                 }
                 rows.append(.message(msg))
                 continue
             }
             rows.append(.message(msg))
-            cards.append(contentsOf: msg.artifactRefs.map { .html($0) })
+            cards.append(contentsOf: msg.artifactRefs
+                .filter { lastOwner[ChatCard.htmlKey($0.id)] == msg.id }
+                .map { .html($0) })
         }
         flush()
         return rows
         #else
-        // **iOS 不归组**：无右栏、无文档卡，维持逐条渲染。
-        return messages.map { DisplayRow.message($0) }
+        // **iOS 不归组**：无右栏、无文档卡，维持逐条渲染。同一页同样只留最新那条消息里的卡。
+        let lastOwner = lastCardOwner
+        return messages.map { msg in
+            guard msg.role != "user" else { return DisplayRow.message(msg) }
+            var filtered = msg
+            filtered.artifacts = msg.artifactRefs.filter { lastOwner[ChatCard.htmlKey($0.id)] == msg.id }
+            return .message(filtered)
+        }
         #endif
     }
 
@@ -444,7 +489,8 @@ struct MessageListView: View {
                 onOpenArtifact(ref.id, ref.title)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Layout.chatHorizontalPadding)
+            // 与正文/文档卡同一条左缘（正文是 chatHorizontalPadding + 14 的气泡内边距）
+            .padding(.horizontal, Layout.chatHorizontalPadding + 14)
         case .document(let ref):
             DocumentRefCard(ref: ref) { onOpenDocument(ref.id) }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -536,7 +582,8 @@ struct MessageListView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Layout.chatHorizontalPadding)
+                // 与正文左缘对齐（正文泡内还有 14 的缩进）
+                .padding(.horizontal, Layout.chatHorizontalPadding + 14)
             }
 
             if let artifact = msg.localArtifact {

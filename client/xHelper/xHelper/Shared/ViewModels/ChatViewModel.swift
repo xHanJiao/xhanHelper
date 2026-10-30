@@ -1186,12 +1186,16 @@ class ChatViewModel: ObservableObject {
                 // HTML 产物：卡片立刻挂到当前这条回复上（服务端字段要等重载才有）
                 if pending.tool == "html", pending.function == "create", tr.success,
                    let aid = tr.data?["artifact_id"] as? String {
+                    let title = tr.data?["title"] as? String ?? ""
                     appendArtifactRef(ArtifactRef(
                         id: aid,
                         type: tr.data?["type"] as? String ?? "html",
-                        title: tr.data?["title"] as? String ?? "",
+                        title: title,
                         summary: tr.data?["summary"] as? String ?? ""
                     ))
+                    // 改版（原地覆盖）时 id 不变：若这页正开在右栏，静默重拉一次，
+                    // 否则用户看到的是旧版、以为没改成。新建时 tab 不存在，天然 no-op。
+                    ArtifactOpenCoordinator.shared.reloadIfOpen(id: aid, title: title)
                 }
                 if pending.tool == "document", tr.success,
                    let patch = DocumentArtifactProducer.patch(function: pending.function,

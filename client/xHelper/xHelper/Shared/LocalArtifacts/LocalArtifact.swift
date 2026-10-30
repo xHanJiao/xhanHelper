@@ -47,3 +47,18 @@ enum LocalArtifact: Equatable {
         }
     }
 }
+
+/// 聊天流卡片去重：同一页（HTML 卡 / 文档卡）只在它**最后一次**出现的那条消息里显示。
+///
+/// 改版是原地覆盖（id 不变），但卡会挂到新一轮的消息上；历史轮的消息也还挂着同一个 id。
+/// 不按「最新」收敛，聊天流里就会越改越多张同 id 的卡（见 docs/design/html-artifact §9.9）。
+enum ChatCardDedupe {
+    /// 出现记录按消息顺序传入，返回每个卡片 id 最后一次出现的消息 id。
+    static func lastOwner(_ occurrences: [(cardID: String, messageID: String)]) -> [String: String] {
+        var owner: [String: String] = [:]
+        for occurrence in occurrences {
+            owner[occurrence.cardID] = occurrence.messageID
+        }
+        return owner
+    }
+}

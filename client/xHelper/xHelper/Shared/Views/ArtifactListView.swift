@@ -28,7 +28,7 @@ struct ArtifactListView: View {
             isLoading: viewModel.isLoading && viewModel.items.isEmpty,
             errorMessage: viewModel.errorMessage,
             isEmpty: viewModel.items.isEmpty && !viewModel.isLoading,
-            emptyMessage: "灵阅还是空的——在聊天里让我做一张手账或对比图试试",
+            emptyMessage: "暂无内容。可在对话中生成页面后回到此处查看。",
             onRetry: { Task { await viewModel.load() } }
         ) {
             VStack(spacing: 0) {

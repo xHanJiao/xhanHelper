@@ -39,7 +39,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
         let tabID = tabID(id)
         #if os(macOS)
         guard let rs = rightSidebar else {
-            ToastCenter.shared.show("右侧栏还没准备好，稍后再试")
+            ToastCenter.shared.show("右侧栏尚未就绪，请稍后重试")
             return
         }
         // 同一个 id 已开着：只切过去，不重建（重建会把已渲染的页面扔掉再加载一遍）
@@ -71,12 +71,11 @@ final class ArtifactOpenCoordinator: ObservableObject {
         } catch {
             LogBuffer.shared.error("ArtifactOpenCoordinator.open id=\(id): \(error)")
             let deleted = (error as NSError).code == 404
-            let message = deleted ? "这个页面已被删除。" : error.localizedDescription
             #if os(macOS)
             // 骨架是临时占位：拉失败就关掉，别留一个永远白屏的 tab（原因由 toast 说清）
             rightSidebar?.closeTab(tabID)
             #endif
-            ToastCenter.shared.show(deleted ? "这个页面已被删除" : "打不开页面：\(message)")
+            ToastCenter.shared.show(deleted ? "该页面已被删除" : "无法打开页面：\(error.localizedDescription)")
         }
     }
 
@@ -136,7 +135,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
     func copyShareLink(id: String) async {
         guard let url = await share(id: id) else { return }
         copyToPasteboard(url)
-        ToastCenter.shared.show("分享链接已复制：拿到链接的人无需登录即可查看")
+        ToastCenter.shared.show("分享链接已复制，获得链接者无需登录即可查看")
     }
 
     #if os(macOS)
@@ -167,7 +166,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
             ToastCenter.shared.show("已导出 \(url.lastPathComponent)")
         } catch {
             LogBuffer.shared.error("ArtifactOpenCoordinator.exportPDF id=\(id): \(error)")
-            ToastCenter.shared.show("导出 PDF 失败")
+            ToastCenter.shared.show("导出 PDF 失败：\(error.localizedDescription)")
         }
     }
 

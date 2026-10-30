@@ -35,7 +35,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         switch self {
         case .bills:     return "查看账单记录与统计"
         case .memories:  return "长期记忆与语义搜索"
-        case .artifacts: return "回看聊天里生成过的手账、报告与对比图"
+        case .artifacts: return "浏览对话中生成的页面、报告与对比图"
         case .documents: return "Markdown 文档与版本"
         case .images:    return "图片库：预览与清理已上传的图"
         case .themes:    return "主题状态追踪"

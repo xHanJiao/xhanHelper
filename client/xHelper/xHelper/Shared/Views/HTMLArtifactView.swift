@@ -63,7 +63,7 @@ struct HTMLArtifactView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 28))
-                    Text("页面没能渲染出来")
+                    Text("页面渲染失败")
                         .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundColor(Color("assistantText").opacity(0.5))
@@ -91,7 +91,7 @@ struct HTMLArtifactView: View {
                 Task {
                     switch await ArtifactOpenCoordinator.shared.unshare(id: id) {
                     case .some(true): ToastCenter.shared.show("已撤销分享，旧链接已失效")
-                    case .some(false): ToastCenter.shared.show("这一页还没有分享链接")
+                    case .some(false): ToastCenter.shared.show("当前页面尚未生成分享链接")
                     case .none: break // 失败已由 coordinator toast
                     }
                 }
@@ -110,7 +110,7 @@ struct HTMLArtifactView: View {
         .fixedSize()
         .disabled(isSharing)
         .padding(10)
-        .help("分享这一页")
+        .help("生成分享链接（获得链接者无需登录即可查看）")
     }
 
     private func copyShareLink() async {
@@ -119,7 +119,7 @@ struct HTMLArtifactView: View {
         defer { isSharing = false }
         guard let url = await ArtifactOpenCoordinator.shared.share(id: id) else { return }
         copyToPasteboard(url)
-        ToastCenter.shared.show("分享链接已复制：拿到链接的人无需登录即可查看")
+        ToastCenter.shared.show("分享链接已复制，获得链接者无需登录即可查看")
     }
 }
 

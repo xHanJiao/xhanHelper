@@ -10,6 +10,11 @@ final class ArtifactViewModel: ObservableObject {
     @Published private(set) var items: [ArtifactSummary] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
+    /// 多选态（入口与工具条在 `BrowsePanelView` 的页头，状态得放这里才读得到）
+    @Published var isSelecting = false
+    @Published var selectedIDs: Set<String> = []
+    /// 批量删除在飞：防同一批重复提交（与 `ImageViewModel.isDeleting` 同口径）
+    @Published private(set) var isDeleting = false
 
     private static let pageSize = 30 // 服务端默认也是 30（server/.../controller/artifact.go 的 DefaultQuery）
 
@@ -30,6 +35,8 @@ final class ArtifactViewModel: ObservableObject {
             let resp = try await apiClient.listArtifacts(limit: Self.pageSize)
             items = resp.items
             total = resp.total
+            // 重载后可能有条目已被别处删掉：勾选里不能留幽灵 id
+            selectedIDs.formIntersection(Set(items.map(\.id)))
         } catch where Self.isCancellation(error) {
             // 切 tab / 关面板会让 `.task` 被取消。取消不是加载失败：别把「已取消」写进
             // 共享的 errorMessage（灵阅面板会据此显示「加载失败 + 重试」）。
@@ -112,6 +119,45 @@ final class ArtifactViewModel: ObservableObject {
         total = max(0, total - removed)
         for id in ids {
             ArtifactOpenCoordinator.shared.closeTabIfOpen(id: id)
+        }
+    }
+
+    // MARK: - 多选
+
+    func enterSelection() {
+        selectedIDs.removeAll()
+        isSelecting = true
+    }
+
+    func exitSelection() {
+        isSelecting = false
+        selectedIDs.removeAll()
+    }
+
+    func toggleSelection(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    func selectAll() {
+        selectedIDs = Set(items.map(\.id))
+    }
+
+    /// 删除所选：全成功才退出选择态；部分失败留在选择态，但先把已删的从勾选里剔掉
+    /// （否则「已选 N」虚高，重试还会把幽灵 id 再发一遍）。
+    func deleteSelected() async {
+        guard !selectedIDs.isEmpty, !isDeleting else { return }
+        let ids = Array(selectedIDs)
+        isDeleting = true
+        defer { isDeleting = false }
+        if await deleteMany(ids: ids) {
+            exitSelection()
+            ToastCenter.shared.show("已删除 \(ids.count) 页")
+        } else {
+            selectedIDs.formIntersection(Set(items.map(\.id)))
         }
     }
 }

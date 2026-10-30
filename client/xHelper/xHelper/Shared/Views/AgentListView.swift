@@ -3,6 +3,8 @@ import SwiftUI
 struct AgentListView: View {
     @StateObject var viewModel: AgentViewModel
     @State private var selectedAgent: Agent?
+    /// 待确认删除的智能体（设定不可恢复，走二次确认）
+    @State private var pendingDelete: Agent?
 
     @State private var editName = ""
     @State private var editPrompt = ""
@@ -29,15 +31,16 @@ struct AgentListView: View {
                     title: agent.name,
                     subtitle: agent.systemPrompt,
                     style: .agent,
-                    actions: [
+                    // 与文档/灵阅卡片同款：管理类动作收进右上角「⋯」，页脚不放按钮
+                    menuActions: [
                         CardAction(label: "编辑", icon: "pencil", role: .normal) {
                             viewModel.editingAgent = agent
                             editName = agent.name
                             editPrompt = agent.systemPrompt
                         },
                         CardAction(label: "删除", icon: "trash", role: .destructive) {
-                            Task { await viewModel.delete(id: agent.id) }
-                        }
+                            pendingDelete = agent
+                        },
                     ],
                     onTap: { selectedAgent = agent }
                 )
@@ -54,6 +57,22 @@ struct AgentListView: View {
         }
         .onChange(of: viewModel.editingAgent?.id) { _, _ in
             if viewModel.editingAgent == nil { editName = ""; editPrompt = "" }
+        }
+        .confirmationDialog(
+            "删除智能体",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { agent in
+            Button("删除", role: .destructive) {
+                Task { await viewModel.delete(id: agent.id) }
+            }
+            Button("取消", role: .cancel) { }
+        } message: { agent in
+            Text("「\(agent.name)」及其设定将被删除，不能恢复。")
         }
         .sheet(isPresented: $viewModel.showCreateSheet) {
             agentForm(title: "创建智能体", name: $createName, prompt: $createPrompt,

@@ -414,8 +414,8 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 - `DELETE /api/artifacts/:id`，按 `user_id` 鉴权，命中 0 行回 404。
 - `POST /api/artifacts/batch-delete`，body `{ids:[...]}`（≤100、去重去空，空 400）→ `WHERE user_id = ? AND id IN ?` 软删。越权/已删的 id 静默跳过，返回 `{deleted:n}`——批量操作里一条失效 id 不该让整次失败。
 - 软删（`gorm.DeletedAt`）：正文仍留在库里，但列表、详情、分享路由都看不到（GORM 默认过滤）。**不提供回收站**——产物是可再生成的成品，留着恢复入口反而要维护一套「已删」视图。
-- 客户端（灵阅列表）：卡片页脚 `CardAction(role: .destructive)` + 二次确认（产物一次性、删了没入口找回）。删除成功后本地 `items` 移除、`total -= 1`；若该产物正开在右栏 tab 里，一并 `closeTab`，不留僵尸 tab。
-- **多选批量删除**（2026-10-29，为清理「改版堆出来的那批」）：列表顶部 `选择` → 卡片变勾选态（点卡＝勾选，单条删除按钮隐藏）→ `全选（取消全选） / 已选 N / 删除所选 / 取消`。二次确认共用一个 alert（同一视图挂两个 `.alert` 会互相覆盖）。成功后退出选择态；失败留在选择态，可直接重试。
+- 客户端（灵阅列表）：卡片右上角 `⋯` → 「删除」+ 二次确认（产物一次性、删了没入口找回）。删除成功后本地 `items` 移除、`total -= 1`；若该产物正开在右栏 tab 里，一并 `closeTab`，不留僵尸 tab。
+- **多选批量删除**（2026-10-29，为清理「改版堆出来的那批」）：页头 `checkmark.circle` 图标进入选择态（2026-10-30 与文档/图片统一，见 `docs/design/right-sidebar-consistency`）→ 卡片变勾选态（点卡＝勾选，`⋯` 让位给勾选圈）→ 页头换成 `取消（Esc） / 已选 N 页 / 全选 + 删除`。二次确认由 `BrowsePanelView` 的确认框负责，成功后退出选择态；失败留在选择态（已删的 id 从勾选里剔掉），可直接重试。
 - **和分享的联动**：token 就在同一行，删掉即失效，无需额外逻辑。
 - **聊天里的旧卡片仍在**：点开 404，coordinator 提示「该页面已被删除」（而不是把英文错误抛给用户）。
 
@@ -544,7 +544,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - **改版后 tab**：把那页开在右栏，再让模型改它 → 右栏内容**自动变成新版**（不闪骨架、不需要手点刷新）
 - **改版不动标题摘要**：让模型"只改样式"，确认灵阅里的标题和摘要**没变**（不会变成「本次改了什么」）
 - **改版 id 失效**：删掉页面后让模型"改刚才那页" → 工具报错点名 id，库里**不新增**
-- **批量删除**：灵阅点「选择」→ 全选 → 取消勾选要留的两张 → 删除所选 → 确认 → 卡片消失、`total` 对得上、翻页不重复、对应右栏 tab 一并关掉
+- **批量删除**：灵阅点页头多选图标 → 全选 → 取消勾选要留的两张 → 删除 → 确认 → 卡片消失、`total` 对得上、翻页不重复、对应右栏 tab 一并关掉
 - **不重复**：生成页面后，正文里不应再出现页面内的同一份内容
 - 版式基线：一条模型没写任何样式的 HTML，打开后仍满足最小字号、行高、不横向滚动、有底色
 - 恶意样本：存一条带 `<script>alert(1)</script>`、`<iframe src="file:///etc/passwd">`、外链 `<img>` 的，确认剥干净、WebView 控制台无报错、无网络请求
@@ -701,3 +701,8 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 补充（同日代码审查后）：iOS 404 同时关 sheet；304 命中 `touch` 缓存文件（淘汰按最近使用）；`If-None-Match` 改为按逗号拆分 + 去 `W/` 前缀逐项比较；缓存核心抽成可注入目录/上限/日志的 SwiftPM target，补 5 条测试。
   - 无痕取舍（2026-10-30 拍板）：接受本机 Caches 副本残留——服务端无痕语义不变（物理删后灵阅/分享/其他设备都看不到），本机副本与 `LogBuffer` 同级；已明确写进 §9.8「无痕边界」与 §十一。要彻底隔离再按 conversation 清。
   - 影响文件：`server/.../controller/artifact.go`（+`ServeArtifactHTML` / `artifactETag` / `etagMatches` / `writeHTML` / `artifactCSP`）、`controller/router.go`、`controller/artifact_test.go`、`service/artifact_repo.go`（+`GetHTML`）；`client/.../Services/ArtifactHTMLCache.swift`（新，核心）、`Services/ArtifactHTMLCache+Shared.swift`（新，app 单例）、`Services/LocalPaths.swift`（+`appCachesRoot` / `artifactsCacheDir`）、`Services/APIClient.swift`（+`fetchArtifactHTML`）、`Models/ArtifactRef.swift`（+`ArtifactHTMLResponse`）、`Services/ArtifactOpenCoordinator.swift`、`Views/HTMLArtifactView.swift`、`Views/ChatView.swift`（iOS sheet 用 `OpenedArtifactPage`）、`ViewModels/ArtifactViewModel.swift`（删除时清缓存）、`client/xHelper/Package.swift` + `Tests/ArtifactHTMLCacheCoreTests/`。
+- **2026-10-30 · 灵阅多选入口并进页头**
+  - 起因：三个列表页都有多选，但灵阅是内容区一行文字「选择」，文档/图片是页头图标；灵阅那行还少了 Esc 与 ✕ 取消。
+  - 决定：多选状态从 `ArtifactListView` 的 `@State` 搬进 `ArtifactViewModel`（页头才读得到），入口改成页头 `checkmark.circle`，选中态用 `BrowsePanelView` 的共享 `SelectionToolbar`；内容区那行自绘工具条删除。灵阅多选跨端保留（判断放在 `#if os(macOS)` 之外）。
+  - 影响文件：`client/.../ViewModels/ArtifactViewModel.swift`（+多选状态与 `deleteSelected`）、`Views/BrowsePanelView.swift`（+入口/工具条/批量确认框）、`Views/ArtifactListView.swift`（删本地选择态与工具栏）。
+  - 详见 `docs/design/right-sidebar-consistency/design.md`。

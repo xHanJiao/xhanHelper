@@ -127,6 +127,8 @@ struct BrowsePanelView: View {
     @State private var isConfirmingBatchDelete = false
     /// 图片多选删除二次确认。
     @State private var isConfirmingImageBatchDelete = false
+    /// 灵阅多选删除二次确认。
+    @State private var isConfirmingArtifactBatchDelete = false
     /// 回收站批量操作二次确认（全部恢复 / 全部删除）。
     @State private var trashBulkAction: TrashBulkAction?
 
@@ -212,17 +214,22 @@ struct BrowsePanelView: View {
                     // 监控看板自带 XHPanel header（含刷新按钮）
                     panelContent(panel)
                 } else {
-                    #if os(macOS)
-                    if isDocSelectionActive {
-                        docSelectionHeader
-                    } else if isImageSelectionActive {
-                        imageSelectionHeader
+                    // 灵阅多选跨端一致，判断放在平台分支之外（文档/图片的多选是 macOS-only）
+                    if isArtifactSelectionActive {
+                        artifactSelectionHeader
                     } else {
+                        #if os(macOS)
+                        if isDocSelectionActive {
+                            docSelectionHeader
+                        } else if isImageSelectionActive {
+                            imageSelectionHeader
+                        } else {
+                            panelHeader(panel)
+                        }
+                        #else
                         panelHeader(panel)
+                        #endif
                     }
-                    #else
-                    panelHeader(panel)
-                    #endif
                     Divider()
                     transientSearchPanel(panel)
                     panelContent(panel)
@@ -239,6 +246,7 @@ struct BrowsePanelView: View {
             // 离开文档面板即退出多选（选择工具条只在文档列表前台时有效）
             documentVM.exitDocumentSelection()
             imageVM.exitSelection()
+            artifactVM.exitSelection()
         }
         .onChange(of: documentVM.mode) { old, new in
             // 切模式即收起文档搜索框；离开词云顺手清掉本地高亮词与多选，避免切回来还留着
@@ -586,6 +594,21 @@ struct BrowsePanelView: View {
             }
             #endif
 
+            // 多选入口：文档/图片/灵阅统一放在页头这颗图标上（灵阅那份跨端，故在平台分支之外）
+            if panel == .artifacts {
+                Button {
+                    artifactVM.enterSelection()
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("多选管理")
+                .accessibilityLabel("多选管理")
+                .disabled(artifactVM.items.isEmpty)
+            }
+
             Button {
                 Task { await refresh(panel) }
             } label: {
@@ -678,6 +701,13 @@ struct BrowsePanelView: View {
             return "确定删除所选 \(n) 张？其中含已被消息引用、或来自文档/网页/本地等非聊天来源的图，删除后对应位置会显示占位或裂图。"
         }
         return "确定删除所选 \(n) 张？"
+    }
+
+    /// 灵阅多选态是否生效：**必须与当前面板绑定**——状态是靠 `onChange(of: browsePanelSelection)` 清的，
+    /// 而那是在 body 之后执行；从灵阅多选态直接切到别的面板时，只看 `isSelecting` 会有一帧画出「灵阅工具条 + 别的面板」。
+    /// 跨端可用，所以不在 `#if os(macOS)` 里。
+    private var isArtifactSelectionActive: Bool {
+        manager.browsePanelSelection == .artifacts && artifactVM.isSelecting
     }
 
     #if os(macOS)
@@ -821,6 +851,48 @@ struct BrowsePanelView: View {
     }
     #endif
 
+    /// 灵阅多选工具条：取消（左）/ 已选页数 / 全选 + 删除（右）。与文档、图片同一款 `SelectionToolbar`。
+    /// 跨端可用（灵阅多选在 iOS 上也有），所以不在 `#if os(macOS)` 里。
+    private var artifactSelectionHeader: some View {
+        SelectionToolbar(
+            count: artifactVM.selectedIDs.count,
+            unit: "页",
+            emptyText: "选择页面",
+            cancelHelp: "退出多选（Esc）",
+            onCancel: { artifactVM.exitSelection() }
+        ) {
+            Button {
+                artifactVM.selectAll()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12))
+                    Text("全选")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(artifactVM.items.isEmpty)
+            .help("全选已加载的页面")
+
+            Button {
+                isConfirmingArtifactBatchDelete = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                    Text("删除")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .disabled(artifactVM.selectedIDs.isEmpty || artifactVM.isDeleting)
+            .help("删除所选页面")
+        }
+    }
+
     /// 文档词云的最少篇数上限（标签已按频次降序）
     private var maxTagCount: Int {
         max(1, documentVM.tags.first?.count ?? 1)
@@ -889,6 +961,19 @@ struct BrowsePanelView: View {
             MemoryPage(viewModel: memoryVM)
         case .artifacts:
             ArtifactPage(viewModel: artifactVM)
+                // 挂灵阅面板子树，别和 body 上的文档删除对话框叠在同一节点
+                .confirmationDialog(
+                    "删除页面",
+                    isPresented: $isConfirmingArtifactBatchDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button("删除", role: .destructive) {
+                        Task { await artifactVM.deleteSelected() }
+                    }
+                    Button("取消", role: .cancel) { }
+                } message: {
+                    Text("选中的 \(artifactVM.selectedIDs.count) 页将被删除，不能恢复；已分享的链接会立即失效。")
+                }
         case .documents:
             DocumentPage(viewModel: documentVM)
         case .images:

@@ -13,7 +13,7 @@
 - **文档卡片**：`⋯` = 分享链接 / 下载 Markdown / 导出 PDF（仅 dev 构建）/ ─── / 删除（**仅 macOS**，见 §3.4）
 - **灵阅卡片**：`⋯` = 分享链接 / 下载 HTML / 导出 PDF（仅 dev 构建）/ ─── / 删除
 - **记忆卡片**：不变（页脚 👍/👎，**不加 `⋯`**；记忆不做删除）
-- 智能体卡片、回收站的「恢复」：不变
+- 智能体卡片：编辑 / 删除也走 `⋯`（2026-10-30 补齐，见 §10）；回收站的「恢复」：不变
 
 **范围只限卡片列表页。详情页（文档全文页、灵阅产物页）一行代码不碰**：顶栏那 3 颗文档按钮、灵阅详情右上浮的分享菜单全部保留原样。所以卡片上的 `⋯` 是**新增的第二入口**，不撤任何现有按钮。
 
@@ -119,7 +119,7 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 - 不合并两处分享实现（`HTMLArtifactView.copyShareLink` 与 coordinator 的 `copyShareLink` 暂时并存）。
 - 不统一「分享链接 host 规则」（文档用 `DeviceManager.webBaseURL`、灵阅用 API base；两者都是 `/api/share/...`，dev 走 Vite 代理、线上同源，当前都可用；自定义后端场景才分叉，另开票）。
 - 不做按宽度自动折叠（卡片宽度档位太少，不值）。
-- 智能体卡片的编辑/删除不搬进 `⋯`（后续想搬是零成本，改传 `menuActions` 即可）。
+- ~~智能体卡片的编辑/删除不搬进 `⋯`（后续想搬是零成本，改传 `menuActions` 即可）~~ —— 2026-10-30 已搬，见 §10。
 
 ## 7. 风险 / 回滚
 
@@ -156,3 +156,16 @@ static func exportHTML(_ html: String, to url: URL, baseURL: URL? = nil) async t
 **范围**：只收**卡片菜单**里这一项。文档详情页顶栏那颗「导出 PDF」是本次之前就有的老入口，prod 照常显示——那是在 `DocumentSelectionCoordinator` 的 `TopBarButton` 里注册的，本次未改动。若以后要连它一起收，照同一个开关加在注册处即可。
 
 **影响文件**：`Shared/Views/ArtifactListView.swift`（`menuActions(for:)`）、`Shared/Views/DocumentListView.swift`（`documentMenuActions(_:)`）。
+
+## 10. 智能体卡片也接 `⋯`（2026-10-30）
+
+**背景**：§6 里说「后续想搬是零成本」。右栏整轮风格检查时确认：智能体是唯一还把管理动作放页脚文字按钮的卡片列表，且删除**没有二次确认**（点一下直接删设定）。
+
+**决定**：
+
+- `AgentListView` 的 `actions: [编辑, 删除]` → `menuActions: [编辑, 删除]`，页脚不再有按钮。
+- 删除改为先置 `pendingDelete`，走 `confirmationDialog`「删除智能体」→「「X」及其设定将被删除，不能恢复。」
+
+**影响文件**：`Shared/Views/AgentListView.swift`。组件层零改动。
+
+**详见**：`docs/design/right-sidebar-consistency/design.md`（同一轮里灵阅多选并进页头）。

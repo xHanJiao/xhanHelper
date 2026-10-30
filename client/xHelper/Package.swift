@@ -112,5 +112,17 @@ let package = Package(
             dependencies: ["ImageCompressorCore"],
             path: "Tests/ImageCompressorCoreTests"
         ),
+        // ArtifactHTMLCacheCore — 灵阅正文磁盘缓存（纯文件 IO，不依赖 SwiftUI/LogBuffer）。
+        // 目录/上限/日志由调用方注入，测试用临时目录 + 小上限覆盖淘汰与清理。
+        .target(
+            name: "ArtifactHTMLCacheCore",
+            path: "xHelper/Shared",
+            sources: ["Services/ArtifactHTMLCache.swift"]
+        ),
+        .testTarget(
+            name: "ArtifactHTMLCacheCoreTests",
+            dependencies: ["ArtifactHTMLCacheCore"],
+            path: "Tests/ArtifactHTMLCacheCoreTests"
+        ),
     ]
 )

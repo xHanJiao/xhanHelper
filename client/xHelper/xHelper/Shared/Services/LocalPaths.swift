@@ -65,10 +65,20 @@ enum LocalPaths {
     /// 后端（Go 子进程）日志目录。
     static var backendLogDir: URL { libraryDir.appendingPathComponent("Logs/\(logRootName)", isDirectory: true) }
 
+    /// app 的 Caches 根（`~/Library/Caches/com.xhan.xhanHelper/`；dev/prod 靠子目录后缀分开）。
+    static var appCachesRoot: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent("com.xhan.xhanHelper", isDirectory: true)
+    }
+
     /// Swift 侧 app 日志目录（Caches 下；dev/prod 分开，免得两个 app 的日志混在一起）。
     static var appLogDir: URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        return caches.appendingPathComponent("com.xhan.xhanHelper/logs\(isDev ? "-dev" : "")")
+        appCachesRoot.appendingPathComponent("logs\(isDev ? "-dev" : "")")
+    }
+
+    /// 灵阅正文缓存目录（`ArtifactHTMLCache`；Caches 下，dev/prod 分开）。
+    static var artifactsCacheDir: URL {
+        appCachesRoot.appendingPathComponent(isDev ? "artifacts-dev" : "artifacts", isDirectory: true)
     }
 
     /// 给 app 级配置 key 加环境后缀：dev/prod 共用同一 bundle id 的 UserDefaults 域，

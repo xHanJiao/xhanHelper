@@ -5,12 +5,19 @@ import AppKit
 import UniformTypeIdentifiers
 #endif
 
+/// iOS sheet 的展示数据。`html` 已注入版式基线（`HTMLArtifactView` 不再自己注入）。
+struct OpenedArtifactPage: Identifiable {
+    let id: String
+    let title: String
+    let html: String
+}
+
 /// 打开一条 HTML 产物：拉正文 → 在右栏开 tab（macOS）/ sheet（iOS）。
 ///
-/// 每次点都重新拉，不做缓存：artifact 不可变，缓存只会多一套失效逻辑
-/// （docs/design/html-artifact §十一）。
+/// 正文按 ETag 落本地缓存（`ArtifactHTMLCache`）：重开时先秒出缓存、再发一个
+/// 条件请求确认（304 不动，200 才换），不用每次重下几 MB（docs/design/html-artifact §9.8）。
 ///
-/// **macOS 先开骨架 tab 再换内容**：大页面（内联多图的将近 8MB）拉取 + 解析要几秒，
+/// **macOS 先开 tab 再换内容**：没缓存时大页面（内联多图的将近 8MB）拉取要几秒，
 /// 「拉完才开 tab」在慢链路上就是纯静默，看起来像点了没反应（§9.8）。
 @MainActor
 final class ArtifactOpenCoordinator: ObservableObject {
@@ -22,7 +29,7 @@ final class ArtifactOpenCoordinator: ObservableObject {
     /// 必需依赖，与 `rightSidebar` 同处注入；为 nil 时 `tabContent` 直接炸（接线 bug，不静默降级）。
     weak var artifactVM: ArtifactViewModel?
     /// iOS 用 sheet 展示当前这篇
-    @Published var presented: ArtifactPayload?
+    @Published var presented: OpenedArtifactPage?
 
     private var baseURL = ""
     private var token = ""
@@ -45,40 +52,88 @@ final class ArtifactOpenCoordinator: ObservableObject {
             ToastCenter.shared.show("右侧栏尚未就绪，请稍后重试")
             return
         }
-        // 同一个 id 已开着：只切过去，不重建（重建会把已渲染的页面扔掉再加载一遍）
-        let alreadyOpen = rs.tabs.contains { $0.id == tabID }
+        // 同一个 id 已开着：切过去（右栏可能收着或在分屏），不重建 content
+        if rs.tabs.contains(where: { $0.id == tabID }) {
+            rs.isOpen = true
+            rs.activateTab(id: tabID, inRightPane: rs.splitTabIds.contains(tabID))
+            return
+        }
+        // 有缓存就先秒开（随后条件请求确认/更新）；没缓存才挂骨架
+        let cached = ArtifactHTMLCache.shared.load(id: id)
         rs.openTab(
             id: tabID,
             title: title,
             icon: "doc.richtext",
-            content: tabContent(id: id, title: title, html: nil)
+            content: tabContent(id: id, title: title, html: cached.map { injectingBaseline($0.html) })
         )
-        guard !alreadyOpen else { return }
+        #else
+        // iOS：有缓存就先弹 sheet（无骨架），条件请求随后确认/更新
+        let cached = ArtifactHTMLCache.shared.load(id: id)
+        if let cached {
+            presented = OpenedArtifactPage(id: id, title: title, html: injectingBaseline(cached.html))
+        }
         #endif
-        Task { await load(id: id, title: title, tabID: tabID) }
+        Task { await load(id: id, title: title, tabID: tabID, cached: cached) }
     }
 
-    private func load(id: String, title: String, tabID: String) async {
+    private func load(id: String, title: String, tabID: String, cached: ArtifactHTMLCache.Entry?) async {
         do {
-            let payload = try await api.getArtifact(id: id)
-            #if os(macOS)
-            let shown = payload.title.isEmpty ? title : payload.title
-            rightSidebar?.updateTabTitle(id: tabID, title: shown)
-            rightSidebar?.updateTabContent(
-                id: tabID,
-                content: tabContent(id: payload.id, title: shown, html: payload.html)
-            )
-            #else
-            presented = payload
-            #endif
+            let resp = try await api.fetchArtifactHTML(id: id, etag: cached?.etag)
+            if resp.notModified, cached != nil {
+                // 打开时已经把缓存画上去了；304 说明内容没变，不重建 WebView（免得白闪一下）
+                ArtifactHTMLCache.shared.touch(id: id)
+                LogBuffer.shared.diag("[artifact] id=\(id) cache=hit etag=304")
+                return
+            }
+            var fresh: String
+            var etag = resp.etag
+            if let html = resp.html {
+                fresh = html
+                let state = cached == nil ? "miss" : "stale"
+                LogBuffer.shared.diag("[artifact] id=\(id) cache=\(state) etag=200 bytes=\(html.utf8.count)")
+            } else {
+                // 304 但缓存刚好被系统清掉：退回一次完整拉取
+                let full = try await api.fetchArtifactHTML(id: id, etag: nil)
+                guard let html = full.html else {
+                    throw NSError(domain: "ArtifactOpenCoordinator", code: 500,
+                        userInfo: [NSLocalizedDescriptionKey: "正文为空"])
+                }
+                fresh = html
+                etag = full.etag
+                LogBuffer.shared.diag("[artifact] id=\(id) cache=refetch bytes=\(html.utf8.count)")
+            }
+            do {
+                try ArtifactHTMLCache.shared.store(id: id, html: fresh, etag: etag)
+            } catch {
+                // 缓存失败不影响本次展示，下次退回完整下载
+                LogBuffer.shared.error("ArtifactOpenCoordinator.cache id=\(id): \(error)")
+            }
+            show(id: id, title: title, tabID: tabID, html: fresh)
         } catch {
+            let ns = error as NSError
+            if ns.code == 404 {
+                // 产物已删：缓存也要清，别让聊天里的旧卡片还能翻出来
+                ArtifactHTMLCache.shared.remove(ids: [id])
+                LogBuffer.shared.error("ArtifactOpenCoordinator.open id=\(id): \(error)")
+                #if os(macOS)
+                rightSidebar?.closeTab(tabID)
+                #else
+                if presented?.id == id { presented = nil }
+                #endif
+                ToastCenter.shared.show("该页面已被删除")
+                return
+            }
+            // 网络失败：有缓存就继续看缓存（打开时已经画上去了），记日志、不打扰
+            if cached != nil {
+                LogBuffer.shared.error("ArtifactOpenCoordinator.open id=\(id) 网络失败，显示缓存: \(error)")
+                return
+            }
             LogBuffer.shared.error("ArtifactOpenCoordinator.open id=\(id): \(error)")
-            let deleted = (error as NSError).code == 404
             #if os(macOS)
             // 骨架是临时占位：拉失败就关掉，别留一个永远白屏的 tab（原因由 toast 说清）
             rightSidebar?.closeTab(tabID)
             #endif
-            ToastCenter.shared.show(deleted ? "该页面已被删除" : "无法打开页面：\(error.localizedDescription)")
+            ToastCenter.shared.show("无法打开页面：\(error.localizedDescription)")
         }
     }
 
@@ -98,6 +153,20 @@ final class ArtifactOpenCoordinator: ObservableObject {
     }
     #endif
 
+    /// 版式基线只在这里注入一次，视图拿到的就是最终要渲染的字符串。
+    private func show(id: String, title: String, tabID: String, html: String) {
+        let page = injectingBaseline(html)
+        #if os(macOS)
+        rightSidebar?.updateTabTitle(id: tabID, title: title)
+        rightSidebar?.updateTabContent(
+            id: tabID,
+            content: tabContent(id: id, title: title, html: page)
+        )
+        #else
+        presented = OpenedArtifactPage(id: id, title: title, html: page)
+        #endif
+    }
+
     /// 改版之后：页面若正开在右栏（macOS tab / iOS sheet），重新拉一遍正文。
     ///
     /// 原地覆盖不会产生新 id，所以点卡片走的还是 `open` 的「已开着就直接切过去」分支，
@@ -106,10 +175,12 @@ final class ArtifactOpenCoordinator: ObservableObject {
         #if os(macOS)
         let tab = tabID(id)
         guard let rs = rightSidebar, rs.tabs.contains(where: { $0.id == tab }) else { return }
-        Task { await load(id: id, title: title, tabID: tab) }
+        let cached = ArtifactHTMLCache.shared.load(id: id)
+        Task { await load(id: id, title: title, tabID: tab, cached: cached) }
         #else
         guard presented?.id == id else { return }
-        Task { await load(id: id, title: title, tabID: tabID(id)) }
+        let cached = ArtifactHTMLCache.shared.load(id: id)
+        Task { await load(id: id, title: title, tabID: tabID(id), cached: cached) }
         #endif
     }
 

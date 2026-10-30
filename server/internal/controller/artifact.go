@@ -1,10 +1,13 @@
 package controller
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,8 +29,8 @@ func NewArtifactHandler(repo *service.ArtifactRepo) *ArtifactHandler {
 	return &ArtifactHandler{repo: repo}
 }
 
-// GetArtifact GET /api/artifacts/:id — 返回单条（含正文）。
-// 消息列表永远不带正文，只有这个接口带（见 docs/design/html-artifact §4.1）。
+// GetArtifact GET /api/artifacts/:id — 返回单条（含正文，JSON）。
+// 消息列表永远不带正文；裸 HTML + ETag 的出口见 ServeArtifactHTML（§4.1 / §9.8）。
 func (h *ArtifactHandler) GetArtifact(c *gin.Context) {
 	userID := c.GetString("user_id")
 	a, err := h.repo.GetByID(c.Request.Context(), userID, c.Param("id"))
@@ -47,6 +50,73 @@ func (h *ArtifactHandler) GetArtifact(c *gin.Context) {
 		"html":       a.HTML,
 		"created_at": a.CreatedAt,
 	})
+}
+
+// artifactCSP — 产物页的兜底 CSP（公开分享与裸 HTML 出口共用）。
+// sandbox 把页面放进不透明源；图片只允许 data:（产物已内联）、样式只允许内联。
+const artifactCSP = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
+
+// writeHTML — 直接写字符串，避免 c.Data 把整页再复制一份（8MB 级）。
+// 写失败（客户端断开）只记日志：响应已经发出去了，没有能补救的动作。
+func writeHTML(c *gin.Context, html string) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Content-Length", strconv.Itoa(len(html)))
+	c.Status(http.StatusOK)
+	if _, err := c.Writer.WriteString(html); err != nil {
+		log.Printf("[artifact] write html bytes=%d: %v", len(html), err)
+	}
+}
+
+// ServeArtifactHTML GET /api/artifacts/:id/html — 裸 HTML 出口，给客户端正文缓存用（§9.8）。
+//
+// 与 GetArtifact 的区别：不包 JSON、带 ETag。客户端带 If-None-Match 命中时回 304，
+// 避免每次重开都拉整页（带图页面能到几 MB）。no-store 是不让 URLSession/代理再存一份；
+// 缓存由客户端自己按 ETag 管。
+func (h *ArtifactHandler) ServeArtifactHTML(c *gin.Context) {
+	userID := c.GetString("user_id")
+	id := c.Param("id")
+	a, err := h.repo.GetHTML(c.Request.Context(), userID, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			view.JSONError(c, http.StatusNotFound, "artifact not found")
+			return
+		}
+		log.Printf("[artifact] ServeHTML id=%s user=%s: %v", id, userID, err)
+		view.JSONError(c, http.StatusInternalServerError, "query artifact failed")
+		return
+	}
+
+	etag := artifactETag(a.HTML)
+	c.Header("ETag", etag)
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", artifactCSP)
+	if etagMatches(c.GetHeader("If-None-Match"), etag) {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	writeHTML(c, a.HTML)
+}
+
+// artifactETag — 正文哈希。artifacts 会原地覆盖（改版不换 id），所以不能用 id 当版本。
+func artifactETag(html string) string {
+	sum := sha256.Sum256([]byte(html))
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}
+
+// etagMatches — 按 RFC 的列表形式逐项比较（`"a", W/"b"`），不做子串匹配：
+// 误判 304 会让客户端一直停在旧页。If-None-Match 用弱比较，所以去掉 W/ 前缀再比。
+func etagMatches(header, etag string) bool {
+	if header == "*" {
+		return true
+	}
+	for _, part := range strings.Split(header, ",") {
+		candidate := strings.TrimSpace(part)
+		if strings.TrimPrefix(candidate, "W/") == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // ListArtifacts GET /api/artifacts?limit=30&offset=0 — 灵阅列表（按时间倒序，不含正文）。
@@ -212,10 +282,9 @@ func (h *ArtifactHandler) ViewSharedArtifact(c *gin.Context) {
 		view.JSONError(c, http.StatusInternalServerError, "query artifact failed")
 		return
 	}
-	c.Header("Content-Security-Policy",
-		"sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:")
+	c.Header("Content-Security-Policy", artifactCSP)
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("Cache-Control", "no-store")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(a.HTML))
+	writeHTML(c, a.HTML)
 }

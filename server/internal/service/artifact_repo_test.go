@@ -72,6 +72,12 @@ func TestArtifactAutoMigrateAddsSourceHTMLOnExistingTable(t *testing.T) {
 	if a.SourceHTML != "" {
 		t.Fatalf("旧行的 source_html 应为空串，实际 %q", a.SourceHTML)
 	}
+	if a.Tags != "" {
+		t.Fatalf("旧行的 tags 应为空串，实际 %q", a.Tags)
+	}
+	if n, err := NewArtifactRepo(db).CountUntagged(context.Background(), "u1"); err != nil || n != 1 {
+		t.Fatalf("NULL tags 的老行也要算作未打标签，实际 n=%d err=%v", n, err)
+	}
 	if a.HTML == "" {
 		t.Fatal("旧行正文不该丢")
 	}
@@ -142,7 +148,7 @@ func TestArtifactRepoUpdateInPlace(t *testing.T) {
 		}
 	}
 
-	ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>", "<html>源</html>")
+	ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "标签A,标签B", "<html>新</html>", "<html>源</html>")
 	if err != nil || !ok {
 		t.Fatalf("Update 应成功，ok=%v err=%v", ok, err)
 	}
@@ -150,7 +156,7 @@ func TestArtifactRepoUpdateInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if a.Title != "新标题" || a.Summary != "新摘要" || a.HTML != "<html>新</html>" {
+	if a.Title != "新标题" || a.Summary != "新摘要" || a.Tags != "标签A,标签B" || a.HTML != "<html>新</html>" {
 		t.Fatalf("覆盖没生效：%+v", a)
 	}
 	if a.SourceHTML != "<html>源</html>" {
@@ -158,14 +164,14 @@ func TestArtifactRepoUpdateInPlace(t *testing.T) {
 	}
 
 	// 内容完全相同再改一次：MySQL 的 RowsAffected 会是 0，不能拿它判存在
-	if ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "<html>新</html>", "<html>源</html>"); err != nil || !ok {
+	if ok, err := repo.Update(ctx, "u1", "c1", "新标题", "新摘要", "标签A,标签B", "<html>新</html>", "<html>源</html>"); err != nil || !ok {
 		t.Fatalf("同值更新也应返回 true，ok=%v err=%v", ok, err)
 	}
 	// 越权 / 不存在
-	if ok, err := repo.Update(ctx, "u1", "c2", "t", "s", "<html>y</html>", "<html>y</html>"); err != nil || ok {
+	if ok, err := repo.Update(ctx, "u1", "c2", "t", "s", "t", "<html>y</html>", "<html>y</html>"); err != nil || ok {
 		t.Fatalf("越权更新应返回 false，ok=%v err=%v", ok, err)
 	}
-	if ok, err := repo.Update(ctx, "u1", "nope", "t", "s", "<html>y</html>", "<html>y</html>"); err != nil || ok {
+	if ok, err := repo.Update(ctx, "u1", "nope", "t", "s", "t", "<html>y</html>", "<html>y</html>"); err != nil || ok {
 		t.Fatalf("不存在应返回 false，ok=%v err=%v", ok, err)
 	}
 }
@@ -281,7 +287,8 @@ func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2")
+	tags := "标签X"
+	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2", &tags)
 	if err != nil || !ok {
 		t.Fatalf("原文匹配应写入: ok=%v err=%v", ok, err)
 	}
@@ -289,12 +296,12 @@ func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
 	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got.SourceHTML != "v2" || got.HTML != "<html>v2</html>" {
-		t.Fatalf("更新不对: %+v", got)
+	if got.SourceHTML != "v2" || got.HTML != "<html>v2</html>" || got.Tags != "标签X" {
+		t.Fatalf("更新不对（正文与标签应同一条 UPDATE 落库）: %+v", got)
 	}
 
 	// 拿旧原文再写一次 → 拒绝，库不动
-	ok, err = repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v3</html>", "v3")
+	ok, err = repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v3</html>", "v3", &tags)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -306,5 +313,163 @@ func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
 	}
 	if got.SourceHTML != "v2" {
 		t.Fatalf("被拒后库不该变: %q", got.SourceHTML)
+	}
+}
+
+// 标签筛选：多标签交集、逗号边界（Go ≠ Golang）、关键词、limit=0 只出 total。
+func TestArtifactRepoListByTags(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	base := time.Now().Add(-time.Hour)
+	seed := []model.Artifact{
+		{ID: "t1", UserID: "u1", ConversationID: "c1", Title: "东京手账", Summary: "地铁", Tags: "手账,旅行", HTML: "<html>1</html>", CreatedAt: base},
+		{ID: "t2", UserID: "u1", ConversationID: "c1", Title: "月度理财", Summary: "账单", Tags: "手账,理财", HTML: "<html>2</html>", CreatedAt: base.Add(time.Minute)},
+		{ID: "t3", UserID: "u1", ConversationID: "c1", Title: "Go 笔记", Summary: "并发", Tags: "Golang", HTML: "<html>3</html>", CreatedAt: base.Add(2 * time.Minute)},
+		{ID: "t4", UserID: "u1", ConversationID: "c1", Title: "老页", Summary: "无标签", HTML: "<html>4</html>", CreatedAt: base.Add(3 * time.Minute)},
+		{ID: "t5", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", Tags: "手账", HTML: "<html>5</html>", CreatedAt: base.Add(4 * time.Minute)},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	// 单标签
+	rows, total, err := repo.ListByTags(ctx, "u1", []string{"手账"}, "", 10, 0)
+	if err != nil || total != 2 || len(rows) != 2 {
+		t.Fatalf("『手账』应命中 t1,t2，实际 total=%d len=%d err=%v", total, len(rows), err)
+	}
+	if rows[0].ID != "t2" || rows[1].ID != "t1" {
+		t.Fatalf("应按时间倒序，实际 %+v", rows)
+	}
+	if rows[0].HTML != "" {
+		t.Fatal("列表不应取正文")
+	}
+	if rows[0].Tags != "手账,理财" {
+		t.Fatalf("列表应带标签，实际 %q", rows[0].Tags)
+	}
+
+	// 多标签交集
+	rows, total, err = repo.ListByTags(ctx, "u1", []string{"手账", "旅行"}, "", 10, 0)
+	if err != nil || total != 1 || rows[0].ID != "t1" {
+		t.Fatalf("交集应只命中 t1，实际 total=%d rows=%+v err=%v", total, rows, err)
+	}
+
+	// 标签是逗号边界匹配：Go 不该命中 Golang
+	if _, total, err = repo.ListByTags(ctx, "u1", []string{"Go"}, "", 10, 0); err != nil || total != 0 {
+		t.Fatalf("Go 不应命中 Golang，实际 total=%d err=%v", total, err)
+	}
+
+	// 关键词搜标题/摘要
+	rows, total, err = repo.ListByTags(ctx, "u1", nil, "理财", 10, 0)
+	if err != nil || total != 1 || rows[0].ID != "t2" {
+		t.Fatalf("关键词应命中 t2，实际 total=%d rows=%+v err=%v", total, rows, err)
+	}
+	if _, total, err = repo.ListByTags(ctx, "u1", nil, "账单", 10, 0); err != nil || total != 1 {
+		t.Fatalf("摘要也应参与关键词，实际 total=%d err=%v", total, err)
+	}
+
+	// limit=0：只出 total，不返回列表
+	rows, total, err = repo.ListByTags(ctx, "u1", []string{"手账"}, "", 0, 0)
+	if err != nil || total != 2 || len(rows) != 0 {
+		t.Fatalf("limit=0 应只出 total=2，实际 total=%d len=%d err=%v", total, len(rows), err)
+	}
+}
+
+// 标签图 / 标签名 / 未打标签计数 / 只改标签 / 批量查存活 id。
+func TestArtifactRepoTagsGraphAndHelpers(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := []model.Artifact{
+		{ID: "g1", UserID: "u1", ConversationID: "c1", Title: "a", Summary: "s", Tags: "手账,旅行", HTML: "<html>1</html>"},
+		{ID: "g2", UserID: "u1", ConversationID: "c1", Title: "b", Summary: "s", Tags: "手账,理财", HTML: "<html>2</html>"},
+		{ID: "g3", UserID: "u1", ConversationID: "c1", Title: "老页", Summary: "s", HTML: "<html>3</html>"},
+		{ID: "g4", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", Tags: "手账", HTML: "<html>4</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	tags, edges, err := repo.TagGraph(ctx, "u1")
+	if err != nil {
+		t.Fatalf("TagGraph: %v", err)
+	}
+	if len(tags) != 3 || tags[0].Name != "手账" || tags[0].Count != 2 {
+		t.Fatalf("频次应手账=2 且排第一，实际 %+v", tags)
+	}
+	// 手账 × 旅行 / 手账 × 理财
+	if len(edges) != 2 {
+		t.Fatalf("应有 2 条共现边，实际 %+v", edges)
+	}
+
+	names, err := repo.ListTags(ctx, "u1")
+	if err != nil || len(names) != 3 || names[0] != "手账" {
+		t.Fatalf("ListTags 应返回 3 个且手账在前，实际 %+v err=%v", names, err)
+	}
+
+	if n, err := repo.CountUntagged(ctx, "u1"); err != nil || n != 1 {
+		t.Fatalf("未打标签应为 1（g3），实际 n=%d err=%v", n, err)
+	}
+
+	ok, err := repo.SetTags(ctx, "u1", "g1", "手账,旅行,日本")
+	if err != nil || !ok {
+		t.Fatalf("SetTags 应成功，ok=%v err=%v", ok, err)
+	}
+	a, err := repo.GetMeta(ctx, "u1", "g1")
+	if err != nil || a.Tags != "手账,旅行,日本" || a.Title != "a" {
+		t.Fatalf("只应改标签，实际 %+v err=%v", a, err)
+	}
+	if ok, err := repo.SetTags(ctx, "u1", "g4", "x"); err != nil || ok {
+		t.Fatalf("越权改标签应 false，ok=%v err=%v", ok, err)
+	}
+
+	got, err := repo.ExistingIDs(ctx, "u1", []string{"g1", "g4", "nope"})
+	if err != nil {
+		t.Fatalf("ExistingIDs: %v", err)
+	}
+	if len(got) != 1 || got[0] != "g1" {
+		t.Fatalf("只应返回属于 u1 的 g1，实际 %+v", got)
+	}
+}
+
+// 不带 tags 的正文写不能把「并发改的标签」回滚（tags=nil 时不写该列）。
+func TestArtifactRepoUpdateIfSourceUnchangedKeepsTagsWhenNil(t *testing.T) {
+	repo, db, cleanup := setupArtifactRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := &model.Artifact{
+		ID: "a1", UserID: "u1", ConversationID: "c1",
+		Title: "t", Summary: "s", Tags: "手账", HTML: "<html>v1</html>", SourceHTML: "v1",
+	}
+	if err := db.Create(a).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// 并发里的另一条：只改标签（不动 source_html）
+	if ok, err := repo.SetTags(ctx, "u1", "a1", "旅行,日本"); err != nil || !ok {
+		t.Fatalf("SetTags: ok=%v err=%v", ok, err)
+	}
+
+	// 正文 patch 不带 tags：照常按乐观锁写正文，但 tags 列必须原样保留
+	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2", nil)
+	if err != nil || !ok {
+		t.Fatalf("正文写应成功: ok=%v err=%v", ok, err)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Tags != "旅行,日本" {
+		t.Fatalf("并发改的标签被回滚了: %q", got.Tags)
+	}
+	if got.SourceHTML != "v2" {
+		t.Fatalf("正文应更新: %q", got.SourceHTML)
 	}
 }

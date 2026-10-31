@@ -338,7 +338,13 @@ func (r *DocumentRepo) tagGraph(ctx context.Context, userID, audience string) ([
 	if err != nil {
 		return nil, nil, err
 	}
+	counts, edges := buildTagGraph(raw)
+	return counts, edges, nil
+}
 
+// buildTagGraph — 从「每行一个逗号串」的标签列算出频次与两两共现边。
+// 文档与灵阅（artifacts）共用：两边标签列同形，差别只有过滤条件，故抽出纯计算部分。
+func buildTagGraph(raw []string) ([]TagCount, []TagEdge) {
 	type pair struct{ a, b string }
 	counts := make(map[string]int)
 	edges := make(map[pair]int)
@@ -386,7 +392,7 @@ func (r *DocumentRepo) tagGraph(ctx context.Context, userID, audience string) ([
 		}
 		return edgeList[i].B < edgeList[j].B
 	})
-	return result, edgeList, nil
+	return result, edgeList
 }
 
 // ListTags 获取用户文档的去重标签列表（按出现次数降序）。audience 空串=不过滤（工具读取全可见）。

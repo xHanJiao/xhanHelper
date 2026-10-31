@@ -233,8 +233,28 @@ class APIClient {
 	}
 
 	/// 灵阅列表（右栏「灵阅」）：按时间倒序，不含正文。
-	func listArtifacts(limit: Int = 30, offset: Int = 0) async throws -> ArtifactListResponse {
-		return try await get("/api/artifacts?limit=\(limit)&offset=\(offset)")
+	/// tags 为多标签**交集**筛选（空=不过滤）；keyword 搜标题/摘要；limit=0 时只出 total。
+	func listArtifacts(tags: [String] = [], keyword: String? = nil, limit: Int = 30, offset: Int = 0) async throws -> ArtifactListResponse {
+		var path = "/api/artifacts?limit=\(limit)&offset=\(offset)"
+		if !tags.isEmpty {
+			let joined = tags.joined(separator: ",")
+			path += "&tags=\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined)"
+		}
+		if let k = keyword, !k.isEmpty {
+			path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)"
+		}
+		return try await get(path)
+	}
+
+	/// 交集页数：limit=0 让服务端只出 total，不拉列表。
+	func artifactCount(tags: [String]) async throws -> Int {
+		let resp = try await listArtifacts(tags: tags, limit: 0)
+		return resp.total
+	}
+
+	/// 灵阅标签词云：频次 + 共现边。
+	func listArtifactTags() async throws -> ArtifactTagListResponse {
+		return try await get("/api/artifacts/tags")
 	}
 
 	/// 删除一条产物（软删，无回收站；分享链接随之失效）。

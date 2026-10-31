@@ -117,6 +117,9 @@ struct BrowsePanelView: View {
     @State private var billSearchOpen = false
     @State private var docSearchDraft = ""
     @State private var billSearchDraft = ""
+    /// 灵阅词云的标签高亮搜索（纯本地；列表模式没有搜索框）。
+    @State private var artifactSearchOpen = false
+    @State private var artifactSearchDraft = ""
     #if os(macOS)
     /// 文档详情页的两个开关（原本在详情页自己的二级顶栏上，现已并入页头）。
     /// 与 `DocumentFullView` 共用同一批 key，改一边另一边立刻跟上。
@@ -242,10 +245,19 @@ struct BrowsePanelView: View {
             if newValue == nil {
                 docSearchOpen = false
                 billSearchOpen = false
+                artifactSearchOpen = false
             }
             // 离开文档面板即退出多选（选择工具条只在文档列表前台时有效）
             documentVM.exitDocumentSelection()
             imageVM.exitSelection()
+            artifactVM.exitSelection()
+        }
+        .onChange(of: artifactVM.mode) { _, _ in
+            // 切模式即收起灵阅的高亮搜索；离开词云顺手清掉本地高亮与多选
+            artifactSearchOpen = false
+            artifactSearchDraft = ""
+            artifactVM.cloudQuery = ""
+            artifactVM.clearSelection()
             artifactVM.exitSelection()
         }
         .onChange(of: documentVM.mode) { old, new in
@@ -319,6 +331,19 @@ struct BrowsePanelView: View {
         billSearchOpen = true
     }
 
+    /// 灵阅词云的高亮搜索（纯本地，不参与后端筛选）。
+    private func toggleArtifactSearch() {
+        guard !artifactSearchOpen else { artifactSearchOpen = false; return }
+        docSearchOpen = false
+        billSearchOpen = false
+        artifactSearchDraft = artifactVM.cloudQuery
+        artifactSearchOpen = true
+    }
+
+    private var artifactSearchActive: Bool {
+        artifactSearchOpen || !artifactVM.cloudQuery.isEmpty
+    }
+
     @ViewBuilder
     private func transientSearchPanel(_ panel: BrowsePanel) -> some View {
         switch panel {
@@ -351,6 +376,20 @@ struct BrowsePanelView: View {
                     docSearchDraft = ""
                     Task { await documentVM.search("") }
                     docSearchOpen = false
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        case .artifacts where artifactSearchOpen && artifactVM.mode == .cloud:
+            TransientSearchPanel(
+                placeholder: "搜索标签并高亮",
+                caption: "在词云中高亮匹配的标签（纯本地）",
+                draft: $artifactSearchDraft,
+                live: true,
+                onSearch: { artifactVM.cloudQuery = $0 },
+                onClear: {
+                    artifactSearchDraft = ""
+                    artifactVM.cloudQuery = ""
                 }
             )
             .padding(.horizontal, 12)
@@ -476,6 +515,29 @@ struct BrowsePanelView: View {
 
             Spacer()
 
+            #if os(macOS)
+            if panel == .artifacts {
+                Picker("", selection: $artifactVM.mode) {
+                    Text("列表").tag(ArtifactBrowseMode.list)
+                    Text("词云").tag(ArtifactBrowseMode.cloud)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 120)
+
+                if artifactVM.mode == .cloud {
+                    Stepper(value: $artifactVM.minTagCount, in: 1...maxArtifactTagCount) {
+                        Text("≥ \(artifactVM.minTagCount) 页")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+            #endif
+
             if panel == .documents && documentVM.openDocument == nil {
                 Picker("", selection: $documentVM.mode) {
                     Text("列表").tag(DocumentBrowseMode.list)
@@ -595,7 +657,7 @@ struct BrowsePanelView: View {
             #endif
 
             // 多选入口：文档/图片/灵阅统一放在页头这颗图标上（灵阅那份跨端，故在平台分支之外）
-            if panel == .artifacts {
+            if panel == .artifacts && artifactVM.mode == .list {
                 Button {
                     artifactVM.enterSelection()
                 } label: {
@@ -660,6 +722,11 @@ struct BrowsePanelView: View {
                     help: "搜索账单"
                 ) { toggleBillSearch() }
             }
+            #if os(macOS)
+            if panel == .artifacts && artifactVM.mode == .cloud {
+                headerSearchToggle(active: artifactSearchActive, help: "搜索并高亮标签") { toggleArtifactSearch() }
+            }
+            #endif
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -896,6 +963,11 @@ struct BrowsePanelView: View {
     /// 文档词云的最少篇数上限（标签已按频次降序）
     private var maxTagCount: Int {
         max(1, documentVM.tags.first?.count ?? 1)
+    }
+
+    /// 灵阅词云的最少页数上限（不低过当前值，避免 Stepper 范围越界）
+    private var maxArtifactTagCount: Int {
+        max(artifactVM.minTagCount, artifactVM.tags.first?.count ?? 1)
     }
 
     /// 记忆词云的最少条数上限（topic 已按频次降序；不低过当前值，避免 Stepper 范围越界）

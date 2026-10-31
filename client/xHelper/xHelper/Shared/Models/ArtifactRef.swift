@@ -29,11 +29,13 @@ struct ArtifactSummary: Codable, Identifiable {
     let id: String
     let title: String
     let summary: String
+    /// 逗号分隔的标签（服务端归一化过）。必填规则上线前生成的老页为空。
+    var tags: String? = nil
     let conversationId: String
     let createdAt: String
 
     enum CodingKeys: String, CodingKey {
-        case id, title, summary
+        case id, title, summary, tags
         case conversationId = "conversation_id"
         case createdAt = "created_at"
     }
@@ -42,6 +44,12 @@ struct ArtifactSummary: Codable, Identifiable {
 struct ArtifactListResponse: Codable {
     let items: [ArtifactSummary]
     let total: Int
+}
+
+/// `GET /api/artifacts/tags` 的响应（复用文档词云的同款模型）。
+struct ArtifactTagListResponse: Codable {
+    let tags: [CloudTag]
+    let edges: [TagEdge]
 }
 
 /// `POST /api/artifacts/:id/share` 的响应：token + 相对路径（客户端用 baseURL 拼绝对地址）。

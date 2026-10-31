@@ -120,7 +120,7 @@ struct DocumentListView: View {
         CardView(config: CardConfig(
             title: doc.title,
             subtitle: doc.content,
-            tags: parseTags(doc.tags),
+            tags: doc.tags.tagBadges,
             footerText: "删除于 " + formatConversationDate(doc.updatedAt),
             style: .document,
             actions: [
@@ -140,7 +140,7 @@ struct DocumentListView: View {
             title: doc.title,
             subtitle: doc.content,
             headerBadge: doc.isInternal ? TagBadge(text: "内部", color: .secondary) : nil,
-            tags: parseTags(doc.tags),
+            tags: doc.tags.tagBadges,
             footerText: formatConversationDate(doc.updatedAt),
             style: .document,
             // 选择态让位给勾选圈（两者都占右上角）
@@ -336,12 +336,6 @@ struct DocumentListView: View {
     }
     #endif
 
-    private func parseTags(_ tags: String?) -> [TagBadge] {
-        guard let tags, !tags.isEmpty else { return [] }
-        return tags.split(separator: ",").map {
-            TagBadge(text: String($0).trimmingCharacters(in: .whitespaces), color: Color("appAccent"))
-        }
-    }
 }
 
 
@@ -565,7 +559,7 @@ private struct DocumentFullView: View {
 
                             if let tags = document.tags, !tags.isEmpty {
                                 HStack(spacing: 6) {
-                                    ForEach(parseTags(document.tags)) { tag in
+                                    ForEach(document.tags.tagBadges) { tag in
                                         Text(tag.text)
                                             .font(.system(size: FontSizeManager.shared.scaledSize * 0.76))
                                             .foregroundColor(tag.color)
@@ -952,7 +946,7 @@ private struct DocumentFullView: View {
     /// 行次信息：相对时间 + 前 3 个标签（都没有则省略该行内容）。
     private func documentNavSubtitle(_ doc: Document) -> String {
         var parts = [formatConversationDate(doc.updatedAt)]
-        let tags = parseTags(doc.tags).prefix(3).map(\.text)
+        let tags = doc.tags.tagBadges.prefix(3).map(\.text)
         if !tags.isEmpty { parts.append(tags.joined(separator: " ")) }
         return parts.joined(separator: " · ")
     }
@@ -967,12 +961,6 @@ private struct DocumentFullView: View {
     }
     #endif
 
-    private func parseTags(_ tags: String?) -> [TagBadge] {
-        guard let tags else { return [] }
-        return tags.split(separator: ",").map {
-            TagBadge(text: String($0).trimmingCharacters(in: .whitespaces), color: Color("appAccent"))
-        }
-    }
 
     /// 第 `index` 个目录项在「同级同文字」里是第几个。DOM 侧标题只能按文字找，
     /// 靠这个序号区分同名标题（否则重复的「小结」永远跳到第一个）。

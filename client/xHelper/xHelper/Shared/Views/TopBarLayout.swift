@@ -12,7 +12,7 @@ enum TopBarLevel: Int, CaseIterable, Comparable {
     case foldCenter = 1
     /// 下拉标签收窄（240 → 160）。
     ///
-    /// 为什么最后才动标签而不是收导航组：导航组（文档/账单/监控/记忆/进浏览器）的 ⌘1–5
+    /// 为什么最后才动标签而不是收导航组：导航组（文档/灵阅/监控/浏览器/记忆）的 ⌘1–5
     /// 挂在**被渲染的按钮**上（`TopBarButton.keyEquivalent` → `keyboardShortcut`），
     /// 整组收进 `⋯` 会把快捷键一起丢掉；收标题只是截断文字。
     case compactSwitcher = 2

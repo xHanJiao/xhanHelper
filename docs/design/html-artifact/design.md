@@ -305,7 +305,7 @@ rightSidebar.openTab(
 
 **接入位置定为 `tabs` 池**（不再单开一个右栏模式）：`openTab` 一行就能拿到 tab 条、关闭、返回、切回已有 tab 这些配套，而独立字段/独立模式得自己把这些重画一遍。代价是两个已知毛病，各补一处守卫即可：
 
-- `BrowserToolProvider.performCloseAll` 里 `activeTabId = nil` → **经实现时核对不用改**：那是 provider 自己的字段，不是 `rs.activeTabId`；`RightSidebarManager.closeTab` 关掉网页 tab 时会保留仍存在的 tab（含产物页），所以产物不会被藏掉。
+- `BrowserToolProvider.performCloseAll` 里 `activeTabId = nil` → **2026-10-31 改为要补一轮**：那是 provider 自己的字段，不是 `rs.activeTabId`；只关 provider.tabs 里的网页时，产物页 / 工具页（下载、收藏、历史、配置）留在 `rs.tabs` 里，侧栏不会回浏览面板——只剩灵阅时点「退出」就是个 no-op。现在 `performCloseAll` 末尾会把 `rs.tabs` 里没有 session 的 tab 一并 `closeTab`，下载确认分支（owner == nil）也改走它。
 - 遍历 `manager.tabs` 的浏览器语义（进浏览器、关页回落、保活、右键菜单、拖分屏）按 `id.hasPrefix("artifact:")` 过滤掉这一类。全仓此类引用约 11 处，集中在 `RightSidebarView`；实现时收紧成三处真正会踩到的：`enterBrowser`、`performCloseScoped` / `performCloseTab` 的回落、`demoteAgentTab` 的回落。
 
 **当时不选"新增浏览面板的一个 case"**：`BrowsePanel` 是 `CaseIterable` 驱动的网格入口（账单/记忆/文档…），加一个 case 会在侧栏首页多出一个永久入口——那时要的是"看当前这一页"，不是"一个内容库"。
@@ -532,7 +532,7 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
 - `go build ./... && go test ./...` 全绿（含清洗、校验、repo 的针对性单测）
 - `swift test` + macOS/iOS `swiftc -typecheck` 0 error
 - 真机：发一句"给我做个今天的手账"，出卡片 → 点卡右栏打开 → 页面完整、无横向滚动 → **再点同一张不会开第二份** → 关掉再点能重开 → 切屏/重载卡片还在
-- 右栏守卫：点"退出浏览器"时，开着的 artifact 不会被藏起来；浏览器语义的遍历不会把手账 tab 当网页处理
+- 右栏守卫：点"退出浏览器"会连开着的 artifact（以及下载/收藏/历史/配置/本页资源工具页）一起关掉并回浏览面板（只关视图，作品不丢）；有下载时点「取消」一个 tab 都不关。浏览器语义的遍历不会把手账 tab 当网页处理
 - **触发边界**：问天气、列三件待办、解释一个概念、要一段代码 —— 这四种都**不该**生成页面，确认走 markdown
 - **每轮上限**：同轮内要求"给我五种风格"，确认最多落 3 条
 - **不取正文**：抓一次消息列表接口的响应，确认里面没有 `html` 字段（`Omit` 生效）
@@ -712,3 +712,16 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：撤掉页面右上角浮动分享钮；撤销分享挪进灵阅卡片 `⋯`（此前「不进卡片菜单」的决定作废），`HTMLArtifactView` 回归纯 WKWebView。
   - 决定：文档「导出 PDF」的顶栏胶囊与卡片 `⋯` 里的 dev 专项一起下架，实现（`DocumentSelectionCoordinator.exportPDF` / `DocumentPDFExporter`）保留。
   - 影响文件：`client/.../Services/ArtifactOpenCoordinator.swift`（+`ensureRegisteredGroup` / `revokeShare`）、`Views/ContentView.swift`（+ 注册调用）、`Views/HTMLArtifactView.swift`（−浮钮）、`Views/ArtifactListView.swift`（+撤销分享）、`Services/DocumentSelectionCoordinator.swift`（−PDF 按钮）、`Views/DocumentListView.swift`（−PDF 菜单项）；详见 `docs/design/artifact-topbar-actions/design.md`。
+- **2026-10-31 · 「退出浏览器」连灵阅/工具页一起关**
+  - 起因：真机撞上——只开着灵阅时点「退出」，什么都不发生，回不了浏览面板（`performCloseAll` 只遍历 `BrowserToolProvider.tabs`，灵阅与工具页只在 `rs.tabs` 里）。
+  - 决定：用户「退出」= 标签栏里所有 tab 全关（网页 + 灵阅 + 下载/收藏/历史/配置/本页资源），然后回浏览面板；只关视图，灵阅作品不丢。有下载时确认分支（owner == nil）改走 `performCloseAll`，点「取消」不关任何 tab。agent 的 `agent_browser_close`（owner 非 nil）语义不变，仍只关自己的标签。
+  - 影响文件：`client/xHelper/xHelper/Shared/Tools/BrowserToolProvider.swift`（`performCloseAll` + 下载确认分支）。
+- **2026-10-31 · 灵阅支持 Cmd+W / Cmd+Shift+T**
+  - 起因：灵阅 tab 没有浏览器 session，`BrowserFocus` 判不出焦点，浏览器快捷键对它整组失效；关掉后也不能用 Cmd+Shift+T 找回。
+  - 决定：Cmd+W 按右栏激活 tab 判定（侧栏展开且非分屏时才生效；排在 BrowserFocus 之前，避免后台保活的网页 tab 抢走），`artifact:` 前缀直接关；灵阅 tab 关闭时记进 `closedStack`（`artifactID` + 标题），Cmd+Shift+T 走 `ArtifactOpenCoordinator.open` 重开（先出缓存）。Cmd+T / Cmd+Shift+T 的触发条件放宽为「有 tab 或有可恢复项」。
+  - 不做：缩放 / 刷新 / 页内查找对灵阅生效（无对应语义或需单独做查找栏）。
+  - 影响文件：`client/xHelper/xHelper/Shared/Tools/BrowserToolProvider.swift`（`closedStack` / `closeTab` / `restoreLastClosedTab` / `hasRestorableTab`）、`client/xHelper/xHelperMac/App.swift`（Cmd+W 分支 + Cmd+T 条件）。
+- **2026-10-31 · 分屏「关闭窗格内其他标签页」改走 provider**
+  - 起因：复审发现该入口直连 `manager.closeTab`。除了不进恢复栈，更实际的问题是网页 session 漏在 `BrowserToolProvider.tabs` 里——UI 关了，agent `list_tabs` 还能看到、还能操作；下载也失去确认。
+  - 决定：改走 `BrowserToolProvider.closeTab`，与 tab 条 X / 右键「关闭」同一收尾路径（teardown + 恢复栈 + 下载确认）。
+  - 影响文件：`client/xHelper/xHelper/Shared/Views/RightSidebarView.swift`。

@@ -86,8 +86,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 待人工处理的手递手标签：owner -> (tabId, 升级时间)（验证码/登录墙，检测驱动）。
     /// 带时间戳是为了超时兜底：子任务一死、无人 resolve 时，过期后自动放开回收豁免。
     private var pendingHandoff: [String: (tabId: String, at: Date)] = [:]
-    /// 最近关闭的 tab（Cmd+Shift+T 恢复）
-    private var closedStack: [(url: URL?, title: String)] = []
+    /// 最近关闭的 tab（Cmd+Shift+T 恢复）。灵阅 tab 没有 URL，记 artifactID。
+    private var closedStack: [(url: URL?, title: String, artifactID: String?)] = []
     /// 后台管家定时器（agent 标签空闲清理）
     private var housekeepingTimer: Timer?
     private let maxResultChars: Int
@@ -1845,7 +1845,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 message: "有 \(downloading) 个下载进行中，关闭页面将取消这些下载。确认关闭？"
             ) { [weak self] allow in
                 guard allow else { return }
-                self?.performCloseScoped(ids)
+                // 用户「退出」= 连灵阅/工具页一起关；走 performCloseAll 才覆盖它们
+                if owner == nil {
+                    self?.performCloseAll()
+                } else {
+                    self?.performCloseScoped(ids)
+                }
             }
             return .init(serverResult: Self.jsonDict(["closed": false, "count": count, "pendingConfirmation": true]),
                          serverError: nil, clientAction: nil)
@@ -1872,6 +1877,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         lastAgentTabByOwner.removeAll()
         closedStack.removeAll()
         activeTabId = nil
+        // 灵阅与工具页（下载/收藏/历史/配置/本页资源）只在侧栏 tabs 里、没有浏览器 session，
+        // 上面那轮关不到；不补这一轮，只剩灵阅时「退出」就是个 no-op（退不出去）。
+        for id in rightSidebar?.tabs.map(\.id) ?? [] {
+            rightSidebar?.closeTab(id)
+        }
         refreshBrowserGroup()
     }
 
@@ -1955,7 +1965,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let hadDownloads = session.hasActiveDownloads
         // 无下载的 tab 才进恢复栈；取消了下载的 tab 恢复无意义（重开会再次触发下载/确认）
         if !hadDownloads {
-            closedStack.append((url: session.webView.url, title: session.webView.title ?? session.webView.url?.host ?? ""))
+            closedStack.append((url: session.webView.url, title: session.webView.title ?? session.webView.url?.host ?? "", artifactID: nil))
         }
         session.cancelLoadWait()
         session.forceCancelDownloads()
@@ -2289,7 +2299,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         _ = handleCloseTab(["tabId": id], owner: session.owner)
     }
 
-    /// UI（tab 条右键菜单）重新加载指定 tab；特殊 tab（下载/收藏/历史/配置）无 webView，静默忽略
+    /// 还有可恢的 tab（浏览器 URL 或灵阅）。App 用它放宽 Cmd+T / Cmd+Shift+T 的触发条件：
+    /// 关掉最后一个 tab 后侧栏已空，只看 `hasTabs` 的话恢复快捷键会完全没反应。
+    var hasRestorableTab: Bool { !closedStack.isEmpty }
+
+    /// UI（tab 条右键菜单）重新加载指定 tab；特殊 tab（下载/收藏/历史/配置/本页资源）无 webView，静默忽略
     func reloadTab(_ id: String) {
         tabs[id]?.webView.reload()
     }
@@ -2297,6 +2311,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// UI（tab 条 X 按钮）关闭指定 tab：与工具 close_tab 同路径（含 closedStack 记录），可被 Cmd+Shift+T 恢复。
     func closeTab(_ id: String) {
         guard let session = tabs[id] else {
+            // 灵阅 tab 不在浏览器 session 里，得自己记恢复栈（Cmd+Shift+T 才能重开）
+            if RightSidebarManager.isArtifactTab(id),
+               let tab = rightSidebar?.tabs.first(where: { $0.id == id }) {
+                closedStack.append((url: nil, title: tab.title,
+                                    artifactID: String(id.dropFirst(RightSidebarManager.artifactTabPrefix.count))))
+            }
             rightSidebar?.closeTab(id)
             return
         }
@@ -2326,6 +2346,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 用户主动恢复：owner=nil（视为用户标签，不参与并发任务归属保护）。
     func restoreLastClosedTab() {
         guard let last = closedStack.popLast() else { return }
+        if let artifactID = last.artifactID {
+            ArtifactOpenCoordinator.shared.open(id: artifactID, title: last.title)
+            return
+        }
         if let url = last.url, url.scheme == "http" || url.scheme == "https" {
             Task { @MainActor in
                 _ = await handleOpen(["url": url.absoluteString, "background": false], owner: nil)

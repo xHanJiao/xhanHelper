@@ -120,11 +120,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
-            // Cmd+T / Cmd+Shift+T：焦点无关，只要浏览器有 tab 就生效（对齐 Chrome）。
+            // Cmd+T / Cmd+Shift+T：焦点无关，有 tab 或有关掉的 tab 可恢复时生效。
             // NSApp.modalWindow == nil：模态弹窗（NSAlert.runModal）期间不触发——避免模态 run loop 内改浏览器层级。
+            // 「退出」后两者皆空 → Cmd+T 不响应（要从浏览面板重新进浏览器）。
             if event.keyCode == 17,
                NSApp.modalWindow == nil,
-               BrowserToolProvider.shared.rightSidebar?.hasTabs == true {
+               (BrowserToolProvider.shared.rightSidebar?.hasTabs == true
+                || BrowserToolProvider.shared.hasRestorableTab) {
                 if event.modifierFlags.contains(.shift) {
                     BrowserToolProvider.shared.restoreLastClosedTab()
                 } else {
@@ -152,9 +154,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             // Cmd+W：全局拦截，禁用默认"关闭窗口"菜单快捷键（防止误触退出）。
-            // 浏览器聚焦时对齐 Chrome 关闭当前 tab；否则忽略，不做任何事。
+            // 顺位：灵阅 tab → 浏览器聚焦的当前 tab → 忽略。
             if event.keyCode == 13 {
-                if BrowserFocus.isFocused() {
+                // 灵阅分支放在 BrowserFocus 之前：后台保活的网页 tab 仍在视图层级里，
+                // BrowserFocus 可能为 true 从而抢走这次 Cmd+W（关掉后台网页而不是眼前的灵阅）。
+                // 侧栏收起时不关（tab 不可见，静默关掉会很意外）；分屏下退回浏览器语义——
+                // 两窗格同时在，activeTabId 未必是眼前那个，灵阅用 X 关。
+                if let rs = BrowserToolProvider.shared.rightSidebar,
+                   rs.isOpen,
+                   rs.splitTabIds.isEmpty,
+                   let id = rs.activeTabId,
+                   RightSidebarManager.isArtifactTab(id) {
+                    BrowserToolProvider.shared.closeTab(id)
+                } else if BrowserFocus.isFocused() {
                     BrowserToolProvider.shared.closeActiveTab()
                 }
                 return nil

@@ -465,7 +465,9 @@ struct RightSidebarView: View {
             if !RightSidebarManager.specialTabIDs.contains(tab.id) {
                 Button("关闭窗格内其他标签页") {
                     let group = side == .left ? manager.leftGroupTabs : manager.rightGroupTabs
-                    for t in group where t.id != tab.id { manager.closeTab(t.id) }
+                    // 与「关闭」同路径：走 provider 才会 teardown session / 记恢复栈，
+                    // 直接 manager.closeTab 会把网页 session 漏在 provider 里
+                    for t in group where t.id != tab.id { BrowserToolProvider.shared.closeTab(t.id) }
                 }
             }
         }

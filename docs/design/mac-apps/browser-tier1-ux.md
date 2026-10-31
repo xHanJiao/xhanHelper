@@ -62,6 +62,8 @@
 | Cmd+Shift+G | 5+shift | 查找上一个 | 透传 |
 | Esc | 53 | 关闭查找栏（栏显示时） | 透传 |
 
+> **灵阅（HTML 产物）tab**：它没有浏览器 session，`BrowserFocus` 判不出焦点，所以焦点门控的快捷键默认都不生效。已接的两条：**Cmd+W** 在右栏展开、非分屏、且激活 tab 带 `artifact:` 前缀时直接关（侧栏收起时不关；分屏下两窗格同时在、activeTabId 未必是眼前那个，退回浏览器语义、灵阅用 X 关；分支排在 BrowserFocus 之前，免被后台保活的网页 tab 抢走）；关闭灵阅 tab 会记进 `closedStack`（记 artifactID），**Cmd+Shift+T** 用 `ArtifactOpenCoordinator.open` 重开。Cmd+T / Cmd+Shift+T 的触发条件同时放宽为「有 tab **或** 有可恢复项」，否则关掉最后一个 tab 后恢复键完全没反应。缩放 / 刷新 / 页内查找目前仍不作用于灵阅。
+
 ## 四、节能：非激活 tab 摘除
 
 `RightSidebarView.contentArea`（浏览器态）由

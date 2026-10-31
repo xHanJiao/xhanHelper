@@ -112,6 +112,20 @@ let package = Package(
             dependencies: ["ImageCompressorCore"],
             path: "Tests/ImageCompressorCoreTests"
         ),
+        // SSELineDecoderCore — 字节流按 \n 切行（块边界切在多字节 UTF-8 中间也不丢事件；
+        // 坏字节只替换）。app 目标共享同一份源文件。
+        // 依赖提醒：若把 Tools/FileSystemToolProvider.swift 加进 FsCore，须同时把
+        // Services/SSELineDecoder.swift 加进去，否则 swift test 找不到符号。
+        .target(
+            name: "SSELineDecoderCore",
+            path: "xHelper/Shared",
+            sources: ["Services/SSELineDecoder.swift"]
+        ),
+        .testTarget(
+            name: "SSELineDecoderCoreTests",
+            dependencies: ["SSELineDecoderCore"],
+            path: "Tests/SSELineDecoderCoreTests"
+        ),
         // ArtifactHTMLCacheCore — 灵阅正文磁盘缓存（纯文件 IO，不依赖 SwiftUI/LogBuffer）。
         // 目录/上限/日志由调用方注入，测试用临时目录 + 小上限覆盖淘汰与清理。
         .target(

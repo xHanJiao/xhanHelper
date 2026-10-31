@@ -40,7 +40,8 @@ nonisolated private final class StderrTail: @unchecked Sendable {
         }
     }
 
-    var tail: String { lock.withLock { String(data: data, encoding: .utf8) ?? "" } }
+    /// 4096 字节尾巴很可能从字符中间开始，解码失败时不许整条变空（诊断信息宁可带 �）
+    var tail: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
 }
 
 final class FileSystemToolProvider: @unchecked Sendable {
@@ -167,19 +168,24 @@ final class FileSystemToolProvider: @unchecked Sendable {
                 defer { watchdog.cancel() }
 
                 var data = Data()
-                var lineBuffer = ""
+                var decoder = SSELineDecoder()
                 var capped = false
+                var warnedInvalidUTF8 = false
                 while true {
                     let chunk = fh.readData(ofLength: 8192)
                     if chunk.isEmpty { break }
                     data.append(chunk)
                     // 先处理行（收集器可能在收满时提前停）——让 match 上限优先于预算掐断，
                     // 保证翻页语义稳定（~100 条/页），预算只作安全网
-                    lineBuffer += String(data: chunk, encoding: .utf8) ?? ""
+                    // 按字节缓冲到完整行：逐块 String(data:encoding:) 会在中文/emoji 中间
+                    // 切开时整块丢弃（grep 漏匹配、残行与下一块拼成假匹配），见 SSELineDecoder
+                    let (lines, hadInvalidUTF8) = decoder.append(chunk)
+                    if hadInvalidUTF8 && !warnedInvalidUTF8 {
+                        warnedInvalidUTF8 = true
+                        fsToolLog("fs capture: 输出含非法 UTF-8 字节，已替换为 U+FFFD")
+                    }
                     var stop = false
-                    while let newline = lineBuffer.firstIndex(of: "\n") {
-                        let line = String(lineBuffer[..<newline])
-                        lineBuffer.removeSubrange(...newline)
+                    for line in lines {
                         if !onLine(line) { stop = true; break }
                     }
                     if stop {

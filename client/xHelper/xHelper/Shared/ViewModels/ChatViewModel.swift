@@ -658,7 +658,13 @@ class ChatViewModel: ObservableObject {
             scheduleSubagentReload(convID)
         case "status":
             if let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) {
-                subagentSessions[idx].round = parseSubagentRound(content)
+                if let round = parseSubagentRound(content) {
+                    subagentSessions[idx].round = round
+                } else if !content.isEmpty {
+                    // 非轮次状态（如「正在等待客户端执行 fs.grep…」心跳）：显示在最新动作行，
+                    // 否则长等待时面板完全不动，用户看不出停在哪一步
+                    subagentSessions[idx].latestAction = content
+                }
             }
             scheduleSubagentReload(convID)
         case "tool_call":

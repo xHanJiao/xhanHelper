@@ -5,9 +5,12 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private static let log = Logger(subsystem: "com.xhan.xhanHelper", category: "sseclient")
 
     private var session: URLSession!
-    private var task: URLSessionDataTask?
-    private var lineBuffer = ""
+    private var lineDecoder = SSELineDecoder()
+    private var warnedInvalidUTF8 = false
+    /// 当前流的任务；delegate 只采纳它的回调（旧任务 cancel 后仍可能有已入队的回调）
+    private var currentTask: URLSessionDataTask?
     private var httpStatusCode: Int?
+    private var currentEvent = ""
     private let lock = NSLock()
 
     var onEvent: ((StreamEvent) -> Void)?
@@ -23,6 +26,9 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {
+        // 上一轮未断开时先取消；cancel() 只是尽力而为，已入队的回调仍会执行，
+        // 由下面三个 delegate 里的 task 身份守卫拦掉
+        disconnect()
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -56,23 +62,41 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             Self.log.error("failed to serialize request body")
         }
 
+        let newTask = session.dataTask(with: req)
         lock.withLock {
+            // 与 delegate 的守卫同一把锁：只有当前任务的数据/完成回调会被采纳。
+            // resume() 在锁外、这之后，所以这里清一次就够，旧状态不会在中间回流。
+            currentTask = newTask
             httpStatusCode = nil
-            lineBuffer = ""
+            lineDecoder.reset()
+            warnedInvalidUTF8 = false
+            currentEvent = ""
         }
-        task = session.dataTask(with: req)
-        task?.resume()
+        newTask.resume()
     }
 
     func disconnect() {
-        task?.cancel()
-        task = nil
-        lock.withLock { lineBuffer = "" }
+        // 先清 currentTask 再 cancel：cancel 只是尽力而为，先 cancel 会留下一段
+        // 「已入队回调仍能通过守卫」的窗口。残留的一类情况是事件已 dispatch、
+        // 在 Task { @MainActor } 里等着执行——那部分要按流代次（generation）才能根治。
+        let stale: URLSessionDataTask? = lock.withLock {
+            let t = currentTask
+            currentTask = nil
+            lineDecoder.reset()
+            warnedInvalidUTF8 = false
+            currentEvent = ""
+            return t
+        }
+        stale?.cancel()
     }
 
     // MARK: URLSessionDataDelegate
 
     nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard lock.withLock({ currentTask === dataTask }) else {
+            completionHandler(.cancel)
+            return
+        }
         if let http = response as? HTTPURLResponse {
             lock.withLock { httpStatusCode = http.statusCode }
         }
@@ -80,16 +104,34 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        // 旧任务的残留数据不能进新流的解码器
+        guard lock.withLock({ currentTask === dataTask }) else { return }
         // 非 2xx（如 404/500 的 JSON 错误体）不是 SSE 流，不喂给行解析器
         if let status = lock.withLock({ httpStatusCode }), !(200...299).contains(status) {
             return
         }
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        lock.withLock { lineBuffer += text }
-        processLines()
+        var invalidUTF8 = false
+        lock.withLock {
+            // 按字节缓冲到完整行再解码：块边界可能切在多字节字符中间，
+            // 逐块解码会整块丢弃（曾静默吞掉 client_tool_call，见 SSELineDecoder 注释）
+            let (lines, hadInvalidUTF8) = lineDecoder.append(data)
+            if hadInvalidUTF8 && !warnedInvalidUTF8 {
+                warnedInvalidUTF8 = true
+                invalidUTF8 = true
+            }
+            for line in lines {
+                parseLine(line.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        // 锁外打日志；每条流只报第一次，避免工具输出回灌时刷屏
+        if invalidUTF8 {
+            Self.log.warning("SSE line contained invalid UTF-8; replaced bad bytes instead of dropping the chunk")
+        }
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        // 旧任务的完成回调会把新消息的流式气泡 finishStreaming 掉，必须拦
+        guard lock.withLock({ currentTask === task }) else { return }
         if let error = error {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
@@ -106,18 +148,6 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     // MARK: Line parsing
-
-    private func processLines() {
-        lock.withLock {
-            while let newlineIndex = lineBuffer.firstIndex(of: "\n") {
-                let line = String(lineBuffer[..<newlineIndex])
-                lineBuffer = String(lineBuffer[lineBuffer.index(after: newlineIndex)...])
-                parseLine(line.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-        }
-    }
-
-    private var currentEvent = ""
 
     private func parseLine(_ line: String) {
         if line.hasPrefix("event: ") {

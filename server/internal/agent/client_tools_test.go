@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -226,6 +227,23 @@ func TestNormalizeClientToolData(t *testing.T) {
 	var s string
 	if err := json.Unmarshal(got, &s); err != nil || !strings.Contains(s, "已截断") {
 		t.Errorf("truncated result should be a JSON string with marker, err=%v", err)
+	}
+
+	// 非法 UTF-8：json.Valid 不校验编码，坏字节必须在这里被替换（否则 MySQL 1366）
+	bad := json.RawMessage(string([]byte(`{"a":"`)) + "\xe9" + `"}`)
+	gotBad := normalizeClientToolData(bad)
+	if !utf8.Valid(gotBad) {
+		t.Errorf("invalid UTF-8 should be replaced, got %q", gotBad)
+	}
+	if !json.Valid(gotBad) {
+		t.Errorf("sanitized result must stay valid JSON, got %q", gotBad)
+	}
+
+	// 超预算 + 非法 UTF-8：走截断分支，截断点也可能切在字符中间，输出必须是合法 UTF-8/JSON
+	hugeBad := json.RawMessage(`{"data":"` + strings.Repeat("\xe9", clientToolInjectBudgetBytes+5000) + `"}`)
+	gotHugeBad := normalizeClientToolData(hugeBad)
+	if !utf8.Valid(gotHugeBad) || !json.Valid(gotHugeBad) {
+		t.Errorf("truncated invalid-UTF8 result must be valid UTF-8 JSON, valid=%v json=%v", utf8.Valid(gotHugeBad), json.Valid(gotHugeBad))
 	}
 }
 

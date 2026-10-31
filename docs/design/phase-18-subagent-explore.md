@@ -1143,4 +1143,5 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 
 ## 后续变更
 
+- **2026-10-31**：子任务等待客户端工具时的心跳（`status: 正在等待客户端执行 …`）改为显示在行内「最新动作」；同时修掉客户端 SSE 逐块解码在多字节字符中间丢事件、导致 `client_tool_call` 静默丢失、服务端白等 240s 的问题（`SSELineDecoder`）。影响文件：`client/.../Services/SSELineDecoder.swift`（新增，同一解码器还复用到 `Tools/FileSystemToolProvider.swift` 的 grep 输出抓取）、`SSEClient.swift`、`ChatViewModel.swift`、`agent/client_tools.go`（含客户端工具结果的非法 UTF-8 兜底）。详见 `docs/bugs/044-sse-chunk-utf8-drops-client-tool-call.md`。
 - **2026-10-25**：`webfetch` 工具整体删除（连 `WebFetchConfig` / `conf/config.yaml` 的 `webfetch:` 段 / 注册块 / 测试），由服务端联网工具组 `web`（DeepSeek 官方 Search + Fetch，返回 Markdown）取代。`web` 对**主循环可见**（渐进暴露，不再是「仅 subAgent」），配置见 `web_tools`，每日额度 `web_tools.daily_limit`（超限后按行为准则改派 `web_explore`）。影响文件：`tool/web.go`、`tool/web_test.go`、`internal/config/config.go`、`conf/config.yaml`、`appinit/tools.go`、`app/init_repos.go`（`SearchUsage` 重新接线）、`tool/seeder.go`、`agent/promptbuilder/static.go`（准则 8）、`tool/task.go`。方案见 `docs/design/web-tools/design.md`。

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -367,6 +368,13 @@ func normalizeClientToolData(data json.RawMessage) json.RawMessage {
 		wrapped, _ := json.Marshal(truncated)
 		return wrapped
 	}
+	// json.Valid 不校验 UTF-8，坏字节能混过下面的 JSON 判断直达消息内容（MySQL 1366）。
+	// 放在预算判定之后：替换字节会变长（1→3），可能把刚好在预算内的结果顶过阈值，
+	// 打出一条「客户端未按协议」的误导日志。
+	if !utf8.Valid(data) {
+		log.Printf("[orch] client tool result contained invalid UTF-8 (%d bytes) — replaced bad bytes with U+FFFD", len(data))
+		data = json.RawMessage(strings.ToValidUTF8(string(data), "\uFFFD"))
+	}
 	if !json.Valid(data) {
 		wrapped, _ := json.Marshal(string(data))
 		return wrapped
@@ -453,6 +461,9 @@ func (cc *clientToolCaller) Call(
 
 	// 服务端桥接视角（附表 A `tool.bridge.*`）：派发成功才落 dispatched，returned 覆盖全部终态。
 	// 未送达（上面 return）时整条链不存在，避免产生无 dispatched 的孤儿 returned。
+	// 这行日志与客户端 `client.tool.exec.started` 对账：call_id 两边一致，
+	// 服务端等满超时但客户端没有 started 时，可直接判定事件没送到客户端。
+	log.Printf("[clientToolCaller] dispatched call_id=%s tool=%s owner=%s turn=%s", callID, display, owner, turnID)
 	bridgeOutcome := activity.OutcomeCompleted
 	if cc.activity != nil {
 		cc.emitBridge(ctx, activity.TypeToolBridgeDispatched, bridgeEventID, callID, convID, turnID, flatName, "")

@@ -41,6 +41,8 @@ final class ArtifactViewModel: ObservableObject {
     @Published var resultCount: Int?
     /// 列表模式的后端交集筛选标签（空=不过滤）。
     @Published var activeTags: [String] = []
+    /// 列表模式的后端关键词（搜标题/摘要，与 `activeTags` 取交集）。
+    @Published var keyword = ""
 
     private static let pageSize = 30 // 服务端默认也是 30（server/.../controller/artifact.go 的 DefaultQuery）
     /// 与后端 `?tags=` 的上限一致（超过 10 个 → 400）。
@@ -50,6 +52,9 @@ final class ArtifactViewModel: ObservableObject {
     /// 列表总数（侧栏节名「· N 篇」用；`loadMore` 的边界也靠它）
     @Published private(set) var total = 0
     private var isLoadingMore = false
+    /// 列表代际：`load()` 自增；`loadMore` 发现代际变了就丢弃旧响应
+    /// （否则旧关键词的第二页会拼进新一次的搜索结果）。
+    private var generation = 0
     private var countTask: Task<Void, Never>?
 
     init(apiClient: APIClient) {
@@ -57,10 +62,19 @@ final class ArtifactViewModel: ObservableObject {
     }
 
     func load() async {
+        generation += 1
+        let gen = generation
         isLoading = true
         errorMessage = nil
         do {
-            let resp = try await apiClient.listArtifacts(tags: activeTags, limit: Self.pageSize)
+            let resp = try await apiClient.listArtifacts(
+                tags: activeTags,
+                keyword: keyword.isEmpty ? nil : keyword,
+                limit: Self.pageSize
+            )
+            // 更晚的一次 load 已经接管：这次响应作废，别把旧结果盖回去
+            // （也不动 isLoading，转圈归最新那次管）
+            guard gen == generation else { return }
             items = resp.items
             total = resp.total
             // 重载后可能有条目已被别处删掉：勾选里不能留幽灵 id
@@ -68,10 +82,15 @@ final class ArtifactViewModel: ObservableObject {
         } catch where Self.isCancellation(error) {
             // 切 tab / 关面板会让 `.task` 被取消。取消不是加载失败：别把「已取消」写进
             // 共享的 errorMessage（灵阅面板会据此显示「加载失败 + 重试」）。
+            guard gen == generation else { return }
         } catch {
+            // 旧一次请求的失败不能污染新一次列表（错误页会整块替换内容）
+            guard gen == generation else { return }
             LogBuffer.shared.error("ArtifactViewModel.load: \(error)")
             errorMessage = error.localizedDescription
         }
+        // 收尾也只归最新那次：旧的取消不能把还在飞的转圈提前撤掉
+        guard gen == generation else { return }
         // 列表已经好了就先撤转圈；词云慢不该拖着列表一直转
         isLoading = false
         // 词云不是列表的必要条件：单独失败只记日志、保留上一次的标签，别把整页拖进错误态
@@ -91,13 +110,27 @@ final class ArtifactViewModel: ObservableObject {
         }
     }
 
+    /// 列表搜索：标题/摘要关键词（与标签筛选叠加）。空串 = 取消搜索。
+    func search(_ kw: String) async {
+        keyword = kw.trimmingCharacters(in: .whitespacesAndNewlines)
+        await load()
+    }
+
     /// 滚到底自动加载下一页；失败只记日志 + toast，已显示的列表不动。
     func loadMore() async {
         guard !isLoadingMore, !isLoading, items.count < total else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
+        let gen = generation
         do {
-            let resp = try await apiClient.listArtifacts(tags: activeTags, limit: Self.pageSize, offset: items.count)
+            let resp = try await apiClient.listArtifacts(
+                tags: activeTags,
+                keyword: keyword.isEmpty ? nil : keyword,
+                limit: Self.pageSize,
+                offset: items.count
+            )
+            // 翻页期间换了关键词/标签（新的 load 已接管）：旧关键词的第二页属于上一份列表，丢掉
+            guard gen == generation else { return }
             // offset 分页 + 翻页期间又生成了一条 → 第 2 页会重复第 1 页的末条，按 id 去重
             // （重复 id 会让 SwiftUI 报 "ID occurs multiple times" 并可能错行）
             let known = Set(items.map(\.id))
@@ -106,6 +139,8 @@ final class ArtifactViewModel: ObservableObject {
         } catch where Self.isCancellation(error) {
             // 同上：切走导致的取消不 toast、不记错误
         } catch {
+            // 旧筛选的第二页失败，不该给当前列表弹错误
+            guard gen == generation else { return }
             LogBuffer.shared.error("ArtifactViewModel.loadMore: \(error)")
             ToastCenter.shared.show("加载更多失败：\(error.localizedDescription)")
         }

@@ -99,7 +99,9 @@ struct ArtifactListView: View {
             isLoading: viewModel.isLoading && viewModel.items.isEmpty,
             errorMessage: viewModel.errorMessage,
             isEmpty: viewModel.items.isEmpty && !viewModel.isLoading,
-            emptyMessage: "暂无内容。可在对话中生成页面后回到此处查看。",
+            emptyMessage: viewModel.keyword.isEmpty && viewModel.activeTags.isEmpty
+                ? "暂无内容。可在对话中生成页面后回到此处查看。"
+                : "未找到匹配的页面",
             onRetry: { Task { await viewModel.load() } }
         ) {
             CardGridView(

@@ -379,7 +379,7 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 界面与交互：
 
 - `PageContainer` + `CardGridView` + `CardConfig`（标题 + 摘要 2 行 + 标签胶囊 + 日期脚注），与文档列表同款观感；不按会话分组。
-- **列表 / 词云两态**（2026-10-31，macOS）：页头 `Picker` 切换；词云复用 `TagCloudView`，点标签筛列表、⌘ 多选看交集篇数、「清除筛选」回词云。列表**不做自由文本搜索**（模型侧有 `keyword`，界面只做标签筛选）。
+- **列表 / 词云两态**（2026-10-31，macOS）：页头 `Picker` 切换；词云复用 `TagCloudView`，点标签筛列表、⌘ 多选看交集篇数、「清除筛选」回词云。列表态页头也有搜索（2026-10-31 起）：关键词走后端 `keyword` 搜**标题/摘要**，与已选标签**取交集**；页面正文（`html`）不参与检索，词云态的搜索仍是纯本地高亮标签。
 - 删除见 §9.7（单条 + 多选批量）；删除入口只在列表态出现。
 - 点一条 → `ArtifactOpenCoordinator.open(id:title:)` → 右栏开 tab 渲染整页（与聊天卡片同一条路径，同一 id 再点是切回去）。
 - 「灵阅」是浏览面板的一种态；离开再回来会重新拉第一页（`ArtifactViewModel.load` 在 `.task` 里），顺带把刚生成的产物顶到最前面。
@@ -743,3 +743,8 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：客户端完整仿文档词云（列表/词云切换、⌘ 多选交集、共现高亮、标签高亮搜索，macOS）；`ArtifactSummary.tags` 下发到卡片；词云状态机与 `DocumentViewModel` 各持一份（共享的是 `TagCloudView` / `TagChip`），`parseTags` 抽成 `String.tagBadges` 共用。
   - 决定：REST 列表加 `tags`（交集）/`keyword`，`limit=0` 改为只出 total；新增 `GET /api/artifacts/tags`。`ArtifactRepo.ListByTags` 内部复用文档的 `tagBoundaryClause`，共现统计抽 `buildTagGraph` 供文档与灵阅共用。
   - 影响文件：`server/.../model/artifact.go`（+`tags`）、`service/artifact_repo.go`（+`ListByTags` / `TagGraph` / `ListTags` / `CountUntagged` / `SetTags` / `ExistingIDs`、`Update` 加 tags）、`service/document_repo.go`（抽 `buildTagGraph`）、`controller/artifact.go`（+`ListArtifactTags`、列表参数）、`controller/router.go`、`tool/html_artifact.go`（+`delete` / `list_tags`、标签必填校验、`create`/`patch`/`list`/`get` 带 tags）+测试；`client/.../Models/ArtifactRef.swift`（+`tags` / `ArtifactTagListResponse`）、`Services/APIClient.swift`（+`tags`/`keyword`/`artifactCount`/`listArtifactTags`）、`ViewModels/ArtifactViewModel.swift`（+词云状态）、`Views/ArtifactListView.swift`（+词云页/卡片标签）、`Views/BrowsePanelView.swift`（+列表/词云切换、minTagCount、标签高亮搜索）、`Views/CardStyle.swift`（+`tagBadges`）、`Views/DocumentListView.swift`（−重复 `parseTags`）。
+- **2026-10-31 · 灵阅列表支持关键词搜索（标题/摘要）**
+  - 起因：后端 `keyword` 和 `html.list(keyword=…)` 早就有了，客户端只把它接到了 `APIClient`，界面没有入口；产物攒多后只能翻页找。
+  - 决定：`ArtifactViewModel` 加 `keyword` + `search()`，`load` / `loadMore` 带上；列表态页头搜索框复用 `TransientSearchPanel`（不传 `fields`，不做字段多选），与标签筛选 AND；空态文案区分「暂无内容 / 未找到匹配的页面」。词云态仍是本地高亮标签（同一个搜索入口，按 `mode` 分流）。不做正文检索：灵阅没有 `content` 列，`summary` 是模型写的一句话，搜 HTML 需要新增纯文本列 + 回填，留到有真实需求再说。
+  - 影响文件：`client/xHelper/xHelper/Shared/ViewModels/ArtifactViewModel.swift`（+`keyword` / `search` / 代际守卫，两处 `listArtifacts` 带 `keyword`）、`Views/BrowsePanelView.swift`（页头入口改为列表/词云都在、按 `mode` 分流面板与草稿）、`Views/ArtifactListView.swift`（空态文案）、`ViewModels/DocumentViewModel.swift`（同构的 load/loadMore 代际守卫）。
+  - 副作用：查询串统一走新增的 `Extensions/String+URLQuery.swift`（`urlQueryEscaped` 减掉 `& = + ? ;`），替换 `APIClient` 里全部手写 `.urlQueryAllowed`；浏览器地址栏兜底搜索与 `AppBrowserWebView.searchURL` 一并收口（搜「A&B」不再被截断）。

@@ -51,7 +51,7 @@ final class AppBrowserWebView: WKWebView {
     }
 
     private static func searchURL(for query: String, engine: String) -> URL? {
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        let encoded = query.urlQueryEscaped
         let name = engine.trimmingCharacters(in: .whitespaces).lowercased()
         let base: String
         switch name {

@@ -115,12 +115,12 @@ class APIClient {
     private func billFilterQuery(categorys: [String] = [], startDate: String = "", endDate: String = "", keyword: String = "", owner: String = "") -> String {
         var parts: [String] = []
         for category in categorys {
-            parts.append("category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)")
+            parts.append("category=\(category.urlQueryEscaped)")
         }
         if !startDate.isEmpty { parts.append("start_date=\(startDate)") }
         if !endDate.isEmpty { parts.append("end_date=\(endDate)") }
-        if !keyword.isEmpty { parts.append("keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)") }
-        if !owner.isEmpty { parts.append("owner=\(owner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? owner)") }
+        if !keyword.isEmpty { parts.append("keyword=\(keyword.urlQueryEscaped)") }
+        if !owner.isEmpty { parts.append("owner=\(owner.urlQueryEscaped)") }
         return parts.joined(separator: "&")
     }
 
@@ -157,7 +157,7 @@ class APIClient {
 
 	func listNotes(limit: Int = 50, offset: Int = 0, keyword: String = "") async throws -> NoteListResponse {
 		var path = "/api/notes?limit=\(limit)&offset=\(offset)"
-		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
+		if !keyword.isEmpty { path += "&keyword=\(keyword.urlQueryEscaped)" }
 		return try await get(path)
 	}
 
@@ -173,16 +173,16 @@ class APIClient {
 		var path = "/api/documents?limit=\(limit)&offset=\(offset)"
 		if !tags.isEmpty {
 			let joined = tags.joined(separator: ",")
-			path += "&tags=\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined)"
+			path += "&tags=\(joined.urlQueryEscaped)"
 		}
 		if let k = keyword, !k.isEmpty {
-			path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)"
+			path += "&keyword=\(k.urlQueryEscaped)"
 			if !fields.isEmpty {
 				path += "&fields=\(fields.map(\.rawValue).sorted().joined(separator: ","))"
 			}
 		}
 		if let audience, !audience.isEmpty {
-			path += "&audience=\(audience.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? audience)"
+			path += "&audience=\(audience.urlQueryEscaped)"
 		}
 		return try await get(path)
 	}
@@ -238,10 +238,10 @@ class APIClient {
 		var path = "/api/artifacts?limit=\(limit)&offset=\(offset)"
 		if !tags.isEmpty {
 			let joined = tags.joined(separator: ",")
-			path += "&tags=\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined)"
+			path += "&tags=\(joined.urlQueryEscaped)"
 		}
 		if let k = keyword, !k.isEmpty {
-			path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)"
+			path += "&keyword=\(k.urlQueryEscaped)"
 		}
 		return try await get(path)
 	}
@@ -281,7 +281,7 @@ class APIClient {
 	func listDocumentTags(audience: String? = nil) async throws -> DocumentTagListResponse {
 		var path = "/api/documents/tags"
 		if let audience, !audience.isEmpty {
-			path += "?audience=\(audience.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? audience)"
+			path += "?audience=\(audience.urlQueryEscaped)"
 		}
 		return try await get(path)
 	}
@@ -349,11 +349,7 @@ class APIClient {
 	func listMemories(limit: Int = 50, offset: Int = 0, source: String = "", topic: String = "") async throws -> MemoryListResponse {
 		var path = "/api/memories?limit=\(limit)&offset=\(offset)"
 		if !source.isEmpty { path += "&source=\(source)" }
-		if !topic.isEmpty {
-			// .urlQueryAllowed 不转义 &=+；topic 含这些字符会被服务端截断/解码错，必须减掉
-			let enc = topic.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+"))) ?? topic
-			path += "&topic=\(enc)"
-		}
+		if !topic.isEmpty { path += "&topic=\(topic.urlQueryEscaped)" }
 		return try await get(path)
 	}
 

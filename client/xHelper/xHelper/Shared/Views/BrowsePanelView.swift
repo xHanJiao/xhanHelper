@@ -331,17 +331,18 @@ struct BrowsePanelView: View {
         billSearchOpen = true
     }
 
-    /// 灵阅词云的高亮搜索（纯本地，不参与后端筛选）。
+    /// 灵阅搜索：词云态是本地高亮，列表态是后端关键词（标题/摘要）。
     private func toggleArtifactSearch() {
         guard !artifactSearchOpen else { artifactSearchOpen = false; return }
         docSearchOpen = false
         billSearchOpen = false
-        artifactSearchDraft = artifactVM.cloudQuery
+        artifactSearchDraft = artifactVM.mode == .cloud ? artifactVM.cloudQuery : artifactVM.keyword
         artifactSearchOpen = true
     }
 
     private var artifactSearchActive: Bool {
-        artifactSearchOpen || !artifactVM.cloudQuery.isEmpty
+        guard !artifactSearchOpen else { return true }
+        return artifactVM.mode == .cloud ? !artifactVM.cloudQuery.isEmpty : !artifactVM.keyword.isEmpty
     }
 
     @ViewBuilder
@@ -390,6 +391,24 @@ struct BrowsePanelView: View {
                 onClear: {
                     artifactSearchDraft = ""
                     artifactVM.cloudQuery = ""
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        case .artifacts where artifactSearchOpen:
+            // 列表态：后端关键词（标题/摘要），与标签筛选取交集
+            TransientSearchPanel(
+                placeholder: "搜索标题或摘要",
+                caption: "按标题/摘要检索，与标签筛选叠加生效",
+                draft: $artifactSearchDraft,
+                onSearch: { kw in
+                    Task { await artifactVM.search(kw) }
+                    artifactSearchOpen = false
+                },
+                onClear: {
+                    artifactSearchDraft = ""
+                    Task { await artifactVM.search("") }
+                    artifactSearchOpen = false
                 }
             )
             .padding(.horizontal, 12)
@@ -723,8 +742,11 @@ struct BrowsePanelView: View {
                 ) { toggleBillSearch() }
             }
             #if os(macOS)
-            if panel == .artifacts && artifactVM.mode == .cloud {
-                headerSearchToggle(active: artifactSearchActive, help: "搜索并高亮标签") { toggleArtifactSearch() }
+            if panel == .artifacts {
+                headerSearchToggle(
+                    active: artifactSearchActive,
+                    help: artifactVM.mode == .cloud ? "搜索并高亮标签" : "搜索页面"
+                ) { toggleArtifactSearch() }
             }
             #endif
         }

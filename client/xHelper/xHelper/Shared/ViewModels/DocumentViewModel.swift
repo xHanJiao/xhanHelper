@@ -90,6 +90,9 @@ class DocumentViewModel: ObservableObject {
     let apiClient: APIClient
     private var offset = 0
     private var hasMore = true
+    /// 列表代际：`load()` 自增；`loadMore` / 失败回调发现代际变了就丢弃
+    /// （同灵阅，防旧关键词的翻页/错误拼进新一次筛选）。
+    private var generation = 0
     private var trashOffset = 0
     private var trashHasMore = true
     private var countTask: Task<Void, Never>?
@@ -288,6 +291,8 @@ class DocumentViewModel: ObservableObject {
     }
 
     func load() async {
+        generation += 1
+        let gen = generation
         isLoading = true
         errorMessage = nil
         offset = 0
@@ -299,17 +304,23 @@ class DocumentViewModel: ObservableObject {
                 fields: searchFields,
                 audience: audienceView.rawValue
             )
+            // 更晚的一次 load 已经接管：旧响应作废（也不动 isLoading，归最新那次收尾）
+            guard gen == generation else { return }
             documents = resp.documents
             listTotal = resp.total
             hasMore = resp.documents.count >= 24
             let tagResp = try await apiClient.listDocumentTags(audience: audienceView.rawValue)
+            guard gen == generation else { return }
             tags = tagResp.tags
             buildGraph(tagResp.edges)
             minTagCount = min(minTagCount, max(1, tags.first?.count ?? 1))
         } catch {
+            // 旧一次请求的失败不能污染新一次列表
+            guard gen == generation else { return }
             LogBuffer.shared.error("DocumentViewModel.load: \(error)")
             errorMessage = error.localizedDescription
         }
+        guard gen == generation else { return }
         isLoading = false
     }
 
@@ -384,6 +395,8 @@ class DocumentViewModel: ObservableObject {
     func loadMore() async {
         guard hasMore, !isLoadingMore else { return }
         isLoadingMore = true
+        defer { isLoadingMore = false }
+        let gen = generation
         offset += 24
         do {
             let resp = try await apiClient.listDocuments(
@@ -393,12 +406,14 @@ class DocumentViewModel: ObservableObject {
                 audience: audienceView.rawValue,
                 offset: offset
             )
+            // 翻页期间换了关键词/标签：旧筛选的第二页属于上一份列表，丢掉
+            guard gen == generation else { return }
             documents.append(contentsOf: resp.documents)
             hasMore = resp.documents.count >= 24
         } catch {
+            guard gen == generation else { return }
             LogBuffer.shared.error("DocumentViewModel.loadMore: \(error)")
             errorMessage = error.localizedDescription
         }
-        isLoadingMore = false
     }
 }

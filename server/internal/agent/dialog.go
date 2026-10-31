@@ -54,4 +54,6 @@ func renderDialog(msgs []model.Message) (string, error) {
 // postChatDialogSystemPrompt — 输入是「用户 + 助手」对话的后处理链路专用 system prompt。
 // 不复用 postChatSharedSystemPrompt：那条写死了「输入均为用户角色的发言」，
 // 与喂 user + assistant 的对话矛盾，且改共享常量会动其他后处理链路的缓存前缀。
+// 注意：记忆抽取（MemoryWorker）现在只喂 user 消息，但摘要 worker 仍喂全量对话，故这句
+// 「输入是一段用户与助手的对话记录」对后者仍准确；不要为了记忆口径改常量（会破缓存前缀）。
 const postChatDialogSystemPrompt = `你是一个对话后处理助手。输入是一段用户与助手的对话记录，按时间顺序排列，每个 turn 带发生时间。`

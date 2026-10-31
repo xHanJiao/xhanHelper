@@ -247,3 +247,7 @@ delete_note(target_id string)                                                   
   `memoryTopicMaxLen = 5`、`topic-5char.md` 一致）。影响文件：`agent/record_loop_types.go`、`agent/record_loop.go`、
   `agent/record_loop_render.go`、`agent/promptbuilder/memory_definition.go`、`agent/promptbuilder/static.go`、
   `agent/extractor.go`、`tool/record_memory.go`。
+
+- **2026-10-31**：§0/§4 里「抽取段 ≤5 条」的取值已改为 **`memory_max_per_session = 2`**，
+  且抽取段输入改为**只喂用户消息**（不再含 assistant turn）。本文描述的循环指令与工具定义未变。
+  详见 `docs/design/memory-quality/design.md` 第四轮。

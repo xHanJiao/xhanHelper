@@ -9,7 +9,8 @@ import (
 	"xhan-helper/internal/model"
 )
 
-// 抽取段：输入完整对话（user + assistant），assistant 必须标注 role，不能被当成用户的话。
+// 抽取段：函数本身支持任意 role（assistant 必须标注 role，不能被当成用户的话）；
+// 生产编排层（MemoryWorker）只喂 user——这里测的是通用能力，不代表线上输入口径。
 // 空 content / tool-call 轮跳过。
 func TestExtractCandidates_SendsFullDialogWithRoles(t *testing.T) {
 	mock := &syncMockLLM{responses: []llm.Message{{Content: `{"extracted":true,"memories":[

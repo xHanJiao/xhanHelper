@@ -11,7 +11,7 @@ server:
   local_token: "${XHAN_LOCAL_TOKEN}" # app 生成随机值经 env 注入；make local 缺省 local-dev-token
   # 身份锚点是「库里的用户」（迁移进来的 xhan 原样认领），不靠配置里的名字。
   # local_username 可选，仅用于空库新建时的默认名（缺省 "me"）。
-  memory_auto_extract: false # 暂关 post_chat（观察期）：只留 inline。判据见 docs/design/memory-quality/design.md 文末
+  memory_auto_extract: true # 恢复 post_chat：抽取段只喂用户消息（挡助手结论幻觉）+ 每批上限 2，见 docs/design/memory-quality/design.md 第四轮
 
 db:
   driver: sqlite

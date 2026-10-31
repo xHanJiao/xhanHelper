@@ -112,7 +112,7 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 		cfg.DupeThreshold = 0.85
 	}
 	if cfg.MaxCandidates <= 0 {
-		cfg.MaxCandidates = 5
+		cfg.MaxCandidates = 2
 	}
 	return &MemoryExtractor{
 		llmClient:     cfg.LLMClient,
@@ -131,7 +131,7 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 // 只做抽取，不做去重、不落库、不嵌入——那些是决策循环的职责（它能看到近邻，判定才准）。
 // 不做游标/进度更新（session-window 驱动，天然增量，无 LastExtractedMsgID 概念）。
 // 上限 e.maxCandidates 条（prompt 明示 + 解析后截断，来自 config memory_max_per_session）。
-// 输入是完整的 user + assistant 对话（assistant 的话必须标注 role，不能当成用户的话）。
+// 函数本身不限制 role；编排层（MemoryWorker）现在只喂 user 消息——assistant 的结论是幻觉主源。
 // 形状对齐 fact_extractor：对话渲染成 <对话> 块，拼在指令后，作为单条 user 消息发出。
 func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, msgs []model.Message) ([]memoryCandidate, error) {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")

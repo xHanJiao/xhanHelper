@@ -317,3 +317,7 @@ topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 
 - **2026-10-13**：上线一个月后的数据回收发现三类噪声（记账流水 / 本轮任务过程 / 同主题碎片化），
   以及一个实现缺口——**§4.2 的决策循环指令从未进代码**。修复方案见 `docs/design/memory-quality/design.md`
   （补齐指令 + 收窄门槛 + `<topic_records>` 视野），本票范围之外的循环改动（拒绝出口、幻觉核对）在该文档 §6 挂账。
+- **2026-10-31**：`memory_max_per_session` 由 **5 改为 2**（本文 §4.2/§6/§9 等处写的「上限 5」是当时的取值）。
+  动机：一次会话炸出 4~5 条碎片（10-24 10:44 五条、10-25 13:26 四条）。同时 `post_chat` 抽取段改为
+  **只喂用户消息**（assistant 的结论是幻觉主源）。详见 `docs/design/memory-quality/design.md` 第四轮。
+  影响文件：`agent/memory_worker.go`、`agent/extractor.go`、`config/config.go`、`conf/config.yaml`。

@@ -210,7 +210,7 @@ type ServerConfig struct {
 	MemoryDupeThreshold     float64  `yaml:"memory_dupe_threshold"`     // 记忆去重相似度阈值，默认 0.85（旧单条提取路径遗留）
 	// —— 记录循环（记忆两段式：抽取 + 逐候选决策循环）——
 	RecordLoopMaxIterations   int     `yaml:"record_loop_max_iterations"`   // 决策循环轮数上限，默认 6
-	MemoryMaxPerSession       int     `yaml:"memory_max_per_session"`       // 单次会话最多新增几条记忆（抽取段上限），默认 5
+	MemoryMaxPerSession       int     `yaml:"memory_max_per_session"`       // 单次会话最多新增几条记忆（抽取段上限），默认 2
 	MemoryNeighborTopK        int     `yaml:"memory_neighbor_top_k"`        // 预检索近邻条数（每域），默认 5
 	MemoryNeighborThreshold   float64 `yaml:"memory_neighbor_threshold"`    // 预检索近邻相似度下限，默认 0.5
 	MemoryConfirmThreshold    float64 `yaml:"memory_confirm_threshold"`     // NONE 时「再次确认」的近邻相似度下限，默认 0.80
@@ -902,7 +902,7 @@ func validate(cfg *Config) error {
 		cfg.Server.RecordLoopMaxIterations = 8
 	}
 	if cfg.Server.MemoryMaxPerSession == 0 {
-		cfg.Server.MemoryMaxPerSession = 5
+		cfg.Server.MemoryMaxPerSession = 2
 	}
 	if cfg.Server.MemoryNeighborTopK == 0 {
 		cfg.Server.MemoryNeighborTopK = 5

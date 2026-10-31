@@ -103,3 +103,6 @@ flowchart TD
 | 写入工具内的 topic 复用（仅 `save_memory`，阈值 0.80） | §4.4 |
 | 旧笔记停写与清理 | §5 + `note-retirement.md` |
 | 配置项 | §6 |
+
+- **2026-10-31**：图中「N ≤ memory_max_per_session 5」与小节「上限 5 条」已改为 **2**；
+  抽取段输入改为只喂用户消息。详见 `docs/design/memory-quality/design.md` 第四轮。

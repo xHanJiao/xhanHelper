@@ -7,7 +7,7 @@ server:
   memory_auto_extract: false
   # --- 记录循环（记忆两段式：抽取 + 逐候选决策循环）---
   record_loop_max_iterations: 8 # 决策循环轮数上限（含强制收敛轮）；留给「工具打回 + 补检索」余量
-  memory_max_per_session: 5 # 单次会话最多新增几条记忆（抽取段上限）
+  memory_max_per_session: 2 # 单次会话最多新增几条记忆（抽取段上限）。2 = 逼模型只挑最该留的，防一次会话炸出 4~5 条碎片
   memory_neighbor_top_k: 5 # 预检索近邻条数（每域）
   memory_neighbor_threshold: 0.5 # 预检索近邻相似度下限
   memory_confirm_threshold: 0.8 # NONE 时「再次确认」的近邻相似度下限

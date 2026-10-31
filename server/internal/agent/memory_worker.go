@@ -47,9 +47,11 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 		ConvID:      sess.ConvID,
 	})
 
-	// 输入完整对话（user + assistant）：assistant 的结论/列表常是被用户确认的记忆来源，
-	// 只喂 user 会丢掉一半。role 由 renderDialog 标注，不会被当成用户的话。
-	cands, err := w.extractor.ExtractCandidates(ctx, sess.UserID, sess.GetAllMessages())
+	// 只喂用户消息：assistant 的结论（含工具查库结果）是记忆幻觉的主要来源——
+	// 「机票 10-08 已入账」「此前补记属重复记账」都是助手说的，却被记成用户事实。
+	// 代价：用户依赖上文的指代（「就按这个来」）会失去上下文，宁可漏记也不让助手的话进来
+	// （见 docs/design/memory-quality/design.md 第四轮）。
+	cands, err := w.extractor.ExtractCandidates(ctx, sess.UserID, sess.GetUserMessages())
 	if err != nil {
 		return err
 	}

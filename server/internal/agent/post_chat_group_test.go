@@ -290,8 +290,8 @@ func TestMemoryWorker_Name(t *testing.T) {
 	}
 }
 
-// 编排侧：Process 必须把完整对话（含 assistant）交给抽取器。
-func TestMemoryWorker_SendsAssistantTurnsToExtractor(t *testing.T) {
+// 编排侧：Process 必须把用户消息交给抽取器，assistant 的话不能进（幻觉来源）。
+func TestMemoryWorker_SendsOnlyUserTurnsToExtractor(t *testing.T) {
 	mock := &syncMockLLM{responses: []llm.Message{{Content: `{"extracted":false}`}}}
 	worker := NewMemoryWorker(&MemoryWorkerConfig{
 		Extractor:         NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: mock}),
@@ -310,8 +310,11 @@ func TestMemoryWorker_SendsAssistantTurnsToExtractor(t *testing.T) {
 		t.Fatalf("expected 1 LLM call, got %d", len(mock.reqs))
 	}
 	content := mock.reqs[0].Messages[0].Content
-	if !strings.Contains(content, `<turn role="assistant"`) || !strings.Contains(content, "建议方案B") {
-		t.Errorf("assistant turn must reach the extractor, got: %.400s", content)
+	if !strings.Contains(content, "用哪个方案") {
+		t.Errorf("user turn must reach the extractor, got: %.400s", content)
+	}
+	if strings.Contains(content, "建议方案B") || strings.Contains(content, `role="assistant"`) {
+		t.Errorf("assistant turn must not reach the extractor, got: %.400s", content)
 	}
 }
 

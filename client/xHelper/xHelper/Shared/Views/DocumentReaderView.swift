@@ -539,16 +539,24 @@ private struct ReaderWebView: NSViewRepresentable {
         }
 
         /// 正文里的 `[标题](xhanhelper://document/<id>)` 不能交给 WebKit（无 handler 时会被甩给
-        /// NSWorkspace，弹「未设定用来打开URL…的应用程序」）。拦下来交宿主打开，其余导航放行。
+        /// NSWorkspace，弹「未设定用来打开URL…的应用程序」）。拦下来交宿主打开；其余只放行
+        /// http/https/about/mailto/tel，未知协议（站点探测本机 App 的 `bitbrowser://` 等）一律吞掉。
         nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = navigationAction.request.url, url.scheme == "xhanhelper" else {
+            guard let url = navigationAction.request.url, let scheme = url.scheme?.lowercased() else {
                 decisionHandler(.allow)
                 return
             }
-            decisionHandler(.cancel)
-            guard let id = DocumentSelectionCoordinator.documentID(from: url) else { return }
-            Task { @MainActor in DocumentSelectionCoordinator.shared.openDocument(id: id) }
+            switch scheme {
+            case "xhanhelper":
+                decisionHandler(.cancel)
+                guard let id = DocumentSelectionCoordinator.documentID(from: url) else { return }
+                Task { @MainActor in DocumentSelectionCoordinator.shared.openDocument(id: id) }
+            case "http", "https", "about", "mailto", "tel":
+                decisionHandler(.allow)
+            default:
+                decisionHandler(.cancel)
+            }
         }
     }
 }

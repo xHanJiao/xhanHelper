@@ -2896,8 +2896,38 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             setupDelegates()
         }
 
+        /// 站点脚本常探测的本机 App 协议：抖音会试探 `bitbrowser://`（比特指纹浏览器）这类
+        /// "本机装没装"的信号。导航策略里的 cancel 不总赶在 WebKit 前面，URL 会被甩给
+        /// NSWorkspace 弹「未设定用来打开 URL…的应用程序」；注册成本地 handler 后在进程内吞掉。
+        /// 与「一律 cancel 非 http(s)」一致，功能上没有损失。要拦新协议在这里加一行。
+        private static let swallowedSchemes = ["bitbrowser"]
+
+        /// 探测协议 sink：只要 WebKit 不把 URL 交给系统即可，不需要真实内容。
+        private final class SwallowedSchemeSink: NSObject, WKURLSchemeHandler {
+            /// 同一 tab 同一 scheme 只记一次：反爬脚本可能周期探测，别刷满日志
+            private var logged = false
+
+            nonisolated func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+                MainActor.assumeIsolated {
+                    if !logged {
+                        logged = true
+                        let target = urlSchemeTask.request.url?.absoluteString ?? "?"
+                        LogBuffer.shared.diag("[Browser] swallowed probe \(target.prefix(80))")
+                    }
+                    urlSchemeTask.didFailWithError(
+                        NSError(domain: NSURLErrorDomain, code: NSURLErrorUnsupportedURL))
+                }
+            }
+
+            nonisolated func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+        }
+
         /// 统一构建 webView（应用 UA/缩放/注入脚本配置）
         private static func makeWebView(configuration: WKWebViewConfiguration) -> WKWebView {
+            // 弹窗 tab 的 configuration 由父页面派生，可能已带 handler；重复注册会抛异常
+            for scheme in Self.swallowedSchemes where configuration.urlSchemeHandler(forURLScheme: scheme) == nil {
+                configuration.setURLSchemeHandler(SwallowedSchemeSink(), forURLScheme: scheme)
+            }
             let prefs = WKWebpagePreferences()
             prefs.allowsContentJavaScript = true
             configuration.defaultWebpagePreferences = prefs
@@ -3365,7 +3395,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 后者在点击下载链接时 WebKit 必然回报，不是真实失败，应静默忽略。
         private func isBenignNavigationError(_ error: Error) -> Bool {
             let ns = error as NSError
+            // -1002：站点探测协议被 SwallowedSchemeSink 主动 fail，不是真加载失败
             return ns.code == NSURLErrorCancelled
+                || ns.code == NSURLErrorUnsupportedURL
                 || (ns.domain == "WebKitErrorDomain" && ns.code == 102)
         }
 

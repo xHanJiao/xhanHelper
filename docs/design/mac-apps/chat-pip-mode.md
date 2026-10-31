@@ -209,3 +209,9 @@ func pipLog(_ message: String, file: String = #file, line: Int = #line) {
   7. 窗口缩小 → 面板收敛不出界；最大化 → 面板保持标准尺寸
   8. 退出路径（✕ / 按钮 / 关右栏 / 切 tab / 清空 tab）均恢复布局
   9. DEBUG 控制台见 `[PiP]` print；release 见 LogDiagnosticView
+
+## 十一、后续变更
+
+- 2026-10-31：修「最大化侧栏时输入框里的图丢失」。进出 PiP 会拆掉并重建中栏 `ChatView`，`@State` 随之销毁——草稿类状态（`draftAttachments`）必须放 `ChatViewModel`（与 `draftText` 同层），不能留在视图里。同理 `isUploadingAttachments`（上传闸门）也挪进 VM：上传 Task 不随视图取消，标志留在视图会被重建复位，闸门失效。影响 `ChatView.swift` / `ChatViewModel.swift`。
+- 2026-10-31（已知未修）：重建后 `inputFocused` 复位为 false，⌘V 的 `pastedImages` 会暂存在 VM，等新输入框重新上报焦点才被消费；不丢数据，属现有设计。
+

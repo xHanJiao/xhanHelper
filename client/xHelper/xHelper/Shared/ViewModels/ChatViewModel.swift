@@ -133,10 +133,14 @@ class ChatViewModel: ObservableObject {
     @Published var temperature: Double? = nil
     @Published var maxTokens: Int? = nil
     @Published var draftText = ""
+    /// 待发附件（草稿区缩略图）。必须放 VM 而不是 ChatView 的 @State：进出 PiP 时
+    /// 中栏 ChatView 会被拆掉重建，视图私有状态跟着没，草稿图就丢了。
+    @Published var draftAttachments: [DraftAttachment] = []
+    /// 待发图上传在途（发送闸门）。同样必须在 VM：上传 Task 不随视图销毁取消，
+    /// 标志留在视图里会被重建复位成 false，闸门失效并可能让还原路径覆盖新草稿。
+    @Published var isUploadingAttachments = false
 
-    /// ⌘V 粘贴进来的图片字节（一次性投递箱）：剪贴板在 AppDelegate 里读，而待发附件
-    /// draftAttachments 是 ChatView 的 @State，中间没有通路，只能经 VM 转手。
-    /// ChatView 消费后清空。
+    /// ⌘V 粘贴进来的图片字节（一次性投递箱）：剪贴板在 AppDelegate 里读，ChatView 消费后清空。
     @Published var pastedImages: [Data] = []
 
     func enqueuePastedImages(_ datas: [Data]) {
@@ -947,6 +951,7 @@ class ChatViewModel: ObservableObject {
         isInitialLoading = false
         loadMoreError = nil
         draftText = ""
+        draftAttachments = []
         streamingContent = ""
     }
 

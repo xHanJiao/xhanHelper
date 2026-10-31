@@ -24,8 +24,6 @@ struct ChatView: View {
     @State private var hasLoadedAgents = false
 
     // MARK: 输入框附件（选图 → 上传 → 发送）
-    @State private var draftAttachments: [DraftAttachment] = []
-    @State private var isUploadingAttachments = false
     @State private var showFileImporter = false
     /// 本视图输入框是否聚焦（⌘V 粘贴定位收件 ChatView 用，见 viewModel.pastedImages）
     @State private var inputFocused = false
@@ -277,15 +275,15 @@ struct ChatView: View {
     /// 文字和图片同一帧一起清掉（图片只在上传期间不可能留下、避免「文字先走、图片后走」的时差）；
     /// 上传失败时两者一起还原。
     private func sendDraft() {
-        guard !isUploadingAttachments else { return }
+        guard !viewModel.isUploadingAttachments else { return }
         let text = viewModel.draftText
-        let attachments = draftAttachments
+        let attachments = viewModel.draftAttachments
         let hasText = !text.trimmingCharacters(in: .whitespaces).isEmpty
         guard hasText || !attachments.isEmpty else { return }
 
         dismissKeyboardToken = UUID()
         viewModel.draftText = ""
-        draftAttachments = []
+        viewModel.draftAttachments = []
         withAnimation(.easeOut(duration: 0.3)) {
             scrollPosition.scrollTo(edge: .top)
         }
@@ -296,9 +294,9 @@ struct ChatView: View {
         }
 
         // 带图：先上传拿 image_id，再发送
-        isUploadingAttachments = true
+        viewModel.isUploadingAttachments = true
         Task { @MainActor in
-            defer { isUploadingAttachments = false }
+            defer { viewModel.isUploadingAttachments = false }
             let api = viewModel.apiClient
             var ids: [String] = []
             for item in attachments {
@@ -315,7 +313,7 @@ struct ChatView: View {
             guard !ids.isEmpty else {
                 // 全失败：文字和待发图一起还给用户，别让打好的字白丢
                 viewModel.draftText = text
-                draftAttachments = attachments
+                viewModel.draftAttachments = attachments
                 return
             }
             viewModel.sendMessage(
@@ -344,11 +342,11 @@ struct ChatView: View {
             isStreaming: viewModel.isStreaming,
             dismissKeyboardToken: dismissKeyboardToken,
             containerTint: inputBarTint,
-            hasAttachments: !draftAttachments.isEmpty,
+            hasAttachments: !viewModel.draftAttachments.isEmpty,
             onFocusChange: setInputFocused,
             onClearAll: {
                 viewModel.draftText = ""
-                draftAttachments.removeAll()
+                viewModel.draftAttachments.removeAll()
             },
             onSend: sendDraft,
             onStop: {
@@ -514,7 +512,7 @@ struct ChatView: View {
                 context: ctx,
                 symbol: "paperclip",
                 tint: Color("appAccent"),
-                isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
+                isEnabled: !viewModel.isStreaming && !viewModel.isUploadingAttachments,
                 tooltip: "添加图片",
                 action: { showFileImporter = true }
             )
@@ -601,14 +599,14 @@ struct ChatView: View {
     /// InputBar 附件托盘（已选待发缩略图）
     @ViewBuilder
     private func inputBarAttachmentTray(_ ctx: InputBarContext) -> some View {
-        if !draftAttachments.isEmpty {
+        if !viewModel.draftAttachments.isEmpty {
             AttachmentTray(
-                attachments: draftAttachments,
+                attachments: viewModel.draftAttachments,
                 onRemove: { item in
-                    draftAttachments.removeAll { $0.id == item.id }
+                    viewModel.draftAttachments.removeAll { $0.id == item.id }
                 },
                 onAdd: { showFileImporter = true },
-                onClearAll: { draftAttachments.removeAll() },
+                onClearAll: { viewModel.draftAttachments.removeAll() },
                 onPreview: { item in
                     LightboxCenter.shared.present {
                         AttachmentPreviewView(image: item.image) { LightboxCenter.shared.dismiss() }
@@ -627,7 +625,7 @@ struct ChatView: View {
         SendStopButton(
             context: ctx,
             isStreaming: viewModel.isStreaming,
-            canSend: ctx.canSend && !isUploadingAttachments,
+            canSend: ctx.canSend && !viewModel.isUploadingAttachments,
             onSend: sendDraft,
             onStop: {
                 viewModel.stopStreaming()
@@ -649,7 +647,7 @@ struct ChatView: View {
                 context: ctx,
                 symbol: "arrow.up.circle.fill",
                 tint: ctx.canSend ? Color("appAccent") : .gray,
-                isEnabled: ctx.canSend && !isUploadingAttachments,
+                isEnabled: ctx.canSend && !viewModel.isUploadingAttachments,
                 tooltip: "发送",
                 action: sendDraft
             )
@@ -686,15 +684,15 @@ struct ChatView: View {
             }
             // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
             // 重复 id 会让模型把同一张图看两遍
-            guard !draftAttachments.contains(where: { $0.data == upload }) else {
+            guard !viewModel.draftAttachments.contains(where: { $0.data == upload }) else {
                 duplicated += 1
                 continue
             }
-            guard draftAttachments.count < Layout.maxDraftImages else {
+            guard viewModel.draftAttachments.count < Layout.maxDraftImages else {
                 overCap += 1
                 continue
             }
-            draftAttachments.append(
+            viewModel.draftAttachments.append(
                 DraftAttachment(data: upload, image: image, filename: item.filename)
             )
         }

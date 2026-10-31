@@ -111,7 +111,7 @@ enum ChatMode: String {
         }
     }
 
-    /// 是否处于计划模式（禁写、禁客户端本地工具）。
+    /// 是否处于计划模式（禁写；客户端工具仅放行 fs 的 glob/grep/read）。
     var isPlanLike: Bool { self != .off }
 }
 

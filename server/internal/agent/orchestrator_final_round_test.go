@@ -295,7 +295,7 @@ func TestMkLlmChatReq_PlanMode_OnlyReadOnlyTools(t *testing.T) {
 	} else if len(browser.Functions) != 1 || browser.Functions[0].Name != "navigate" {
 		t.Errorf("browser 应只含 navigate, got %+v", browser.Functions)
 	}
-	// plan 模式：只下发只读函数定义，写函数与客户端工具都不下发，也不注入 expose_tools
+	// plan 模式：只下发服务端只读函数 + 客户端 fs 只读白名单，写函数与其它客户端工具都不下发，也不注入 expose_tools
 	plan := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})
 	var mixed *llm.ToolDefinition
 	for i := range plan.Tools {

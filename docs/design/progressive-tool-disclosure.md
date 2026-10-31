@@ -125,7 +125,7 @@ expose_tools 自身 schema 描述：`启用工具组。传组名列表（见系�
 
 - `go build ./...` + `go test ./...` 全绿；新增暴露流测试。
 - 真机验证：新窗口首轮只见 expose_tools → 说"记一笔账" → LLM 先 expose bookkeeping 再 create_bill；同窗口第二条"再记一笔"不重复 expose；15min 后新窗口重新 expose。日志无 `[post_chat_group]` 等报错。
-- 回归：plan 模式无工具可见；finalRound 无工具；客户端工具照常。
+- 回归：plan 模式只可见服务端只读函数 + 客户端 fs 只读三函数（glob/grep/read）；finalRound 无工具；客户端工具照常。
 
 ## 不做（YAGNI）
 

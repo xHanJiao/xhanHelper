@@ -138,4 +138,5 @@ make test   # 已知测试库残留失败除外，需确认与新改动无关
 
 ## 后续变更
 
-- **2026-10-15**：`browser` 从 `chat.subagent_only_client_tools` 移出 → 主循环也走本套渐进暴露（客户端在线时目录含 browser，LLM `enable` 后可用）。动机与实现见 `docs/design/mac-apps/browser-main-session.md`。影响文件：`server/conf/config.yaml`、`server/internal/config/config.go`、`server/internal/agent/orchestrator.go`（仅注释）。`fs` / `shell` 仍仅子任务。
+- **2026-10-15**：`browser` 从 `chat.subagent_only_client_tools` 移出 → 主循环也走本套渐进暴露（客户端在线时目录含 browser，LLM `enable` 后可用）。动机与实现见 `docs/design/mac-apps/browser-main-session.md`。影响文件：`server/conf/config.yaml`、`server/internal/config/config.go`、`server/internal/agent/orchestrator.go`（仅注释）。`fs` / `shell` 在 work 模式下仍仅子任务。
+- **2026-10-31**：plan 模式例外——`fs` 的 `glob`/`grep`/`read` 由服务端白名单直接下发主循环（不走 `subagent_only_client_tools`，也不走渐进暴露）；work 模式下 fs / shell 仍仅子任务。见 `docs/design/plan-mode-readonly.md`。

@@ -27,7 +27,7 @@
 
 ## 目标
 
-计划模式 = **读放行、写拦截**：允许 LLM 检索/查询用户数据支撑方案讨论，任何产生副作用的操作仍被硬拦截。范围仅限**服务端内置工具**；客户端本地工具本轮维持全拦。
+计划模式 = **读放行、写拦截**：允许 LLM 检索/查询用户数据支撑方案讨论，任何产生副作用的操作仍被硬拦截。范围含**服务端内置只读工具** + **客户端本地文件只读工具**（fs 的 `glob`/`grep`/`read`）；客户端其它工具（shell/browser/chart）仍全拦。
 
 ## 放行清单（服务端只读函数）
 
@@ -50,7 +50,7 @@
 - `task`（子智能体入口）：虽声明 `AllReadOnly`，但会启动 subAgent，subAgent 可能带浏览器等写工具 → **plan 模式必须拦截**。做法：把 `TaskTool.ReadOnlyFuncs()` 改为返回 `nil`（nil = 全写 = plan 全拦），语义上也更准确（task 触发执行，非只读）。
 - `expose_tools`：`ReadOnlyFuncs()` 返回 nil，自然被拦，且 plan 模式不注入渐进暴露机制。
 
-**客户端本地工具**（浏览器/文件系统/画图）：本轮不放行，维持全拦。原因：`BrowserToolProvider` 当前把包含 `click/fill/type/press/drag` 在内的几乎所有函数标为 `isReadOnly: true`（历史特例），直接放行等于计划模式可操作浏览器，语义不符。后续若要放行，需先修浏览器读写标记，另立设计。
+**客户端本地工具**（浏览器/文件系统/画图）：2026-10-31 起只放行 **fs 的 `glob`/`grep`/`read`**（服务端 `planModeClientToolFuncs` 显式白名单，不读客户端 `is_read_only`）。原因：`BrowserToolProvider` 当前把包含 `click/fill/type/press/drag` 在内的几乎所有函数标为 `isReadOnly: true`（历史特例），按标记放行等于计划模式可操作浏览器。其余客户端工具（shell/browser/chart/MCP）维持全拦。
 
 ## 改造点
 
@@ -95,7 +95,7 @@ Swift `ModePill` tooltip 已写"计划模式 · 只读"，无需功能改动（�
 
 - **前缀缓存**：mode 是会话级、稳定的，切换 mode 本就改变 system prompt；`tools` 数组随 mode 变化不影响同一 mode 内的缓存前缀。
 - **只读声明正确性**：依赖 `ValidateReadOnlyFuncs()` 的启动校验（函数名存在性），语义正确性由各工具自行负责；本设计不改动既有声明内容，只新增 `task` 声明收紧。
-- **客户端工具全拦**：计划模式下客户端本地工具仍不可用，属已知限制，符合本次范围。
+- **客户端工具**：计划模式仅放行 fs 的 `glob`/`grep`/`read`（白名单在服务端，客户端离线时无定义）；shell/browser 等仍不可用。
 - **回滚**：改动集中在拦截判断与 prompt 分支，回滚 = 恢复 plan 全拦分支即可。
 
 ## 测试清单
@@ -106,4 +106,9 @@ Swift `ModePill` tooltip 已写"计划模式 · 只读"，无需功能改动（�
   - 新增 `task` 在 plan 被拦的用例。
 - 新增 `Registry.ReadOnlyToolDefinitions()` / `GenerateReadOnlyPrompt()` 单测：只含只读函数、不含 `task` / `expose_tools` / 写函数。
 - `promptbuilder/builder_test.go`：plan 断言改为"含只读工具定义、不含写工具定义"（prompt-eng + native FC 两条路径）。
+- `agent/client_tools_test.go`（2026-10-31）：plan 放行 `fs.glob/grep/read`，拦截 `fs.write/edit`、`shell.run`、`browser.*`；plan 请求体只下发 fs 只读三函数。
 - 验收：影响主链路 → `go build ./...` + `go test ./...` 全绿（`make test` 已暂时停用，见 `server/Makefile`）。
+
+## 后续变更
+
+- 2026-10-31：计划模式放行客户端 **fs 的 `glob`/`grep`/`read`**，让方案讨论可以直接读本地文件。白名单在服务端 `planModeClientToolFuncs`（不依赖客户端 `is_read_only`），plan 分支直接把这三个函数定义下发到请求体 `tools`；shell/browser/chart/MCP 与 `task` 仍全拦。影响文件：`server/internal/agent/client_tools.go`、`server/internal/agent/orchestrator.go`、`server/internal/controller/chat.go`。

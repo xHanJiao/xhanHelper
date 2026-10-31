@@ -12,7 +12,7 @@
 客户端 `FileSystemToolProvider` 有完整的 `fs__write` / `fs__edit`（L3 diff 确认条、敏感文件拦截、
 目录授权、写前必读、原子写、BOM/行尾保留），但服务端两道闸把它们全挡住了：
 
-1. `chat.subagent_only_client_tools = [fs, shell]`（原含 browser，2026-10-15 起 browser 已放回主循环）→ 主循环对整个 fs 组不可见；
+1. `chat.subagent_only_client_tools = [fs, shell]`（原含 browser，2026-10-15 起 browser 已放回主循环）→ work 模式下主循环对整个 fs 组不可见；plan 模式例外：服务端白名单直接放行 fs 的 `glob/grep/read`（2026-10-31）；
 2. `file_explore` 的 fs 函数白名单只有 `glob/grep/read` → 子任务里 write/edit 被函数级剥掉。
 
 结果：**任何 agent 都够不着写能力**。这是「客户端四批完成 → 服务端零改动」留下的接线缺口。

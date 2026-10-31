@@ -15,6 +15,7 @@ import (
 
 	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
@@ -28,10 +29,9 @@ type ClientTool struct {
 	// 组级描述（可选）：同一 server_name 取首个非空作为 ToolDefinition.Description；
 	// 缺省回退「Mac 客户端本地工具（组名）」。客户端须保证同一组内该字段字节稳定。
 	ServerDescription string `json:"server_description"`
-	// 注（2026-08-14）：plan 模式已收紧为全量禁用客户端工具，此字段不再参与 plan 拦截，
-	// 仅保留供未来"只读浏览模式"复用。客户端工具在客户端本地执行，服务端无法拦截执行本身，
-	// 但分派前（executeConcurrently）会按会话模式拦断。agent_browser 因操作难以精确界定读写，
-	// 整体标记只读（历史决策特例：调研场景需要 + 风险由客户端 riskLevel 兜底）。
+	// 注：plan 模式默认全量禁用客户端工具，唯一例外是 fs 的 glob/grep/read 只读函数
+	// （服务端 planModeClientToolFuncs 白名单，不依赖此字段——浏览器把部分写操作也标了只读）。
+	// 客户端工具在客户端本地执行，服务端无法拦截执行本身，但分派前（executeConcurrently）会按会话模式拦断。
 }
 
 // maxClientTools — 单次请求客户端工具数量上限，防 prompt 膨胀
@@ -159,8 +159,9 @@ func clientToolIndex(clientTools []ClientTool, registry *tool.Registry) map[stri
 	return idx
 }
 
-// filterSubAgentOnlyClientTools 剔除仅 subAgent 可用的客户端工具组（主循环视角）。
-// 主循环对 LLM 隐藏这些组（目录/defs/分发索引/expose 校验均剔除）；
+// filterSubAgentOnlyClientTools 剔除仅 subAgent 可用的客户端工具组（work 模式主循环视角）。
+// work 模式对 LLM 隐藏这些组（目录/defs/分发索引/expose 校验均剔除）；plan 模式不调用本函数，
+// 改为走 planAllowedClientTools 的 fs 只读白名单。
 // 子循环经 task 工具透传的 ec.ClientTools 保持完整，不受影响。groups 为空 = 不限制。
 func filterSubAgentOnlyClientTools(cs []ClientTool, groups []string) []ClientTool {
 	if len(cs) == 0 || len(groups) == 0 {
@@ -189,6 +190,45 @@ func filterSubAgentOnlyClientToolInfos(cs []tool.ClientToolInfo, groups []string
 		out = append(out, c)
 	}
 	return out
+}
+
+// planModeClientToolFuncs — 计划模式放行的客户端函数白名单（仅本地文件读取）。
+// 不依赖客户端的 is_read_only：BrowserToolProvider 把 click/fill 等写操作也标成了只读，
+// 按标记放行等于让计划模式操作浏览器。服务端按 server_name + 函数名显式收窄。
+//
+// shortcut: 只按 server_name 字符串匹配——用户若把 MCP server 命名成 "fs" 且函数名恰好是
+// glob/grep/read，也会被放行；升级点是需要区分内置 fs 与 MCP 来源时改用来源标记。
+var planModeClientToolFuncs = map[string]map[string]bool{
+	"fs": {"glob": true, "grep": true, "read": true},
+}
+
+// planAllowedClientTools 过滤出计划模式可用的客户端工具函数（fs 的 glob/grep/read）。
+func planAllowedClientTools(cs []ClientTool) []ClientTool {
+	if len(cs) == 0 {
+		return nil
+	}
+	out := make([]ClientTool, 0, len(cs))
+	for _, c := range cs {
+		if planAllowsClientTool(c.ServerName, c.Name) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// planAllowsClientTool 判断某个客户端函数在计划模式下是否放行。
+func planAllowsClientTool(serverName, funcName string) bool {
+	return planModeClientToolFuncs[serverName][funcName]
+}
+
+// mainLoopClientTools — 主循环可见的客户端工具集合。
+// work：剔除 subAgent-only 组（fs/shell 默认在列），维持原有渐进暴露；
+// plan：只放行 fs 只读三函数，其余（含 shell/browser）一律不可见。
+func mainLoopClientTools(cs []ClientTool, subAgentOnlyGroups []string, mode string) []ClientTool {
+	if model.ModeRestrictsTools(mode) {
+		return planAllowedClientTools(cs)
+	}
+	return filterSubAgentOnlyClientTools(cs, subAgentOnlyGroups)
 }
 
 // mainOwner 主循环的标签归属（客户端据此做标签隔离与用户标签写入授权的任务级缓存）。
@@ -311,22 +351,6 @@ func toToolClientInfos(clientTools []ClientTool) []tool.ClientToolInfo {
 		}
 	}
 	return infos
-}
-
-// clientToolReadOnlyIndex 构建 flatName("server__func") → 是否只读 的索引，
-// 供 plan 模式下客户端工具分派前拦截（executeClientTool）。查不到 = 非只读（plan 拦截）。
-func clientToolReadOnlyIndex(clientTools []ClientTool) map[string]bool {
-	if len(clientTools) == 0 {
-		return nil
-	}
-	idx := make(map[string]bool, len(clientTools))
-	for _, ct := range clientTools {
-		if ct.ServerName == "" || ct.Name == "" {
-			continue
-		}
-		idx[ct.ServerName+"__"+ct.Name] = ct.IsReadOnly
-	}
-	return idx
 }
 
 // normalizeClientToolData 保证客户端回传数据可安全序列化并控制体积。

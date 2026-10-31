@@ -174,7 +174,7 @@ type Orchestrator struct {
 	verifyMaxRetries        int
 	verifyModel             string   // "flash" | "pro"
 	toolExcludes            []string // 对 LLM 隐藏的工具名（控 token 成本）
-	subAgentOnlyClientTools []string // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏）
+	subAgentOnlyClientTools []string // work 模式下对主循环隐藏的客户端工具组（plan 模式固定放行 fs 只读三函数，见 mainLoopClientTools）
 	debugPersistJSON        bool
 	debugJSONSink           DebugJSONSink // request_json 异步落库 sink（开关开启时必须注入）
 	clientBridge            *ClientToolBridge
@@ -229,7 +229,7 @@ type OrchestratorConfig struct {
 	VerifyMaxRetries          int
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	ToolExcludes              []string          // 对 LLM 隐藏的工具名列表（控 token 成本）
-	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["fs","shell"]（browser 已放回主循环）
+	SubAgentOnlyClientTools   []string          // work 模式下对主循环隐藏的客户端工具组，默认 ["fs","shell"]（browser 已放回主循环；plan 模式固定放行 fs 只读三函数）
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
 	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
@@ -366,8 +366,9 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	log.Printf("[orch] run start: model=%s, msgs=%d, client_tools=%d", o.pickClient(req).ModelName(), len(req.Messages), len(req.ClientTools))
 
 	// 1. 静态 system prompt + 稳定上下文（画像+摘要，会话内字节稳定）
-	// 客户端工具目录：非 plan 模式时生成（客户端工具经 expose_tools 渐进暴露，
+	// 客户端工具目录：仅 work 模式生成（客户端工具经 expose_tools 渐进暴露，
 	// 不再无条件下发；目录并入「工具使用」段，是 LLM 发现客户端工具的唯一渠道）。
+	// plan 模式不放行渐进暴露，其 fs 只读定义直接随请求体 tools 下发，不走目录。
 	clientCatalog := ""
 	if !model.ModeRestrictsTools(req.Mode) {
 		clientCatalog = clientToolCatalog(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
@@ -1200,9 +1201,10 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		thinking = &t
 	}
 	var tools []llm.ToolDefinition
-	// plan：仅注入只读工具定义（写操作执行级仍被拦截）；work：渐进式暴露。
+	// plan：服务端只读函数 + 客户端 fs 只读三函数（写操作执行级仍被拦截）；work：渐进式暴露。
 	if !state.finalRound && req.Mode == model.ConvModePlan {
 		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), o.toolExcludes)
+		tools = append(tools, filterToolDefs(buildClientToolDefs(planAllowedClientTools(req.ClientTools), o.registry), o.toolExcludes)...)
 	} else if !state.finalRound {
 		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
 		state.expMutex.Lock()
@@ -1422,7 +1424,8 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, req.TurnID, o.registry, internalTCs, clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
+		mainClients := mainLoopClientTools(req.ClientTools, o.subAgentOnlyClientTools, req.Mode)
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, req.TurnID, o.registry, internalTCs, clientToolIndex(mainClients, o.registry), state, req.Mode, toToolClientInfos(req.ClientTools))
 		state.artifactRefs = append(state.artifactRefs, artifactRefsFromResults(toolCallResults)...)
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
 		return false
@@ -1834,9 +1837,7 @@ func (o *Orchestrator) exposeServerGroup(res *tool.ExposeResult, state *reactSta
 // injectExcludeIDs 将 exclude_ids（已注入的记忆 ID）注入到 memory_search 工具的 args 中
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID, turnID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState,
-	mode string, clientReadOnly map[string]bool, clientTools []tool.ClientToolInfo) []toolExecResult {
-	// clientReadOnly 已不再参与 plan 拦截（2026-08-14 起 plan 模式全量禁用客户端工具），
-	// 保留形参仅为最小改动与未来只读模式复用，勿再依赖。
+	mode string, clientTools []tool.ClientToolInfo) []toolExecResult {
 
 	limit := o.maxConcurrency
 	if limit <= 0 {
@@ -1897,12 +1898,11 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: "客户端本地工具不可用（本轮对话中已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。请不要再调用客户端本地工具，直接告知用户即可。"}}
 			continue
 		}
-		// —— 计划模式拦截：plan（只读）下客户端工具全部禁用
-		// （不再依据 IsReadOnly 放行——只读机制保留仅为未来"只读浏览模式"备用）。
-		// 执行在客户端，服务端在此拦断——
-		if model.ModeRestrictsTools(mode) {
+		// —— 计划模式拦截：plan 下仅放行服务端白名单内的客户端只读函数（fs.glob/grep/read）
+		// 不依赖 IsReadOnly（浏览器把部分写操作也标成只读），执行在客户端，服务端在此拦断。
+		if model.ModeRestrictsTools(mode) && !planAllowsClientTool(tc.Tool, tc.Function) {
 			results[idx] = toolExecResult{tc: tc, result: &tool.Result{Success: false,
-				Error: fmt.Sprintf("当前处于计划模式，本模式下已禁用全部客户端工具，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户退出计划模式。", tc.Tool, tc.Function)}}
+				Error: fmt.Sprintf("当前处于计划模式，本模式仅允许只读操作，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户退出计划模式。", tc.Tool, tc.Function)}}
 			continue
 		}
 		r, unavailable := o.executeClientTool(ctx, events, userID, convID, turnID, tc, mode, mainOwner(convID))

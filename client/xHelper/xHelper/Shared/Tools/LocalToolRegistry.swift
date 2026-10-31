@@ -126,7 +126,7 @@ final class LocalToolRegistry {
                     "server_name": namespace,
                     "name": s.name,
                     "description": s.description,
-                    "is_read_only": s.isReadOnly, // 函数级必备字段；plan 模式已全量禁用（2026-08-14），保留待未来只读模式复用
+                    "is_read_only": s.isReadOnly, // 函数级必备字段；plan 模式只放行 fs 的 glob/grep/read（服务端自有白名单），该字段不参与放行
                 ]
                 if let groupDesc = provider.groupDescription {
                     item["server_description"] = groupDesc // 组级描述，服务端在目录/定义里透传

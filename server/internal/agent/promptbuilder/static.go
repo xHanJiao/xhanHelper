@@ -135,4 +135,4 @@ func (p *toolCatalogProvider) Render(ctx context.Context) string {
 // planModeReadOnlyNotice — plan 模式下替代工具目录的短提示。
 // 可用的只读函数定义已随 native FC 请求体 tools 字段下发，此处无需再列函数名。
 // 写操作在服务端执行级硬拦截，本提示只是引导。
-const planModeReadOnlyNotice = "当前处于计划模式：本模式仅提供只读工具（检索/查询类函数定义见请求体 tools，可直接调用），禁止任何写操作。请用只读工具收集信息并基于已有上下文进行方案讨论。"
+const planModeReadOnlyNotice = "当前处于计划模式：本模式仅提供只读工具（检索/查询类；macOS 客户端在线时含本地文件读取 glob/grep/read。函数定义见请求体 tools，可直接调用），禁止任何写操作。请用只读工具收集信息并基于已有上下文进行方案讨论。"

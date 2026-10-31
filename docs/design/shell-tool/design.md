@@ -242,7 +242,7 @@ allow 档命令（`head` / `tail` / `grep` / `rg` / `wc` / `diff` …）的参�
 - `SensitiveFileBlocker.hardBlockedDisplayPaths`：硬性拦截的高危路径（`~` 缩写），一并告知"不要尝试"。
 - 二者由 `DirectoryAuthorizationManager.accessDescriptionBlock()` 拼成一块，追加到 `fs__glob/grep/read/write/edit` 与 `shell__run` 的 description 末尾。
 - **动态**：description 在 `provider.toolSchemas()` 里拼，`clientToolsPayload()` **每条消息重建**（`ChatViewModel.swift:817`），服务端 `buildClientToolDefs` 原样透传、无缓存 → 用户改授权后下一条消息生效。
-- **只进子任务**：fs/shell 属 `subagent_only_client_tools`，主循环看不到这些 def，prompt 不膨胀。
+- **只进子任务（work 模式）**：fs/shell 属 `subagent_only_client_tools`，work 模式主循环看不到这些 def，prompt 不膨胀。plan 模式例外：只下发 fs 的 `glob/grep/read` 三个只读 def（2026-10-31）。
 - **隐私**：目录绝对路径随 `client_tools` 发往 LLM provider（工具调用的 `path` 参数本来也会带）；临时授权目录（1h TTL）刻意不列，保 tool defs 字节稳定。
 
 ### 聚合规则
@@ -303,7 +303,7 @@ L4 改四处：
 14. **git 只读**：`git status` / `git branch` / `git stash list` 放行；`git commit` / `git push` / `git branch new` / `git tag v1` / `git remote add x y` → 拒绝。
 15. **绝对路径**：`/tmp/evil/git status`（→ 拒绝，不在受信目录）；`/bin/ls` → allow。
 16. **元字符不可绕**：`echo $(whoami)` → 因不支持展开，返回字面量/明确错误，**不执行** `whoami`；`sleep 1 &` → 拒绝。
-17. **plan 模式**：客户端工具整体禁用（服务端已有逻辑），shell 天然不可用。
+17. **plan 模式**：客户端工具默认禁用，仅 fs 的 `glob`/`grep`/`read` 放行（服务端白名单），shell 天然不可用。
 
 ## 十一、边界与兜底
 

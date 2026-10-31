@@ -341,7 +341,7 @@ func TestExecuteConcurrently_MainOwnerIsPerConversation(t *testing.T) {
 
 	o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), []tool.ToolCall{{Tool: "browser", Function: "agent_browser_list_tabs"}},
-		map[string]bool{"browser": true}, &reactState{}, "", nil, nil)
+		map[string]bool{"browser": true}, &reactState{}, "", nil)
 }
 
 // 执行超时不置位 unavailable（可重试）：两个调用都真实执行并各自超时
@@ -355,7 +355,7 @@ func TestExecuteConcurrently_TimeoutDoesNotSetUnavailable(t *testing.T) {
 	}
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
-		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil, nil)
+		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil)
 
 	if state.clientToolsUnavailable {
 		t.Error("执行超时不应置位 clientToolsUnavailable（可重试）")
@@ -383,14 +383,10 @@ func TestExecuteConcurrently_PlanModeBlocksClientWrite(t *testing.T) {
 		{Tool: "browser", Function: "agent_browser_click"}, // 写
 		{Tool: "chart", Function: "render"},                // 写
 	}
-	clientTools := []ClientTool{
-		{ServerName: "browser", Name: "agent_browser_click"}, // 默认 IsReadOnly=false
-		{ServerName: "chart", Name: "render"},
-	}
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true, "chart": true}, state,
-		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
+		model.ConvModePlan, nil)
 
 	for i, res := range results {
 		if res.result.Success {
@@ -406,20 +402,17 @@ func TestExecuteConcurrently_PlanModeBlocksClientWrite(t *testing.T) {
 }
 
 func TestExecuteConcurrently_PlanModeBlocksClientReadOnly(t *testing.T) {
-	// 2026-08-14 激进收紧：plan 模式客户端工具全量禁用，只读工具（agent_browser 特例）同样拦截
+	// 2026-10-31 起 plan 模式只放行 fs 的 glob/grep/read；浏览器的只读标记不算数（历史特例），继续拦截。
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 	calls := []tool.ToolCall{
 		{Tool: "browser", Function: "agent_browser_open"}, // 只读（旧特例，现同样拦截）
 	}
-	clientTools := []ClientTool{
-		{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
-	}
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
-		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
+		model.ConvModePlan, nil)
 
 	if results[0].result.Success {
 		t.Fatal("plan 模式只读客户端工具应被拦截")
@@ -432,38 +425,109 @@ func TestExecuteConcurrently_PlanModeBlocksClientReadOnly(t *testing.T) {
 	}
 }
 
+func TestExecuteConcurrently_PlanModeAllowsFSRead(t *testing.T) {
+	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 20 * time.Millisecond}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+	calls := []tool.ToolCall{{Tool: "fs", Function: "read"}}
+	clientTools := []ClientTool{{ServerName: "fs", Name: "read", IsReadOnly: true}}
+
+	// 模拟真实链路：clientIdx 由 plan 模式可见集合构建
+	clientIdx := clientToolIndex(mainLoopClientTools(clientTools, nil, model.ConvModePlan), tool.NewRegistry())
+	if !clientIdx["fs"] {
+		t.Fatal("plan 模式 clientIdx 应包含 fs")
+	}
+
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
+		tool.NewRegistry(), calls, clientIdx, state,
+		model.ConvModePlan, nil)
+
+	if strings.Contains(results[0].result.Error, "计划模式") {
+		t.Fatalf("plan 模式 fs.read 不应被计划模式拦截, got: %s", results[0].result.Error)
+	}
+	// 只有真的走到 executeClientTool 才会得到桥接超时；若 clientIdx 漏了 fs，
+	// 会落到服务端注册表报「未找到工具」，这条断言能拦住那种假通过。
+	if !strings.Contains(results[0].result.Error, "客户端工具执行超时") {
+		t.Fatalf("fs.read 应被分派到客户端执行，got: %s", results[0].result.Error)
+	}
+}
+
+func TestPlanModeClientToolWhitelist(t *testing.T) {
+	cs := []ClientTool{
+		{ServerName: "fs", Name: "glob", IsReadOnly: true},
+		{ServerName: "fs", Name: "grep", IsReadOnly: true},
+		{ServerName: "fs", Name: "read", IsReadOnly: true},
+		{ServerName: "fs", Name: "write"},
+		{ServerName: "fs", Name: "edit"},
+		{ServerName: "shell", Name: "run", IsReadOnly: true},
+		{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
+	}
+
+	allowed := planAllowedClientTools(cs)
+	if len(allowed) != 3 {
+		t.Fatalf("plan 白名单应只有 fs 的 glob/grep/read，got %+v", allowed)
+	}
+	for _, ct := range allowed {
+		if ct.ServerName != "fs" || !planAllowsClientTool(ct.ServerName, ct.Name) {
+			t.Errorf("不应放行 %s.%s", ct.ServerName, ct.Name)
+		}
+	}
+	for _, fn := range []string{"write", "edit"} {
+		if planAllowsClientTool("fs", fn) {
+			t.Errorf("plan 模式不应放行 fs.%s", fn)
+		}
+	}
+	if planAllowsClientTool("shell", "run") || planAllowsClientTool("browser", "agent_browser_open") {
+		t.Error("plan 模式不应放行 shell/browser")
+	}
+}
+
+func TestMkLlmChatReq_PlanModeInjectsFSReadOnly(t *testing.T) {
+	o := &Orchestrator{registry: tool.NewRegistry()}
+	cs := []ClientTool{
+		{ServerName: "fs", Name: "read", IsReadOnly: true},
+		{ServerName: "fs", Name: "glob", IsReadOnly: true},
+		{ServerName: "fs", Name: "grep", IsReadOnly: true},
+		{ServerName: "fs", Name: "write"},
+		{ServerName: "fs", Name: "edit"},
+		{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
+	}
+	req := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: cs}, "sys",
+		&reactState{msgs: []llm.Message{{Role: "user", Content: "hi"}}})
+
+	var fsDef *llm.ToolDefinition
+	for i := range req.Tools {
+		switch req.Tools[i].Name {
+		case "fs":
+			fsDef = &req.Tools[i]
+		case "browser", "shell", "expose_tools":
+			t.Errorf("plan 模式不应下发 %s", req.Tools[i].Name)
+		}
+	}
+	if fsDef == nil {
+		t.Fatal("plan 模式应下发 fs 只读定义")
+	}
+	var names []string
+	for _, fn := range fsDef.Functions {
+		names = append(names, fn.Name)
+	}
+	if strings.Join(names, ",") != "glob,grep,read" {
+		t.Errorf("plan 模式 fs 应只含 glob/grep/read，got %v", names)
+	}
+}
+
 func TestExecuteConcurrently_WorkModeAllowsClientWrite(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 	calls := []tool.ToolCall{{Tool: "browser", Function: "agent_browser_click"}}
-	clientTools := []ClientTool{{ServerName: "browser", Name: "agent_browser_click"}}
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
-		model.ConvModeWork, clientToolReadOnlyIndex(clientTools), nil)
+		model.ConvModeWork, nil)
 
 	if strings.Contains(results[0].result.Error, "计划模式") {
 		t.Errorf("work 模式客户端写工具应放行, got: %s", results[0].result.Error)
-	}
-}
-
-func TestClientToolReadOnlyIndex(t *testing.T) {
-	idx := clientToolReadOnlyIndex([]ClientTool{
-		{ServerName: "browser", Name: "open", IsReadOnly: true},
-		{ServerName: "browser", Name: "click"},
-	})
-	if !idx["browser__open"] {
-		t.Error("browser__open 应标记只读")
-	}
-	if idx["browser__click"] {
-		t.Error("browser__click 不应标记只读")
-	}
-	if idx["browser__nope"] {
-		t.Error("未声明的函数不应命中")
-	}
-	if got := clientToolReadOnlyIndex(nil); got != nil {
-		t.Errorf("空输入应返回 nil, got %v", got)
 	}
 }
 

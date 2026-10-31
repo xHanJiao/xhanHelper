@@ -43,7 +43,7 @@ extension ChartTool: LocalToolProvider {
                 ],
                 "required": ["chart_type", "labels", "datasets"],
             ],
-            isReadOnly: true // 画图只做可视化展示，不产生数据副作用 → 只读（plan 模式可用）
+            isReadOnly: true // 画图只做可视化展示，不产生数据副作用 → 只读（注意：plan 模式仍按服务端白名单，只放行 fs 只读）
         )]
     }
 

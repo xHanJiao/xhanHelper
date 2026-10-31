@@ -48,7 +48,7 @@ V2+（本期只做设计预留，不实现）：
 - **自动退出**两个触发器（`ContentView` onChange）：
   1. 右栏关闭（`rightSidebar.isOpen → false`）→ `reason=sidebarClosed`
   2. 左侧导航切到非 chat tab（`router.currentTab`）→ `reason=tabChanged`
-- PiP 是「右栏最大化」的层级状态，**与右栏内容解耦**：切到浏览面板（Cmd+1/2/3 文档/账单/监控）、Cmd+4 进浏览器、关光浏览器标签，都不退出 PiP。
+- PiP 是「右栏最大化」的层级状态，**与右栏内容解耦**：切到浏览面板（Cmd+1/2/3 文档/灵阅/监控）、Cmd+4 进浏览器、关光浏览器标签，都不退出 PiP。
 
 ## 四、布局联动（ContentView）
 

@@ -186,6 +186,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 
 		// HTML 产物：正文出口（JSON / 裸 HTML + ETag；消息列表只带摘要，见 docs/design/html-artifact §4.1）
 		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)
+		auth.GET("/artifacts/tags", rc.ArtifactHandler.ListArtifactTags)
 		auth.GET("/artifacts/:id", rc.ArtifactHandler.GetArtifact)
 		auth.GET("/artifacts/:id/html", rc.ArtifactHandler.ServeArtifactHTML)
 		auth.DELETE("/artifacts/:id", rc.ArtifactHandler.DeleteArtifact)

@@ -47,6 +47,7 @@ func (h *ArtifactHandler) GetArtifact(c *gin.Context) {
 		"id":         a.ID,
 		"title":      a.Title,
 		"summary":    a.Summary,
+		"tags":       a.Tags,
 		"html":       a.HTML,
 		"created_at": a.CreatedAt,
 	})
@@ -119,29 +120,78 @@ func etagMatches(header, etag string) bool {
 	return false
 }
 
-// ListArtifacts GET /api/artifacts?limit=30&offset=0 — 灵阅列表（按时间倒序，不含正文）。
+// ListArtifacts GET /api/artifacts?limit=30&offset=0&tags=a,b&keyword= — 灵阅列表（按时间倒序，不含正文）。
 // 直接返回 model.Artifact：HTML 字段是 json:"-"、DeletedAt 也不序列化，
 // 所以这里不需要再定义一个 DTO 去防漏（见 docs/design/html-artifact §9.5）。
-// limit 默认 30 与客户端 ArtifactViewModel.pageSize 一致；两边改一处时记得对齐。
+// limit 默认 30 与客户端 ArtifactViewModel.pageSize 一致；limit=0 表示只取 total（词云「查看 N 篇」用）。
+// tags 是逗号分隔的标签名，多个按**交集**过滤（与文档的标签筛选同口径）。
 func (h *ArtifactHandler) ListArtifacts(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	// limit 超界/非数字回默认值，不让一次误传把整表拉出来
-	if limit <= 0 || limit > 100 {
-		limit = 30
+	// limit=0 是「只取总数」的哨兵；参数非法一律 400，不能把 Atoi 的失败当成 0
+	limit := 30
+	if raw := c.Query("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 || n > 100 {
+			view.JSONError(c, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		limit = n
 	}
-	if offset < 0 {
-		offset = 0
+	offset := 0
+	if raw := c.Query("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			view.JSONError(c, http.StatusBadRequest, "invalid offset")
+			return
+		}
+		offset = n
+	}
+	tags := parseTagQuery(c.Query("tags"))
+	if len(tags) > 10 {
+		view.JSONError(c, http.StatusBadRequest, "too many tags")
+		return
 	}
 
-	items, total, err := h.repo.ListByUser(c.Request.Context(), userID, limit, offset)
+	items, total, err := h.repo.ListByTags(c.Request.Context(), userID, tags, strings.TrimSpace(c.Query("keyword")), limit, offset)
 	if err != nil {
 		log.Printf("[artifact] ListArtifacts user=%s: %v", userID, err)
 		view.JSONError(c, http.StatusInternalServerError, "query artifacts failed")
 		return
 	}
 	view.JSONOK(c, gin.H{"items": items, "total": total})
+}
+
+// parseTagQuery — 逗号分隔的标签参数 → 去空去重的切片。
+func parseTagQuery(raw string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, 4)
+	for _, t := range strings.Split(raw, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// ListArtifactTags GET /api/artifacts/tags — 词云用的标签频次 + 共现边（与文档 /documents/tags 同构）。
+func (h *ArtifactHandler) ListArtifactTags(c *gin.Context) {
+	userID := c.GetString("user_id")
+	tags, edges, err := h.repo.TagGraph(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("[artifact] ListArtifactTags user=%s: %v", userID, err)
+		view.JSONError(c, http.StatusInternalServerError, "query artifact tags failed")
+		return
+	}
+	if tags == nil {
+		tags = []service.TagCount{}
+	}
+	if edges == nil {
+		edges = []service.TagEdge{}
+	}
+	view.JSONOK(c, gin.H{"tags": tags, "edges": edges})
 }
 
 // DeleteArtifact DELETE /api/artifacts/:id — 软删（无回收站，见 design §9.7）。

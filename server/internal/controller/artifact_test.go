@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -175,5 +177,127 @@ func TestBatchDeleteArtifacts_Handler(t *testing.T) {
 	}
 	if _, err := repo.GetByID(ctx, "u2", "a3"); err != nil {
 		t.Fatalf("别人的页面不该被删: %v", err)
+	}
+}
+
+// 灵阅列表的标签筛选 / 关键词 / limit=0 与 /artifacts/tags 词云契约。
+func TestListArtifacts_TagsFilterAndGraph(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tags.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Artifact{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := service.NewArtifactRepo(db)
+	h := NewArtifactHandler(repo)
+	seed := []model.Artifact{
+		{ID: "a1", UserID: "u1", ConversationID: "c1", Title: "东京手账", Summary: "地铁", Tags: "手账,旅行", HTML: "<html>1</html>"},
+		{ID: "a2", UserID: "u1", ConversationID: "c1", Title: "月度理财", Summary: "账单", Tags: "手账,理财", HTML: "<html>2</html>"},
+		{ID: "a3", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", Tags: "手账", HTML: "<html>3</html>"},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	r := gin.New()
+	r.GET("/api/artifacts", func(c *gin.Context) {
+		c.Set("user_id", "u1")
+		h.ListArtifacts(c)
+	})
+	r.GET("/api/artifacts/tags", func(c *gin.Context) {
+		c.Set("user_id", "u1")
+		h.ListArtifactTags(c)
+	})
+
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+
+	// 参数非法必须 400：limit 解析失败曾被当成 0（只出 total），调用方会误读成「一页都没有」
+	for _, path := range []string{
+		"/api/artifacts?limit=abc",
+		"/api/artifacts?limit=-1",
+		"/api/artifacts?limit=200",
+		"/api/artifacts?offset=x",
+		"/api/artifacts?tags=a,b,c,d,e,f,g,h,i,j,k",
+	} {
+		if w := get(path); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s 应 400，实际 %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+
+	// 多标签交集：手账 ∩ 旅行 → 只有 a1
+	w := get("/api/artifacts?tags=" + url.QueryEscape("手账, 旅行"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("tags 查询应 200，实际 %d: %s", w.Code, w.Body.String())
+	}
+	var listResp struct {
+		Data struct {
+			Items []struct {
+				ID   string `json:"id"`
+				Tags string `json:"tags"`
+			} `json:"items"`
+			Total int `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if listResp.Data.Total != 1 || len(listResp.Data.Items) != 1 || listResp.Data.Items[0].ID != "a1" {
+		t.Fatalf("应只命中 a1，实际 %+v", listResp.Data)
+	}
+	if listResp.Data.Items[0].Tags != "手账,旅行" {
+		t.Fatalf("列表应带标签，实际 %q", listResp.Data.Items[0].Tags)
+	}
+
+	// 关键词命中标题
+	w = get("/api/artifacts?keyword=理财")
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode keyword: %v", err)
+	}
+	if listResp.Data.Total != 1 {
+		t.Fatalf("keyword 应命中 1 条，实际 %+v", listResp.Data)
+	}
+
+	// limit=0：只出 total（词云「查看 N 篇」）
+	w = get("/api/artifacts?tags=手账&limit=0")
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode limit=0: %v", err)
+	}
+	if listResp.Data.Total != 2 || len(listResp.Data.Items) != 0 {
+		t.Fatalf("limit=0 应只出 total=2，实际 %+v", listResp.Data)
+	}
+
+	// 词云：频次 + 共现边
+	w = get("/api/artifacts/tags")
+	if w.Code != http.StatusOK {
+		t.Fatalf("tags 词云应 200，实际 %d: %s", w.Code, w.Body.String())
+	}
+	var tagResp struct {
+		Data struct {
+			Tags []struct {
+				Name  string `json:"name"`
+				Count int    `json:"count"`
+			} `json:"tags"`
+			Edges []struct {
+				A string `json:"a"`
+				B string `json:"b"`
+			} `json:"edges"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &tagResp); err != nil {
+		t.Fatalf("decode tags: %v", err)
+	}
+	if len(tagResp.Data.Tags) != 3 || tagResp.Data.Tags[0].Name != "手账" || tagResp.Data.Tags[0].Count != 2 {
+		t.Fatalf("标签频次不对（应手账=2 在前），实际 %+v", tagResp.Data.Tags)
+	}
+	if len(tagResp.Data.Edges) != 2 {
+		t.Fatalf("应有 2 条共现边，实际 %+v", tagResp.Data.Edges)
 	}
 }

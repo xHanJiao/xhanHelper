@@ -88,7 +88,7 @@
 
 四条设计要点：
 
-1. **不收导航组**（文档/账单/监控/记忆/进浏览器）。`TopBarButton.keyEquivalent`（⌘1–5）是挂在
+1. **不收导航组**（文档/灵阅/监控/浏览器/记忆）。`TopBarButton.keyEquivalent`（⌘1–5）是挂在
    **被渲染的按钮**上的（`keyboardShortcut`），整组收进 `⋯` 会连快捷键一起丢掉；收标题只是截断文字。
    故最末杠杆是标签而不是导航组 —— 与最初设想的「DEV → 中心槽 → 导航组」不同，理由在实现时才发现。
    （DEV 徽标自 2026-10-14 起不再参与降级，顺序只剩「中心槽组 → 标签收窄」，见 §7。）
@@ -227,3 +227,12 @@
   （`xHelperMac/App.swift`），从此不会有第二份注册。
 - **影响文件**：`xHelperMac/App.swift`、`Shared/Views/{ContentView,AppBackdrop}.swift`（注释）、`docs/bugs/038`、本文件。
 - **不变**：降级顺序、宽度账、`⋯` 落位一律不动（本条只动"有几份顶栏"）。
+
+### 2026-10-31 · `⌘2` 从账单换成灵阅
+
+- **需求**（用户原话）：「把 cmd+2 从账单换成灵阅」。
+- **决定**：导航组第二颗按钮 `open-bills`（账单）换成 `open-artifacts`（灵阅，图标 `doc.richtext`），
+  `⌘2` 随之改为打开灵阅；账单降级到右栏首页网格（`BrowsePanel.allCases`）与设置「账单记录」，
+  顶栏不再有账单入口（`⌘1–5` 只有 5 个槽，属刻意取舍）。导航组仍是 5 颗按钮，降级/宽度账不变。
+- **影响文件**：`Shared/Views/TopBarView.swift`、`xHelperMac/ShortcutGuideView.swift`、`Shared/Views/TopBarLayout.swift`（注释）、
+  `docs/design/mac-apps/chat-pip-mode.md`、本文件。

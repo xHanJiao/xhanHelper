@@ -63,7 +63,13 @@ const samplePage = `<html><head><style>h1{color:#333}</style></head><body>
 </body></html>`
 
 func artArgs(title, summary, html string) json.RawMessage {
-	b, _ := json.Marshal(map[string]string{"title": title, "summary": summary, "html": html})
+	b, _ := json.Marshal(map[string]string{"title": title, "summary": summary, "tags": "测试标签", "html": html})
+	return b
+}
+
+// artArgsWithTags — 指定标签的新建（测标签校验/归一化用）。
+func artArgsWithTags(title, summary, tags, html string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"title": title, "summary": summary, "tags": tags, "html": html})
 	return b
 }
 
@@ -76,6 +82,12 @@ func reviseArgs(title, summary, html, id string) json.RawMessage {
 // reviseHTMLArgs — 改版只给 html（标题/摘要沿用旧页）。
 func reviseHTMLArgs(html, id string) json.RawMessage {
 	b, _ := json.Marshal(map[string]string{"html": html, "artifact_id": id})
+	return b
+}
+
+// reviseWithTagsArgs — 改版同时给标签（老页补标签用）。
+func reviseWithTagsArgs(html, id, tags string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"html": html, "artifact_id": id, "tags": tags})
 	return b
 }
 
@@ -98,9 +110,9 @@ func TestHTMLArtifactListAcrossConversations(t *testing.T) {
 
 	base := time.Now().Add(-time.Hour)
 	seed := []model.Artifact{
-		{ID: "p1", UserID: "u1", ConversationID: "c1", Title: "10.18 手账", Summary: "s1", HTML: samplePage, CreatedAt: base},
-		{ID: "p2", UserID: "u1", ConversationID: "c2", Title: "10.19 手账", Summary: "s2", HTML: samplePage, CreatedAt: base.Add(time.Minute)},
-		{ID: "p3", UserID: "u2", ConversationID: "c3", Title: "别人的", Summary: "s3", HTML: samplePage, CreatedAt: base.Add(2 * time.Minute)},
+		{ID: "p1", UserID: "u1", ConversationID: "c1", Title: "10.18 手账", Summary: "s1", Tags: "手账", HTML: samplePage, CreatedAt: base},
+		{ID: "p2", UserID: "u1", ConversationID: "c2", Title: "10.19 手账", Summary: "s2", Tags: "手账", HTML: samplePage, CreatedAt: base.Add(time.Minute)},
+		{ID: "p3", UserID: "u2", ConversationID: "c3", Title: "别人的", Summary: "s3", Tags: "手账", HTML: samplePage, CreatedAt: base.Add(2 * time.Minute)},
 	}
 	for i := range seed {
 		if err := db.Create(&seed[i]).Error; err != nil {
@@ -1528,5 +1540,353 @@ func TestHTMLArtifactPatchReplayClearsUpdated(t *testing.T) {
 	}
 	if len(pr.Updated) != 0 || pr.Inserted != 0 || pr.Removed != 0 {
 		t.Fatalf("幂等重放不该报任何变更: %+v", pr)
+	}
+}
+
+// 标签必填：新建必须 1–5 个；全角逗号/重复要归一化；失败不落库。
+func TestHTMLArtifactCreateRequiresTags(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-tags"}
+
+	res := tl.Execute(ec, "create", artArgsWithTags("页", "摘要", "", samplePage))
+	if res.Success || !strings.Contains(res.Error, "tags 必填") {
+		t.Fatalf("无标签应被拒: success=%v err=%q", res.Success, res.Error)
+	}
+
+	res = tl.Execute(ec, "create", artArgsWithTags("页", "摘要", "a,b,c,d,e,f", samplePage))
+	if res.Success || !strings.Contains(res.Error, "最多 5 个") {
+		t.Fatalf("6 个标签应被拒: success=%v err=%q", res.Success, res.Error)
+	}
+
+	res = tl.Execute(ec, "create", artArgsWithTags("页", "摘要", "手账，旅行，手账", samplePage))
+	if !res.Success {
+		t.Fatalf("全角逗号+重复应归一化后通过: %s", res.Error)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", artifactIDFrom(t, res)).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Tags != "手账,旅行" {
+		t.Fatalf("标签应归一化为『手账,旅行』，实际 %q", got.Tags)
+	}
+}
+
+// 改版标签：不传沿用旧页；旧页没有标签时必须补上。
+func TestHTMLArtifactRevisionTags(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-tags-revise"}
+
+	res := tl.Execute(ec, "create", artArgsWithTags("页", "摘要", "手账,旅行", samplePage))
+	if !res.Success {
+		t.Fatalf("create: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	// 改版只给 html：标签沿用
+	res = tl.Execute(ec, "create", reviseHTMLArgs(samplePage, id))
+	if !res.Success {
+		t.Fatalf("改版应沿用标签: %s", res.Error)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Tags != "手账,旅行" {
+		t.Fatalf("标签应沿用，实际 %q", got.Tags)
+	}
+
+	// 存量老页（没有标签）：改版不传 tags → 报错；传了 → 成功补上
+	legacy := &model.Artifact{
+		ID: "legacy", UserID: "u1", ConversationID: "c1",
+		Title: "老页", Summary: "s", HTML: samplePage, SourceHTML: samplePage,
+	}
+	if err := db.Create(legacy).Error; err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	res = tl.Execute(ec, "create", reviseHTMLArgs(samplePage, "legacy"))
+	if res.Success || !strings.Contains(res.Error, "一起传 tags") {
+		t.Fatalf("老页改版缺标签应被拒: success=%v err=%q", res.Success, res.Error)
+	}
+	res = tl.Execute(ec, "create", reviseWithTagsArgs(samplePage, "legacy", "补上的标签"))
+	if !res.Success {
+		t.Fatalf("老页改版补标签应成功: %s", res.Error)
+	}
+	var legacyGot model.Artifact
+	if err := db.First(&legacyGot, "id = ?", "legacy").Error; err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if legacyGot.Tags != "补上的标签" {
+		t.Fatalf("老页标签应补上，实际 %q", legacyGot.Tags)
+	}
+}
+
+// patch 改标签：空串拒绝；整套替换；无标签老页改内容时给补标签提示。
+func TestHTMLArtifactPatchTags(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-patch-tags"}
+
+	res := tl.Execute(ec, "create", artArgsWithTags("页", "摘要", "手账", samplePage))
+	if !res.Success {
+		t.Fatalf("create: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	patchTags := func(tags string) *Result {
+		args, _ := json.Marshal(map[string]any{"artifact_id": id, "tags": tags})
+		return tl.Execute(ec, "patch", args)
+	}
+	if res := patchTags(""); res.Success || !strings.Contains(res.Error, "至少") {
+		t.Fatalf("清空标签应被拒: success=%v err=%q", res.Success, res.Error)
+	}
+	if res := patchTags("旅行, 日本"); !res.Success {
+		t.Fatalf("改标签失败: %s", res.Error)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Tags != "旅行,日本" || !strings.Contains(got.SourceHTML, "三方案对比") {
+		t.Fatalf("只应改标签、不动正文: tags=%q html=%q", got.Tags, got.SourceHTML)
+	}
+
+	// 存量老页：patch 正文不拦，但提示补标签
+	legacy := &model.Artifact{
+		ID: "legacy-p", UserID: "u1", ConversationID: "c1",
+		Title: "老页", Summary: "s", HTML: samplePage, SourceHTML: samplePage,
+	}
+	if err := db.Create(legacy).Error; err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	out := getOutlineResult(t, tl, "legacy-p")
+	t1 := outlineByNID(t, out, "t1")
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": "legacy-p",
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "改过"}},
+	})
+	pres := tl.Execute(ec, "patch", args)
+	if !pres.Success {
+		t.Fatalf("老页 patch 正文不该被拦: %s", pres.Error)
+	}
+	var pr struct {
+		Tip string `json:"tip"`
+	}
+	if err := json.Unmarshal(pres.Data, &pr); err != nil {
+		t.Fatalf("decode patch: %v", err)
+	}
+	if !strings.Contains(pr.Tip, "还没有标签") {
+		t.Fatalf("应提示补标签，实际 tip=%q", pr.Tip)
+	}
+}
+
+// list 的标签/关键词筛选 + list_tags + untagged 计数。
+func TestHTMLArtifactListFilterAndListTags(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-list-tags"}
+
+	for i, spec := range []struct{ title, tags string }{
+		{"东京手账", "手账,旅行"},
+		{"月度理财", "手账,理财"},
+		{"Go 笔记", "Golang"},
+	} {
+		args, _ := json.Marshal(map[string]string{
+			"title": spec.title, "summary": "摘要", "tags": spec.tags,
+			"html": strings.Replace(samplePage, "三方案对比", spec.title, 1),
+		})
+		res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: fmt.Sprintf("turn-%d", i)}, "create", args)
+		if !res.Success {
+			t.Fatalf("create %s: %s", spec.title, res.Error)
+		}
+	}
+	// 存量老页（无标签）→ untagged=1
+	if err := db.Create(&model.Artifact{
+		ID: "old-l", UserID: "u1", ConversationID: "c1",
+		Title: "老页", Summary: "s", HTML: samplePage, SourceHTML: samplePage,
+	}).Error; err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	list := func(args string) (int, string, int) {
+		res := tl.Execute(ec, "list", json.RawMessage(args))
+		if !res.Success {
+			t.Fatalf("list %s: %s", args, res.Error)
+		}
+		var out struct {
+			Items []struct {
+				ArtifactID string `json:"artifact_id"`
+				Tags       string `json:"tags"`
+			} `json:"items"`
+			Total    int `json:"total"`
+			Untagged int `json:"untagged"`
+		}
+		if err := json.Unmarshal(res.Data, &out); err != nil {
+			t.Fatalf("decode list: %v", err)
+		}
+		id := ""
+		if len(out.Items) > 0 {
+			id = out.Items[0].ArtifactID
+		}
+		return out.Total, id, out.Untagged
+	}
+
+	if total, _, untagged := list(`{"tag":"旅行"}`); total != 1 || untagged != 1 {
+		t.Fatalf("tag=旅行 应命中 1 条且 untagged=1，实际 total=%d untagged=%d", total, untagged)
+	}
+	if total, _, _ := list(`{"keyword":"理财"}`); total != 1 {
+		t.Fatalf("keyword=理财 应命中 1 条，实际 %d", total)
+	}
+	if total, _, _ := list(`{"tag":"Golang"}`); total != 1 {
+		t.Fatalf("tag=Golang 应命中 1 条，实际 %d", total)
+	}
+
+	res := tl.Execute(ec, "list_tags", nil)
+	if !res.Success {
+		t.Fatalf("list_tags: %s", res.Error)
+	}
+	var tagOut struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.Unmarshal(res.Data, &tagOut); err != nil {
+		t.Fatalf("decode tags: %v", err)
+	}
+	if len(tagOut.Tags) != 4 || tagOut.Tags[0] != "手账" {
+		t.Fatalf("标签应按频次降序（手账=2 在前）共 4 个，实际 %+v", tagOut.Tags)
+	}
+}
+
+// delete：自己的删掉、越权/不存在进 missing、重复去重、空入参报错。
+func TestHTMLArtifactDelete(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+
+	res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "t1"}, "create", artArgs("a", "s", samplePage))
+	if !res.Success {
+		t.Fatalf("create a: %s", res.Error)
+	}
+	idA := artifactIDFrom(t, res)
+	res = tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "t2"}, "create", artArgs("b", "s", samplePage))
+	if !res.Success {
+		t.Fatalf("create b: %s", res.Error)
+	}
+	idB := artifactIDFrom(t, res)
+
+	if err := db.Create(&model.Artifact{
+		ID: "other", UserID: "u2", ConversationID: "c2", Title: "别人的", Summary: "s", Tags: "x", HTML: samplePage,
+	}).Error; err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
+
+	delArgs, _ := json.Marshal(map[string]any{"artifact_ids": []string{idA, idB, idA, "other", "nope"}})
+	dres := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "delete", delArgs)
+	if !dres.Success {
+		t.Fatalf("delete: %s", dres.Error)
+	}
+	var out struct {
+		Deleted int      `json:"deleted"`
+		Missing []string `json:"missing"`
+	}
+	if err := json.Unmarshal(dres.Data, &out); err != nil {
+		t.Fatalf("decode delete: %v", err)
+	}
+	if out.Deleted != 2 {
+		t.Fatalf("应删 2 条（去重后），实际 %d", out.Deleted)
+	}
+	if len(out.Missing) != 2 {
+		t.Fatalf("missing 应含 other/nope，实际 %+v", out.Missing)
+	}
+	var n int64
+	if err := db.Model(&model.Artifact{}).Where("user_id = ?", "u1").Count(&n).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("u1 的页应全删，剩 %d", n)
+	}
+
+	if res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "delete", json.RawMessage(`{"artifact_ids":[]}`)); res.Success {
+		t.Fatal("空 artifact_ids 应报错")
+	}
+	if res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "delete", nil); res.Success {
+		t.Fatal("缺参应报错")
+	}
+}
+
+// 早于 source_html 列的老页：改标签不用原文，改内容仍要整页重建。
+func TestHTMLArtifactPatchTagsOnLegacyPage(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1"}
+	if err := db.Create(&model.Artifact{
+		ID: "legacy-t", UserID: "u1", ConversationID: "c1",
+		Title: "老页", Summary: "s", HTML: samplePage, // SourceHTML 空
+	}).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]any{"artifact_id": "legacy-t", "tags": "补,标签"})
+	if res := tl.Execute(ec, "patch", args); !res.Success {
+		t.Fatalf("老页只改标签应成功: %s", res.Error)
+	}
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", "legacy-t").Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Tags != "补,标签" || got.HTML != samplePage {
+		t.Fatalf("只应改标签、不动正文: %+v", got)
+	}
+
+	opsArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": "legacy-t",
+		"ops":         []map[string]string{{"nid": "t1", "hash": "x", "text": "改"}},
+	})
+	res := tl.Execute(ec, "patch", opsArgs)
+	if res.Success || !strings.Contains(res.Error, "早期格式") {
+		t.Fatalf("老页改内容应被拒并说明原因: success=%v err=%q", res.Success, res.Error)
+	}
+}
+
+// 不带 tags 的正文 patch 不能把「并发改的标签」写回旧值。
+//
+// 注意不能按「先改标签、再改正文」顺序测：patch 里的 GetForRead 读到的已经是新标签，
+// 旧实现把同一个值写回去也照样通过。这里用 SQLite 触发器在任何 html 更新之前把 tags
+// 改成新值，稳定模拟「读到旧标签 → 别人改标签 → 正文落库」的窗口：旧实现会覆盖回去。
+func TestHTMLArtifactPatchWithoutTagsKeepsCurrentTags(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-keep-tags"}
+
+	res := tl.Execute(ec, "create", artArgsWithTags("页", "摘要", "手账", samplePage))
+	if !res.Success {
+		t.Fatalf("create: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	// 并发的「只改标签」：抢在正文 UPDATE 之前把 tags 换成新值
+	if err := db.Exec(`CREATE TRIGGER bump_tags BEFORE UPDATE OF html ON artifacts
+		BEGIN UPDATE artifacts SET tags = '旅行,日本' WHERE id = NEW.id; END;`).Error; err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	out := getOutlineResult(t, tl, id)
+	t1 := outlineByNID(t, out, "t1")
+	bodyArgs, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "新标题"}},
+	})
+	if res := tl.Execute(ec, "patch", bodyArgs); !res.Success {
+		t.Fatalf("改正文: %s", res.Error)
+	}
+
+	var got model.Artifact
+	if err := db.First(&got, "id = ?", id).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Tags != "旅行,日本" {
+		t.Fatalf("不带 tags 的正文 patch 把并发改的标签回滚了，实际 %q", got.Tags)
+	}
+	if !strings.Contains(got.SourceHTML, "新标题") {
+		t.Fatal("正文应已更新")
 	}
 }

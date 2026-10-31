@@ -210,18 +210,20 @@ columns(n, [blocks]) / tag / divider / footer
     {"nid": "img2", "hash": "77aa88bb"}
   ],
   "style": "…<style> 里的 CSS…",
-  "style_hash": "11223344"
+  "style_hash": "11223344",
+  "tags": "手账,旅行"
 }
 ```
 
-- 四类至少给一个（`ops` / `insert` / `remove` / `style`）；
+- `ops` / `insert` / `remove` / `style` 至少给一个；`tags` 也可单独给（那一次只改标签）；
+- `tags`（可选，2026-10-31）：整套替换标签，1–5 个，空串拒绝；不参与块编辑的 hash 校验，也不触发正文重新清洗（只改 `tags` 列）；
 - `insert`：插到 `after` 块的后面；`html` 是**块级片段**（figure/div/p/img…），图片写 `image:<id>`，服务端统一清洗 + 内联；单次 ≤10 段；
 - `remove`：删掉整块；单次 ≤20 块。删完从该块的父节点向上**收缩变空的容器**（判据见 §4.5「空容器」）：删图不留空相框 + 孤立图注，删光单元格不留 `<table>` 骨架；同一 figure 里还有别的图就不动；
 - 同一块不能既在 `ops` 又在 `remove`；`insert.after` 也不能是被删的块；
 - 全部校验通过才写入（**事务性**），任何一个失败整次拒绝、不动库；
 - 写完重新走 `htmlsanitize` + `inlineImages`，同时更新 `html` 与 `source_html`；
-- 返回只回摘要：`{"artifact_id", "title", "summary", "updated": ["t3", "img2"], "inserted": 1, "removed": 1, "style_updated": true, "page_bytes": 3620}`。`updated` 只列**内容被替换**的块（`ops` 的 nid）；删除块有自己的计数（`removed`），不再混进 `updated`——删掉的块连 nid 都不存在了，混进去只会让调用方误判「哪块只是改了字」。
-  带 `title`/`summary` 是给客户端的：patch 后同 id 的卡要按「只留最新」收敛到本轮，摘要得跟着更新。
+- 返回只回摘要：`{"artifact_id", "title", "summary", "tags", "updated": ["t3", "img2"], "inserted": 1, "removed": 1, "style_updated": true, "page_bytes": 3620}`。`updated` 只列**内容被替换**的块（`ops` 的 nid）；删除块有自己的计数（`removed`），不再混进 `updated`——删掉的块连 nid 都不存在了，混进去只会让调用方误判「哪块只是改了字」。
+  带 `title`/`summary`/`tags` 是给客户端的：patch 后同 id 的卡要按「只留最新」收敛到本轮，摘要与标签得跟着更新。
 
 #### create
 
@@ -482,3 +484,6 @@ patch
   - 修：`insertPlan.after` 死字段删除；`ErrNoStyle` 改名 `ErrNoHead`（`Style()` 无样式已改为返回空）；幂等重放连 `updated` 一起清空。
   - 改：页脚文案改回「锚在页脚之前那块」——锚在 `<footer>` 内部的块上会插进页脚（`TestInsertInsideFooterStaysInside` 钉住）；描述补一句「表格是最后一个块时只能整页重写」。
   - 影响文件：`util/htmlpatch/htmlpatch.go`（`contentOf` 递归、`liftAlways`、`dangerousTags`、`insertPlan`、`ErrNoHead`）+测试、`tool/html_artifact.go`（描述、幂等分支）+测试、`tool/image.go` + `service/image_store.go`（`available`）、本文件。
+- **2026-10-31 · patch 支持改标签**
+  - 加：`patch(tags=…)` 整套替换标签（1–5 个，空串拒绝）；不传＝不动。只改标签时不重传整页、不触发重新清洗（`newSrc == src` 分支直接 `SetTags`）；无标签老页改正文会返回补标签的 `tip`。
+  - 影响文件：`tool/html_artifact.go`（patch 的 `tags` 参数、`validateArtifactTags`、`SetTags` 分支）+测试、`service/artifact_repo.go`（+`SetTags`）、`design.md`、本文件。

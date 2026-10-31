@@ -364,7 +364,7 @@ struct TopBarView: View {
 
     private func registerDefaultGroups() {
         // 默认左槽为空：无浏览器时左侧不放按钮（浏览器态由浏览器组 priority 10 填充）
-        // 右槽位 priority 5：导航组（文档/账单/监控/浏览器）+ 工具组（侧栏/深浅色/设置），防被普通组覆盖。
+        // 右槽位 priority 5：导航组（文档/灵阅/监控/浏览器/记忆）+ 工具组（侧栏/深浅色/设置），防被普通组覆盖。
         // 两组合并进同一优先级，注册顺序决定渲染顺序：导航组在左、工具组在右，组间自动分隔线。
         var buttons: [TopBarButton] = [
             TopBarButton(id: "enter-browser", icon: { "globe" },
@@ -382,10 +382,10 @@ struct TopBarView: View {
                          action: { openBrowsePanel(.documents) },
                          help: { "打开文档" },
                          keyEquivalent: ("1", .command)),
-            TopBarButton(id: "open-bills", icon: { "yensign.circle" },
+            TopBarButton(id: "open-artifacts", icon: { "doc.richtext" },
                          enabled: { true },
-                         action: { openBrowsePanel(.bills) },
-                         help: { "打开账单" },
+                         action: { openBrowsePanel(.artifacts) },
+                         help: { "打开灵阅" },
                          keyEquivalent: ("2", .command)),
             TopBarButton(id: "open-monitor", icon: { "chart.bar.xaxis" },
                          enabled: { true },
@@ -439,7 +439,7 @@ struct TopBarView: View {
         #endif
     }
 
-    /// 打开右侧栏浏览面板（文档/账单/监控），复用浏览面板态
+    /// 打开右侧栏浏览面板（文档/灵阅/监控），复用浏览面板态
     private func openBrowsePanel(_ panel: BrowsePanel) {
         rightSidebar.isOpen = true
         rightSidebar.showBrowsePanel()

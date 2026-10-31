@@ -6,6 +6,20 @@ struct TagBadge: Identifiable {
     let color: Color
 }
 
+extension String {
+    /// 逗号分隔的标签串 → 卡片标签胶囊（服务端已归一化，这里只切分去空格）。
+    var tagBadges: [TagBadge] {
+        split(separator: ",")
+            .map { TagBadge(text: $0.trimmingCharacters(in: .whitespaces), color: Color("appAccent")) }
+            .filter { !$0.text.isEmpty }
+    }
+}
+
+extension Optional where Wrapped == String {
+    /// 让 `doc.tags` / `artifact.tags` 这类可选串直接取标签胶囊（nil → 空）。
+    var tagBadges: [TagBadge] { (self ?? "").tagBadges }
+}
+
 struct CardAction: Identifiable {
     /// 稳定身份：同一张卡片每次重新求值不该换 id（`UUID()` 会让 `ForEach` 当新视图重建）。
     var id: String { "\(icon)|\(label)" }

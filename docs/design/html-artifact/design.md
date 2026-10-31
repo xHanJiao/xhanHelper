@@ -84,9 +84,18 @@ type Artifact struct {
 
 **改版时 `title` / `summary` 可选**：不传就沿用旧页（见 §8.3），只有正文是必填。
 
+**标签必填（2026-10-31 起）**：每页 1–5 个（半角逗号，写入统一走 `service.NormalizeTags`）。
+
+- 新建 `html.create` 必传 `tags`；改版不传＝沿用旧页标签，**旧页本来没有标签时这次必须补上**（必填规则上线前的存量老页靠这条补）。
+- `html.patch(tags=…)` 整套替换，传空串拒绝（至少留一个）；只改标签不动正文。
+- 灵阅标签与文档标签是**两套独立命名空间**：`html.list_tags` 只回灵阅用过的标签，不能拿 `document.list_tags` 的结果套用。
+- 存量老页不回填、也不会被自动打标签；`html.list` 的 `untagged` 只是提醒模型改到它们时补上。
+
 **模型怎么拿到 id、又怎么读到旧内容**：不能假设它记得。同一个工具上有一对只读函数：
 
-- `html.list` — 最近 10 页（`artifact_id` / 标题 / 摘要 / 创建时间，**用户级、不按会话过滤**，换了窗口也查得到）。
+- `html.list` — 最近 10 页（`artifact_id` / 标题 / 摘要 / 标签 / 创建时间，**用户级、不按会话过滤**，换了窗口也查得到）。支持 `keyword`（搜标题/摘要）、`tag`（单标签过滤）、`offset`（翻页）；返回里带 `untagged`（还没标签的老页数）。
+- `html.list_tags` — 灵阅用过的标签（按频次降序），只为让模型复用已有标签、别造同义词。
+- `html.delete` — 软删 1–100 条（去重后）。越权/已删的 id 静默跳过，在 `missing` 里点名；灵阅无回收站，删了不可恢复。
 - `html.get` — 按 `view` 读取（默认 `outline`）：块清单（nid / 首 60 字 / hash）、单块全文、`<style>`、整页原文。读的是 `artifacts.source_html`（模型给的原文，图片仍是 `image:<id>` 引用），**不是** `html` 列——那列里图片已内联成几 MB 的 `data:`，整页塞回上下文不现实。整页读回上限 128KB。
 - `html.patch` — 按 nid / style 做局部修改，不重传整页（改文字、换图、改 CSS 走它，见 `fine-grained-edit.md`）。
 
@@ -362,13 +371,16 @@ v1 不提供这个入口。省下的不只是几行代码：清洗标准只剩�
 
 数据源与消息表无关：
 
-- 列表 `GET /api/artifacts?limit=30&offset=0` → `{items, total}`，`WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC`。
-- **只 `Select` 五列**（id/title/summary/conversation_id/created_at）。正文 `html` 不进 SQL、也不进 JSON（`Artifact.HTML` 是 `json:"-"`），沿用 §4.1 的硬规则。
+- 列表 `GET /api/artifacts?limit=30&offset=0&tags=a,b&keyword=` → `{items, total}`，`WHERE user_id = ? AND deleted_at IS NULL`（标签按逗号边界、多标签取交集），`ORDER BY created_at DESC, id DESC`。`limit=0` 只出 `total`（词云「查看 N 页」用）；`limit`/`offset` 非数字或越界、`tags` 超过 10 个一律 400（参数错误不静默降级）。
+- 词云 `GET /api/artifacts/tags` → `{tags:[{name,count}], edges:[{a,b,count}]}`，与文档 `/documents/tags` 同构（共现统计共用 `buildTagGraph`）。
+- **只 `Select` 六列**（id/title/summary/tags/conversation_id/created_at）。正文 `html` 不进 SQL、也不进 JSON（`Artifact.HTML` 是 `json:"-"`），沿用 §4.1 的硬规则。
 - 详情仍只有 `GET /api/artifacts/:id` 一个正文出口。
 
 界面与交互：
 
-- `PageContainer` + `CardGridView` + `CardConfig`（标题 + 摘要 2 行 + 日期脚注），与文档列表同款观感；不做搜索、不按会话分组。删除见 §9.7（单条 + 多选批量）。
+- `PageContainer` + `CardGridView` + `CardConfig`（标题 + 摘要 2 行 + 标签胶囊 + 日期脚注），与文档列表同款观感；不按会话分组。
+- **列表 / 词云两态**（2026-10-31，macOS）：页头 `Picker` 切换；词云复用 `TagCloudView`，点标签筛列表、⌘ 多选看交集篇数、「清除筛选」回词云。列表态页头也有搜索（2026-10-31 起）：关键词走后端 `keyword` 搜**标题/摘要**，与已选标签**取交集**；页面正文（`html`）不参与检索，词云态的搜索仍是纯本地高亮标签。
+- 删除见 §9.7（单条 + 多选批量）；删除入口只在列表态出现。
 - 点一条 → `ArtifactOpenCoordinator.open(id:title:)` → 右栏开 tab 渲染整页（与聊天卡片同一条路径，同一 id 再点是切回去）。
 - 「灵阅」是浏览面板的一种态；离开再回来会重新拉第一页（`ArtifactViewModel.load` 在 `.task` 里），顺带把刚生成的产物顶到最前面。
 - 空态：「暂无内容。可在对话中生成页面后回到此处查看。」
@@ -725,3 +737,14 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 起因：复审发现该入口直连 `manager.closeTab`。除了不进恢复栈，更实际的问题是网页 session 漏在 `BrowserToolProvider.tabs` 里——UI 关了，agent `list_tabs` 还能看到、还能操作；下载也失去确认。
   - 决定：改走 `BrowserToolProvider.closeTab`，与 tab 条 X / 右键「关闭」同一收尾路径（teardown + 恢复栈 + 下载确认）。
   - 影响文件：`client/xHelper/xHelper/Shared/Views/RightSidebarView.swift`。
+- **2026-10-31 · 灵阅工具对齐文档（删除 / 标签 / 搜索）+ 标签词云**
+  - 起因：灵阅只能生、不能删（删除只在客户端），列表看不到第 31 页以后，也没有任何分类维度；文档工具反倒有 `delete_document` / `list_tags` / `query_documents`。
+  - 决定：`html` 加 `delete`（软删 1–100 条，越权进 `missing`）、`list_tags`、`list` 的 `tag`/`keyword`/`offset`；标签**必填 1–5 个**（新建必传，改版不传沿用旧页、旧页无标签时必须补，`patch(tags=…)` 整体替换且拒绝清空）；存量老页不回填，只靠 `untagged` 提醒。
+  - 决定：客户端完整仿文档词云（列表/词云切换、⌘ 多选交集、共现高亮、标签高亮搜索，macOS）；`ArtifactSummary.tags` 下发到卡片；词云状态机与 `DocumentViewModel` 各持一份（共享的是 `TagCloudView` / `TagChip`），`parseTags` 抽成 `String.tagBadges` 共用。
+  - 决定：REST 列表加 `tags`（交集）/`keyword`，`limit=0` 改为只出 total；新增 `GET /api/artifacts/tags`。`ArtifactRepo.ListByTags` 内部复用文档的 `tagBoundaryClause`，共现统计抽 `buildTagGraph` 供文档与灵阅共用。
+  - 影响文件：`server/.../model/artifact.go`（+`tags`）、`service/artifact_repo.go`（+`ListByTags` / `TagGraph` / `ListTags` / `CountUntagged` / `SetTags` / `ExistingIDs`、`Update` 加 tags）、`service/document_repo.go`（抽 `buildTagGraph`）、`controller/artifact.go`（+`ListArtifactTags`、列表参数）、`controller/router.go`、`tool/html_artifact.go`（+`delete` / `list_tags`、标签必填校验、`create`/`patch`/`list`/`get` 带 tags）+测试；`client/.../Models/ArtifactRef.swift`（+`tags` / `ArtifactTagListResponse`）、`Services/APIClient.swift`（+`tags`/`keyword`/`artifactCount`/`listArtifactTags`）、`ViewModels/ArtifactViewModel.swift`（+词云状态）、`Views/ArtifactListView.swift`（+词云页/卡片标签）、`Views/BrowsePanelView.swift`（+列表/词云切换、minTagCount、标签高亮搜索）、`Views/CardStyle.swift`（+`tagBadges`）、`Views/DocumentListView.swift`（−重复 `parseTags`）。
+- **2026-10-31 · 灵阅列表支持关键词搜索（标题/摘要）**
+  - 起因：后端 `keyword` 和 `html.list(keyword=…)` 早就有了，客户端只把它接到了 `APIClient`，界面没有入口；产物攒多后只能翻页找。
+  - 决定：`ArtifactViewModel` 加 `keyword` + `search()`，`load` / `loadMore` 带上；列表态页头搜索框复用 `TransientSearchPanel`（不传 `fields`，不做字段多选），与标签筛选 AND；空态文案区分「暂无内容 / 未找到匹配的页面」。词云态仍是本地高亮标签（同一个搜索入口，按 `mode` 分流）。不做正文检索：灵阅没有 `content` 列，`summary` 是模型写的一句话，搜 HTML 需要新增纯文本列 + 回填，留到有真实需求再说。
+  - 影响文件：`client/xHelper/xHelper/Shared/ViewModels/ArtifactViewModel.swift`（+`keyword` / `search` / 代际守卫，两处 `listArtifacts` 带 `keyword`）、`Views/BrowsePanelView.swift`（页头入口改为列表/词云都在、按 `mode` 分流面板与草稿）、`Views/ArtifactListView.swift`（空态文案）、`ViewModels/DocumentViewModel.swift`（同构的 load/loadMore 代际守卫）。
+  - 副作用：查询串统一走新增的 `Extensions/String+URLQuery.swift`（`urlQueryEscaped` 减掉 `& = + ? ;`），替换 `APIClient` 里全部手写 `.urlQueryAllowed`；浏览器地址栏兜底搜索与 `AppBrowserWebView.searchURL` 一并收口（搜「A&B」不再被截断）。

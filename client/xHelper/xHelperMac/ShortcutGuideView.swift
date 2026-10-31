@@ -29,7 +29,7 @@ struct ShortcutGuideView: View {
         ]),
         ShortcutSection(icon: "menubar.rectangle", title: "面板导航", hint: "顶部工具栏", items: [
             ShortcutItem(keys: ["⌘", "1"], desc: "文档"),
-            ShortcutItem(keys: ["⌘", "2"], desc: "账单"),
+            ShortcutItem(keys: ["⌘", "2"], desc: "灵阅"),
             ShortcutItem(keys: ["⌘", "3"], desc: "监控面板"),
             ShortcutItem(keys: ["⌘", "4"], desc: "浏览器"),
             ShortcutItem(keys: ["⌘", "5"], desc: "记忆"),

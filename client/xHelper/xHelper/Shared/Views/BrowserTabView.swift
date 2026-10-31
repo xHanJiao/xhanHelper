@@ -377,7 +377,7 @@ struct BrowserTabView: View {
             guard let u = URL(string: s) else { return }
             target = u
         } else {
-            let q = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let q = raw.urlQueryEscaped
             guard let u = URL(string: "https://cn.bing.com/search?q=\(q)") else { return }
             target = u
         }

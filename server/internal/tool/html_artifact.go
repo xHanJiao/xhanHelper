@@ -24,6 +24,9 @@ const (
 	maxArtifactsPerTurn = 3
 	maxArtifactTitleLen = 80
 	maxArtifactSumLen   = 200
+	// maxArtifactTags / maxArtifactTagsLen — 标签必填且最多 5 个（防标签泛滥把词云冲垮）。
+	maxArtifactTags    = 5
+	maxArtifactTagsLen = 100
 	// maxInlineImages — 单页最多内联几张图。真正兜体积的是 MaxInlineBytes，
 	// 这个只管"别为一张页读几十个文件"（一页手账放 12 张已经是极限）。
 	maxInlineImages = 12
@@ -73,16 +76,16 @@ func NewHTMLArtifactTool(repo *service.ArtifactRepo, images *service.ImageStore)
 func (t *HTMLArtifactTool) Name() string { return "html" }
 
 func (t *HTMLArtifactTool) Description() string {
-	return "生成、修改或读取可在右栏打开的 HTML 页面，用来做排版本身承载信息的内容（对比表、时间线、一页纸总结、图文混排、仪表盘式汇总）。"
+	return "生成、修改、读取、删除可在右栏（灵阅）打开的 HTML 页面，用来做排版本身承载信息的内容（对比表、时间线、一页纸总结、图文混排、仪表盘式汇总）。每页必须带 1–5 个标签，用于灵阅的词云与筛选。"
 }
 
 func (t *HTMLArtifactTool) Catalog() (CatalogEntry, bool) {
-	return CatalogEntry{ShortDesc: "生成/修改/读取可打开的 HTML 页面（对比/时间线/总结）", Funcs: []string{"create", "list", "get", "patch"}}, true
+	return CatalogEntry{ShortDesc: "生成/改/读/删可打开的 HTML 页面（对比/时间线/总结），每页带 1–5 个标签", Funcs: []string{"create", "list", "get", "patch"}, Others: "删除页面、标签（list_tags）"}, true
 }
 
-// ReadOnlyFuncs — `list` / `get` 只读，plan 模式也能用；`create` / `patch` 写库。
+// ReadOnlyFuncs — `list` / `get` / `list_tags` 只读，plan 模式也能用；`create` / `patch` / `delete` 写库。
 func (t *HTMLArtifactTool) ReadOnlyFuncs() map[string]bool {
-	return map[string]bool{"list": true, "get": true}
+	return map[string]bool{"list": true, "get": true, "list_tags": true}
 }
 
 func (t *HTMLArtifactTool) Functions() []FuncSchema {
@@ -102,12 +105,14 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			fmt.Sprintf("放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片压到适合屏幕的尺寸（最长边 %d）再内联进页面，别自己写 base64、也不用担心原图多大。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单页最多 %d 张不同图片（同一张重复引用只算一张）且内联后的图片总量 ≤%dMB。", service.InlineMaxEdge, maxInlineImages, htmlsanitize.MaxInlineBytes>>20),
 			"观感参考（手账只是其中一种，别套模板、别固定风格）：手账风＝米色纸底 + 胶带/时间轴 + 手写感标题；对比页＝两栏并排 + 色块区分优劣；时间线＝左侧时间列 + 竖向连线；一页纸总结＝大标题 + 三块要点。留白充足、统一配色，别做满屏边框。",
 			"summary 必须一句话说清这页讲了什么（用户据此决定点不点），不要写「以下是对比」「详见下图」，也不要在里面记修改历史。",
+			"每页必须带 1–5 个标签（tags，半角逗号分隔）。打之前先 html.list_tags 看已有哪些标签能复用，别造同义词（手账/手帐）；灵阅标签独立于文档标签，别拿 document.list_tags 的结果套用。改版不传 tags＝沿用旧页；旧页还没有标签时，这次必须补上。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"title":   map[string]interface{}{"type": "string", "description": fmt.Sprintf("页面标题，≤%d 字，会显示在卡片和右栏标签上。新建必填；改版不传＝沿用旧页", maxArtifactTitleLen)},
 				"summary": map[string]interface{}{"type": "string", "description": fmt.Sprintf("一句话摘要，≤%d 字，说清这页讲了什么。新建必填；改版不传＝沿用旧页（别在这里写本次改了什么）", maxArtifactSumLen)},
+				"tags":    map[string]interface{}{"type": "string", "description": fmt.Sprintf("标签，半角逗号分隔，必填 1–%d 个（如 手账,旅行）。新建必传；改版不传＝沿用旧页，旧页没有标签时必须补上", maxArtifactTags)},
 				"html":    map[string]interface{}{"type": "string", "description": "完整的 HTML 文档（含 <html>…</html>，样式内联在 <style> 里）"},
 				"artifact_id": map[string]interface{}{
 					"type":        "string",
@@ -121,8 +126,10 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 		Name:    "list",
 		Display: "查看页面",
 		Description: strings.Join([]string{
-			"列出最近生成的页面（就是用户说的「灵阅」/手账/那张页），按时间倒序，带 artifact_id。",
-			"用途：用户要改某一页但没给 id、或换了窗口不记得 id 时，先调它认出是哪一页，再用 html.get + html.patch 改（只有重排版式才 create 整页覆盖）。",
+			"列出最近生成的页面（就是用户说的「灵阅」/手账/那张页），按时间倒序，带 artifact_id 和标签。",
+			"用途：用户要改/删某一页但没给 id、或换了窗口不记得 id 时，先调它认出是哪一页，再用 html.get + html.patch 改（只有重排版式才 create 整页覆盖）。",
+			"用户按关键词找页时传 keyword（搜标题和摘要）；按标签找页时传 tag；要往后翻用 offset。别靠一页页读标题猜。",
+			"结果里的 untagged 是还没有标签的老页数量（必填规则上线前生成的）：下次改到它们时记得补 tags。",
 			"只读：不会新建、不会修改。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
@@ -131,6 +138,18 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 				"limit": map[string]interface{}{
 					"type":        "integer",
 					"description": "返回几条，默认 10，最多 30",
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "跳过前几条，默认 0（翻页用）",
+				},
+				"keyword": map[string]interface{}{
+					"type":        "string",
+					"description": "按标题/摘要搜关键词（可选）",
+				},
+				"tag": map[string]interface{}{
+					"type":        "string",
+					"description": "只看带这个标签的页（可选，完整标签名）",
 				},
 			},
 		},
@@ -182,6 +201,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"锚点位置：插块落在锚点之后——锚在图注/列表项上会落到整个 figure/列表之后（锚在照片上仍留在 figure 里）；要加在页面末尾就锚在页脚之前那块（锚在页脚内部的块上会插进页脚里）。别锚在表格单元格（td/th）上，那会插出非法结构。",
 			"整张 <table> 可以插；单独插 tr/td 不行，要增删行列请整页重写。表格若是页面最后一个块（后面没有块可当锚点），往后追加只能整页重写。",
 			"换图必须是 image:<id> 引用（先用 image.list_images 拿 id）。",
+			"改标签：tags=\"新,标签\"（整套替换，1–5 个）。传空串会被拒绝——每页至少一个标签；不传 tags 且这页还没有标签时，结果会提示你补上。",
 		}, "\n"),
 		Parameters: map[string]interface{}{
 			"type": "object",
@@ -241,8 +261,43 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 					"type":        "string",
 					"description": "get(view=\"style\") 返回的 hash，原样带上；页面还没有 <style> 时留空（会新建一段）",
 				},
+				"tags": map[string]interface{}{
+					"type":        "string",
+					"description": fmt.Sprintf("整套替换标签，半角逗号分隔，1–%d 个。传空串会被拒绝（每页至少一个标签）；不传＝不动标签", maxArtifactTags),
+				},
 			},
 			"required": []string{"artifact_id"},
+		},
+	}, {
+		Name:    "list_tags",
+		Display: "查看标签",
+		Description: strings.Join([]string{
+			"列出灵阅里用过的所有标签（按使用次数降序）。",
+			"新建页或换标签前先看它：能复用已有标签就别造同义词（手账/手帐）。",
+			"注意：灵阅标签独立于文档标签，不要拿 document 的 list_tags 结果套用。",
+			"只读：不会新建、不会修改。",
+		}, "\n"),
+	}, {
+		Name:    "delete",
+		Display: "删除页面",
+		Description: strings.Join([]string{
+			"删除灵阅里的页面（可一次删多条）。",
+			"只在用户明确说「删掉/去掉/不要这张」时调用；不要因为改版就删旧页——改版是 create 带 artifact_id 原地覆盖。",
+			"删除是软删、灵阅没有回收站，删了不能恢复（与文档的 7 天回收站不同）。",
+			"删完后聊天里那张旧卡片点开会提示「该页面已被删除」，这是预期，不要为此重建页面。",
+			"不知道 id 先 html.list（可按 keyword / tag 找）；越权或已删的 id 会被静默跳过并在 missing 里返回。",
+		}, "\n"),
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"artifact_ids": map[string]interface{}{
+					"type":        "array",
+					"maxItems":    100,
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "要删的页面 id 列表（html.list 或上次 create 返回的 artifact_id），1–100 个",
+				},
+			},
+			"required": []string{"artifact_ids"},
 		},
 	}}
 }
@@ -257,6 +312,10 @@ func (t *HTMLArtifactTool) Execute(ec *ExecuteContext, funcName string, args jso
 		return t.get(ec, args)
 	case "patch":
 		return t.patch(ec, args)
+	case "list_tags":
+		return t.listTags(ec, args)
+	case "delete":
+		return t.delete(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("未知函数: %s", funcName)}
 	}
@@ -322,6 +381,7 @@ func (t *HTMLArtifactTool) get(ec *ExecuteContext, args json.RawMessage) *Result
 			"artifact_id": a.ID,
 			"title":       a.Title,
 			"summary":     a.Summary,
+			"tags":        a.Tags,
 			"html":        src,
 		})
 	default:
@@ -350,6 +410,7 @@ func (t *HTMLArtifactTool) getOutline(src string, a *model.Artifact) *Result {
 		"artifact_id": a.ID,
 		"title":       a.Title,
 		"summary":     a.Summary,
+		"tags":        a.Tags,
 		"blocks":      items,
 		"style_bytes": styleBytes,
 		"page_bytes":  len(src),
@@ -448,6 +509,7 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		} `json:"remove"`
 		Style     *string `json:"style"`
 		StyleHash string  `json:"style_hash"`
+		Tags      *string `json:"tags"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
 		return &Result{Success: false, Error: err.Error()}
@@ -456,8 +518,8 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	if id == "" {
 		return &Result{Success: false, Error: "artifact_id 必填（先用 html.list 查）"}
 	}
-	if len(req.Ops) == 0 && len(req.Insert) == 0 && len(req.Remove) == 0 && req.Style == nil {
-		return &Result{Success: false, Error: "ops / insert / remove / style 至少给一个"}
+	if len(req.Ops) == 0 && len(req.Insert) == 0 && len(req.Remove) == 0 && req.Style == nil && req.Tags == nil {
+		return &Result{Success: false, Error: "ops / insert / remove / style / tags 至少给一个"}
 	}
 	if len(req.Ops) > maxPatchOps {
 		return &Result{Success: false, Error: fmt.Sprintf("一次最多改 %d 个块（收到 %d 个）", maxPatchOps, len(req.Ops))}
@@ -481,8 +543,10 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		return &Result{Success: false, Error: fmt.Sprintf("读页面失败: %v", err)}
 	}
 	src := a.SourceHTML
-	if src == "" {
-		return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块改；只能整页重做"}
+	hasStructure := len(req.Ops) > 0 || len(req.Insert) > 0 || len(req.Remove) > 0
+	if src == "" && (hasStructure || req.Style != nil) {
+		// 只有改标签不需要原文；改内容只能整页重建（create 带 artifact_id）
+		return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块改；改标签可以直接传 tags，改内容请整页重建"}
 	}
 	if req.Style != nil && strings.TrimSpace(req.StyleHash) == "" {
 		// 页面本来没有 <style> 时允许新建；有旧样式就必须带 hash，否则并发改会互相覆盖
@@ -497,7 +561,6 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 
 	newSrc := src
 	var changed []string
-	hasStructure := len(req.Ops) > 0 || len(req.Insert) > 0 || len(req.Remove) > 0
 	if hasStructure {
 		edit := htmlpatch.Edit{
 			Ops:     make([]htmlpatch.Op, 0, len(req.Ops)),
@@ -538,7 +601,7 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		}
 	}
 	// 两处返回同一组字段（没有 tip 的幂等分支也不例外）
-	patchResult := func(pageBytes int, changedNow bool, tip string) *Result {
+	patchResult := func(tagsOut string, pageBytes int, changedNow bool, tip string) *Result {
 		inserted, removed := len(req.Insert), len(req.Remove)
 		updated := changed
 		if !changedNow {
@@ -548,6 +611,7 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 			"artifact_id":   id,
 			"title":         a.Title,
 			"summary":       a.Summary,
+			"tags":          tagsOut,
 			"updated":       updated,
 			"inserted":      inserted,
 			"removed":       removed,
@@ -560,9 +624,32 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		return resultJSON(out)
 	}
 
+	// 标签先校验：必填 1–5 个，传空串＝想清空，直接拒绝（每页至少一个标签）。
+	tagsOut := a.Tags
+	tagsChanged := false
+	if req.Tags != nil {
+		v, msg := validateArtifactTags(*req.Tags)
+		if msg != "" {
+			return &Result{Success: false, Error: msg}
+		}
+		tagsOut = v
+		tagsChanged = v != a.Tags
+	}
+
 	if newSrc == src {
-		// 幂等重放（同一个 patch 又来一次）：内容没变，直接当成功
-		return patchResult(len(src), false, "")
+		if !tagsChanged {
+			// 幂等重放（同一个 patch 又来一次）：内容没变，直接当成功
+			return patchResult(a.Tags, len(src), false, "")
+		}
+		ok, err := t.repo.SetTags(ec.Ctx, ec.UserID, id, tagsOut)
+		if err != nil {
+			log.Printf("[html] patch tags id=%s user=%s: %v", id, ec.UserID, err)
+			return &Result{Success: false, Error: fmt.Sprintf("保存标签失败: %v", err)}
+		}
+		if !ok {
+			return &Result{Success: false, Error: "页面已变（另一处删除了它），请重新 html.list 确认"}
+		}
+		return patchResult(tagsOut, len(src), false, "标签已更新")
 	}
 
 	// 重新清洗 + 内联：patch 改的是原文，成品也要跟着重算
@@ -574,7 +661,13 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		return &Result{Success: false, Error: err.Error()}
 	}
 
-	ok, err := t.repo.UpdateIfSourceUnchanged(ec.Ctx, ec.UserID, id, src, clean, newSrc)
+	// 只有显式传了 tags 才把标签并进这次 UPDATE；不传就完全不碰 tags 列，
+	// 避免把并发「只改标签」的结果静默写回旧值。
+	var tagsParam *string
+	if req.Tags != nil {
+		tagsParam = &tagsOut
+	}
+	ok, err := t.repo.UpdateIfSourceUnchanged(ec.Ctx, ec.UserID, id, src, clean, newSrc, tagsParam)
 	if err != nil {
 		log.Printf("[html] patch save id=%s user=%s: %v", id, ec.UserID, err)
 		return &Result{Success: false, Error: fmt.Sprintf("保存页面失败: %v", err)}
@@ -592,7 +685,11 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		// 增删块之后 nid 会顺移（content hash 没变，变的是「第几块」），旧 nid/hash 配对失效
 		tip = "已改结构；块编号已重排，继续改请重新 get(view=\"outline\") 拿新 nid/hash，不要重传整页"
 	}
-	return patchResult(len(newSrc), true, tip)
+	if tagsOut == "" {
+		// 存量老页：内容照改，但提醒这一次或下一次把必填标签补上
+		tip += "；这页还没有标签，下次 patch 时带上 tags（1–5 个）"
+	}
+	return patchResult(tagsOut, len(newSrc), true, tip)
 }
 
 // patchErrorMessage — 把 htmlpatch 的错误翻成模型能照着自愈的话。
@@ -634,13 +731,32 @@ func resultJSON(v map[string]any) *Result {
 	return &Result{Success: true, Data: data}
 }
 
+// validateArtifactTags — 灵阅标签必填且限 1–5 个（归一化后计数）。
+// 返回归一化后的标签串与给模型看的错误文案（空串＝通过）。
+func validateArtifactTags(raw string) (string, string) {
+	tags := service.NormalizeTags(raw)
+	if tags == "" {
+		return "", fmt.Sprintf("tags 必填：至少给这页打 1 个标签（1–%d 个，半角逗号分隔，如 手账,旅行）", maxArtifactTags)
+	}
+	if n := len(strings.Split(tags, ",")); n > maxArtifactTags {
+		return "", fmt.Sprintf("标签最多 %d 个（收到 %d 个），合并成更少的维度", maxArtifactTags, n)
+	}
+	if utf8.RuneCountInString(tags) > maxArtifactTagsLen {
+		return "", fmt.Sprintf("标签总长超过 %d 字，精简一下", maxArtifactTagsLen)
+	}
+	return tags, ""
+}
+
 // list — 最近生成的页面（标题 + id + 时间），让模型在「改刚才那页」时能认出目标。
 //
 // 用户级而不是会话级：换个窗口说「改一下刚才的灵阅」时，那页是在别的会话里生成的，
 // 按 conversation_id 过滤会直接查不到（这正是「工具只能写、不知道改啥」的根因）。
 func (t *HTMLArtifactTool) list(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		Limit int `json:"limit"`
+		Limit   int    `json:"limit"`
+		Offset  int    `json:"offset"`
+		Keyword string `json:"keyword"`
+		Tag     string `json:"tag"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
 		return &Result{Success: false, Error: err.Error()}
@@ -650,7 +766,14 @@ func (t *HTMLArtifactTool) list(ec *ExecuteContext, args json.RawMessage) *Resul
 	} else if req.Limit > 30 {
 		req.Limit = 30 // 要 30 就给 30，别静默降到默认值
 	}
-	rows, total, err := t.repo.ListByUser(ec.Ctx, ec.UserID, req.Limit, 0)
+	if req.Offset < 0 {
+		req.Offset = 0
+	}
+	var tags []string
+	if tag := strings.TrimSpace(req.Tag); tag != "" {
+		tags = []string{tag}
+	}
+	rows, total, err := t.repo.ListByTags(ec.Ctx, ec.UserID, tags, strings.TrimSpace(req.Keyword), req.Limit, req.Offset)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("查页面列表失败: %v", err)}
 	}
@@ -660,10 +783,85 @@ func (t *HTMLArtifactTool) list(ec *ExecuteContext, args json.RawMessage) *Resul
 			"artifact_id": a.ID,
 			"title":       a.Title,
 			"summary":     a.Summary,
+			"tags":        a.Tags,
 			"created_at":  a.CreatedAt.Format("2006-01-02 15:04"),
 		})
 	}
-	return resultJSON(map[string]any{"items": items, "total": total})
+	out := map[string]any{"items": items, "total": total}
+	// 必填规则上线前生成的老页：提醒模型改到它们时补标签（查不到不影响列表）
+	if n, err := t.repo.CountUntagged(ec.Ctx, ec.UserID); err != nil {
+		log.Printf("[html] list count untagged user=%s: %v", ec.UserID, err)
+	} else if n > 0 {
+		out["untagged"] = n
+	}
+	return resultJSON(out)
+}
+
+// listTags — 灵阅用过的标签（按次数降序），避免模型造同义词。
+func (t *HTMLArtifactTool) listTags(ec *ExecuteContext, args json.RawMessage) *Result {
+	if err := decodeArgs(args, &struct{}{}); err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	tags, err := t.repo.ListTags(ec.Ctx, ec.UserID)
+	if err != nil {
+		log.Printf("[html] list_tags user=%s: %v", ec.UserID, err)
+		return &Result{Success: false, Error: fmt.Sprintf("查标签失败: %v", err)}
+	}
+	return resultJSON(map[string]any{"tags": tags})
+}
+
+// delete — 软删（灵阅无回收站，见 design §9.7）。越权/已删 id 静默跳过，返回 missing 说清楚。
+func (t *HTMLArtifactTool) delete(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		ArtifactIDs []string `json:"artifact_ids"`
+	}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	seen := make(map[string]bool, len(req.ArtifactIDs))
+	ids := make([]string, 0, len(req.ArtifactIDs))
+	for _, id := range req.ArtifactIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return &Result{Success: false, Error: "artifact_ids 必填，至少给一个页面 id（html.list 可查）"}
+	}
+	if len(ids) > 100 {
+		return &Result{Success: false, Error: fmt.Sprintf("一次最多删 100 页（收到 %d 个）", len(ids))}
+	}
+	// 先查哪些 id 真的属于该用户且还在，再把它们删掉：
+	// 越权/已删的 id 只进 missing，不会被算成「删成功」。
+	existing, err := t.repo.ExistingIDs(ec.Ctx, ec.UserID, ids)
+	if err != nil {
+		log.Printf("[html] delete existing ids user=%s: %v", ec.UserID, err)
+		return &Result{Success: false, Error: fmt.Sprintf("查页面失败: %v", err)}
+	}
+	alive := make(map[string]bool, len(existing))
+	for _, id := range existing {
+		alive[id] = true
+	}
+	missing := make([]string, 0)
+	for _, id := range ids {
+		if !alive[id] {
+			missing = append(missing, id)
+		}
+	}
+
+	n, err := t.repo.DeleteMany(ec.Ctx, ec.UserID, existing)
+	if err != nil {
+		log.Printf("[html] delete user=%s: %v", ec.UserID, err)
+		return &Result{Success: false, Error: fmt.Sprintf("删除页面失败: %v", err)}
+	}
+	out := map[string]any{"deleted": n}
+	if len(missing) > 0 {
+		out["missing"] = missing
+	}
+	return resultJSON(out)
 }
 
 func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Result {
@@ -671,6 +869,7 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 		ArtifactID string `json:"artifact_id"`
 		Title      string `json:"title"`
 		Summary    string `json:"summary"`
+		Tags       string `json:"tags"`
 		HTML       string `json:"html"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
@@ -688,6 +887,7 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 	}
 	// 改版：标题/摘要不传就沿用旧页——它们描述「这一页是什么」，不是「这次改了什么」。
 	// 先取旧值再校验长度，模型不用为沿用的旧值负责。
+	var oldTags string
 	if revising {
 		old, err := t.repo.GetMeta(ec.Ctx, ec.UserID, req.ArtifactID)
 		if err != nil {
@@ -703,6 +903,29 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 		if req.Summary == "" {
 			req.Summary = old.Summary
 		}
+		oldTags = old.Tags
+	}
+	// 标签：新建必填；改版不传＝沿用旧页，旧页本来没有标签时这次必须补（存量老页的补标签口）。
+	var tags string
+	if revising {
+		if strings.TrimSpace(req.Tags) == "" {
+			if oldTags == "" {
+				return &Result{Success: false, Error: "这页还没有标签：改版时请一起传 tags（1–5 个，半角逗号分隔），正好把老页补上"}
+			}
+			tags = oldTags
+		} else {
+			v, msg := validateArtifactTags(req.Tags)
+			if msg != "" {
+				return &Result{Success: false, Error: msg}
+			}
+			tags = v
+		}
+	} else {
+		v, msg := validateArtifactTags(req.Tags)
+		if msg != "" {
+			return &Result{Success: false, Error: msg}
+		}
+		tags = v
 	}
 	if utf8.RuneCountInString(req.Title) > maxArtifactTitleLen {
 		return &Result{Success: false, Error: fmt.Sprintf("title 超过 %d 字", maxArtifactTitleLen)}
@@ -730,7 +953,7 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 	if id != "" {
 		// 「改这一版」：原地覆盖，不新建行（见 design §4.2）。
 		// 找不到就报错而不是偷偷新建：静默新建正是「改一次多一张」的来源。
-		ok, err := t.repo.Update(ec.Ctx, ec.UserID, id, req.Title, req.Summary, clean, req.HTML)
+		ok, err := t.repo.Update(ec.Ctx, ec.UserID, id, req.Title, req.Summary, tags, clean, req.HTML)
 		if err != nil {
 			return &Result{Success: false, Error: fmt.Sprintf("保存页面失败: %v", err)}
 		}
@@ -745,6 +968,7 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 			ConversationID: ec.ConvID,
 			Title:          req.Title,
 			Summary:        req.Summary,
+			Tags:           tags,
 			HTML:           clean,
 			SourceHTML:     req.HTML,
 		}
@@ -767,6 +991,7 @@ func (t *HTMLArtifactTool) create(ec *ExecuteContext, args json.RawMessage) *Res
 		"type":        model.ArtifactTypeHTML,
 		"title":       req.Title,
 		"summary":     req.Summary,
+		"tags":        tags,
 	}
 	// 大页整页覆盖时顺手推一把：下次改文字走 patch，别重传整页（docs/design/html-artifact/fine-grained-edit.md §4.7）
 	if revising && len(req.HTML) > 10<<10 {

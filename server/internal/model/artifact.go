@@ -17,7 +17,11 @@ type Artifact struct {
 	ConversationID string `gorm:"size:36;not null;index" json:"conversation_id"`
 	Title          string `gorm:"size:200;not null" json:"title"`
 	Summary        string `gorm:"size:500;not null" json:"summary"`
-	HTML           string `gorm:"type:longtext;not null" json:"-"`
+	// Tags — 逗号分隔（半角），写入前必过 service.NormalizeTags。
+	// 必填 1–5 个的校验在工具层（tool/html_artifact.go）；老数据为空串。
+	// 不加 not null：SQLite 的 ALTER TABLE ADD COLUMN 不接受无默认值 NOT NULL（同 SourceHTML）。
+	Tags string `gorm:"size:500" json:"tags"`
+	HTML string `gorm:"type:longtext;not null" json:"-"`
 	// SourceHTML — 模型给的原文（清洗前、图片仍是 `image:<id>` 引用）。
 	// 只给 `html.get` 读回用：模型要改版时得拿到整页 HTML，而 HTML 列里图片已内联成
 	// 几 MB 的 data: URI，塞进上下文既不现实也浪费（见 design §4.2 / §8.5）。

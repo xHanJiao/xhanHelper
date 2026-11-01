@@ -5,6 +5,8 @@ import MarkdownIt from 'markdown-it'
 import { NDropdown, useMessage } from 'naive-ui'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import WaitingAnimation from '@/components/WaitingAnimation.vue'
+import AuthImage from '@/components/media/AuthImage.vue'
+import ImageLightbox from '@/components/media/ImageLightbox.vue'
 import { useDebugMode } from '@/composables/useDebugMode'
 import { useAuthStore } from '@/stores/auth'
 
@@ -34,6 +36,22 @@ const isTool = computed(() => props.message.role === 'tool')
 const isAssistant = computed(() => props.message.role === 'assistant')
 
 const contentHtml = computed(() => md.render(props.message.content || ''))
+
+// 用户消息附带的图片（后端存 JSON 数组字符串；本地刚发出的消息是数组）
+const imageIds = computed(() => {
+  const raw = props.message.imageIds ?? props.message.image_ids
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    console.error('Failed to parse image_ids', props.message.id, raw)
+    return []
+  }
+})
+
+const previewSrc = ref('')
 
 const timeText = computed(() => {
   if (!props.message.created_at) return ''
@@ -161,8 +179,19 @@ onBeforeUnmount(() => {
     <!-- 用户消息 -->
     <div v-if="isUser" style="width: 100%; display: flex; justify-content: flex-end;">
       <div style="display: flex; flex-direction: column; align-items: flex-end; max-width: 85%;">
-        <div class="user-bubble" style="border-radius: var(--radius-lg); padding: 10px 18px; font-size: 15px; line-height: 1.6; position: relative;">
-          <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
+        <div class="user-bubble" style="border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: 15px; line-height: 1.6; position: relative;">
+          <div v-if="imageIds.length" class="user-images" :class="{ single: imageIds.length === 1 }">
+            <button
+              v-for="id in imageIds"
+              :key="id"
+              type="button"
+              class="user-image-btn"
+              @click.stop="previewSrc = `/api/images/${id}/file`"
+            >
+              <AuthImage :src="`/api/images/${id}/file`" />
+            </button>
+          </div>
+          <div v-if="message.content" class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
           <span
             v-if="debugMode && isAdmin && !isSharedView"
             @click="router.push(`/admin/message-debug/${message.id}`)"
@@ -188,7 +217,7 @@ onBeforeUnmount(() => {
 
     <!-- 工具结果消息 -->
     <div v-else-if="isTool" style="width: 100%; display: flex;">
-      <div style="flex: 1; min-width: 0; max-width: 85%; padding: 0 var(--space-lg);">
+      <div style="flex: 1; min-width: 0; max-width: 100%; padding: 0 var(--space-sm);">
         <div class="tool-result-line">
           <span class="tool-check">✅</span>
           <span class="tool-summary-text">{{ message.content }}</span>
@@ -198,7 +227,7 @@ onBeforeUnmount(() => {
 
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
-      <div style="flex: 1; min-width: 0; max-width: 85%; border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg);">
+      <div style="flex: 1; min-width: 0; max-width: 100%; border-radius: var(--radius-lg); padding: var(--space-xs) var(--space-sm);">
         <div v-if="contentHtml" class="assistant-content" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
@@ -207,14 +236,44 @@ onBeforeUnmount(() => {
         <div v-if="timeText" class="msg-time assistant-time">{{ timeText }}</div>
       </div>
     </div>
+
+    <ImageLightbox v-if="previewSrc" :src="previewSrc" :visible="true" @close="previewSrc = ''" />
   </div>
 </template>
 
 <style scoped>
-.user-bubble { background: var(--color-primary); color: #fff; }
+.user-bubble {
+  background: var(--color-user-bubble);
+  color: var(--color-user-text);
+  border: 0.5px solid rgba(42, 127, 88, 0.12);
+}
 .user-bubble :deep(p) { margin: 0; }
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.user-images.single { display: block; }
+.user-image-btn {
+  width: 84px;
+  height: 84px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: zoom-in;
+  background: var(--color-tool);
+}
+.user-images.single .user-image-btn { width: 168px; height: 168px; }
+.user-image-btn:hover { opacity: 0.92; }
+.user-bubble .message-content:last-child { margin-bottom: 0; }
 .assistant-content :deep(p) { margin: 0; }
-[data-theme="dark"] .user-bubble { background: var(--color-primary); color: #fff; }
+[data-theme="dark"] .user-bubble {
+  background: var(--color-user-bubble);
+  color: var(--color-user-text);
+  border-color: rgba(144, 212, 168, 0.16);
+}
 .status-badge { margin-top: var(--space-sm); }
 .msg-time {
   font-size: 11px;
@@ -335,9 +394,7 @@ onBeforeUnmount(() => {
 
 /* 触摸设备上禁用文本选中，避免长按弹出菜单时文字进入选中态 */
 @media (hover: none) and (pointer: coarse) {
-  .user-bubble,
-  .assistant-content,
-  .message-content {
+  .user-bubble {
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;

@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>M1 · 骨架与移动端预览</title>
+<style>
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --base: 16px;
+    --r-card: 14px;
+    --r-item: 12px;
+    --r-pill: 999px;
+    --safe-bottom: 34px;
+  }
+  html[data-theme="light"] {
+    --bg: #F7EEDD;
+    --bg-deep: #EFE2C8;
+    --text: #3B2E1F;
+    --text-2: rgba(59,46,31,.64);
+    --text-3: rgba(59,46,31,.42);
+    --accent: #2F7D63;
+    --accent-2: #41C9E2;
+    --accent-soft: rgba(47,125,99,.10);
+    --user-text: #2A7F58;
+    --user-bubble: rgba(42,127,88,.10);
+    --input: #F2F7F3;
+    --tool: #E8E4EF;
+    --card: rgba(255,255,255,.50);
+    --card-2: rgba(255,255,255,.26);
+    --border: rgba(59,46,31,.10);
+    --border-strong: rgba(59,46,31,.16);
+    --shadow: 0 18px 50px rgba(59,46,31,.12);
+    --shadow-soft: 0 8px 24px rgba(59,46,31,.08);
+    --danger: #C0504D;
+    --ok: #2F7D63;
+  }
+  html[data-theme="dark"] {
+    --bg: #1C1C1E;
+    --bg-deep: #141416;
+    --text: #FFFFFF;
+    --text-2: rgba(255,255,255,.66);
+    --text-3: rgba(255,255,255,.40);
+    --accent: #92C8B4;
+    --accent-2: #41C9E2;
+    --accent-soft: rgba(146,200,180,.14);
+    --user-text: #90D4A8;
+    --user-bubble: rgba(144,212,168,.12);
+    --input: #2C2E2D;
+    --tool: #2E2B36;
+    --card: rgba(255,255,255,.06);
+    --card-2: rgba(255,255,255,.03);
+    --border: rgba(255,255,255,.12);
+    --border-strong: rgba(255,255,255,.18);
+    --shadow: 0 18px 50px rgba(0,0,0,.34);
+    --shadow-soft: 0 8px 24px rgba(0,0,0,.28);
+    --danger: #E07A76;
+    --ok: #92C8B4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: var(--font);
+    font-size: var(--base);
+    color: var(--text);
+    background:
+      radial-gradient(900px 620px at 8% 4%, rgba(146,200,180,.30), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255,213,166,.34), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47,125,99,.18), transparent 60%),
+      linear-gradient(158deg, var(--bg) 0%, var(--bg-deep) 100%);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: rgba(255,255,255,.18);
+    pointer-events: none;
+    z-index: 0;
+  }
+  html[data-theme="dark"] body::before { background: rgba(0,0,0,.18); }
+  button { font: inherit; color: inherit; }
+  .screen { display: none; position: relative; z-index: 1; }
+  body[data-screen="desktop"] .screen[data-name="desktop"],
+  body[data-screen="mobile-chat"] .screen[data-name="mobile-chat"],
+  body[data-screen="mobile-me"] .screen[data-name="mobile-me"] { display: block; }
+
+  /* ---------- shared ---------- */
+  .frost {
+    background: linear-gradient(180deg, var(--card), var(--card-2));
+    border: .5px solid var(--border);
+    box-shadow: var(--shadow);
+    border-radius: var(--r-card);
+  }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700; font-size: 13px;
+    border: .5px solid var(--border);
+  }
+  .icon-btn, .top-btn, .ghost-btn {
+    border: .5px solid var(--border);
+    background: rgba(255,255,255,.24);
+    border-radius: var(--r-pill);
+    height: 32px; min-width: 32px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 11px;
+    cursor: pointer;
+    color: var(--text-2);
+    transition: background .18s ease, color .18s ease, border-color .18s ease;
+  }
+  html[data-theme="dark"] .icon-btn,
+  html[data-theme="dark"] .top-btn,
+  html[data-theme="dark"] .ghost-btn { background: rgba(255,255,255,.04); }
+  .icon-btn:hover, .top-btn:hover, .ghost-btn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--border-strong); }
+  .icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .muted { color: var(--text-2); }
+  .tiny { font-size: 11px; color: var(--text-3); }
+
+  /* ---------- desktop ---------- */
+  .desk-top {
+    height: 56px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 22px;
+    position: relative;
+    z-index: 30;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px;
+    font-weight: 650; font-size: 13.5px; letter-spacing: .01em;
+    color: var(--text-2);
+    margin-right: 6px;
+  }
+  .brand-mark {
+    width: 26px; height: 26px; border-radius: 9px;
+    display: grid; place-items: center;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px; font-weight: 700;
+    box-shadow: 0 4px 10px rgba(47,125,99,.22);
+  }
+  html[data-theme="dark"] .brand-mark { color: #10221B; }
+  .conv-pill {
+    height: 34px; padding: 0 13px 0 15px;
+    border-radius: var(--r-pill);
+    border: .5px solid var(--border);
+    background: rgba(255,255,255,.36);
+    display: inline-flex; align-items: center; gap: 8px;
+    cursor: pointer; max-width: 340px;
+    font-size: 13.5px; font-weight: 550;
+    transition: background .18s ease, border-color .18s ease;
+  }
+  html[data-theme="dark"] .conv-pill { background: rgba(255,255,255,.05); }
+  .conv-pill:hover { background: var(--accent-soft); border-color: var(--border-strong); }
+  .conv-pill .chev { opacity: .5; }
+  .top-spacer { flex: 1; }
+  .desk-main {
+    padding: 0 24px 24px;
+    display: flex; justify-content: center;
+  }
+  .chat-card {
+    width: min(760px, 100%);
+    height: calc(100dvh - 80px);
+    max-height: 900px;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  /* macOS 的卡片上边包住顶栏一点；这里用负 margin 近似 */
+  .chat-card::before {
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.34);
+  }
+  .chat-scroll {
+    flex: 1; overflow-y: auto;
+    padding: 22px 28px 12px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .chat-scroll::-webkit-scrollbar { width: 7px; }
+  .chat-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 99px; }
+
+  .date-divider {
+    text-align: center; font-size: 10.5px; color: var(--text-3);
+    margin: 4px 0 18px; letter-spacing: .04em;
+  }
+  .msg { margin-bottom: 20px; }
+  .msg.user { display: flex; justify-content: flex-end; }
+  .user-text {
+    max-width: 82%;
+    color: var(--user-text);
+    font-size: 15.5px; line-height: 1.65;
+    text-align: left;
+    padding: 2px 0;
+  }
+  body[data-bubble="bubble"] .user-text {
+    background: var(--user-bubble);
+    border: .5px solid rgba(42,127,88,.12);
+    padding: 10px 14px;
+    border-radius: 16px 16px 4px 16px;
+  }
+  .msg-meta { margin-top: 5px; font-size: 10px; color: var(--text-3); text-align: right; }
+  .assistant { max-width: 100%; }
+  .think-row {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-3);
+    margin-bottom: 9px;
+  }
+  .think-row .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: .55; }
+  .tool-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--tool);
+    border: .5px solid var(--border);
+    color: var(--text-2);
+    border-radius: var(--r-pill);
+    padding: 5px 11px;
+    font-size: 11.5px;
+    margin-bottom: 12px;
+  }
+  .tool-pill .check { color: var(--ok); font-weight: 700; }
+  .md { font-size: 15.5px; line-height: 1.68; }
+  .md p { margin: 0 0 12px; }
+  .md p:last-child { margin-bottom: 0; }
+  .md a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(47,125,99,.28); }
+  html[data-theme="dark"] .md a { border-bottom-color: rgba(146,200,180,.35); }
+  .md strong { font-weight: 650; }
+  .md ul { margin: 0 0 12px; padding-left: 18px; }
+  .md li { margin: 4px 0; }
+  .md code {
+    font-family: var(--mono); font-size: .86em;
+    background: var(--tool); border-radius: 5px; padding: 1px 5px;
+  }
+  .md pre {
+    background: var(--input); border: .5px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  }
+  .md table { border-collapse: collapse; width: 100%; min-width: 460px; margin: 0 0 12px; font-size: 13.5px; }
+  .md th, .md td { border-bottom: .5px solid var(--border); padding: 7px 8px; text-align: left; }
+  .md th { color: var(--text-2); font-weight: 600; }
+  .md .table-wrap { overflow-x: auto; }
+
+  /* cards */
+  .cards { display: flex; gap: 10px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 8px; margin: 2px 0 14px; }
+  .cards::-webkit-scrollbar { height: 0; }
+  .ref-card {
+    width: 240px; min-height: 92px; flex: 0 0 240px;
+    border-radius: 11px;
+    background: var(--input);
+    border: .5px solid var(--border);
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background .18s ease, transform .18s ease;
+  }
+  .ref-card:hover { background: var(--accent-soft); transform: translateY(-1px); }
+  .ref-title { font-size: 13.5px; font-weight: 650; line-height: 1.3; margin-bottom: 6px; }
+  .ref-summary { font-size: 11.5px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .ref-kind { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-3); margin-bottom: 6px; }
+  .ref-kind .mini-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .ref-card.more {
+    flex: 0 0 72px; width: 72px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    color: var(--accent);
+  }
+  .ref-card.more span { font-size: 17px; font-weight: 650; }
+  .ref-card.more small { font-size: 9px; color: var(--text-3); }
+
+  .composer {
+    padding: 8px 18px 14px;
+    background: linear-gradient(180deg, transparent, var(--card) 38%);
+  }
+  .composer-inner {
+    display: flex; align-items: flex-end; gap: 8px;
+    background: var(--input);
+    border: .5px solid var(--border);
+    border-radius: 22px;
+    padding: 8px 9px 8px 10px;
+    box-shadow: 0 6px 18px rgba(59,46,31,.06);
+  }
+  html[data-theme="dark"] .composer-inner { box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  .composer-inner .ghost-btn { border: 0; background: transparent; width: 30px; height: 30px; padding: 0; }
+  .composer-input { flex: 1; min-height: 30px; display: flex; align-items: center; color: var(--text-3); font-size: 14.5px; padding: 0 2px; }
+  .send-btn {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 0; background: var(--accent); color: #fff;
+    display: grid; place-items: center; cursor: pointer;
+    box-shadow: 0 4px 12px rgba(47,125,99,.22);
+  }
+  html[data-theme="dark"] .send-btn { color: #10221B; }
+  .composer-hint { text-align: center; font-size: 10px; color: var(--text-3); margin-top: 7px; }
+
+  /* popovers */
+  .popover {
+    position: absolute; z-index: 60;
+    display: none;
+    background: rgba(252,248,240,.94);
+    border: .5px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  }
+  html[data-theme="dark"] .popover { background: rgba(38,38,40,.94); }
+  body[data-popover="functions"] .functions-popover { display: block; }
+  body[data-popover="conversations"] .conv-popover { display: block; }
+  .functions-popover { top: 58px; right: 108px; width: 440px; padding: 14px; }
+  .fn-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .fn-item {
+    border: 0; background: transparent; text-align: left;
+    border-radius: 10px; padding: 10px 9px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .fn-item:hover { background: var(--accent-soft); }
+  .fn-ico {
+    width: 26px; height: 26px; border-radius: 8px;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent);
+    margin-bottom: 3px; font-size: 13px;
+  }
+  .fn-name { font-size: 12.5px; font-weight: 600; }
+  .fn-sub { font-size: 10px; color: var(--text-3); }
+  .pop-sep { height: .5px; background: var(--border); margin: 10px 4px; }
+  .pop-foot { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px; font-size: 11px; color: var(--text-3); }
+
+  .conv-popover { top: 58px; left: 190px; width: 380px; padding: 10px; }
+  .pop-search {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--input); border: .5px solid var(--border);
+    border-radius: 10px; padding: 8px 10px; color: var(--text-3); font-size: 12.5px;
+    margin-bottom: 8px;
+  }
+  .pop-new {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 10px; border-radius: 9px; cursor: pointer;
+    font-size: 13px; font-weight: 600; color: var(--accent);
+  }
+  .pop-new:hover { background: var(--accent-soft); }
+  .pop-list { max-height: 300px; overflow-y: auto; }
+  .pop-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 10px; border-radius: 9px; cursor: pointer;
+    font-size: 12.5px;
+  }
+  .pop-row:hover { background: var(--accent-soft); }
+  .pop-row.active { background: var(--accent-soft); }
+  .pop-row .row-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pop-row .row-time { font-size: 10px; color: var(--text-3); }
+  .pop-row .row-act { display: none; gap: 4px; }
+  .pop-row:hover .row-act { display: inline-flex; }
+  .row-act button { border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 2px; }
+  .row-act button:hover { color: var(--accent); }
+
+  /* function icons variant */
+  .fn-icons { display: none; align-items: center; gap: 6px; }
+  body[data-functions="icons"] .fn-icons { display: inline-flex; }
+  body[data-functions="icons"] .functions-trigger { display: none; }
+
+  /* right drawer variant */
+  .right-drawer {
+    display: none;
+    position: fixed; top: 0; right: 0; bottom: 0; width: 380px; z-index: 70;
+    background: rgba(252,248,240,.96);
+    border-left: .5px solid var(--border-strong);
+    box-shadow: var(--shadow);
+    padding: 18px;
+  }
+  html[data-theme="dark"] .right-drawer { background: rgba(38,38,40,.96); }
+  body[data-functions="drawer"] .right-drawer { display: block; }
+  body[data-functions="drawer"] .chat-card { margin-right: 360px; }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; font-size: 13px; font-weight: 650; }
+
+  /* ---------- phone ---------- */
+  .phone-wrap { display: flex; justify-content: center; padding: 22px 0 26px; }
+  .phone {
+    width: 390px; height: 844px; border-radius: 46px;
+    background: #171719;
+    padding: 9px;
+    box-shadow: 0 30px 70px rgba(0,0,0,.28), 0 0 0 .5px rgba(255,255,255,.12) inset;
+    position: relative;
+  }
+  .phone-screen {
+    width: 100%; height: 100%; border-radius: 38px; overflow: hidden;
+    background:
+      radial-gradient(420px 300px at 10% 4%, rgba(146,200,180,.30), transparent 64%),
+      radial-gradient(380px 300px at 96% 8%, rgba(255,213,166,.34), transparent 64%),
+      linear-gradient(160deg, var(--bg), var(--bg-deep));
+    color: var(--text);
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+  .phone-screen::before { content: ""; position: absolute; inset: 0; background: rgba(255,255,255,.14); pointer-events: none; }
+  html[data-theme="dark"] .phone-screen::before { background: rgba(0,0,0,.16); }
+  .statusbar {
+    height: 44px; padding: 12px 22px 0;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; font-weight: 650; color: var(--text);
+    position: relative; z-index: 2;
+  }
+  .status-icons { display: flex; align-items: center; gap: 5px; opacity: .9; }
+  .status-icons span { display: block; background: currentColor; border-radius: 2px; }
+  .m-top {
+    height: 48px; padding: 0 15px;
+    display: flex; align-items: center; gap: 8px;
+    position: relative; z-index: 5;
+  }
+  .m-conv {
+    flex: 1; min-width: 0;
+    border: 0; background: transparent;
+    display: flex; align-items: center; gap: 7px;
+    font-size: 14.5px; font-weight: 650; color: var(--text);
+    padding: 4px 0; cursor: pointer;
+  }
+  .m-conv .m-conv-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-icon {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: .5px solid var(--border);
+    background: rgba(255,255,255,.22);
+    display: grid; place-items: center; color: var(--text-2);
+    cursor: pointer;
+  }
+  html[data-theme="dark"] .m-icon { background: rgba(255,255,255,.05); }
+  .m-chat {
+    flex: 1; overflow-y: auto; padding: 4px 16px 10px;
+    position: relative; z-index: 1;
+  }
+  .m-chat .msg { margin-bottom: 16px; }
+  .m-chat .user-text { font-size: 15px; }
+  .m-chat .md { font-size: 15px; }
+  .m-chat .think-row { font-size: 11px; }
+  .m-chat .tool-pill { font-size: 11px; }
+  .m-chat .ref-card { width: 220px; flex-basis: 220px; }
+  .m-chat .cards .ref-card.more { width: 64px; flex-basis: 64px; }
+  .m-composer {
+    padding: 6px 12px calc(8px + var(--safe-bottom));
+    background: linear-gradient(180deg, transparent, rgba(247,238,221,.72) 40%);
+    position: relative; z-index: 4;
+  }
+  html[data-theme="dark"] .m-composer { background: linear-gradient(180deg, transparent, rgba(28,28,30,.72) 40%); }
+  .m-composer .composer-inner { border-radius: 20px; padding: 7px 8px; }
+  body[data-composer="collapsed"] .m-composer { display: none; }
+  .collapsed-composer {
+    display: none;
+    position: absolute; right: 18px; bottom: calc(70px + var(--safe-bottom)); z-index: 8;
+    width: 56px; height: 34px; border-radius: var(--r-pill);
+    background: var(--accent); color: #fff; border: 0;
+    box-shadow: 0 8px 20px rgba(47,125,99,.24);
+    font-size: 16px; cursor: pointer;
+  }
+  html[data-theme="dark"] .collapsed-composer { color: #10221B; }
+  body[data-composer="collapsed"] .collapsed-composer { display: block; }
+  .bottom-tabs {
+    height: calc(56px + var(--safe-bottom));
+    padding: 4px 8px var(--safe-bottom);
+    display: flex; align-items: flex-start; justify-content: space-around;
+    background: rgba(252,248,240,.78);
+    border-top: .5px solid var(--border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    position: relative; z-index: 10;
+  }
+  html[data-theme="dark"] .bottom-tabs { background: rgba(30,30,32,.82); }
+  .tab {
+    flex: 1; border: 0; background: transparent; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 4px 0 0; color: var(--text-3); font-size: 10px;
+  }
+  .tab .tab-ico { width: 21px; height: 21px; display: grid; place-items: center; }
+  .tab.active { color: var(--accent); }
+  .tab.active .tab-ico { background: var(--accent-soft); border-radius: 9px; }
+
+  /* me */
+  .me-scroll { flex: 1; overflow-y: auto; padding: 2px 16px calc(18px + var(--safe-bottom)); position: relative; z-index: 1; }
+  .me-title { padding: 2px 2px 14px; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  .me-profile {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px; border-radius: var(--r-item);
+    background: linear-gradient(180deg, var(--card), var(--card-2));
+    border: .5px solid var(--border);
+    box-shadow: var(--shadow-soft);
+    margin-bottom: 14px;
+  }
+  .me-profile .big-avatar {
+    width: 48px; height: 48px; border-radius: 16px;
+    display: grid; place-items: center;
+    background: var(--accent); color: #fff; font-size: 19px; font-weight: 700;
+  }
+  html[data-theme="dark"] .me-profile .big-avatar { color: #10221B; }
+  .me-name { font-size: 15.5px; font-weight: 650; }
+  .me-sub { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+  .me-badge { margin-left: auto; font-size: 10px; padding: 3px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+  .me-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .me-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 12px; border-radius: var(--r-item);
+    background: linear-gradient(180deg, var(--card), var(--card-2));
+    border: .5px solid var(--border);
+    cursor: pointer; text-align: left;
+    transition: background .18s ease, transform .18s ease;
+  }
+  .me-item:hover { background: var(--accent-soft); transform: translateY(-1px); }
+  .me-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }
+  .me-item > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+  .me-item-name { font-size: 13px; font-weight: 600; }
+  .me-item-sub { font-size: 10px; color: var(--text-3); margin-top: 1px; }
+  body[data-me="list"] .me-grid { display: flex; flex-direction: column; gap: 1px; background: var(--border); border-radius: var(--r-item); overflow: hidden; }
+  body[data-me="list"] .me-item { border-radius: 0; border: 0; }
+  .me-section { margin-top: 6px; }
+  .me-section-title { font-size: 11px; color: var(--text-3); padding: 0 4px 7px; letter-spacing: .04em; }
+  .me-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 12px; border-radius: var(--r-item);
+    background: linear-gradient(180deg, var(--card), var(--card-2));
+    border: .5px solid var(--border);
+    margin-bottom: 7px; font-size: 13px; cursor: pointer;
+  }
+  .me-row .chev { margin-left: auto; color: var(--text-3); }
+  .me-row .row-badge { margin-left: auto; font-size: 10px; color: var(--text-3); }
+
+  /* ---------- control bar ---------- */
+  .ui {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    z-index: 999;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 10px;
+    border-radius: 16px;
+    background: rgba(252,248,240,.92);
+    border: .5px solid var(--border-strong);
+    box-shadow: 0 16px 40px rgba(59,46,31,.16);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    max-width: calc(100vw - 24px);
+    color: var(--text);
+    font-size: 11px;
+  }
+  html[data-theme="dark"] .ui { background: rgba(38,38,40,.94); box-shadow: 0 16px 40px rgba(0,0,0,.34); }
+  .ui-group { display: flex; align-items: center; gap: 4px; }
+  .ui-group > span { color: var(--text-3); margin-right: 2px; white-space: nowrap; }
+  .ui button {
+    border: .5px solid var(--border); background: transparent;
+    border-radius: 8px; padding: 5px 8px; cursor: pointer;
+    color: var(--text-2); white-space: nowrap;
+  }
+  .ui button:hover { background: var(--accent-soft); color: var(--accent); }
+  .ui button.on { background: var(--accent); color: #fff; border-color: transparent; }
+  html[data-theme="dark"] .ui button.on { color: #10221B; }
+  body[data-chrome="0"] .ui { display: none; }
+  @media (max-width: 700px) {
+    .ui { display: none; }
+  }
+</style>
+</head>
+<body data-screen="desktop" data-bubble="bubble" data-functions="menu" data-me="grid" data-composer="always" data-chrome="1">
+
+<!-- ===================== DESKTOP ===================== -->
+<div class="screen" data-name="desktop">
+  <header class="desk-top">
+    <button class="conv-pill" data-popover-toggle="conversations">
+      <span>杭州行 · 三天</span>
+      <svg class="icon chev" viewBox="0 0 24 24" width="14" height="14"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <button class="icon-btn" title="新对话"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <div class="top-spacer"></div>
+
+    <div class="fn-icons" aria-label="快捷入口">
+      <button class="icon-btn" title="灵阅">✦</button>
+      <button class="icon-btn" title="文档">▤</button>
+      <button class="icon-btn" title="图片">◍</button>
+    </div>
+    <button class="top-btn functions-trigger" data-popover-toggle="functions">
+      <svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <span>功能</span>
+    </button>
+    <button class="icon-btn" data-theme-toggle title="切换主题">
+      <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <div class="avatar">X</div>
+  </header>
+
+  <main class="desk-main">
+    <section class="chat-card frost">
+      <div class="chat-scroll">
+        <div class="date-divider">今天 11:02</div>
+
+        <div class="msg user">
+          <div>
+            <div class="user-text">把杭州这三天的安排整理成一页，顺便记一下高铁和酒店的钱。</div>
+            <div class="msg-meta">11:02</div>
+          </div>
+        </div>
+
+        <div class="msg assistant">
+          <div class="think-row"><span class="dot"></span>思考内容</div>
+          <div class="tool-pill"><span class="check">✓</span> 记账 · 已记录 2 笔</div>
+          <div class="md">
+            <p>整理好了。三天按「西湖—灵隐—运河」排，酒店放在龙翔桥，晚上走回湖边不远。</p>
+            <div class="cards">
+              <div class="ref-card">
+                <div class="ref-kind"><span class="mini-dot"></span>灵阅 · 页面</div>
+                <div class="ref-title">杭州三日 · 行程手账</div>
+                <div class="ref-summary">3 天 2 晚，西湖/灵隐/运河三块，含高铁、酒店和两家想吃的店。</div>
+              </div>
+              <div class="ref-card">
+                <div class="ref-kind"><span class="mini-dot"></span>文档</div>
+                <div class="ref-title">杭州行 · 落地清单</div>
+                <div class="ref-summary">身份证、充电宝、雨伞、常用药；酒店 15:00 后入住，前台电话已存。</div>
+              </div>
+            </div>
+            <p>高铁和酒店两笔已经记到「旅行」分类，合计 <strong>¥1,846</strong>。要我把每天的步行量也估一下吗？</p>
+          </div>
+        </div>
+
+        <div class="msg assistant">
+          <div class="think-row"><span class="dot"></span>思考中...</div>
+          <div class="md"><p>可以，按你平时每天 8k–12k 步的节奏估。西湖那天会多一些，灵隐和运河相对松。</p></div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <button class="ghost-btn" title="添加图片"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12.5V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h9"/><path d="M3 16l5-5 4 4 2-2 3 3"/><circle cx="16" cy="8" r="1.2"/></svg></button>
+          <div class="composer-input">发消息，或粘贴图片…</div>
+          <button class="send-btn" title="发送"><svg class="icon" viewBox="0 0 24 24" width="17" height="17"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+        </div>
+        <div class="composer-hint">Enter 发送 · Shift + Enter 换行</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- function popover -->
+  <div class="popover functions-popover">
+    <div class="fn-grid">
+      <button class="fn-item"><span class="fn-ico">✦</span><span class="fn-name">灵阅</span><span class="fn-sub">HTML 页面</span></button>
+      <button class="fn-item"><span class="fn-ico">▤</span><span class="fn-name">文档</span><span class="fn-sub">Markdown</span></button>
+      <button class="fn-item"><span class="fn-ico">◍</span><span class="fn-name">图片</span><span class="fn-sub">图床</span></button>
+      <button class="fn-item"><span class="fn-ico">¥</span><span class="fn-name">账单</span><span class="fn-sub">记录</span></button>
+      <button class="fn-item"><span class="fn-ico">◎</span><span class="fn-name">记忆</span><span class="fn-sub">长期</span></button>
+      <button class="fn-item"><span class="fn-ico">✳</span><span class="fn-name">主题</span><span class="fn-sub">状态页</span></button>
+      <button class="fn-item"><span class="fn-ico">◇</span><span class="fn-name">智能体</span><span class="fn-sub">自定义</span></button>
+      <button class="fn-item"><span class="fn-ico">⚙</span><span class="fn-name">设置</span><span class="fn-sub">偏好</span></button>
+    </div>
+    <div class="pop-sep"></div>
+    <div class="pop-foot"><span>管理后台仅桌面端显示</span><span>⌘ K 搜索</span></div>
+  </div>
+
+  <!-- conversation popover -->
+  <div class="popover conv-popover">
+    <div class="pop-search"><svg class="icon" viewBox="0 0 24 24" width="14" height="14"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>搜索会话</div>
+    <div class="pop-new"><svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>新对话</div>
+    <div class="pop-list">
+      <div class="pop-row active"><span class="row-title">杭州行 · 三天</span><span class="row-time">11:02</span><span class="row-act"><button title="置顶">↑</button><button title="归档">▣</button></span></div>
+      <div class="pop-row"><span class="row-title">灵阅改版：手账配色</span><span class="row-time">昨天</span><span class="row-act"><button title="置顶">↑</button><button title="归档">▣</button></span></div>
+      <div class="pop-row"><span class="row-title">周报与账单汇总</span><span class="row-time">10/30</span><span class="row-act"><button title="置顶">↑</button><button title="归档">▣</button></span></div>
+      <div class="pop-row"><span class="row-title">读书笔记：纳瓦尔宝典</span><span class="row-time">10/28</span><span class="row-act"><button title="置顶">↑</button><button title="归档">▣</button></span></div>
+    </div>
+    <div class="pop-sep"></div>
+    <div class="pop-foot"><span>已归档会话 3</span><span>加载更多</span></div>
+  </div>
+
+  <!-- optional right drawer variant -->
+  <aside class="right-drawer">
+    <div class="drawer-head"><span>功能</span><span class="tiny">简单抽屉 · 备选</span></div>
+    <div class="fn-grid">
+      <button class="fn-item"><span class="fn-ico">✦</span><span class="fn-name">灵阅</span></button>
+      <button class="fn-item"><span class="fn-ico">▤</span><span class="fn-name">文档</span></button>
+      <button class="fn-item"><span class="fn-ico">◍</span><span class="fn-name">图片</span></button>
+      <button class="fn-item"><span class="fn-ico">¥</span><span class="fn-name">账单</span></button>
+    </div>
+    <div class="pop-sep"></div>
+    <div class="tiny">M1 默认不实现；如果预览后觉得右抽屉更顺手，再升级。</div>
+  </aside>
+</div>
+
+<!-- ===================== MOBILE CHAT ===================== -->
+<div class="screen" data-name="mobile-chat">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="status-icons"><span style="width:17px;height:10px;border-radius:2px;opacity:.9"></span><span style="width:3px;height:8px"></span><span style="width:3px;height:10px"></span><span style="width:22px;height:11px;border-radius:3px;opacity:.8"></span></span>
+        </div>
+        <header class="m-top">
+          <button class="m-conv">
+            <span class="m-conv-title">杭州行 · 三天</span>
+            <svg class="icon" viewBox="0 0 24 24" width="14" height="14" style="opacity:.45"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <button class="m-icon" title="新对话"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="m-icon" title="更多"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        </header>
+
+        <main class="m-chat">
+          <div class="date-divider">今天 11:02</div>
+          <div class="msg user">
+            <div>
+              <div class="user-text">把杭州这三天的安排整理成一页，顺便记一下高铁和酒店的钱。</div>
+              <div class="msg-meta">11:02</div>
+            </div>
+          </div>
+          <div class="msg assistant">
+            <div class="think-row"><span class="dot"></span>思考内容</div>
+            <div class="tool-pill"><span class="check">✓</span> 记账 · 2 笔</div>
+            <div class="md">
+              <p>整理好了。三天按「西湖—灵隐—运河」排，酒店放在龙翔桥。</p>
+              <div class="cards">
+                <div class="ref-card">
+                  <div class="ref-kind"><span class="mini-dot"></span>灵阅 · 页面</div>
+                  <div class="ref-title">杭州三日 · 行程手账</div>
+                  <div class="ref-summary">3 天 2 晚，西湖/灵隐/运河三块，含高铁、酒店和两家想吃的店。</div>
+                </div>
+                <div class="ref-card more">
+                  <span>+1</span>
+                  <small>文档</small>
+                </div>
+              </div>
+              <p>高铁和酒店两笔已经记到「旅行」分类，合计 <strong>¥1,846</strong>。</p>
+            </div>
+          </div>
+          <div class="msg assistant">
+            <div class="think-row"><span class="dot"></span>思考中...</div>
+            <div class="md"><p>可以，按你平时每天 8k–12k 步的节奏估。</p></div>
+          </div>
+        </main>
+
+        <div class="m-composer">
+          <div class="composer-inner">
+            <button class="ghost-btn" title="添加图片"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12.5V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h9"/><path d="M3 16l5-5 4 4 2-2 3 3"/><circle cx="16" cy="8" r="1.2"/></svg></button>
+            <div class="composer-input">发消息…</div>
+            <button class="send-btn" title="发送"><svg class="icon" viewBox="0 0 24 24" width="17" height="17"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+          </div>
+        </div>
+        <button class="collapsed-composer" title="展开输入">↑</button>
+
+        <nav class="bottom-tabs">
+          <button class="tab active"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg></span><span>对话</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M12 3l2.2 5.6L20 11l-5.8 2.4L12 19l-2.2-5.6L4 11l5.8-2.4L12 3z"/></svg></span><span>灵阅</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg></span><span>文档</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.8-3.4 3.4-5 7-5s6.2 1.6 7 5"/></svg></span><span>我的</span></button>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MOBILE ME ===================== -->
+<div class="screen" data-name="mobile-me">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="status-icons"><span style="width:17px;height:10px;border-radius:2px;opacity:.9"></span><span style="width:3px;height:8px"></span><span style="width:3px;height:10px"></span><span style="width:22px;height:11px;border-radius:3px;opacity:.8"></span></span>
+        </div>
+        <header class="m-top">
+          <div class="m-conv" style="cursor:default"><span class="m-conv-title">我的</span></div>
+          <button class="m-icon" title="设置"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21h-4v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3v-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3h4v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.1.38.5.65 1 .65H21v4h-.08a1.7 1.7 0 0 0-1.52 1.35z"/></svg></button>
+        </header>
+
+        <div class="me-scroll">
+          <div class="me-title">我的</div>
+          <div class="me-profile">
+            <div class="big-avatar">X</div>
+            <div>
+              <div class="me-name">xhanHelper</div>
+              <div class="me-sub">已连接 · 本机</div>
+            </div>
+            <span class="me-badge">管理员</span>
+          </div>
+
+          <div class="me-grid">
+            <button class="me-item"><span class="me-ico">◍</span><span><span class="me-item-name">图片</span><span class="me-item-sub">128 张</span></span></button>
+            <button class="me-item"><span class="me-ico">¥</span><span><span class="me-item-name">账单</span><span class="me-item-sub">本月 ¥3,240</span></span></button>
+            <button class="me-item"><span class="me-ico">◎</span><span><span class="me-item-name">记忆</span><span class="me-item-sub">86 条</span></span></button>
+            <button class="me-item"><span class="me-ico">✳</span><span><span class="me-item-name">主题</span><span class="me-item-sub">12 个</span></span></button>
+            <button class="me-item"><span class="me-ico">◇</span><span><span class="me-item-name">智能体</span><span class="me-item-sub">4 个</span></span></button>
+            <button class="me-item"><span class="me-ico">⚙</span><span><span class="me-item-name">设置</span><span class="me-item-sub">外观与账号</span></span></button>
+          </div>
+
+          <div class="me-section">
+            <div class="me-section-title">会话</div>
+            <div class="me-row"><span>已归档会话</span><span class="row-badge">3</span><span class="chev">›</span></div>
+            <div class="me-row"><span>无痕会话</span><span class="row-badge">关闭</span><span class="chev">›</span></div>
+          </div>
+
+          <div class="me-section">
+            <div class="me-section-title">帮助</div>
+            <div class="me-row"><span>快捷操作说明</span><span class="chev">›</span></div>
+            <div class="me-row"><span>退出登录</span><span class="chev">›</span></div>
+          </div>
+        </div>
+
+        <nav class="bottom-tabs">
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg></span><span>对话</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M12 3l2.2 5.6L20 11l-5.8 2.4L12 19l-2.2-5.6L4 11l5.8-2.4L12 3z"/></svg></span><span>灵阅</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg></span><span>文档</span></button>
+          <button class="tab active"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.8-3.4 3.4-5 7-5s6.2 1.6 7 5"/></svg></span><span>我的</span></button>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CONTROL BAR ===================== -->
+<div class="ui">
+  <div class="ui-group"><span>屏幕</span>
+    <button data-set="screen" data-value="desktop">桌面</button>
+    <button data-set="screen" data-value="mobile-chat">手机聊天</button>
+    <button data-set="screen" data-value="mobile-me">我的</button>
+  </div>
+  <div class="ui-group"><span>主题</span>
+    <button data-theme-toggle>浅/深</button>
+  </div>
+  <div class="ui-group"><span>气泡</span>
+    <button data-set="bubble" data-value="text">文本</button>
+    <button data-set="bubble" data-value="bubble">气泡</button>
+  </div>
+  <div class="ui-group"><span>功能入口</span>
+    <button data-set="functions" data-value="menu">菜单</button>
+    <button data-set="functions" data-value="icons">图标</button>
+    <button data-set="functions" data-value="drawer">右抽屉</button>
+  </div>
+  <div class="ui-group"><span>我的</span>
+    <button data-set="me" data-value="grid">格子</button>
+    <button data-set="me" data-value="list">列表</button>
+  </div>
+  <div class="ui-group"><span>输入区</span>
+    <button data-set="composer" data-value="always">常驻</button>
+    <button data-set="composer" data-value="collapsed">收起</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const state = {
+    screen: params.get('screen') || 'desktop',
+    theme: params.get('theme') || 'light',
+    bubble: params.get('bubble') || 'bubble',
+    functions: params.get('functions') || 'menu',
+    me: params.get('me') || 'grid',
+    composer: params.get('composer') || 'always',
+    popover: params.get('popover') || '',
+    chrome: params.get('chrome') === '0' ? '0' : '1'
+  };
+
+  function apply() {
+    document.documentElement.dataset.theme = state.theme;
+    document.body.dataset.screen = state.screen;
+    document.body.dataset.bubble = state.bubble;
+    document.body.dataset.functions = state.functions;
+    document.body.dataset.me = state.me;
+    document.body.dataset.composer = state.composer;
+    document.body.dataset.popover = state.popover;
+    document.body.dataset.chrome = state.chrome;
+    document.querySelectorAll('[data-set]').forEach((btn) => {
+      btn.classList.toggle('on', state[btn.dataset.set] === btn.dataset.value);
+    });
+  }
+
+  document.querySelectorAll('[data-set]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state[btn.dataset.set] = btn.dataset.value;
+      state.popover = '';
+      apply();
+    });
+  });
+
+  document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.theme = state.theme === 'light' ? 'dark' : 'light';
+      apply();
+    });
+  });
+
+  document.querySelectorAll('[data-popover-toggle]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = btn.dataset.popoverToggle;
+      state.popover = state.popover === target ? '' : target;
+      apply();
+    });
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.popover') && !e.target.closest('[data-popover-toggle]')) {
+      state.popover = '';
+      apply();
+    }
+  });
+
+  apply();
+  if (params.get('debug') === '1') {
+    const p = document.querySelector('.phone');
+    const r = p ? p.getBoundingClientRect() : null;
+    const c = document.querySelector('.screen[data-name="mobile-chat"] .cards');
+    const cr = c ? c.getBoundingClientRect() : null;
+    const m = document.querySelector('.screen[data-name="mobile-chat"] .ref-card.more');
+    const mr = m ? m.getBoundingClientRect() : null;
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;background:#fff;color:#000;font:12px monospace;padding:6px';
+    d.textContent = 'inner=' + innerWidth + ' body.scroll=' + document.body.scrollWidth + ' phone=' + (r ? Math.round(r.left) + ',' + Math.round(r.width) : 'none') + ' cards=' + (cr ? Math.round(cr.left) + ',' + Math.round(cr.width) : 'none') + ' more=' + (mr ? Math.round(mr.left) + ',' + Math.round(mr.width) : 'none');
+    document.body.appendChild(d);
+  }
+})();
+</script>
+</body>
+</html>

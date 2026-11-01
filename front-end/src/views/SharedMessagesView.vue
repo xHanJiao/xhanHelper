@@ -53,7 +53,7 @@ onMounted(async () => {
 
 <style scoped>
 .shared-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   overflow-y: auto;
   background: var(--color-bg-page);
 }

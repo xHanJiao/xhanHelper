@@ -1,0 +1,15 @@
+{
+  "name": "xhanHelper",
+  "short_name": "xhanHelper",
+  "description": "个人 AI Agent（对话 / 灵阅 / 文档）",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F7EEDD",
+  "theme_color": "#F7EEDD",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

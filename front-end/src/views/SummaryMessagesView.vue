@@ -68,7 +68,7 @@ onMounted(fetchSummaryMessages)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+  <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
     <PageTopBar title="摘要详情" :visible="!isMobile || isBarVisible" />
 
     <div

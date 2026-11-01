@@ -44,6 +44,14 @@ export const api = {
     headers: { 'Content-Type': contentType },
     body
   }).then(r => r.json()).then(unwrap),
+  // multipart 上传：不设 Content-Type，边界交给浏览器
+  upload: (path, file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request(path, { method: 'POST', body: form }).then(r => r.json()).then(unwrap)
+  },
+  // 取二进制（图床私有读要 Bearer，不能直接给 <img src>）
+  blob: (path) => request(path).then(r => r.blob()),
   patch: (path, body) => request(path, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

@@ -126,7 +126,7 @@ onMounted(fetchPrompts)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+  <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
     <PageTopBar title="System Prompt 管理" :visible="!isMobile || isBarVisible">
       <template #right>
         <TopBarBtn label="创建 Prompt" @click="openCreate" />

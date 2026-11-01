@@ -47,7 +47,7 @@ function toggleMode() {
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--color-bg-page);">
+  <div style="height: 100dvh; display: flex; align-items: center; justify-content: center; background: transparent;">
     <NCard title="xhanHelper" style="width: 400px; text-align: center;">
       <NForm>
         <NFormItem label="用户名">

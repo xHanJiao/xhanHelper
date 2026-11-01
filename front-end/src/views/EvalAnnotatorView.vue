@@ -808,8 +808,8 @@ onMounted(() => loadProjects())
 .eval-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  background: var(--color-bg-page);
+  height: 100%;
+  background: transparent;
 }
 .eval-tabs {
   padding: 0 var(--space-lg);
@@ -842,7 +842,7 @@ onMounted(() => loadProjects())
 .session-row.clickable:hover { background: var(--color-hover); }
 .session-row .time { flex: 0.6; }
 
-.annotate-layout { display: flex; gap: 0; height: calc(100vh - 180px); }
+.annotate-layout { display: flex; gap: 0; height: calc(100dvh - 180px); }
 .query-list-panel { width: 300px; flex-shrink: 0; border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
 .panel-toolbar { padding: 8px; }
 .query-items { flex: 1; overflow-y: auto; }

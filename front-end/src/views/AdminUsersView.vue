@@ -216,8 +216,8 @@ const columns = computed(() => [
 .users-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  background: var(--color-bg-page);
+  height: 100%;
+  background: transparent;
   min-width: 0;
 }
 .users-topbar {

@@ -57,6 +57,13 @@ export const useThemeStore = defineStore('theme', () => {
     apply(isDark.value, naiveTheme)
   }
 
+  // 设置页用：明确选择浅/深，写入 localStorage
+  function setAndSave(v) {
+    isDark.value = !!v
+    apply(isDark.value, naiveTheme)
+    try { localStorage.setItem(KEY, isDark.value ? 'dark' : 'light') } catch {}
+  }
+
   // 内嵌模式：app 切主题 → 媒体查询变化 → 页面即时跟随
   if (typeof window !== 'undefined') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
@@ -70,5 +77,5 @@ export const useThemeStore = defineStore('theme', () => {
 
   load()
 
-  return { isDark, naiveTheme, toggle, set }
+  return { isDark, naiveTheme, toggle, set, setAndSave }
 })

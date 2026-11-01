@@ -218,7 +218,7 @@ onMounted(loadAnchor)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+  <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
     <PageTopBar title="对话重放对比" :visible="true">
       <template #right>
         <span @click="goBack" style="cursor: pointer; font-size: 14px; color: var(--color-primary);">← 返回</span>

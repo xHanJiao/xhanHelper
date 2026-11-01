@@ -600,7 +600,7 @@ onMounted(loadRound)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+  <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
     <PageTopBar v-if="!isMacEmbedded()" title="消息调试" :visible="true">
       <template #right>
         <span @click="router.push(`/admin/replay-compare/${msgId}`)" style="cursor: pointer; font-size: 13px; color: var(--color-warning); margin-right: 16px;">对比重放</span>

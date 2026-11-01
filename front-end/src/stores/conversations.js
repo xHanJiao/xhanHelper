@@ -61,15 +61,48 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
-  // 删除会话
+  // 删除会话（归档）
   async function remove(id) {
     try {
       await api.delete(`/api/conversations/${id}`)
       list.value = list.value.filter(c => c.id !== id)
+      total.value = Math.max(0, total.value - 1)
       return { success: true }
     } catch (e) {
-      console.error('Failed to delete conversation', e)
-      return { success: false, message: '删除失败' }
+      console.error('Failed to remove conversation', e)
+      return { success: false, message: '归档失败' }
+    }
+  }
+
+  // 置顶/取消置顶
+  async function togglePin(id, pinned) {
+    try {
+      await api.patch(`/api/conversations/${id}`, { pinned })
+      const conv = list.value.find(c => c.id === id)
+      if (conv) conv.pinned = pinned
+      // 后端列表按 pin 时间倒排；本地也把置顶项挪到前面
+      list.value = [...list.value].sort((a, b) =>
+        (Number(!!b.pinned) - Number(!!a.pinned)) ||
+        (new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+      )
+      return { success: true }
+    } catch (e) {
+      console.error('Failed to pin conversation', e)
+      return { success: false, message: '置顶失败' }
+    }
+  }
+
+  // 已归档会话（设置页用）
+  async function fetchArchived(offset = 0) {
+    loading.value = true
+    try {
+      const res = await api.get(`/api/conversations?archived=true&limit=${pageSize}&offset=${offset}`)
+      return { list: res.conversations || [], total: res.total || 0 }
+    } catch (e) {
+      console.error('Failed to fetch archived conversations', e)
+      return { list: [], total: 0 }
+    } finally {
+      loading.value = false
     }
   }
 
@@ -82,6 +115,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     updateTitle,
     updateAgent,
     rename,
-    remove
+    remove,
+    togglePin,
+    fetchArchived
   }
 })

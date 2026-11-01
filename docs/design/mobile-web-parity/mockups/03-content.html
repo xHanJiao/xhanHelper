@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>M3 · 灵阅、文档、设置预览</title>
+<style>
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --safe-bottom: 34px;
+  }
+  html[data-theme="light"] {
+    --bg:#F7EEDD; --bg-deep:#EFE2C8; --text:#3B2E1F; --text-2:rgba(59,46,31,.64); --text-3:rgba(59,46,31,.42);
+    --accent:#2F7D63; --accent-soft:rgba(47,125,99,.10); --user-text:#2A7F58;
+    --input:#F2F7F3; --tool:#E8E4EF; --card:rgba(255,255,255,.50); --card-2:rgba(255,255,255,.26);
+    --border:rgba(59,46,31,.10); --border-strong:rgba(59,46,31,.16); --shadow:0 18px 50px rgba(59,46,31,.12);
+    --shadow-soft:0 8px 24px rgba(59,46,31,.08); --ok:#2F7D63; --danger:#C0504D; --mark:rgba(47,125,99,.13);
+  }
+  html[data-theme="dark"] {
+    --bg:#1C1C1E; --bg-deep:#141416; --text:#FFFFFF; --text-2:rgba(255,255,255,.66); --text-3:rgba(255,255,255,.40);
+    --accent:#92C8B4; --accent-soft:rgba(146,200,180,.14); --user-text:#90D4A8;
+    --input:#2C2E2D; --tool:#2E2B36; --card:rgba(255,255,255,.06); --card-2:rgba(255,255,255,.03);
+    --border:rgba(255,255,255,.12); --border-strong:rgba(255,255,255,.18); --shadow:0 18px 50px rgba(0,0,0,.34);
+    --shadow-soft:0 8px 24px rgba(0,0,0,.28); --ok:#92C8B4; --danger:#E07A76; --mark:rgba(146,200,180,.16);
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; min-height:100%; }
+  body {
+    font-family:var(--font); font-size:16px; color:var(--text);
+    background:
+      radial-gradient(900px 620px at 8% 4%, rgba(146,200,180,.30), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255,213,166,.34), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47,125,99,.18), transparent 60%),
+      linear-gradient(158deg, var(--bg), var(--bg-deep));
+    background-attachment:fixed;
+  }
+  body::before { content:""; position:fixed; inset:0; background:rgba(255,255,255,.18); pointer-events:none; z-index:0; }
+  html[data-theme="dark"] body::before { background:rgba(0,0,0,.18); }
+  button { font:inherit; color:inherit; }
+  .screen { display:none; position:relative; z-index:1; }
+  body[data-screen="artifacts"] .screen[data-name="artifacts"],
+  body[data-screen="artifact-detail"] .screen[data-name="artifact-detail"],
+  body[data-screen="doc-desktop"] .screen[data-name="doc-desktop"],
+  body[data-screen="doc-mobile"] .screen[data-name="doc-mobile"],
+  body[data-screen="settings"] .screen[data-name="settings"] { display:block; }
+  .frost { background:linear-gradient(180deg,var(--card),var(--card-2)); border:.5px solid var(--border); box-shadow:var(--shadow); border-radius:14px; }
+  .icon { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .icon-btn { border:.5px solid var(--border); background:rgba(255,255,255,.24); border-radius:999px; height:32px; min-width:32px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:0 11px; cursor:pointer; color:var(--text-2); }
+  html[data-theme="dark"] .icon-btn { background:rgba(255,255,255,.04); }
+  .icon-btn:hover { background:var(--accent-soft); color:var(--accent); }
+  .tiny { font-size:10px; color:var(--text-3); }
+
+  /* phone shell */
+  .phone-wrap { display:flex; justify-content:center; padding:22px 0 26px; }
+  .phone { width:390px; height:844px; border-radius:46px; background:#171719; padding:9px; box-shadow:0 30px 70px rgba(0,0,0,.28),0 0 0 .5px rgba(255,255,255,.12) inset; }
+  .phone-screen { width:100%; height:100%; border-radius:38px; overflow:hidden; background:radial-gradient(420px 300px at 10% 4%,rgba(146,200,180,.30),transparent 64%),radial-gradient(380px 300px at 96% 8%,rgba(255,213,166,.34),transparent 64%),linear-gradient(160deg,var(--bg),var(--bg-deep)); display:flex; flex-direction:column; position:relative; }
+  .phone-screen::before { content:""; position:absolute; inset:0; background:rgba(255,255,255,.14); pointer-events:none; }
+  html[data-theme="dark"] .phone-screen::before { background:rgba(0,0,0,.16); }
+  .statusbar { height:44px; padding:12px 22px 0; display:flex; align-items:center; justify-content:space-between; font-size:12px; font-weight:650; position:relative; z-index:2; }
+  .status-icons { display:flex; align-items:center; gap:5px; opacity:.9; }
+  .status-icons span { display:block; background:currentColor; border-radius:2px; }
+  .m-top { height:48px; padding:0 15px; display:flex; align-items:center; gap:8px; position:relative; z-index:5; }
+  .m-title { flex:1; min-width:0; font-size:14.5px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:7px; }
+  .m-icon { width:32px; height:32px; border-radius:50%; border:.5px solid var(--border); background:rgba(255,255,255,.22); display:grid; place-items:center; color:var(--text-2); cursor:pointer; flex:0 0 auto; }
+  html[data-theme="dark"] .m-icon { background:rgba(255,255,255,.05); }
+  .bottom-tabs { height:calc(56px + var(--safe-bottom)); padding:4px 8px var(--safe-bottom); display:flex; align-items:flex-start; justify-content:space-around; background:rgba(252,248,240,.78); border-top:.5px solid var(--border); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); position:relative; z-index:10; }
+  html[data-theme="dark"] .bottom-tabs { background:rgba(30,30,32,.82); }
+  .tab { flex:1; border:0; background:transparent; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 0 0; color:var(--text-3); font-size:10px; }
+  .tab .tab-ico { width:21px; height:21px; display:grid; place-items:center; }
+  .tab.active { color:var(--accent); }
+  .tab.active .tab-ico { background:var(--accent-soft); border-radius:9px; }
+
+  /* artifact list */
+  .art-scroll { flex:1; overflow-y:auto; padding:2px 16px 18px; position:relative; z-index:1; }
+  .art-head { display:flex; align-items:flex-end; justify-content:space-between; padding:2px 2px 12px; }
+  .art-title { font-size:26px; font-weight:700; letter-spacing:-.02em; }
+  .search { display:flex; align-items:center; gap:7px; background:var(--input); border:.5px solid var(--border); border-radius:10px; padding:8px 10px; color:var(--text-3); font-size:12px; margin-bottom:11px; }
+  .chips { display:flex; gap:6px; overflow-x:auto; padding-bottom:12px; }
+  .chips::-webkit-scrollbar { height:0; }
+  .chip { flex:0 0 auto; border:.5px solid var(--border); background:rgba(255,255,255,.22); border-radius:999px; padding:5px 11px; font-size:11.5px; color:var(--text-2); cursor:pointer; }
+  html[data-theme="dark"] .chip { background:rgba(255,255,255,.04); }
+  .chip.active { background:var(--accent); color:#fff; border-color:transparent; }
+  html[data-theme="dark"] .chip.active { color:#10221B; }
+  .art-list { display:flex; flex-direction:column; gap:9px; }
+  body[data-density="compact"] .art-list { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  body[data-density="compact"] .art-card .summary { -webkit-line-clamp:1; }
+  body[data-density="rows"] .art-list { gap:1px; background:var(--border); border-radius:12px; overflow:hidden; }
+  body[data-density="rows"] .art-card { border-radius:0; border:0; }
+  body[data-density="rows"] .art-card .summary { -webkit-line-clamp:1; }
+  .art-card { position:relative; padding:13px 13px 12px; border-radius:12px; background:linear-gradient(180deg,var(--card),var(--card-2)); border:.5px solid var(--border); box-shadow:var(--shadow-soft); cursor:pointer; }
+  .art-card:hover { background:var(--accent-soft); }
+  .art-kicker { display:flex; align-items:center; gap:5px; font-size:9.5px; color:var(--text-3); margin-bottom:5px; }
+  .art-kicker .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .art-card .title { font-size:15px; font-weight:650; line-height:1.35; padding-right:22px; }
+  .art-card .summary { font-size:11.5px; color:var(--text-2); line-height:1.45; margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .art-meta { display:flex; align-items:center; gap:6px; margin-top:9px; flex-wrap:wrap; }
+  .tag { font-size:9.5px; color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:2px 7px; }
+  .art-date { margin-left:auto; font-size:9.5px; color:var(--text-3); }
+  .art-more { position:absolute; top:10px; right:10px; width:24px; height:24px; border-radius:50%; border:0; background:transparent; color:var(--text-3); cursor:pointer; }
+  .art-more:hover { background:var(--accent-soft); color:var(--accent); }
+
+  /* artifact detail */
+  .artifact-scroll { flex:1; overflow-y:auto; position:relative; z-index:1; }
+  .artifact-page { margin:4px 14px 18px; border-radius:14px; overflow:hidden; background:#FBF4E6; color:#3B2E1F; box-shadow:var(--shadow-soft); border:.5px solid rgba(59,46,31,.10); }
+  .ap-pad { padding:22px 20px 18px; }
+  .ap-kicker { font-size:9.5px; letter-spacing:.18em; color:#2F7D63; font-weight:650; }
+  .ap-title { font-size:30px; line-height:1.15; font-weight:750; letter-spacing:-.03em; margin:8px 0 4px; }
+  .ap-sub { font-size:12px; color:rgba(59,46,31,.6); }
+  .ap-photos { display:grid; grid-template-columns:1.2fr .8fr; grid-template-rows:92px 92px; gap:6px; margin:16px 0 16px; }
+  .ap-photo { border-radius:9px; position:relative; overflow:hidden; display:flex; align-items:flex-end; padding:7px; color:#fff; font-size:9.5px; text-shadow:0 1px 3px rgba(0,0,0,.35); }
+  .ap-photo:first-child { grid-row:span 2; }
+  .ap-g1 { background:linear-gradient(135deg,#8DC0A5,#2F7D63 55%,#1E4E3F); }
+  .ap-g2 { background:linear-gradient(135deg,#F0C58C,#C98B55 55%,#8A5A36); }
+  .ap-g3 { background:linear-gradient(135deg,#A7C7E7,#5E8DB3 55%,#2F5068); }
+  .ap-section { margin-top:16px; }
+  .ap-section h3 { font-size:11px; letter-spacing:.06em; color:#2F7D63; margin:0 0 8px; }
+  .ap-row { display:flex; gap:10px; padding:8px 0; border-top:.5px solid rgba(59,46,31,.10); font-size:11.5px; line-height:1.5; }
+  .ap-row .time { width:40px; flex:0 0 40px; color:#2F7D63; font-weight:650; }
+  .ap-row .body { color:rgba(59,46,31,.78); }
+  .ap-note { margin-top:15px; padding:11px 12px; border-radius:9px; background:rgba(47,125,99,.08); border:.5px solid rgba(47,125,99,.16); font-size:11px; line-height:1.55; color:rgba(59,46,31,.72); }
+  .ap-foot { padding:12px 20px 14px; border-top:.5px solid rgba(59,46,31,.10); font-size:9px; color:rgba(59,46,31,.4); display:flex; justify-content:space-between; }
+
+  /* doc desktop */
+  .doc-top { height:56px; display:flex; align-items:center; gap:10px; padding:0 22px; }
+  .doc-top .back { display:flex; align-items:center; gap:6px; border:0; background:transparent; color:var(--text-2); cursor:pointer; font-size:13px; }
+  .doc-top .doc-title { font-size:14px; font-weight:650; }
+  .doc-top .spacer { flex:1; }
+  .doc-main { display:grid; grid-template-columns:220px minmax(0,728px) 320px; gap:26px; justify-content:center; padding:0 24px 32px; align-items:start; }
+  body[data-anno="off"] .doc-main { grid-template-columns:220px minmax(0,728px); }
+  body[data-anno="off"] .anno-panel { display:none; }
+  .toc { position:sticky; top:18px; padding:4px 0; }
+  .toc-title { font-size:10px; letter-spacing:.08em; color:var(--text-3); padding:0 10px 8px; }
+  .toc-item { display:block; font-size:12px; color:var(--text-2); padding:6px 10px; border-left:2px solid transparent; cursor:pointer; text-decoration:none; }
+  .toc-item:hover { color:var(--accent); background:var(--accent-soft); }
+  .toc-item.active { color:var(--accent); border-left-color:var(--accent); background:var(--accent-soft); }
+  .toc-item.sub { padding-left:22px; font-size:11.5px; color:var(--text-3); }
+  .doc-article { padding:34px 44px 42px; border-radius:14px; background:linear-gradient(180deg,var(--card),var(--card-2)); border:.5px solid var(--border); box-shadow:var(--shadow-soft); }
+  .doc-article h1 { font-size:28px; line-height:1.2; letter-spacing:-.03em; margin:0 0 8px; }
+  .doc-meta { font-size:11px; color:var(--text-3); margin-bottom:22px; }
+  .doc-article h2 { font-size:19px; margin:26px 0 10px; }
+  .doc-article h3 { font-size:15.5px; margin:20px 0 8px; }
+  .doc-article p { font-size:15.5px; line-height:1.75; margin:0 0 13px; }
+  .doc-article ul { font-size:15.5px; line-height:1.75; padding-left:20px; margin:0 0 13px; }
+  .doc-article blockquote { margin:0 0 15px; padding:2px 0 2px 14px; border-left:3px solid var(--border-strong); color:var(--text-2); font-size:15px; }
+  .doc-article code { font-family:var(--mono); background:var(--tool); border-radius:5px; padding:1px 5px; font-size:.86em; }
+  .doc-article table { border-collapse:collapse; width:100%; font-size:13.5px; margin:0 0 15px; }
+  .doc-article th,.doc-article td { border-bottom:.5px solid var(--border); padding:7px 8px; text-align:left; }
+  .doc-article .quote { background:var(--mark); border-bottom:1.5px solid var(--accent); padding:0 1px; }
+  .doc-article .anno-pill { display:inline-flex; align-items:center; gap:4px; font-size:9px; color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:2px 6px; margin-left:5px; vertical-align:middle; }
+
+  .anno-panel { position:sticky; top:18px; }
+  .anno-head { display:flex; align-items:center; justify-content:space-between; padding:0 4px 10px; font-size:11px; color:var(--text-3); }
+  .anno-card { padding:12px 13px; border-radius:12px; background:linear-gradient(180deg,var(--card),var(--card-2)); border:.5px solid var(--border); box-shadow:var(--shadow-soft); margin-bottom:9px; }
+  .anno-quote { font-size:11.5px; line-height:1.55; color:var(--text-2); border-left:2px solid var(--accent); padding-left:8px; margin-bottom:7px; }
+  .anno-note { font-size:12.5px; line-height:1.55; }
+  .anno-foot { display:flex; align-items:center; gap:6px; margin-top:8px; font-size:9.5px; color:var(--text-3); }
+  .anno-badge { color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:1px 6px; }
+
+  /* doc mobile */
+  .docm-scroll { flex:1; overflow-y:auto; padding:4px 16px 90px; position:relative; z-index:1; }
+  .docm-article { padding:20px 18px 24px; border-radius:14px; background:linear-gradient(180deg,var(--card),var(--card-2)); border:.5px solid var(--border); box-shadow:var(--shadow-soft); }
+  .docm-article h1 { font-size:24px; line-height:1.2; letter-spacing:-.03em; margin:0 0 7px; }
+  .docm-article .doc-meta { margin-bottom:16px; }
+  .docm-article h2 { font-size:18px; margin:20px 0 8px; }
+  .docm-article p { font-size:15px; line-height:1.75; margin:0 0 12px; }
+  .docm-article blockquote { margin:0 0 13px; padding:2px 0 2px 12px; border-left:3px solid var(--border-strong); color:var(--text-2); font-size:14.5px; }
+  .docm-article .quote { background:var(--mark); border-bottom:1.5px solid var(--accent); padding:0 1px; }
+  .docm-article .anno-pill { display:inline-flex; align-items:center; gap:4px; font-size:9px; color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:2px 6px; margin-left:4px; vertical-align:middle; }
+  .docm-bar { position:absolute; left:50%; bottom:calc(18px + var(--safe-bottom)); transform:translateX(-50%); z-index:9; display:flex; gap:4px; padding:5px; border-radius:999px; background:rgba(252,248,240,.9); border:.5px solid var(--border-strong); box-shadow:var(--shadow-soft); backdrop-filter:blur(14px); }
+  html[data-theme="dark"] .docm-bar { background:rgba(38,38,40,.92); }
+  .docm-bar button { border:0; background:transparent; color:var(--text-2); border-radius:999px; padding:6px 11px; font-size:11px; cursor:pointer; }
+  .docm-bar button.active { background:var(--accent); color:#fff; }
+  html[data-theme="dark"] .docm-bar button.active { color:#10221B; }
+
+  /* settings */
+  .set-scroll { flex:1; overflow-y:auto; padding:2px 16px calc(22px + var(--safe-bottom)); position:relative; z-index:1; }
+  .set-title { font-size:26px; font-weight:700; letter-spacing:-.02em; padding:2px 2px 14px; }
+  .set-group { margin-bottom:16px; }
+  .set-group-title { font-size:10.5px; letter-spacing:.08em; color:var(--text-3); padding:0 4px 7px; }
+  .set-card { border-radius:12px; background:linear-gradient(180deg,var(--card),var(--card-2)); border:.5px solid var(--border); box-shadow:var(--shadow-soft); overflow:hidden; }
+  .set-row { display:flex; align-items:center; gap:10px; padding:12px 13px; font-size:13px; border-bottom:.5px solid var(--border); }
+  .set-row:last-child { border-bottom:0; }
+  .set-row .label { flex:1; }
+  .set-row .value { color:var(--text-3); font-size:11.5px; }
+  .set-row .chev { color:var(--text-3); }
+  .seg { display:flex; gap:2px; background:var(--tool); border-radius:9px; padding:2px; }
+  .seg button { border:0; background:transparent; border-radius:7px; padding:5px 9px; font-size:11px; color:var(--text-2); cursor:pointer; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  html[data-theme="dark"] .seg button.on { color:#10221B; }
+  .slider { display:flex; align-items:center; gap:9px; padding:12px 13px; }
+  .slider .track { flex:1; height:4px; border-radius:99px; background:var(--border-strong); position:relative; }
+  .slider .knob { position:absolute; top:50%; left:62%; transform:translate(-50%,-50%); width:16px; height:16px; border-radius:50%; background:var(--accent); box-shadow:0 2px 6px rgba(0,0,0,.18); }
+  .slider .val { font-size:11px; color:var(--text-3); width:34px; text-align:right; }
+  .set-note { font-size:10.5px; color:var(--text-3); padding:8px 4px 0; line-height:1.5; }
+
+  /* control bar */
+  .ui { position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:999; display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 10px; border-radius:16px; background:rgba(252,248,240,.92); border:.5px solid var(--border-strong); box-shadow:0 16px 40px rgba(59,46,31,.16); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); max-width:calc(100vw - 24px); color:var(--text); font-size:11px; }
+  html[data-theme="dark"] .ui { background:rgba(38,38,40,.94); box-shadow:0 16px 40px rgba(0,0,0,.34); }
+  .ui-group { display:flex; align-items:center; gap:4px; }
+  .ui-group > span { color:var(--text-3); margin-right:2px; white-space:nowrap; }
+  .ui button { border:.5px solid var(--border); background:transparent; border-radius:8px; padding:5px 8px; cursor:pointer; color:var(--text-2); white-space:nowrap; }
+  .ui button:hover { background:var(--accent-soft); color:var(--accent); }
+  .ui button.on { background:var(--accent); color:#fff; border-color:transparent; }
+  html[data-theme="dark"] .ui button.on { color:#10221B; }
+  body[data-chrome="0"] .ui { display:none; }
+  @media (max-width:700px) { .ui { display:none; } }
+</style>
+</head>
+<body data-screen="artifacts" data-density="large" data-anno="on" data-chrome="1">
+
+<!-- ===================== ARTIFACTS ===================== -->
+<div class="screen" data-name="artifacts">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar"><span>9:41</span><span class="status-icons"><span style="width:17px;height:10px;border-radius:2px;opacity:.9"></span><span style="width:3px;height:8px"></span><span style="width:3px;height:10px"></span><span style="width:22px;height:11px;border-radius:3px;opacity:.8"></span></span></div>
+        <header class="m-top">
+          <div class="m-title">灵阅</div>
+          <button class="m-icon" title="搜索"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button>
+          <button class="m-icon" title="标签"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M20 13l-7 7-9-9V4h7l9 9z"/><circle cx="7.5" cy="7.5" r="1"/></svg></button>
+        </header>
+
+        <div class="art-scroll">
+          <div class="art-head"><div class="art-title">灵阅</div><span class="tiny">共 28 页</span></div>
+          <div class="search"><svg class="icon" viewBox="0 0 24 24" width="14" height="14"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>搜索标题、摘要</div>
+          <div class="chips">
+            <button class="chip active">全部</button>
+            <button class="chip">手账</button>
+            <button class="chip">工作</button>
+            <button class="chip">旅行</button>
+            <button class="chip">周报</button>
+          </div>
+
+          <div class="art-list">
+            <div class="art-card">
+              <div class="art-kicker"><span class="dot"></span>HTML 页面</div>
+              <div class="title">杭州三日 · 行程手账</div>
+              <div class="summary">3 天 2 晚，西湖/灵隐/运河三块，含高铁、酒店和两家想吃的店。</div>
+              <div class="art-meta"><span class="tag">旅行</span><span class="tag">手账</span><span class="art-date">今天 11:02</span></div>
+              <button class="art-more">⋯</button>
+            </div>
+            <div class="art-card">
+              <div class="art-kicker"><span class="dot"></span>HTML 页面</div>
+              <div class="title">10.18 手账</div>
+              <div class="summary">上午咖啡、下午书店、晚上和朋友吃饭。配色偏暖，留了一点空白。</div>
+              <div class="art-meta"><span class="tag">手账</span><span class="art-date">昨天</span></div>
+              <button class="art-more">⋯</button>
+            </div>
+            <div class="art-card">
+              <div class="art-kicker"><span class="dot"></span>HTML 页面</div>
+              <div class="title">本周工作看板</div>
+              <div class="summary">三件事：文档对齐、检索评测、移动端重构。按优先级排了一版。</div>
+              <div class="art-meta"><span class="tag">工作</span><span class="art-date">10/30</span></div>
+              <button class="art-more">⋯</button>
+            </div>
+            <div class="art-card">
+              <div class="art-kicker"><span class="dot"></span>HTML 页面</div>
+              <div class="title">纳瓦尔宝典 · 摘录</div>
+              <div class="summary">关于杠杆、判断力和长期主义的几句，做了两栏排版。</div>
+              <div class="art-meta"><span class="tag">读书</span><span class="art-date">10/28</span></div>
+              <button class="art-more">⋯</button>
+            </div>
+          </div>
+        </div>
+
+        <nav class="bottom-tabs">
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg></span><span>对话</span></button>
+          <button class="tab active"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M12 3l2.2 5.6L20 11l-5.8 2.4L12 19l-2.2-5.6L4 11l5.8-2.4L12 3z"/></svg></span><span>灵阅</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg></span><span>文档</span></button>
+          <button class="tab"><span class="tab-ico"><svg class="icon" viewBox="0 0 24 24" width="19" height="19"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.8-3.4 3.4-5 7-5s6.2 1.6 7 5"/></svg></span><span>我的</span></button>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== ARTIFACT DETAIL ===================== -->
+<div class="screen" data-name="artifact-detail">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar"><span>9:41</span><span class="status-icons"><span style="width:17px;height:10px;border-radius:2px;opacity:.9"></span><span style="width:3px;height:8px"></span><span style="width:3px;height:10px"></span><span style="width:22px;height:11px;border-radius:3px;opacity:.8"></span></span></div>
+        <header class="m-top">
+          <button class="m-icon" title="返回"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M15 6l-6 6 6 6"/></svg></button>
+          <div class="m-title">杭州三日 · 行程手账</div>
+          <button class="m-icon" title="分享"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/></svg></button>
+          <button class="m-icon" title="更多"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        </header>
+
+        <div class="artifact-scroll">
+          <div class="artifact-page">
+            <div class="ap-pad">
+              <div class="ap-kicker">TRIP · 2026</div>
+              <div class="ap-title">杭州三日</div>
+              <div class="ap-sub">西湖 / 灵隐 / 运河 · 10.17–10.19</div>
+              <div class="ap-photos">
+                <div class="ap-photo ap-g1">西湖 · 傍晚</div>
+                <div class="ap-photo ap-g2">酒店 · 龙翔桥</div>
+                <div class="ap-photo ap-g3">灵隐 · 清晨</div>
+              </div>
+
+              <div class="ap-section">
+                <h3>行程</h3>
+                <div class="ap-row"><span class="time">D1</span><span class="body">下午到杭州，酒店放行李，沿湖走到断桥，晚上在湖滨吃饭。</span></div>
+                <div class="ap-row"><span class="time">D2</span><span class="body">早上去灵隐，午后回市区，运河边散步，晚上自由安排。</span></div>
+                <div class="ap-row"><span class="time">D3</span><span class="body">上午退房，去茶叶市场，午后高铁返程。</span></div>
+              </div>
+
+              <div class="ap-section">
+                <h3>已记录</h3>
+                <div class="ap-row"><span class="time">¥646</span><span class="body">高铁往返</span></div>
+                <div class="ap-row"><span class="time">¥1,200</span><span class="body">酒店 2 晚</span></div>
+                <div class="ap-row"><span class="time">¥186</span><span class="body">晚餐 · 湖滨</span></div>
+              </div>
+
+              <div class="ap-note">雨天的备选：浙江省博物馆 / 中国美院象山校区。出发前再看一眼天气。</div>
+            </div>
+            <div class="ap-foot"><span>由 xhanHelper 生成</span><span>只读 · 沙箱渲染</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== DOC DESKTOP ===================== -->
+<div class="screen" data-name="doc-desktop">
+  <header class="doc-top">
+    <button class="back"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M15 6l-6 6 6 6"/></svg>文档</button>
+    <div class="doc-title">杭州行 · 落地清单</div>
+    <div class="spacer"></div>
+    <button class="icon-btn">分享</button>
+    <button class="icon-btn">下载 .md</button>
+    <button class="icon-btn" data-theme-toggle><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+  </header>
+
+  <div class="doc-main">
+    <aside class="toc">
+      <div class="toc-title">目录</div>
+      <a class="toc-item active">出发前</a>
+      <a class="toc-item sub">证件与票据</a>
+      <a class="toc-item sub">天气与衣物</a>
+      <a class="toc-item">交通</a>
+      <a class="toc-item sub">高铁</a>
+      <a class="toc-item sub">市内</a>
+      <a class="toc-item">酒店</a>
+      <a class="toc-item">吃与逛</a>
+      <a class="toc-item">应急</a>
+    </aside>
+
+    <article class="doc-article">
+      <h1>杭州行 · 落地清单</h1>
+      <div class="doc-meta">更新于 10/17 09:12 · 8 个批注</div>
+      <p>这份清单按「出发前 / 交通 / 酒店 / 吃与逛 / 应急」排，现场照着做就行。<span class="quote">酒店 15:00 后入住</span><span class="anno-pill">批注 2</span></p>
+
+      <h2>出发前</h2>
+      <h3>证件与票据</h3>
+      <ul>
+        <li>身份证、手机、充电宝</li>
+        <li>高铁票截图已存相册</li>
+        <li>酒店订单截图已存相册</li>
+      </ul>
+      <h3>天气与衣物</h3>
+      <p>三天都有雨，带伞和一双好走的鞋。湖边风大，薄外套别忘。</p>
+
+      <h2>交通</h2>
+      <blockquote>高铁到杭州东，地铁 1 号线到龙翔桥，出站走 8 分钟到酒店。</blockquote>
+      <table>
+        <thead><tr><th>段</th><th>方式</th><th>时间</th></tr></thead>
+        <tbody><tr><td>上海虹桥 → 杭州东</td><td>高铁</td><td>10/17 09:20</td></tr><tr><td>杭州东 → 龙翔桥</td><td>地铁 1 号线</td><td>约 25 分钟</td></tr></tbody>
+      </table>
+
+      <h2>酒店</h2>
+      <p>龙翔桥地铁站旁，前台电话已存。入住 15:00 后，退房 12:00 前；行李可以先寄存。</p>
+
+      <h2>吃与逛</h2>
+      <ul>
+        <li>湖滨：晚餐，人均 120–180</li>
+        <li>灵隐：素面，早上人少</li>
+        <li>运河：傍晚散步，天黑前回</li>
+      </ul>
+
+      <h2>应急</h2>
+      <p>雨太大就改去浙江省博物馆；身体不舒服先回酒店，不要硬撑。</p>
+    </article>
+
+    <aside class="anno-panel">
+      <div class="anno-head"><span>批注 · 8</span><span>只读</span></div>
+      <div class="anno-card">
+        <div class="anno-quote">酒店 15:00 后入住</div>
+        <div class="anno-note">前台电话 0571-xxxx，行李可先寄存。到得早的话先去湖滨吃饭。</div>
+        <div class="anno-foot"><span class="anno-badge">2 条回复</span><span>10/17</span></div>
+      </div>
+      <div class="anno-card">
+        <div class="anno-quote">三天都有雨，带伞和一双好走的鞋</div>
+        <div class="anno-note">伞放行李箱侧袋，别放背包最底下。</div>
+        <div class="anno-foot"><span>10/16</span></div>
+      </div>
+      <div class="anno-card">
+        <div class="anno-quote">雨太大就改去浙江省博物馆</div>
+        <div class="anno-note">需要提前预约吗？到杭州再看。</div>
+        <div class="anno-foot"><span class="anno-badge">原文有改动</span><span>10/16</span></div>
+      </div>
+      <div class="tiny" style="padding:6px 4px">点击批注可滚到原文并临时高亮；M3 不提供新建/回复。</div>
+    </aside>
+  </div>
+</div>
+
+<!-- ===================== DOC MOBILE ===================== -->
+<div class="screen" data-name="doc-mobile">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar"><span>9:41</span><span class="status-icons"><span style="width:17px;height:10px;border-radius:2px;opacity:.9"></span><span style="width:3px;height:8px"></span><span style="width:3px;height:10px"></span><span style="width:22px;height:11px;border-radius:3px;opacity:.8"></span></span></div>
+        <header class="m-top">
+          <button class="m-icon" title="返回"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M15 6l-6 6 6 6"/></svg></button>
+          <div class="m-title">杭州行 · 落地清单</div>
+          <button class="m-icon" title="分享"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/></svg></button>
+          <button class="m-icon" title="更多"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        </header>
+
+        <div class="docm-scroll">
+          <article class="docm-article">
+            <h1>杭州行 · 落地清单</h1>
+            <div class="doc-meta">更新于 10/17 09:12 · 8 个批注</div>
+            <p>这份清单按「出发前 / 交通 / 酒店 / 吃与逛 / 应急」排，现场照着做就行。<span class="quote">酒店 15:00 后入住</span><span class="anno-pill">2</span></p>
+            <h2>出发前</h2>
+            <p>身份证、手机、充电宝；高铁票和酒店订单截图已存相册。</p>
+            <p>三天都有雨，带伞和一双好走的鞋。湖边风大，薄外套别忘。</p>
+            <h2>交通</h2>
+            <blockquote>高铁到杭州东，地铁 1 号线到龙翔桥，出站走 8 分钟到酒店。</blockquote>
+            <p>高铁 10/17 09:20 出发，约 1 小时到杭州东；地铁 1 号线约 25 分钟。</p>
+            <h2>酒店</h2>
+            <p>龙翔桥地铁站旁，前台电话已存。入住 15:00 后，退房 12:00 前；行李可以先寄存。</p>
+            <h2>吃与逛</h2>
+            <p>湖滨晚餐人均 120–180；灵隐素面早上人少；运河傍晚散步，天黑前回。</p>
+          </article>
+        </div>
+
+        <div class="docm-bar">
+          <button class="active">目录</button>
+          <button>批注 8</button>
+          <button>字号</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== SETTINGS ===================== -->
+<div class="screen" data-name="settings">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar"><span>9:41</span><span class="status-icons"><span style="width:17px;height:10px;border-radius:2px;opacity:.9"></span><span style="width:3px;height:8px"></span><span style="width:3px;height:10px"></span><span style="width:22px;height:11px;border-radius:3px;opacity:.8"></span></span></div>
+        <header class="m-top">
+          <button class="m-icon" title="返回"><svg class="icon" viewBox="0 0 24 24" width="15" height="15"><path d="M15 6l-6 6 6 6"/></svg></button>
+          <div class="m-title">设置</div>
+          <div style="width:32px"></div>
+        </header>
+
+        <div class="set-scroll">
+          <div class="set-title">设置</div>
+
+          <div class="set-group">
+            <div class="set-group-title">外观</div>
+            <div class="set-card">
+              <div class="set-row">
+                <span class="label">主题</span>
+                <div class="seg">
+                  <button class="on">浅色</button>
+                  <button>深色</button>
+                  <button>跟随系统</button>
+                </div>
+              </div>
+              <div class="slider">
+                <span class="label" style="flex:0 0 auto">字号</span>
+                <div class="track"><span class="knob"></span></div>
+                <span class="val">100%</span>
+              </div>
+            </div>
+            <div class="set-note">字号只影响聊天正文和文档正文；卡片标题保持固定。</div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-group-title">账号</div>
+            <div class="set-card">
+              <div class="set-row"><span class="label">xhanHelper</span><span class="value">管理员</span></div>
+              <div class="set-row"><span class="label">修改密码</span><span class="chev">›</span></div>
+              <div class="set-row"><span class="label">退出登录</span><span class="chev">›</span></div>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-group-title">会话</div>
+            <div class="set-card">
+              <div class="set-row"><span class="label">已归档会话</span><span class="value">3</span><span class="chev">›</span></div>
+              <div class="set-row"><span class="label">无痕会话</span><span class="value">关闭</span><span class="chev">›</span></div>
+              <div class="set-row"><span class="label">默认智能体</span><span class="value">xhanHelper</span><span class="chev">›</span></div>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-group-title">关于</div>
+            <div class="set-card">
+              <div class="set-row"><span class="label">版本</span><span class="value">Web 1.0</span></div>
+              <div class="set-row"><span class="label">后端环境</span><span class="value">本地</span></div>
+              <div class="set-row"><span class="label">添加到主屏幕</span><span class="chev">›</span></div>
+            </div>
+            <div class="set-note">管理后台只在桌面端提供；手机上不显示入口。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CONTROL BAR ===================== -->
+<div class="ui">
+  <div class="ui-group"><span>屏幕</span>
+    <button data-set="screen" data-value="artifacts">灵阅</button>
+    <button data-set="screen" data-value="artifact-detail">灵阅详情</button>
+    <button data-set="screen" data-value="doc-desktop">文档桌面</button>
+    <button data-set="screen" data-value="doc-mobile">文档手机</button>
+    <button data-set="screen" data-value="settings">设置</button>
+  </div>
+  <div class="ui-group"><span>主题</span><button data-theme-toggle>浅/深</button></div>
+  <div class="ui-group"><span>灵阅密度</span>
+    <button data-set="density" data-value="large">大卡</button>
+    <button data-set="density" data-value="compact">双列</button>
+    <button data-set="density" data-value="rows">列表</button>
+  </div>
+  <div class="ui-group"><span>批注</span>
+    <button data-set="anno" data-value="on">显示</button>
+    <button data-set="anno" data-value="off">隐藏</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const state = {
+    screen: params.get('screen') || 'artifacts',
+    theme: params.get('theme') || 'light',
+    density: params.get('density') || 'large',
+    anno: params.get('anno') || 'on',
+    chrome: params.get('chrome') === '0' ? '0' : '1'
+  };
+  function apply() {
+    document.documentElement.dataset.theme = state.theme;
+    document.body.dataset.screen = state.screen;
+    document.body.dataset.density = state.density;
+    document.body.dataset.anno = state.anno;
+    document.body.dataset.chrome = state.chrome;
+    document.querySelectorAll('[data-set]').forEach((btn) => {
+      btn.classList.toggle('on', state[btn.dataset.set] === btn.dataset.value);
+    });
+  }
+  document.querySelectorAll('[data-set]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state[btn.dataset.set] = btn.dataset.value;
+      apply();
+    });
+  });
+  document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.theme = state.theme === 'light' ? 'dark' : 'light';
+      apply();
+    });
+  });
+  apply();
+})();
+</script>
+</body>
+</html>

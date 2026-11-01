@@ -27,7 +27,7 @@ export function useChatSSE() {
   const auth = useAuthStore()
   let abortController = null
 
-  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking } = {}) {
+  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral } = {}) {
     if (chat.isStreaming) return
 
     abortController = new AbortController()
@@ -56,6 +56,10 @@ export function useChatSSE() {
         memory_threshold: 0.5,
         memory_limit: 8
       }
+      if (attachments && attachments.length) body.attachments = attachments
+      // 仅新会话生效：服务端对已有会话忽略这两个字段
+      if (initMode) body.init_mode = initMode
+      if (ephemeral) body.ephemeral = true
       if (temperature !== undefined && temperature !== null) {
         body.temperature = temperature
       }

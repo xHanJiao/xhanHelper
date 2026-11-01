@@ -4,14 +4,12 @@ import { useRouter, useRoute } from 'vue-router'
 import { NConfigProvider, NMessageProvider } from 'naive-ui'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
-import { useMobile } from '@/composables/useMobile'
-import ConversationList from '@/components/ConversationList.vue'
+import AppShell from '@/layouts/AppShell.vue'
 
 const theme = useThemeStore()
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
-const { isMobile, drawerOpen, closeDrawer, sidebarCollapsed } = useMobile()
 
 // token 失效时自动跳转登录页（覆盖心跳401/API401/跨tab登出等所有场景）
 watch(() => auth.token, (newToken, oldToken) => {
@@ -22,56 +20,35 @@ watch(() => auth.token, (newToken, oldToken) => {
   }
 })
 
-const themeOverrides = computed(() => ({
-  common: {
-    primaryColor: '#5b6abf',
-    primaryColorHover: '#4a58a8',
-    primaryColorPressed: '#3f4d96',
-    primaryColorSuppl: '#5b6abf'
+const themeOverrides = computed(() => {
+  const dark = theme.isDark
+  return {
+    common: {
+      primaryColor: dark ? '#92C8B4' : '#2F7D63',
+      primaryColorHover: dark ? '#B4E0CF' : '#245F4B',
+      primaryColorPressed: dark ? '#7FB7A2' : '#1E4E3F',
+      primaryColorSuppl: dark ? '#92C8B4' : '#2F7D63',
+      bodyColor: dark ? '#1C1C1E' : '#F7EEDD',
+      cardColor: dark ? '#242426' : '#FBF6EC',
+      modalColor: dark ? '#242426' : '#FBF6EC',
+      popoverColor: dark ? '#242426' : '#FBF6EC',
+      textColorBase: dark ? '#FFFFFF' : '#3B2E1F',
+      textColor2: dark ? 'rgba(255,255,255,0.66)' : 'rgba(59,46,31,0.64)',
+      textColor3: dark ? 'rgba(255,255,255,0.40)' : 'rgba(59,46,31,0.42)',
+      borderColor: dark ? 'rgba(255,255,255,0.12)' : 'rgba(59,46,31,0.12)'
+    },
+    Card: {
+      borderRadius: '14px'
+    }
   }
-}))
+})
 </script>
 
 <template>
   <NConfigProvider :theme="theme.naiveTheme" :theme-overrides="themeOverrides">
     <NMessageProvider>
-      <div style="display: flex; height: 100vh; width: 100vw; overflow: hidden;">
-        <!-- 桌面端侧栏 -->
-        <div v-if="auth.token && !isMobile" :style="{ width: sidebarCollapsed ? '0' : '280px', overflow: 'hidden', transition: 'width 0.25s ease', flexShrink: 0 }">
-          <ConversationList />
-        </div>
-
-        <!-- 移动端抽屉覆盖 -->
-        <template v-if="auth.token && isMobile">
-          <div
-            v-if="drawerOpen"
-            style="position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,0.4);"
-            @click="closeDrawer"
-          />
-          <div
-            :style="{
-              position: 'fixed', top: 0, left: 0, bottom: 0, zIndex: 1000,
-              width: '280px', transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)',
-              transition: 'transform 0.25s ease'
-            }"
-          >
-            <ConversationList />
-          </div>
-        </template>
-
-        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
-          <router-view />
-        </div>
-      </div>
+      <router-view v-if="route.meta.bare" />
+      <AppShell v-else />
     </NMessageProvider>
   </NConfigProvider>
 </template>
-
-<style>
-html, body, #app {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  width: 100%;
-}
-</style>

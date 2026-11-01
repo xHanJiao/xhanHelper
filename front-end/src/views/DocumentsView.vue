@@ -162,7 +162,7 @@ onMounted(fetchDocuments)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+  <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
     <PageTopBar title="文档" :visible="!isMobile || isBarVisible">
       <template #right>
         <div style="display: flex; align-items: center; gap: var(--space-md);">

@@ -59,7 +59,7 @@
  * ============================================================================
  */
 
-import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted, provide } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted, provide } from 'vue'
 import { useRoute } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
@@ -75,17 +75,12 @@ import {
 import MessageBubble from '@/components/MessageBubble.vue'
 import ToolCallToast from '@/components/ToolCallToast.vue'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
+import AttachmentTray from '@/components/chat/AttachmentTray.vue'
+import { prepareImage } from '@/utils/image'
 
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
-import { useDebugMode } from '@/composables/useDebugMode'
 import { useMobile } from '@/composables/useMobile'
-import { useAuthStore } from '@/stores/auth'
-import { useThemeStore } from '@/stores/theme'
 
-const auth = useAuthStore()
-const isAdmin = computed(() => auth.user?.isAdmin === true)
-const theme = useThemeStore()
 const route = useRoute()
 const chat = useChatStore()
 const convs = useConversationsStore()
@@ -93,7 +88,6 @@ const { sendMessage, cancel } = useChatSSE()
 const nMessage = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
-const { debugMode, toggle: toggleDebug } = useDebugMode()
 
 onMounted(() => {
   fetchAgents()
@@ -183,8 +177,6 @@ let hideCooldownTimer = null
 let showCooldownActive = false
 let scrollRafPending = false
 
-if (isMobile.value) inputVisible.value = false
-watch(isMobile, (val) => { if (val) inputVisible.value = false })
 watch(inputVisible, async (val) => {
   if (val) {
     await nextTick()
@@ -389,6 +381,17 @@ function normalizeMessage(msg) {
     normalized.reasoning = msg.reasoning_content
     normalized.reasoningDone = true
   }
+  // 解析附件图片 id（JSON 数组字符串）
+  if (msg.image_ids) {
+    try {
+      normalized.imageIds = typeof msg.image_ids === 'string'
+        ? JSON.parse(msg.image_ids)
+        : msg.image_ids
+    } catch {
+      normalized.imageIds = []
+      console.error('Failed to parse image_ids', msg.id, msg.image_ids)
+    }
+  }
 
   let toolCalls = []
   if (msg.tool_calls_json) {
@@ -571,14 +574,41 @@ watch(inputExpanded, () => {
 })
 
 async function handleSend() {
+  if (chat.isStreaming) return
+
   const content = inputValue.value.trim()
-  if (!content || chat.isStreaming) return
+  const ready = draftImages.value.filter(d => d.status === 'done')
+  const failed = draftImages.value.some(d => d.status === 'error')
+  const uploading = draftImages.value.some(d => d.status === 'uploading')
+
+  if (!content && !ready.length) {
+    if (failed) nMessage.warning('有图片上传失败，请重试或移除')
+    return
+  }
+  if (uploading) {
+    nMessage.info('图片还在上传，稍等')
+    return
+  }
+  if (failed) {
+    nMessage.warning('有图片上传失败，请重试或移除')
+    return
+  }
 
   exitSelectionMode()
 
-  chat.addMessage({ id: Date.now().toString(), role: 'user', content, created_at: new Date().toISOString() })
+  const imageIds = ready.map(d => d.imageId)
+  chat.addMessage({
+    id: Date.now().toString(),
+    role: 'user',
+    content,
+    imageIds,
+    created_at: new Date().toISOString()
+  })
   inputValue.value = ''
   inputExpanded.value = false
+  // 预览 URL 在这里回收：消息里的图改走鉴权接口读，不依赖本地 objectURL
+  clearDrafts()
+
   // 把当前会话移到列表最前面
   const conv = convs.list.find(c => c.id === chat.conversationId)
   if (chat.conversationId && conv?.title) {
@@ -594,7 +624,11 @@ async function handleSend() {
 
   const opts = {
     conversationId: chat.conversationId,
-    agentId: chat.agentId
+    agentId: chat.agentId,
+    attachments: imageIds,
+    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+    initMode: chat.conversationId ? undefined : chat.mode,
+    ephemeral: chat.conversationId ? false : chat.ephemeral
   }
   await sendMessage(content, opts)
 }
@@ -603,24 +637,175 @@ function handleStop() {
   cancel()
 }
 
+// 会话的模式/无痕状态来自列表接口（mode / ephemeral）；冷启动时列表可能晚于
+// 路由 watcher 到达，所以用 watch 挂在「当前会话对象」上，而不是在切换分支里读一次。
+watch(
+  () => convs.list.find(c => c.id === chat.conversationId),
+  (conv) => {
+    if (!conv) return
+    chat.mode = conv.mode || 'work'
+    chat.ephemeral = !!conv.ephemeral
+  },
+  { immediate: true }
+)
+
+// --- 待发图片 ---
+// 参数对齐 macOS 端：上限 20 张、长边 2048（压缩在 utils/image.js）、上传并发 2。
+// 选完即传：发送时不用等，失败的单张可重试；没被引用的图由服务端 orphan TTL 自动清。
+const MAX_DRAFTS = 20
+const draftImages = ref([])
+const fileInputRef = ref(null)
+let draftSeq = 0
+let activeUploads = 0
+const uploadQueue = []
+
+const canSend = computed(() => {
+  if (chat.isStreaming) return false
+  // 上传中不给发；失败态故意放行到这里，让 handleSend 弹出「有图片上传失败」的提示
+  if (draftImages.value.some(d => d.status === 'uploading')) return false
+  return !!inputValue.value.trim() || draftImages.value.length > 0
+})
+
+function pickImages() {
+  if (chat.isStreaming) return
+  fileInputRef.value?.click()
+}
+
+async function addImages(files) {
+  const images = files.filter(f => f.type.startsWith('image/'))
+  for (const file of images) {
+    if (draftImages.value.length >= MAX_DRAFTS) {
+      nMessage.warning(`最多 ${MAX_DRAFTS} 张图片`)
+      break
+    }
+    let prepared
+    try {
+      prepared = await prepareImage(file)
+    } catch (e) {
+      console.error('Failed to prepare image', file.name, e)
+      nMessage.error(`「${file.name}」处理失败，换一张试试`)
+      continue
+    }
+    if (draftImages.value.some(d => d.key === prepared.key)) continue
+    const item = reactive({
+      id: ++draftSeq,
+      key: prepared.key,
+      name: prepared.name,
+      blob: prepared.blob,
+      preview: URL.createObjectURL(prepared.blob),
+      status: 'uploading',
+      imageId: null,
+      error: ''
+    })
+    draftImages.value.push(item)
+    enqueueUpload(item)
+  }
+}
+
+function enqueueUpload(item) {
+  uploadQueue.push(item)
+  pumpUploads()
+}
+
+function pumpUploads() {
+  while (activeUploads < 2 && uploadQueue.length) {
+    const item = uploadQueue.shift()
+    activeUploads++
+    uploadOne(item).finally(() => {
+      activeUploads--
+      pumpUploads()
+    })
+  }
+}
+
+async function uploadOne(item) {
+  item.status = 'uploading'
+  item.error = ''
+  try {
+    const file = new File([item.blob], item.name, { type: item.blob.type || 'image/jpeg' })
+    const res = await api.upload('/api/images/upload', file)
+    item.imageId = res.image_id
+    item.status = 'done'
+  } catch (e) {
+    console.error('Image upload failed', item.name, e)
+    item.status = 'error'
+    item.error = e?.message || '上传失败'
+  }
+}
+
+function retryDraft(item) {
+  if (item.status === 'uploading') return
+  enqueueUpload(item)
+}
+
+function removeDraft(item) {
+  URL.revokeObjectURL(item.preview)
+  draftImages.value = draftImages.value.filter(d => d.id !== item.id)
+}
+
+function clearDrafts() {
+  for (const item of draftImages.value) URL.revokeObjectURL(item.preview)
+  draftImages.value = []
+  uploadQueue.length = 0
+}
+
+function onFilesChosen(e) {
+  const files = [...(e.target.files || [])]
+  e.target.value = ''
+  if (files.length) addImages(files)
+}
+
+// 粘贴图片：剪贴板同时带文字时不接管，让用户拿到文字（与 macOS 端规则一致）
+function onComposerPaste(e) {
+  const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'))
+  if (!files.length) return
+  if (e.clipboardData.getData('text/plain').trim()) return
+  e.preventDefault()
+  addImages(files)
+}
+
+function onComposerDrop(e) {
+  const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'))
+  if (files.length) addImages(files)
+}
+
+// --- 会话模式 / 无痕 ---
+// 新会话只在本地记意图，首条消息随 init_mode / ephemeral 落库；
+// 已有会话直接 PATCH（默认会话禁止无痕，服务端会 400，这里把原因透出来）。
+async function toggleMode() {
+  const next = chat.mode === 'plan' ? 'work' : 'plan'
+  if (!chat.conversationId) {
+    chat.mode = next
+    return
+  }
+  try {
+    await api.patch(`/api/conversations/${chat.conversationId}/mode`, { mode: next })
+    chat.mode = next
+  } catch (e) {
+    console.error('Failed to switch conversation mode', e)
+    nMessage.error(e?.message || '切换模式失败')
+  }
+}
+
+async function toggleEphemeral() {
+  const next = !chat.ephemeral
+  if (!chat.conversationId) {
+    chat.ephemeral = next
+    return
+  }
+  try {
+    await api.patch(`/api/conversations/${chat.conversationId}/ephemeral`, { ephemeral: next })
+    chat.ephemeral = next
+  } catch (e) {
+    console.error('Failed to toggle ephemeral', e)
+    nMessage.error(e?.message || '切换无痕失败')
+  }
+}
+
 function handleScroll(e) {
   const container = e.target
   const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
   isAwayFromBottom.value = distFromBottom > 200
-
-  // 显示/隐藏输入框（非移动端）
-  // 显示：即时触发，无需延迟（跟手体验）
-  // 隐藏：即时触发，但在「刚显示后的冷却期」内拦截，防止 iPad Safari 弹性滚动振荡导致闪烁
-  if (isInitialScrollDone.value && !isMobile.value) {
-    if (distFromBottom < 30 && !inputVisible.value && !selectionMode.value) {
-      inputVisible.value = true
-      showCooldownActive = true
-      clearTimeout(hideCooldownTimer)
-      hideCooldownTimer = setTimeout(() => { showCooldownActive = false }, 300)
-    } else if (distFromBottom > 200 && inputVisible.value && !showCooldownActive) {
-      inputVisible.value = false
-    }
-  }
 
   const threshold = container.clientHeight * 0.15
   const nearTop = container.scrollTop <= threshold
@@ -646,24 +831,29 @@ function handleContainerClick(e) {
 </script>
 
 <template>
-  <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-        <PageTopBar :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" :agents="agentsList" @select-agent="handleSelectAgent" @popover-open="fetchAgents" >
-      <template #right>
-        <TopBarBtn v-if="!isMobile && isAdmin" :label="debugMode ? '调试:开' : '调试'" @click="toggleDebug" />
-        <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()" />
-      </template>
+  <div class="chat-page">
+    <PageTopBar
+      show-conversation
+      :agent-id="currentAgentId"
+      :agent-name="currentAgentName"
+      :visible="!isMobile || isBarVisible"
+      :agents="agentsList"
+      @select-agent="handleSelectAgent"
+      @popover-open="fetchAgents"
+    >
     </PageTopBar>
 
     <SelectionActionBar />
 
+    <div class="chat-card">
     <div
       ref="messagesContainerRef"
       @scroll="handleScroll"
       @touchstart="isMobile ? showBar() : null"
       @click="handleContainerClick"
-      style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;"
+      class="chat-messages"
     >
-      <div style="width: 100%; max-width: 900px; position: relative;">
+      <div class="chat-column">
 
         <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
           <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
@@ -715,53 +905,11 @@ function handleContainerClick(e) {
       </div>
     </div>
 
-    <div
-      v-if="isMobile && !inputVisible"
-      @click="toggleInput"
-      :style="{
-        width: '60px',
-        height: '30px',
-        background: 'rgba(91, 106, 191, 0.85)',
-        borderRadius: '30px 30px 0 0',
-        display: 'flex',
-        alignItems: 'flex-end',
-        justifyContent: 'center',
-        marginLeft: 'auto',
-        marginRight: 'auto',
-        cursor: 'pointer',
-        boxShadow: '0 -2px 10px rgba(0,0,0,0.1)',
-        color: 'white',
-        fontSize: '20px',
-        fontWeight: 'bold',
-        flexShrink: 0
-      }"
-    >
-      ↑
-    </div>
-
     <!-- 查看历史消息时，滚动到底部按钮 -->
     <div
-      v-if="!isMobile && !inputVisible && isAwayFromBottom"
+      v-if="isAwayFromBottom"
       @click="handleScrollToBottomBtn"
-      :style="{
-        position: 'fixed',
-        bottom: '24px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 101,
-        width: '40px',
-        height: '40px',
-        borderRadius: '50%',
-        background: 'rgba(91, 106, 191, 0.8)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
-        color: 'white',
-        fontSize: '20px',
-        userSelect: 'none'
-      }"
+      class="scroll-bottom-btn"
     >
       ↓
     </div>
@@ -770,12 +918,12 @@ function handleContainerClick(e) {
       ref="mobileInputRef"
       :style="[
         !isMobile ? {
-          padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',
-          maxWidth: 'min(88%, 56rem)',
+          padding: inputVisible ? '8px 18px 14px' : '0 18px',
+          maxWidth: 'min(760px, 100%)',
           marginLeft: 'auto',
           marginRight: 'auto',
           width: '100%',
-          background: 'var(--color-bg-page)',
+          background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,
           height: inputVisible ? (inputExpanded ? '50vh' : 'auto') : '0',
@@ -785,8 +933,8 @@ function handleContainerClick(e) {
           transformOrigin: 'bottom right',
           transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
         } : {
-          padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',
-          background: 'var(--color-bg-page)',
+          padding: inputVisible ? '6px 12px calc(8px + var(--safe-bottom))' : '0 12px',
+          background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,
           height: inputVisible ? (inputExpanded ? '75vh' : 'auto') : '0',
@@ -796,33 +944,58 @@ function handleContainerClick(e) {
         }
       ]"
     >
-      <div :style="{ border: `1px solid var(--color-bg-page)`, borderRadius: 'var(--radius-xl)', padding: 'var(--space-md) var(--space-md)', background: 'var(--color-surface)', height: '100%', display: 'flex', flexDirection: 'column', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }">
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept="image/*"
+        multiple
+        class="file-input"
+        @change="onFilesChosen"
+      />
+      <div class="chat-composer-card" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
+        <div v-if="chat.mode === 'plan'" class="plan-hint">计划模式 · 只读，不会写文档或改数据</div>
+        <div v-if="chat.ephemeral" class="plan-hint">无痕会话 · 结束后自动销毁</div>
+        <AttachmentTray
+          v-if="draftImages.length"
+          :items="draftImages"
+          :limit="MAX_DRAFTS"
+          @add="pickImages"
+          @remove="removeDraft"
+          @retry="retryDraft"
+          @clear="clearDrafts"
+        />
         <NInput
           v-model:value="inputValue"
           type="textarea"
           placeholder="发消息..."
           :disabled="chat.isStreaming"
-          :autosize="(isMobile || inputExpanded) ? false : { minRows: 1, maxRows: 6 }"
+          :autosize="inputExpanded ? false : { minRows: 1, maxRows: isMobile ? 4 : 6 }"
           class="chat-input"
           @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !inputExpanded) { e.preventDefault(); handleSend() }}"
           :bordered="false"
           style="background: transparent; flex: 1;"
         />
-        <div :style="{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }">
-          <div>
-            <NButton quaternary size="small" @click="toggleExpand" style="color: var(--color-text-muted)">
-              {{ inputExpanded ? '⤡ 收起输入框' : '⤢ 展开输入框' }}
-            </NButton>
-            <NButton v-if="isMobile && inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px; color: var(--color-text-muted)">
-              收起
-            </NButton>
+        <div class="composer-row">
+          <div class="composer-left">
+            <button class="icon-pill" type="button" title="添加图片" :disabled="chat.isStreaming" @click="pickImages">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+            </button>
+            <button class="icon-pill" :class="{ on: chat.mode === 'plan' }" type="button" :title="chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）'" @click="toggleMode">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg>
+            </button>
+            <button class="icon-pill" :class="{ on: chat.ephemeral }" type="button" :title="chat.ephemeral ? '关闭无痕' : '无痕会话（结束后销毁）'" @click="toggleEphemeral">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
+            </button>
+            <button v-if="!isMobile" class="icon-pill wide" type="button" title="展开/收起输入框" @click="toggleExpand">
+              {{ inputExpanded ? '⤡' : '⤢' }}
+            </button>
           </div>
-          <div style="display: flex; justify-content: flex-end; align-items: center;">
+          <div class="composer-actions">
             <NButton
               v-if="!chat.isStreaming"
               type="primary"
               size="small"
-              :disabled="!inputValue.trim()"
+              :disabled="!canSend"
               @click="handleSend"
               style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
             >↑</NButton>
@@ -837,6 +1010,7 @@ function handleContainerClick(e) {
         </div>
       </div>
     </div>
+    </div><!-- /chat-card -->
   </div>
 </template>
 
@@ -844,5 +1018,140 @@ function handleContainerClick(e) {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+.chat-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.chat-card {
+  flex: 1;
+  min-height: 0;
+  width: calc(100% - 48px);
+  max-width: 820px;
+  margin: 0 auto 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 0.5px solid var(--color-border);
+  background: linear-gradient(180deg, var(--color-surface), rgba(255, 255, 255, 0.26));
+  box-shadow: var(--shadow-card);
+}
+[data-theme="dark"] .chat-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03));
+}
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  display: flex;
+  justify-content: center;
+}
+.chat-column {
+  width: 100%;
+  max-width: 760px;
+  position: relative;
+}
+.chat-composer-card {
+  border: 0.5px solid var(--color-border);
+  border-radius: 22px;
+  padding: 8px 10px;
+  background: var(--color-input);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-sm);
+}
+.composer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.composer-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.icon-pill {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  border: 0.5px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.icon-pill svg { width: 17px; height: 17px; }
+.icon-pill:hover:not(:disabled) { background: var(--color-primary-soft); color: var(--color-primary); }
+.icon-pill:disabled { opacity: 0.35; cursor: default; }
+.icon-pill.wide { font-size: 15px; }
+.icon-pill.on {
+  background: var(--color-primary-soft);
+  border-color: var(--color-border);
+  color: var(--color-primary);
+}
+.plan-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 3px 6px 6px;
+  color: var(--color-warning);
+}
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.scroll-bottom-btn {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(96px + var(--safe-bottom));
+  z-index: 101;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--color-surface-strong);
+  border: 0.5px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  color: var(--color-text-secondary);
+  font-size: 18px;
+  user-select: none;
+}
+@media (max-width: 1099px) {
+  .chat-composer-card { border-radius: 18px; padding: 6px 8px; }
+  .composer-row { margin-top: 6px; }
+  .icon-pill { width: 34px; height: 34px; }
+  .chat-card {
+    width: 100%;
+    margin: 0;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+  .chat-messages { padding: 8px 14px; }
+  .chat-column { max-width: 100%; }
+  .scroll-bottom-btn { bottom: calc(86px + var(--safe-bottom)); }
 }
 </style>

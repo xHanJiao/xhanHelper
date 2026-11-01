@@ -123,7 +123,7 @@ onMounted(fetchList)
 </script>
 
 <template>
-  <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
+  <div style="display: flex; flex-direction: column; height: 100%; background: transparent; min-width: 0;">
     <PageTopBar title="主题管理" :visible="true">
       <template #right>
         <TopBarBtn label="新建主题" @click="openCreate" />

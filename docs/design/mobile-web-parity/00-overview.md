@@ -1,7 +1,7 @@
 # 移动端优先的 Web 体验对齐 · 总览
 
 > 日期：2026-11-01
-> 状态：范围与 UI 已定；M1 骨架 + M2a/M2c（输入框图片链路、计划/无痕）已落地，M2b/M3 待开发
+> 状态：范围与 UI 已定；M1 骨架 + M2a/M2c（输入框图片链路、计划/无痕）+ M2b v1（灵阅卡片/列表/详情、文档阅读页、done.artifacts）已落地；M3 待开发
 > 位置：`docs/design/mobile-web-parity/`；预览在同目录 `mockup.html` 与 `mockups/`
 > 目标：把 Web 前端做成「手机上的主客户端」，桌面可用即可
 > 对照：macOS 客户端 `client/xHelper/xHelper/Shared`

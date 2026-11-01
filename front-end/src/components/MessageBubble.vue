@@ -1,12 +1,13 @@
 <script setup>
 import { computed, ref, inject, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import MarkdownIt from 'markdown-it'
 import { NDropdown, useMessage } from 'naive-ui'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import WaitingAnimation from '@/components/WaitingAnimation.vue'
 import AuthImage from '@/components/media/AuthImage.vue'
 import ImageLightbox from '@/components/media/ImageLightbox.vue'
+import ArtifactCards from '@/components/chat/ArtifactCards.vue'
+import md from '@/utils/markdown'
 import { useDebugMode } from '@/composables/useDebugMode'
 import { useAuthStore } from '@/stores/auth'
 
@@ -28,8 +29,6 @@ const selectionMode = inject('selectionMode', ref(false))
 const selectedUserMsgIds = inject('selectedUserMsgIds', ref(new Set()))
 const toggleRound = inject('toggleRound', () => {})
 const enterSelection = inject('enterSelectionMode', () => {})
-
-const md = new MarkdownIt()
 
 const isUser = computed(() => props.message.role === 'user')
 const isTool = computed(() => props.message.role === 'tool')
@@ -67,7 +66,14 @@ const canSelect = computed(() => {
   return selectionMode.value && props.roundKey && !isTool.value
 })
 
-function handleBubbleClick() {
+function handleBubbleClick(e) {
+  // 正文里的内链（xhanhelper://document/<id>）走应用内跳转，不做整页刷新
+  const link = e?.target?.closest?.('a[data-route]')
+  if (link) {
+    e.preventDefault()
+    router.push(link.getAttribute('data-route'))
+    return
+  }
   if (canSelect.value) {
     toggleRound(props.roundKey)
   }
@@ -231,6 +237,7 @@ onBeforeUnmount(() => {
         <div v-if="contentHtml" class="assistant-content" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
+        <ArtifactCards :items="message.artifacts || []" />
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
         <ThinkingBlock v-if="!isSharedView" :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" :has-content="!!(message.content)" />
         <div v-if="timeText" class="msg-time assistant-time">{{ timeText }}</div>

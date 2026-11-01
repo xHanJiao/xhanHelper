@@ -79,10 +79,22 @@ const routes = [
     meta: { topLevel: true }
   },
   {
+    path: '/documents/:id',
+    name: 'DocumentRead',
+    component: () => import('@/views/DocumentReadView.vue'),
+    meta: { hideTabs: true }
+  },
+  {
     path: '/artifacts',
     name: 'Artifacts',
     component: () => import('@/views/ArtifactsView.vue'),
     meta: { topLevel: true }
+  },
+  {
+    path: '/artifacts/:id',
+    name: 'ArtifactDetail',
+    component: () => import('@/views/ArtifactDetailView.vue'),
+    meta: { hideTabs: true }
   },
   {
     path: '/images',

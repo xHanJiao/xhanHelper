@@ -185,6 +185,35 @@ img {
   height: auto;
 }
 
+.message-content a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.message-content a:hover {
+  text-decoration: underline;
+}
+
+.message-content blockquote {
+  margin: 0 0 10px;
+  padding: 2px 12px;
+  border-left: 3px solid var(--color-primary-soft);
+  color: var(--color-text-secondary);
+}
+
+.message-content ul,
+.message-content ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.message-content h1,
+.message-content h2,
+.message-content h3 {
+  line-height: 1.35;
+  margin: 16px 0 8px;
+}
+
 .message-content p {
   margin: 0 0 10px 0;
 }

@@ -201,6 +201,10 @@ export function useChatSSE() {
           id: d.message_id,
           toolCalls: []
         }
+        // 本轮产出的灵阅卡片：done 直接带标题摘要，不用等下一次拉消息列表
+        if (Array.isArray(d.artifacts) && d.artifacts.length) {
+          finalMsg.artifacts = d.artifacts
+        }
         chat.addMessage(finalMsg)
         chat.streamingMessage = null
 

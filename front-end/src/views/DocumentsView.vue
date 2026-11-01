@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
@@ -21,6 +22,7 @@ import TopBarBtn from '@/components/TopBarBtn.vue'
 import { useExportPDF } from '@/composables/useExportPDF'
 
 const message = useMessage()
+const router = useRouter()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 const { exportPDF } = useExportPDF()
@@ -139,6 +141,7 @@ function parseTags(tags) {
 
 function getCardActions(doc) {
   return [
+    { key: 'open', label: '阅读', onClick: () => router.push(`/documents/${doc.id}`) },
     { key: 'export-pdf', label: '导出PDF', onClick: () => exportPDF(doc.content, doc.title, 'markdown') },
     { key: 'share', label: '分享', onClick: () => handleShare(doc) },
     { key: 'download', label: '下载', onClick: () => handleDownload(doc) },

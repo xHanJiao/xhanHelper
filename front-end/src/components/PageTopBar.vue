@@ -30,7 +30,8 @@ const theme = useThemeStore()
 
 const displayName = computed(() => auth.user?.username || '我')
 const showBack = computed(() => !props.showConversation && route.meta.topLevel !== true)
-const titleText = computed(() => props.title || (props.showConversation ? '' : 'xhanHelper'))
+// 顶级页（对话/灵阅/文档/我的）自己有标题，顶栏不再重复品牌名
+const titleText = computed(() => props.title || (props.showConversation || route.meta.topLevel ? '' : 'xhanHelper'))
 
 function handlePopoverShow(v) {
   showAgentPopover.value = v

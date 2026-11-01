@@ -533,7 +533,7 @@ func (o *Orchestrator) runReActLoop(
 		if len(state.artifactRefs) == 0 || state.lastAssistantMsgID == "" {
 			return
 		}
-		b, err := json.Marshal(state.artifactRefs)
+		b, err := json.Marshal(compactArtifactRefs(state.artifactRefs))
 		if err != nil {
 			log.Printf("[orch] marshal artifacts error: %v", err)
 			return
@@ -581,7 +581,7 @@ func (o *Orchestrator) runFinalRound(
 		// 兜底：收尾轮仍未结束（如 prompt-eng 模式 LLM 仍返回工具调用），保留硬错误行为
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
 		state.outcome = activity.OutcomeFailed
-		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "max iterations reached", idsByTypeFromResult(retrieveResult), state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "max iterations reached", idsByTypeFromResult(retrieveResult), state.artifactRefs, state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
 	}
 }
 
@@ -1383,7 +1383,7 @@ func (o *Orchestrator) finalizeRound(
 		if state.nativeFCTextDeferred && streamContent != "" {
 			o.streamTextChunks(ctx, events, streamContent)
 		}
-		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", idsByTypeFromResult(retrieveResult), state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", idsByTypeFromResult(retrieveResult), state.artifactRefs, state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
 	}
 	return done
 }
@@ -1426,7 +1426,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
 		mainClients := mainLoopClientTools(req.ClientTools, o.subAgentOnlyClientTools, req.Mode)
 		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, req.TurnID, o.registry, internalTCs, clientToolIndex(mainClients, o.registry), state, req.Mode, toToolClientInfos(req.ClientTools))
-		state.artifactRefs = append(state.artifactRefs, artifactRefsFromResults(toolCallResults)...)
+		state.artifactRefs = mergeArtifactRefs(state.artifactRefs, artifactRefsFromResults(toolCallResults))
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
 		return false
 	}
@@ -1728,6 +1728,8 @@ func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
 		var d struct {
 			ArtifactID string `json:"artifact_id"`
 			Type       string `json:"type"`
+			Title      string `json:"title"`
+			Summary    string `json:"summary"`
 		}
 		if err := json.Unmarshal(r.result.Data, &d); err != nil {
 			log.Printf("[orch] parse artifact ref: %v", err)
@@ -1740,9 +1742,40 @@ func artifactRefsFromResults(results []toolExecResult) []model.ArtifactRef {
 		if typ == "" {
 			typ = model.ArtifactTypeHTML
 		}
-		refs = append(refs, model.ArtifactRef{ID: d.ArtifactID, Type: typ})
+		refs = append(refs, model.ArtifactRef{ID: d.ArtifactID, Type: typ, Title: d.Title, Summary: d.Summary})
 	}
 	return refs
+}
+
+// mergeArtifactRefs — 按 id 合并（后到的覆盖），保持首次出现顺序。
+// 一轮里对同一页 patch 多次只该留一张卡，标题以最后一次为准。
+func mergeArtifactRefs(old, add []model.ArtifactRef) []model.ArtifactRef {
+	if len(add) == 0 {
+		return old
+	}
+	idx := make(map[string]int, len(old))
+	for i, r := range old {
+		idx[r.ID] = i
+	}
+	for _, r := range add {
+		if i, ok := idx[r.ID]; ok {
+			old[i] = r
+			continue
+		}
+		idx[r.ID] = len(old)
+		old = append(old, r)
+	}
+	return old
+}
+
+// compactArtifactRefs — 落库前的裁剪：消息表只存 {id,type}，
+// 标题摘要读时由 attachArtifacts 一次 IN 展开（docs/design/html-artifact design §5）。
+func compactArtifactRefs(refs []model.ArtifactRef) []model.ArtifactRef {
+	out := make([]model.ArtifactRef, len(refs))
+	for i, r := range refs {
+		out[i] = model.ArtifactRef{ID: r.ID, Type: r.Type}
+	}
+	return out
 }
 
 // collectToolResultsNative 原生 FC 路径：工具结果以 role=tool 保存，关联真实 tool_call_id。
@@ -2310,7 +2343,7 @@ func (o *Orchestrator) streamTextChunks(ctx context.Context, events chan<- *llm.
 	}
 }
 
-func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistantMsgID, userMsgID, errStr string, resourceIDs map[string][]string, contextTokens, contextWindow int) {
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistantMsgID, userMsgID, errStr string, resourceIDs map[string][]string, artifacts []model.ArtifactRef, contextTokens, contextWindow int) {
 	parts := make([]string, 0)
 	if convID != "" {
 		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
@@ -2331,6 +2364,14 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistan
 		if ids := resourceIDs[typ]; len(ids) > 0 {
 			b, _ := json.Marshal(ids)
 			parts = append(parts, fmt.Sprintf(`"%s_ids":%s`, typ, string(b)))
+		}
+	}
+	// 本轮产出的 HTML 页面引用（含标题摘要）：流一结束就能渲染卡片，不用再拉一次消息列表。
+	if len(artifacts) > 0 {
+		if b, err := json.Marshal(artifacts); err == nil {
+			parts = append(parts, `"artifacts":`+string(b))
+		} else {
+			log.Printf("[orch] marshal done artifacts: %v", err)
 		}
 	}
 	if errStr != "" {

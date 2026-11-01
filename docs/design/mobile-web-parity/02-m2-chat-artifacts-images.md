@@ -9,10 +9,13 @@
 | 段 | 内容 | 状态 |
 |---|---|---|
 | **M2a** 输入框补齐 | 选图 / 粘贴 / 拖拽 → 压缩 → 上传 → 托盘 → 发送 → 历史图片条 + 大图 | ✅ 已实现 |
-| **M2b** 卡片与灵阅 | 文档卡、灵阅卡、多卡横排 `＋N`、`done.artifacts`、灵阅列表/详情、文档最小阅读页 | 待做 |
+| **M2b** 卡片与灵阅 | 灵阅卡 + 多卡横排 `＋N`、`done.artifacts`、灵阅列表/详情（分享/删除）、文档最小阅读页、Markdown 内链/表格 | ✅ 已实现（v1） |
 | **M2c** 会话开关 | 计划模式 pill、无痕 pill（新会话 `init_mode`/`ephemeral`，已有会话 PATCH） | ✅ 已实现 |
 
 图片链路被提到卡片之前：手机端发照片是最常用的真实动作，比卡片更核心。
+
+M2b 的 v1 只做「能看见、能点开」；还没做的：消息卡片里没有图片/文件卡（只有灵阅卡），
+Markdown 代码块没有复制按钮，灵阅详情没有标签词云。这些留到 M3 或按需再补。
 
 ### M1 输入框对照 macOS 的取舍
 
@@ -239,7 +242,7 @@ new MarkdownIt({
 
 ## 九、后端小改
 
-### done 带 artifacts
+### done 带 artifacts（已实现）
 
 `emitDone` 增加参数 `artifacts []model.ArtifactRef`，输出：
 
@@ -247,9 +250,9 @@ new MarkdownIt({
 {"conversation_id":"...","message_id":"...","user_message_id":"...","artifacts":[{"id":"...","type":"html","title":"...","summary":"..."}]}
 ```
 
-- `artifactRefsFromResults` 解析 `title/summary`。
-- 落库 `SetArtifactsJSON` 前剥掉 title/summary，只存 id/type。
-- 单测：`artifactRefsFromResults` 现有测试补 title/summary；`emitDone` 用 `httptest` 或直接断言 JSON 字符串可行。
+- `artifactRefsFromResults` 解析 `title/summary`；同一轮 patch 同一页按 id 合并，标题取最后一次（`mergeArtifactRefs`）。
+- 落库 `SetArtifactsJSON` 前用 `compactArtifactRefs` 剥掉 title/summary，只存 id/type。
+- 单测：`artifactRefsFromResults` 带出标题摘要、`mergeArtifactRefs` 去重、`compactArtifactRefs` 裁剪（`artifact_refs_test.go`）。
 
 ### 可选：artifact ref 批量接口
 

@@ -875,6 +875,7 @@ function handleContainerClick(e) {
   <div class="chat-page">
     <PageTopBar
       show-conversation
+      align-card
       :agent-id="currentAgentId"
       :agent-name="currentAgentName"
       :visible="!isMobile || isBarVisible"
@@ -963,7 +964,7 @@ function handleContainerClick(e) {
       :style="[
         !isMobile ? {
           padding: inputVisible ? '8px 18px 14px' : '0 18px',
-          maxWidth: 'min(760px, 100%)',
+          maxWidth: 'min(960px, 100%)',
           marginLeft: 'auto',
           marginRight: 'auto',
           width: '100%',
@@ -1099,7 +1100,7 @@ function handleContainerClick(e) {
   flex: 1;
   min-height: 0;
   width: calc(100% - 48px);
-  max-width: 820px;
+  max-width: 1080px;
   margin: 0 auto 24px;
   display: flex;
   flex-direction: column;
@@ -1121,7 +1122,7 @@ function handleContainerClick(e) {
 }
 .chat-column {
   width: 100%;
-  max-width: 760px;
+  max-width: 960px;
   position: relative;
 }
 .chat-composer-card {

@@ -15,7 +15,9 @@ const props = defineProps({
   agentName: { type: String, default: '' },
   agentId: { type: String, default: '' },
   agents: { type: Array, default: () => [] },
-  showConversation: { type: Boolean, default: false }
+  showConversation: { type: Boolean, default: false },
+  // 顶栏内容与下方聊天卡片同宽对齐（仅桌面；手机卡片是全宽的）
+  alignCard: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['select-agent', 'popover-open'])
@@ -68,9 +70,9 @@ async function logout() {
 <template>
   <header
     class="app-topbar"
+    :class="{ 'align-card': alignCard }"
     :style="{
       height: visible ? '56px' : '0px',
-      padding: visible ? '0 var(--topbar-pad)' : '0 var(--topbar-pad)',
       overflow: 'visible'
     }"
   >
@@ -175,6 +177,7 @@ async function logout() {
 <style scoped>
 .app-topbar {
   --topbar-pad: 22px;
+  padding: 0 var(--topbar-pad);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -186,6 +189,10 @@ async function logout() {
 }
 @media (max-width: 1099px) {
   .app-topbar { --topbar-pad: 14px; padding-top: var(--safe-top); box-sizing: content-box; }
+}
+/* 与 .chat-card 同宽：卡片是 calc(100% - 48px) / max 1080，两侧最小 24 */
+@media (min-width: 1100px) {
+  .app-topbar.align-card { padding-inline: max(24px, calc((100% - 1080px) / 2)); }
 }
 .topbar-left {
   display: flex;

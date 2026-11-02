@@ -77,6 +77,8 @@ export default defineConfig({
     include: ['vue', 'vue-router', 'pinia', 'markdown-it']
   },
   server: {
+    // 监听 0.0.0.0，手机同 Wi-Fi 直接开 http://<Mac 局域网 IP>:5173 验收
+    host: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

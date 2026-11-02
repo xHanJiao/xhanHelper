@@ -82,7 +82,7 @@ onMounted(fetchNotes)
         search-placeholder="搜索笔记"
         @search="handleSearch"
       />
-      <NGrid v-if="notes.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
+      <NGrid v-if="notes.length > 0" cols="1 s:2 m:3" responsive="screen" :x-gap="16" :y-gap="16">
         <NGi v-for="note in notes" :key="note.id">
           <ListItemCard
             :title="note.topic || '无标题'"

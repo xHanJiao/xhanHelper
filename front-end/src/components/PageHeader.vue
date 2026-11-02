@@ -202,6 +202,17 @@ watch(() => props.filterable, (v) => {
 
 <style scoped>
 .ph { padding: 0 2px 14px; }
+/* 桌面：标题/返回跟着滚动区吸顶。手机不吸顶（键盘与安全区判断复杂，且留白本就紧张） */
+@media (min-width: 1100px) {
+  .ph {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(247, 238, 221, 0.86);
+    backdrop-filter: blur(12px);
+  }
+  [data-theme="dark"] .ph { background: rgba(28, 28, 30, 0.86); }
+}
 .ph-row { display: flex; align-items: center; gap: 8px; }
 .ph-back {
   display: inline-flex;

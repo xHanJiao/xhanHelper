@@ -83,7 +83,7 @@ onMounted(() => {
         @search="handleSearch"
       />
       <!-- 提取状态 -->
-      <NGrid v-if="memories.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
+      <NGrid v-if="memories.length > 0" cols="1 s:2 m:3" responsive="screen" :x-gap="16" :y-gap="16">
         <NGi v-for="mem in memories" :key="mem.id">
           <ListItemCard
             :title="mem.memory_key || '记忆'"

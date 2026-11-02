@@ -308,10 +308,14 @@ img {
 }
 
 /* 列表页统一滚动容器：手机顶部让出安全区（这些页在手机端隐藏了 PageTopBar） */
+/* 桌面内容宽度统一 1120；设置/我的用 scoped 的 760 覆盖 */
 .page-scroll {
   flex: 1;
   overflow-y: auto;
   padding: 0 16px 28px;
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
 }
 @media (max-width: 1099px) {
   .page-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }

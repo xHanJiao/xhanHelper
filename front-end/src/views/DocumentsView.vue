@@ -154,7 +154,7 @@ onMounted(() => {
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
     <PageTopBar v-if="!isMobile" />
-    <div class="page-scroll doc-scroll">
+    <div class="page-scroll">
       <PageHeader
         title="文档"
         searchable
@@ -232,6 +232,5 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.doc-scroll { width: 100%; }
 .empty { display: grid; justify-items: center; gap: 6px; padding: 12px 0; }
 </style>

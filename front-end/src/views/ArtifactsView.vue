@@ -193,7 +193,7 @@ onMounted(() => {
 <template>
   <div class="page">
     <PageTopBar v-if="!isMobile" />
-    <div class="page-scroll art-scroll">
+    <div class="page-scroll">
       <PageHeader
         :title="selecting ? `已选 ${selectedCount}` : '灵阅'"
         :searchable="!selecting"
@@ -295,7 +295,6 @@ onMounted(() => {
 
 <style scoped>
 .page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.art-scroll { max-width: 900px; width: 100%; margin: 0 auto; }
 
 .hint { display: grid; place-items: center; padding: 40px 0; }
 .empty { text-align: center; padding: 60px 12px; color: var(--color-text-secondary); }

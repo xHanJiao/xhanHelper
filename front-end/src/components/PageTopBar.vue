@@ -98,7 +98,7 @@ async function logout() {
         @update:show="handlePopoverShow"
       >
         <template #trigger>
-          <TopBarBtn icon="🤖" :label="agentName ? agentName + ' ▾' : '智能体 ▾'" />
+          <TopBarBtn :label="agentName ? agentName + ' ▾' : '智能体 ▾'" />
         </template>
         <div class="agent-popover">
           <div class="agent-popover-header">已绑定智能体</div>
@@ -126,7 +126,7 @@ async function logout() {
         @update:show="handlePopoverShow"
       >
         <template #trigger>
-          <TopBarBtn icon="🤖" label="智能体 ▾" />
+          <TopBarBtn label="智能体 ▾" />
         </template>
         <div class="agent-popover">
           <div class="agent-popover-header">选择智能体</div>

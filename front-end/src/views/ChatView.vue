@@ -70,6 +70,7 @@ import { api } from '@/api/client'
 import {
   NInput,
   NButton,
+  NTooltip,
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
@@ -92,6 +93,13 @@ const { isIOS } = useDevice()
 onMounted(() => {
   fetchAgents()
   document.addEventListener('visibilitychange', onVisibilityChange)
+  // 输入区高度变化（收起/展开/挂图）时重算「↓」的位置
+  if (mobileInputRef.value) {
+    composerObserver = new ResizeObserver(onLayoutResize)
+    composerObserver.observe(mobileInputRef.value)
+  }
+  window.addEventListener('resize', onLayoutResize)
+  nextTick(onLayoutResize)
   // 复用已存在会话（从其它 tab 返回，route id 与 store 中 conversationId 相同，
   // 导致 watcher 三分支全跳过）时，主动同步一次：拉取最新消息 + 滚到底，
   // 避免看到陈旧列表且停在旧滚动位置。
@@ -132,6 +140,8 @@ function exitSelectionMode() {
   if (!isMobile.value) {
     inputVisible.value = true
   }
+  // 手机也重置：否则再点「发消息」会直接弹成 75vh
+  inputExpanded.value = false
 }
 
 function toggleRound(roundKey) {
@@ -173,6 +183,24 @@ const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
 const inputVisible = ref(true)
 const inputExpanded = ref(false)
+// 「↓」按钮贴在输入卡上沿：输入卡高度会变（收起/展开/加图），写死 bottom 会压在卡上
+const scrollBtnBottom = ref(120)
+let composerObserver = null
+function updateScrollBtnBottom() {
+  const el = mobileInputRef.value
+  if (!el) return
+  scrollBtnBottom.value = Math.round(window.innerHeight - el.getBoundingClientRect().top) + 12
+}
+// 消息容器高度变了（收起/展开/挂附件）也要重算「↓」该不该露，别等下一次 scroll
+function updateAwayFromBottom() {
+  const c = messagesContainerRef.value
+  if (!c) return
+  isAwayFromBottom.value = c.scrollHeight - c.scrollTop - c.clientHeight > 200
+}
+function onLayoutResize() {
+  updateScrollBtnBottom()
+  updateAwayFromBottom()
+}
 let hideCooldownTimer = null
 let showCooldownActive = false
 let scrollRafPending = false
@@ -191,8 +219,11 @@ function toggleInput() {
   inputVisible.value = !inputVisible.value
   if (inputVisible.value) {
     nextTick(() => {
-      document.querySelector('.chat-input')?.focus()
+      document.querySelector('.chat-input textarea')?.focus()
     })
+  } else {
+    // 收起要连键盘一起收：只把高度收 0，iOS 上焦点还在，键盘不会退
+    document.querySelector('.chat-input textarea')?.blur()
   }
 }
 
@@ -265,7 +296,6 @@ function scrollToBottom() {
 }
 
 function handleScrollToBottomBtn() {
-  inputVisible.value = true
   nextTick(() => {
     requestAnimationFrame(() => {
       const el = messagesContainerRef.value
@@ -476,6 +506,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     // 切换会话时跳过输入框 CSS 过渡，避免过渡期间 scrollHeight 变化导致定位不准
     skipInputTransition.value = true
     inputVisible.value = true
+    inputExpanded.value = false
     isFirstLoad.value = true
     // 延迟 200ms 才允许「上滑加载更多历史」触发，防止初入页面时的滚动事件误触发分页
     isInitialScrollDone.value = false
@@ -519,6 +550,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     // 与分支 A 相同的 UI 重置 + 历史加载 + 滚动定位流程
     skipInputTransition.value = true
     inputVisible.value = true
+    inputExpanded.value = false
     isFirstLoad.value = true
     isInitialScrollDone.value = false
     await loadHistory(newId)
@@ -552,6 +584,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   // ====================================================================
   } else if (!newId) {
     inputVisible.value = true
+    inputExpanded.value = false
     isInitialScrollDone.value = false
     if (chat.isStreaming) cancel()
     chat.reset()
@@ -560,6 +593,8 @@ watch(() => route.params.id, async (newId, oldId) => {
 
 onBeforeUnmount(() => {
   clearTimeout(hideCooldownTimer)
+  composerObserver?.disconnect()
+  window.removeEventListener('resize', onLayoutResize)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (chat.isStreaming) cancel()
 })
@@ -774,13 +809,17 @@ function onComposerDrop(e) {
 // 已有会话直接 PATCH（默认会话禁止无痕，服务端会 400，这里把原因透出来）。
 async function toggleMode() {
   const next = chat.mode === 'plan' ? 'work' : 'plan'
+  // 提示只弹一次、几秒自动消失；模式状态由 pill 高亮保留，不常驻黄条
+  const hint = next === 'plan' ? '计划模式已开启：只读，不会写文档或改数据' : '已退出计划模式'
   if (!chat.conversationId) {
     chat.mode = next
+    nMessage.info(hint)
     return
   }
   try {
     await api.patch(`/api/conversations/${chat.conversationId}/mode`, { mode: next })
     chat.mode = next
+    nMessage.info(hint)
   } catch (e) {
     console.error('Failed to switch conversation mode', e)
     nMessage.error(e?.message || '切换模式失败')
@@ -789,13 +828,16 @@ async function toggleMode() {
 
 async function toggleEphemeral() {
   const next = !chat.ephemeral
+  const hint = next ? '无痕会话已开启：结束后自动销毁' : '已关闭无痕会话'
   if (!chat.conversationId) {
     chat.ephemeral = next
+    nMessage.info(hint)
     return
   }
   try {
     await api.patch(`/api/conversations/${chat.conversationId}/ephemeral`, { ephemeral: next })
     chat.ephemeral = next
+    nMessage.info(hint)
   } catch (e) {
     console.error('Failed to toggle ephemeral', e)
     nMessage.error(e?.message || '切换无痕失败')
@@ -804,8 +846,7 @@ async function toggleEphemeral() {
 
 function handleScroll(e) {
   const container = e.target
-  const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-  isAwayFromBottom.value = distFromBottom > 200
+  updateAwayFromBottom()
 
   const threshold = container.clientHeight * 0.15
   const nearTop = container.scrollTop <= threshold
@@ -898,7 +939,8 @@ function handleContainerClick(e) {
         <div
           ref="messagesEndRef"
           :style="{
-            height: inputExpanded ? (isMobile ? '75vh' : '35vh') : '15px',
+            // 手机上输入卡自己就占 75vh，再塞 75vh 占位会把可视区撑成空白
+            height: inputExpanded && !isMobile ? '35vh' : '15px',
             transition: 'height 0.2s ease-out'
           }"
         />
@@ -907,15 +949,17 @@ function handleContainerClick(e) {
 
     <!-- 查看历史消息时，滚动到底部按钮 -->
     <div
-      v-if="isAwayFromBottom"
+      v-if="isAwayFromBottom && !inputExpanded"
       @click="handleScrollToBottomBtn"
       class="scroll-bottom-btn"
+      :style="{ bottom: scrollBtnBottom + 'px' }"
     >
       ↓
     </div>
 
     <div
       ref="mobileInputRef"
+      :inert="!inputVisible"
       :style="[
         !isMobile ? {
           padding: inputVisible ? '8px 18px 14px' : '0 18px',
@@ -953,8 +997,9 @@ function handleContainerClick(e) {
         @change="onFilesChosen"
       />
       <div class="chat-composer-card" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
-        <div v-if="chat.mode === 'plan'" class="plan-hint">计划模式 · 只读，不会写文档或改数据</div>
-        <div v-if="chat.ephemeral" class="plan-hint">无痕会话 · 结束后自动销毁</div>
+        <button v-if="isMobile" class="composer-handle" type="button" aria-label="收起输入框" @click="toggleInput">
+          <span></span>
+        </button>
         <AttachmentTray
           v-if="draftImages.length"
           :items="draftImages"
@@ -977,18 +1022,38 @@ function handleContainerClick(e) {
         />
         <div class="composer-row">
           <div class="composer-left">
-            <button class="icon-pill" type="button" title="添加图片" :disabled="chat.isStreaming" @click="pickImages">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
-            </button>
-            <button class="icon-pill" :class="{ on: chat.mode === 'plan' }" type="button" :title="chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）'" @click="toggleMode">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg>
-            </button>
-            <button class="icon-pill" :class="{ on: chat.ephemeral }" type="button" :title="chat.ephemeral ? '关闭无痕' : '无痕会话（结束后销毁）'" @click="toggleEphemeral">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
-            </button>
-            <button v-if="!isMobile" class="icon-pill wide" type="button" title="展开/收起输入框" @click="toggleExpand">
-              {{ inputExpanded ? '⤡' : '⤢' }}
-            </button>
+            <NTooltip :disabled="isMobile" placement="top">
+              <template #trigger>
+                <button class="icon-pill" type="button" aria-label="添加图片" :disabled="chat.isStreaming" @click="pickImages">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+                </button>
+              </template>
+              添加图片
+            </NTooltip>
+            <NTooltip :disabled="isMobile" placement="top">
+              <template #trigger>
+                <button class="icon-pill" :class="{ on: chat.mode === 'plan' }" type="button" :aria-pressed="chat.mode === 'plan'" :aria-label="chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）'" @click="toggleMode">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg>
+                </button>
+              </template>
+              {{ chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）' }}
+            </NTooltip>
+            <NTooltip :disabled="isMobile" placement="top">
+              <template #trigger>
+                <button class="icon-pill" :class="{ on: chat.ephemeral }" type="button" :aria-pressed="chat.ephemeral" :aria-label="chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）'" @click="toggleEphemeral">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
+                </button>
+              </template>
+              {{ chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）' }}
+            </NTooltip>
+            <NTooltip :disabled="isMobile" placement="top">
+              <template #trigger>
+                <button class="icon-pill wide" type="button" :aria-label="inputExpanded ? '收起输入框' : '展开输入框'" @click="toggleExpand">
+                  {{ inputExpanded ? '⤡' : '⤢' }}
+                </button>
+              </template>
+              {{ inputExpanded ? '收起输入框' : '展开输入框' }}
+            </NTooltip>
           </div>
           <div class="composer-actions">
             <NButton
@@ -1011,6 +1076,10 @@ function handleContainerClick(e) {
       </div>
     </div>
     </div><!-- /chat-card -->
+    <button v-if="isMobile && !inputVisible && !selectionMode" class="composer-reopen" type="button" @click="toggleInput">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      发消息
+    </button>
   </div>
 </template>
 
@@ -1083,6 +1152,41 @@ function handleContainerClick(e) {
   align-items: center;
   flex: 0 0 auto;
 }
+.composer-handle {
+  width: 100%;
+  height: 22px;
+  margin: -2px 0 2px;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+}
+.composer-handle span {
+  width: 34px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-border-strong);
+}
+.composer-reopen {
+  position: fixed;
+  right: 14px;
+  bottom: calc(var(--bottom-tabs-height) + var(--safe-bottom) + 12px);
+  z-index: 101;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-surface-strong);
+  color: var(--color-primary);
+  font-size: 12.5px;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+.composer-reopen svg { width: 14px; height: 14px; }
 .icon-pill {
   width: 32px;
   height: 32px;
@@ -1105,12 +1209,6 @@ function handleContainerClick(e) {
   border-color: var(--color-border);
   color: var(--color-primary);
 }
-.plan-hint {
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 3px 6px 6px;
-  color: var(--color-warning);
-}
 .file-input {
   position: absolute;
   width: 1px;
@@ -1122,7 +1220,6 @@ function handleContainerClick(e) {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(96px + var(--safe-bottom));
   z-index: 101;
   width: 38px;
   height: 38px;
@@ -1152,6 +1249,5 @@ function handleContainerClick(e) {
   }
   .chat-messages { padding: 8px 14px; }
   .chat-column { max-width: 100%; }
-  .scroll-bottom-btn { bottom: calc(86px + var(--safe-bottom)); }
 }
 </style>

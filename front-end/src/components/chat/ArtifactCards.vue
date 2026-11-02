@@ -90,7 +90,8 @@ onBeforeUnmount(clearTimer)
 .card {
   flex: 0 0 auto;
   width: 220px;
-  min-height: 92px;
+  height: 96px;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -119,8 +120,8 @@ onBeforeUnmount(clearTimer)
   line-height: 1.5;
   color: var(--color-text-secondary);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -132,7 +133,7 @@ onBeforeUnmount(clearTimer)
 .more {
   flex: 0 0 auto;
   width: 46px;
-  min-height: 92px;
+  height: 96px;
   border: 0.5px dashed var(--color-border-strong);
   border-radius: 11px;
   background: transparent;

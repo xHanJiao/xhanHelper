@@ -191,7 +191,8 @@ onMounted(() => {
         </template>
       </PageHeader>
 
-      <NGrid v-if="documents.length > 0" :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">
+      <!-- 文档卡带正文预览，多列太挤，恒单列 -->
+      <NGrid v-if="documents.length > 0" :cols="1" :x-gap="16" :y-gap="16">
         <NGi v-for="doc in documents" :key="doc.id">
           <ListItemCard
             :title="doc.title"

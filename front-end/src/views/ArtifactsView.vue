@@ -1,7 +1,7 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NInput, NSpin, useMessage } from 'naive-ui'
+import { NButton, NInput, NPopconfirm, NSpin, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import PageTopBar from '@/components/PageTopBar.vue'
 
@@ -16,21 +16,139 @@ const loading = ref(false)
 const keyword = ref('')
 const pageSize = 20
 
+// 标签 chip 多选 = 交集（后端 ?tags=a,b 就是交集口径）
+const tags = ref([])
+const selectedTags = ref([])
+const MAX_TAGS = 10
+
+// 多选删除：上限与后端 maxBatchDelete 一致
+const MAX_SELECT = 100
+const selecting = ref(false)
+const selectedIds = ref([])
+const deleting = ref(false)
+const selectedCount = computed(() => selectedIds.value.length)
+// 已选标签可能因频次变化掉出前 20：补到 chip 行最前面，否则没有入口取消它
+const chipTags = computed(() => {
+  const names = new Set(tags.value.map((t) => t.name))
+  const extra = selectedTags.value.filter((t) => !names.has(t)).map((name) => ({ name, count: 0 }))
+  return [...extra, ...tags.value]
+})
+
+// 请求序号：快速切标签 / 加载更多在飞时切筛选，只让最后一次响应落地
+let listSeq = 0
+
 async function fetchList(reset = true) {
+  const my = ++listSeq
   loading.value = true
   try {
     const offset = reset ? 0 : items.value.length
     let url = `/api/artifacts?limit=${pageSize}&offset=${offset}`
     if (keyword.value.trim()) url += `&keyword=${encodeURIComponent(keyword.value.trim())}`
+    if (selectedTags.value.length) {
+      url += `&tags=${selectedTags.value.map((t) => encodeURIComponent(t)).join(',')}`
+    }
     const res = await api.get(url)
+    if (my !== listSeq) return
     const list = res.items || []
     items.value = reset ? list : [...items.value, ...list]
     total.value = res.total || 0
   } catch (e) {
+    if (my !== listSeq) return
     console.error('Failed to load artifacts', e)
     message.error('加载灵阅列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
+  }
+}
+
+// 标签失败不影响列表：只是没有 chip 可用
+async function fetchTags() {
+  try {
+    const res = await api.get('/api/artifacts/tags')
+    tags.value = (Array.isArray(res?.tags) ? res.tags : [])
+      .filter((t) => t?.name)
+      .slice(0, 20)
+  } catch (e) {
+    console.error('Failed to load artifact tags', e)
+  }
+}
+
+function toggleTag(name) {
+  const i = selectedTags.value.indexOf(name)
+  if (i >= 0) {
+    selectedTags.value.splice(i, 1)
+  } else {
+    if (selectedTags.value.length >= MAX_TAGS) {
+      message.warning(`最多同时筛选 ${MAX_TAGS} 个标签`)
+      return
+    }
+    selectedTags.value.push(name)
+  }
+  fetchList()
+}
+
+function resetFilters() {
+  keyword.value = ''
+  selectedTags.value = []
+  fetchList()
+}
+
+function clearTags() {
+  if (!selectedTags.value.length) return
+  selectedTags.value = []
+  fetchList()
+}
+
+function enterSelect() {
+  selecting.value = true
+  selectedIds.value = []
+}
+
+function exitSelect() {
+  selecting.value = false
+  selectedIds.value = []
+}
+
+function isSelected(id) {
+  return selectedIds.value.includes(id)
+}
+
+function toggleSelect(a) {
+  if (isSelected(a.id)) {
+    selectedIds.value = selectedIds.value.filter((id) => id !== a.id)
+    return
+  }
+  if (selectedIds.value.length >= MAX_SELECT) {
+    message.warning(`一次最多选 ${MAX_SELECT} 条`)
+    return
+  }
+  selectedIds.value.push(a.id)
+}
+
+function openCard(a) {
+  if (selecting.value) toggleSelect(a)
+  else router.push(`/artifacts/${a.id}`)
+}
+
+async function deleteSelected() {
+  if (!selectedIds.value.length || deleting.value) return
+  deleting.value = true
+  try {
+    const res = await api.post('/api/artifacts/batch-delete', { ids: selectedIds.value })
+    const removed = Number(res?.deleted) || 0
+    const gone = new Set(selectedIds.value)
+    items.value = items.value.filter((a) => !gone.has(a.id))
+    total.value = Math.max(0, total.value - removed)
+    exitSelect()
+    fetchTags()
+    // 当前页删空但库里还有：补一页，别让「还没有灵阅」盖住事实
+    if (!items.value.length && total.value > 0) fetchList()
+    message.success(removed ? `已删除 ${removed} 条` : '没有可删除的条目')
+  } catch (e) {
+    console.error('Failed to delete artifacts', e)
+    message.error('删除失败，请重试')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -44,7 +162,10 @@ function formatDate(value) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
-onMounted(() => fetchList())
+onMounted(() => {
+  fetchList()
+  fetchTags()
+})
 </script>
 
 <template>
@@ -52,23 +173,73 @@ onMounted(() => fetchList())
     <PageTopBar />
     <div class="scroll">
       <div class="head">
-        <div class="heading">灵阅</div>
-        <NInput
-          v-model:value="keyword"
-          size="small"
-          clearable
-          placeholder="搜索标题/摘要"
-          class="search"
-          @keyup.enter="fetchList()"
-          @clear="fetchList()"
-        />
+        <template v-if="selecting">
+          <div class="heading sel-count">已选 {{ selectedCount }}</div>
+          <div class="sel-actions">
+            <NButton size="small" quaternary @click="exitSelect">取消</NButton>
+            <NPopconfirm
+              :positive-text="`删除 ${selectedCount} 条`"
+              negative-text="取消"
+              @positive-click="deleteSelected"
+            >
+              <template #trigger>
+                <NButton size="small" type="error" :disabled="!selectedCount" :loading="deleting">删除</NButton>
+              </template>
+              删除 {{ selectedCount }} 条灵阅？不可恢复，已分享的链接会立即失效。
+            </NPopconfirm>
+          </div>
+        </template>
+        <template v-else>
+          <div class="heading">灵阅</div>
+          <NInput
+            v-model:value="keyword"
+            size="small"
+            clearable
+            placeholder="搜索标题/摘要"
+            class="search"
+            @keyup.enter="fetchList()"
+            @clear="fetchList()"
+          />
+          <NButton v-if="items.length" size="small" quaternary @click="enterSelect">选择</NButton>
+        </template>
+      </div>
+
+      <div v-if="tags.length && !selecting" class="chips">
+        <button
+          type="button"
+          class="chip"
+          :class="{ active: !selectedTags.length }"
+          :aria-pressed="!selectedTags.length"
+          @click="clearTags"
+        >
+          全部
+        </button>
+        <button
+          v-for="t in chipTags"
+          :key="t.name"
+          type="button"
+          class="chip"
+          :class="{ active: selectedTags.includes(t.name) }"
+          :aria-pressed="selectedTags.includes(t.name)"
+          :title="t.count ? `${t.count} 篇` : ''"
+          @click="toggleTag(t.name)"
+        >
+          {{ t.name }}
+        </button>
       </div>
 
       <div v-if="loading && !items.length" class="hint"><NSpin size="small" /></div>
       <div v-else-if="!items.length" class="empty">
-        <div class="empty-ico">✦</div>
-        <p>还没有灵阅。在对话里让模型做一页，就会出现在这里。</p>
-        <router-link to="/chat" class="btn">去对话</router-link>
+        <template v-if="keyword.trim() || selectedTags.length">
+          <div class="empty-ico">✦</div>
+          <p>没有匹配的灵阅。</p>
+          <button type="button" class="btn" @click="resetFilters">清除筛选</button>
+        </template>
+        <template v-else>
+          <div class="empty-ico">✦</div>
+          <p>还没有灵阅。在对话里让模型做一页，就会出现在这里。</p>
+          <router-link to="/chat" class="btn">去对话</router-link>
+        </template>
       </div>
 
       <div v-else class="grid">
@@ -77,8 +248,13 @@ onMounted(() => fetchList())
           :key="a.id"
           type="button"
           class="card"
-          @click="router.push(`/artifacts/${a.id}`)"
+          :class="{ picked: selecting && isSelected(a.id), selecting }"
+          :aria-pressed="selecting ? isSelected(a.id) : undefined"
+          @click="openCard(a)"
         >
+          <span v-if="selecting" class="check" :class="{ on: isSelected(a.id) }">
+            <span v-if="isSelected(a.id)">✓</span>
+          </span>
           <span class="title">{{ a.title || '未命名页面' }}</span>
           <span v-if="a.summary" class="summary">{{ a.summary }}</span>
           <span class="foot">
@@ -90,7 +266,7 @@ onMounted(() => fetchList())
         </button>
       </div>
 
-      <div v-if="items.length < total" class="more">
+      <div v-if="!selecting && items.length < total" class="more">
         <NButton size="small" :loading="loading" @click="fetchList(false)">加载更多</NButton>
       </div>
     </div>
@@ -102,7 +278,37 @@ onMounted(() => fetchList())
 .scroll { flex: 1; overflow-y: auto; padding: 0 16px 28px; max-width: 900px; width: 100%; margin: 0 auto; }
 .head { display: flex; align-items: center; gap: 12px; padding: 2px 2px 14px; }
 .heading { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; flex: 1; }
+.sel-count { font-size: 20px; font-weight: 600; }
+.sel-actions { display: flex; align-items: center; gap: 8px; }
 .search { max-width: 260px; }
+
+.chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 2px 12px;
+  scrollbar-width: none;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto;
+  border: 0.5px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 3px 11px;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip:hover { background: var(--color-primary-soft); }
+.chip.active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 .hint { display: grid; place-items: center; padding: 40px 0; }
 .empty { text-align: center; padding: 60px 12px; color: var(--color-text-secondary); }
 .empty-ico {
@@ -112,12 +318,13 @@ onMounted(() => fetchList())
 }
 .empty p { font-size: 12.5px; line-height: 1.6; margin: 0 0 14px; }
 .btn {
-  display: inline-block; border-radius: 999px; background: var(--color-primary);
-  color: #fff; padding: 7px 16px; font-size: 12.5px; text-decoration: none;
+  display: inline-block; border: 0; border-radius: 999px; background: var(--color-primary);
+  color: #fff; padding: 7px 16px; font-size: 12.5px; text-decoration: none; cursor: pointer;
 }
 [data-theme="dark"] .btn { color: #10221B; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -131,6 +338,25 @@ onMounted(() => fetchList())
   transition: background var(--transition-fast), transform var(--transition-fast);
 }
 .card:hover { background: var(--color-primary-soft); transform: translateY(-1px); }
+.card.picked { border-color: var(--color-primary); background: var(--color-primary-soft); transform: none; }
+.check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--color-border);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  background: var(--color-surface);
+}
+.check.on { background: var(--color-primary); border-color: var(--color-primary); }
+[data-theme="dark"] .check.on { color: #10221B; }
+.card.selecting .title { padding-right: 24px; }
 .title { font-size: 15px; font-weight: 600; }
 .summary {
   font-size: 12.5px;
@@ -156,8 +382,9 @@ onMounted(() => fetchList())
 @media (max-width: 1099px) {
   .scroll { padding: 0 12px 20px; }
   .heading { font-size: 24px; }
+  .sel-count { font-size: 17px; }
   .head { flex-wrap: wrap; }
-  .search { max-width: none; flex: 1 1 100%; }
+  .search { max-width: none; flex: 1 1 100%; order: 3; }
   .grid { grid-template-columns: 1fr; }
 }
 </style>

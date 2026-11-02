@@ -9,7 +9,6 @@ import { useMobile } from '@/composables/useMobile'
 import { api } from '@/api/client'
 import { CHAT_FONT_OPTIONS, readChatFont, setChatFont } from '@/utils/chatFont'
 import { isMacEmbedded } from '@/utils/embed'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 const router = useRouter()
@@ -126,7 +125,6 @@ onMounted(loadArchived)
 
 <template>
   <div class="settings-page">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll settings-scroll">
       <PageHeader title="设置" />
 

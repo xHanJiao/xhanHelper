@@ -16,7 +16,6 @@ import {
   NEmpty,
   useMessage
 } from 'naive-ui'
-import PageTopBar from '@/components/PageTopBar.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
@@ -105,7 +104,6 @@ onMounted(fetchTools)
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll">
       <PageHeader title="动态工具">
         <template #actions>

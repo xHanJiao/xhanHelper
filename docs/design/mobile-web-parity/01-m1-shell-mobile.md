@@ -22,7 +22,7 @@
 |---|---|---|
 | `front-end/src/App.vue` | 左侧 280 侧栏 + 抽屉 | 换成 `AppShell`：无侧栏；主区 + 手机底部 Tab |
 | `front-end/src/components/ConversationList.vue` | 侧栏四段折叠，历史包在 `v-if="isAdmin"` | 下线；由 `ConversationSwitcher` 取代，历史对所有登录用户可见 |
-| `front-end/src/components/PageTopBar.vue` | 有 `title` prop 但不渲染 | 改成唯一顶栏：标题、返回、会话下拉、功能菜单、右侧插槽 |
+| `front-end/src/components/PageTopBar.vue` | 有 `title` prop 但不渲染 | 改成顶栏：标题、返回、会话下拉、功能菜单、右侧插槽（2026-11-02 起：列表页的桌面顶栏改由 `PageHeader` + `TopBarActions` 承担，本组件只服务聊天页与详情/管理页） |
 | `front-end/src/composables/useMobile.js` | 每个组件各挂一个 resize 监听；断点 768 | 单例 store；断点改 1100；提供 `isPhone`/`isDesktop` |
 | `front-end/src/style.css` | Slate + Indigo token | 换成 macOS token；保留语义变量名，减少页面改动 |
 | `front-end/src/router/index.js` | 路由无 meta 布局 | 加 `meta.layout = 'shell' | 'auth' | 'share' | 'admin'` |
@@ -37,7 +37,7 @@ front-end/src/
 ├── layouts/
 │   └── AppShell.vue              # flex 壳 + 手机底部 Tab + 管理后台手机拦截
 ├── components/
-│   ├── PageTopBar.vue            # 唯一顶栏：标题/返回/会话下拉/功能菜单/右侧插槽
+│   ├── PageTopBar.vue            # 聊天页与详情/管理页的顶栏（列表页见 PageHeader + TopBarActions）
 │   ├── ConversationSwitcher.vue  # 当前会话 + 搜索 + 列表 + 新建 + 置顶/归档
 │   ├── BottomTabs.vue            # 对话/灵阅/文档/我的
 │   ├── FunctionMenu.vue          # 桌面「功能」菜单

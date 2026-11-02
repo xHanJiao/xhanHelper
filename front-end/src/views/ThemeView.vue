@@ -3,7 +3,6 @@ import { ref, computed, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { NModal, NForm, NFormItem, NInput, NButton, NSpin, NGrid, NGi, NEmpty, NTag, useMessage } from 'naive-ui'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ListItemCard from '@/components/ListItemCard.vue'
 
@@ -127,7 +126,6 @@ onMounted(fetchList)
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100%; background: transparent; min-width: 0;">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll">
       <PageHeader title="主题">
         <template #actions>

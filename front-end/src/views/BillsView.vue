@@ -10,7 +10,6 @@ import {
   NPagination,
   useMessage
 } from 'naive-ui'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 const auth = useAuthStore()
@@ -174,7 +173,6 @@ onMounted(fetchBills)
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll">
       <PageHeader
         title="账单"

@@ -3,11 +3,9 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NPopover } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
-import { useAuthStore } from '@/stores/auth'
-import { useThemeStore } from '@/stores/theme'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import ConversationSwitcher from '@/components/ConversationSwitcher.vue'
-import FunctionMenu from '@/components/FunctionMenu.vue'
+import TopBarActions from '@/components/TopBarActions.vue'
 import { useGoBack } from '@/composables/useGoBack'
 
 const props = defineProps({
@@ -24,25 +22,17 @@ const props = defineProps({
 const emit = defineEmits(['select-agent', 'popover-open'])
 
 const showAgentPopover = ref(false)
-const showUserPopover = ref(false)
 const route = useRoute()
 const router = useRouter()
-const { isMobile, isDesktop } = useMobile()
-const auth = useAuthStore()
-const theme = useThemeStore()
+const { isDesktop } = useMobile()
 
-const displayName = computed(() => auth.user?.username || '我')
-// 用 PageHeader 的列表页：顶栏不再重复返回和标题，只留右侧全局按钮
+// 有 PageHeader 的列表页不再渲染本组件，桌面顶栏由 PageHeader + TopBarActions 承担
 const showBack = computed(() =>
-  !props.showConversation
-  && route.meta.contentHeader !== true
-  && (isDesktop.value || route.meta.topLevel !== true)
+  !props.showConversation && (isDesktop.value || route.meta.topLevel !== true)
 )
 // 顶级页（对话/灵阅/文档/我的）自己有标题，顶栏不再重复品牌名
 const titleText = computed(() =>
-  route.meta.contentHeader
-    ? ''
-    : (props.title || (props.showConversation || route.meta.topLevel ? '' : 'xhanHelper'))
+  props.title || (props.showConversation || route.meta.topLevel ? '' : 'xhanHelper')
 )
 const goBack = useGoBack()
 
@@ -63,13 +53,6 @@ function handleUnbind() {
 
 function newChat() {
   router.push('/chat')
-  showUserPopover.value = false
-}
-
-async function logout() {
-  showUserPopover.value = false
-  await auth.logout()
-  router.push('/login')
 }
 </script>
 
@@ -151,31 +134,7 @@ async function logout() {
 
       <slot name="right"></slot>
 
-      <FunctionMenu v-if="isDesktop" />
-
-      <button v-if="isDesktop" class="icon-btn" type="button" :title="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()">
-        <svg v-if="theme.isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
-      </button>
-
-      <NPopover
-        v-if="isDesktop"
-        trigger="click"
-        :show="showUserPopover"
-        placement="bottom-end"
-        @update:show="v => showUserPopover = v"
-      >
-        <template #trigger>
-          <button class="avatar" type="button">{{ displayName.slice(0, 1).toUpperCase() }}</button>
-        </template>
-        <div class="user-popover">
-          <div class="user-name">{{ displayName }}</div>
-          <div class="user-item" @click="router.push('/settings'); showUserPopover = false">设置</div>
-          <div class="user-item" @click="router.push('/me'); showUserPopover = false">我的</div>
-          <div class="user-divider"></div>
-          <div class="user-item danger" @click="logout">退出登录</div>
-        </div>
-      </NPopover>
+      <TopBarActions v-if="isDesktop" />
     </div>
   </header>
 </template>
@@ -252,17 +211,6 @@ async function logout() {
 [data-theme="dark"] .icon-btn { background: rgba(255, 255, 255, 0.04); }
 .icon-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
 .icon-btn svg { width: 16px; height: 16px; }
-.avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 0.5px solid var(--color-border);
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
 .agent-popover { min-width: 180px; }
 .agent-popover-header { font-size: 12px; color: var(--color-text-muted); padding: 4px 12px; margin-bottom: 4px; }
 .agent-popover-item {
@@ -279,10 +227,4 @@ async function logout() {
 .agent-popover-current { font-size: 12px; color: var(--color-text-muted); }
 .agent-popover-divider { border-top: 1px solid var(--color-border); margin: 4px 0; }
 .agent-popover-item.unbind { color: var(--color-danger); }
-.user-popover { min-width: 150px; }
-.user-name { font-size: 12px; font-weight: 650; padding: 5px 10px 7px; }
-.user-item { padding: 7px 10px; border-radius: 8px; font-size: 12.5px; cursor: pointer; }
-.user-item:hover { background: var(--color-surface-hover); }
-.user-item.danger { color: var(--color-danger); }
-.user-divider { border-top: 1px solid var(--color-border); margin: 4px 0; }
 </style>

@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
-import { useMobile } from '@/composables/useMobile'
 import {
   NButton,
   NInput,
@@ -14,14 +13,12 @@ import {
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useExportPDF } from '@/composables/useExportPDF'
 import { ensureDocumentShareUrl, writeClipboard, downloadMarkdown } from '@/utils/document'
 
 const message = useMessage()
 const router = useRouter()
-const { isMobile } = useMobile()
 const { exportPDF } = useExportPDF()
 
 const documents = ref([])
@@ -153,7 +150,6 @@ onMounted(() => {
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll">
       <PageHeader
         title="文档"

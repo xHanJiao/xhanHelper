@@ -3,12 +3,11 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { isDesktop, isMobile } = useMobile()
+const { isDesktop } = useMobile()
 const isAdmin = computed(() => auth.user?.isAdmin === true)
 const name = computed(() => auth.user?.username || 'xhanHelper')
 
@@ -27,7 +26,6 @@ function go(path) {
 
 <template>
   <div class="me-page">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll me-scroll">
       <PageHeader title="我的" />
 

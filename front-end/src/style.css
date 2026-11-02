@@ -309,7 +309,7 @@ img {
   display: none;
 }
 
-/* 列表页统一滚动容器：手机顶部让出安全区（这些页在手机端隐藏了 PageTopBar） */
+/* 列表页统一滚动容器：手机顶部让出安全区（这些页没有 PageTopBar，标题由 PageHeader 承担） */
 /* 桌面内容宽度统一 1120；设置/我的用 scoped 的 760 覆盖 */
 .page-scroll {
   flex: 1;
@@ -320,9 +320,9 @@ img {
 @media (max-width: 1099px) {
   .page-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }
 }
-/* 桌面页头吸顶：让聚焦元素滚进来时避开页头 */
+/* 桌面页头吸顶：让聚焦元素滚进来时避开页头（页头基础高约 58） */
 @media (min-width: 1100px) {
-  .page-scroll { scroll-padding-top: 72px; }
+  .page-scroll { scroll-padding-top: 64px; }
 }
 
 /* 头部右侧的文字操作（选择/新建/导出） */
@@ -401,14 +401,8 @@ img {
   cursor: pointer;
 }
 
-/* Tab 页（灵阅 / 文档 / 我的）统一大标题：只统一字体，间距由各页容器给 */
-.page-heading {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
+/* Tab 页（灵阅 / 文档 / 我的）统一大标题的字体由 PageHeader 的 .ph-title 控制 */
 @media (max-width: 1099px) {
-  .page-heading { font-size: 24px; }
   /* 手机端这些按钮是创建/选择/筛选的唯一入口，撑到接近 44px 的触控区 */
   .page-action { padding: 10px 6px; }
 }

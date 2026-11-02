@@ -3,15 +3,12 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NPopconfirm, NSpin, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
-import { useMobile } from '@/composables/useMobile'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 // 灵阅列表：单列大卡（手机）、桌面自动 2–3 列。卡片只显示标题/摘要/标签/日期，
 // 正文点进去再取（列表接口不带 html）。
 const router = useRouter()
 const message = useMessage()
-const { isMobile } = useMobile()
 
 const items = ref([])
 const total = ref(0)
@@ -192,7 +189,6 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll">
       <PageHeader
         :title="selecting ? `已选 ${selectedCount}` : '灵阅'"

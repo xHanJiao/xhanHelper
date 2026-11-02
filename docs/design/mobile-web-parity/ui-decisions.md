@@ -80,6 +80,7 @@
 - 审查后补：三个纯图标 pill 补 `aria-label`；收起态容器加 `inert`（不可聚焦/不播报）；输入框展开时隐藏「↓」按钮（避免压在输入框上）；点「↓」不再强行展开输入框；切会话重置展开态。
 - 桌面卡片拉宽：聊天卡 `max-width` 820 → **1080**，正文列 / 输入卡 760 → **960**。原来 1440 宽屏下卡片只占一半、顶栏两侧按钮显得虚浮；手机（≤1099）仍是全宽无卡片。
 - 顶栏与卡片齐平：`PageTopBar` 新增 `alignCard`（对话页启用），桌面端 `padding-inline: max(24px, calc((100% - 1080px) / 2))`，会话胶囊左沿 / 头像右沿正好压在卡片描边上；其他通栏管理页不传该属性，行为不变。
+- 桌面列表页合并顶栏：原来「56px 全局顶栏（功能/主题/头像）+ 吸顶页头（返回/标题/页面操作）」是上下两条行，看着像两个顶栏。现在把全局入口抽成 `TopBarActions`，由 `PageHeader` 在桌面渲染在标题行右侧（1px 竖线分隔），标题从 28 降到 20px；12 个列表页不再渲染 `PageTopBar`。全局按钮随之跟内容列右缘对齐（1920 屏从 x≈1890 移到 x≈1520），不再贴窗口边。
 
 ## 六、文档阅读器（2026-11-02 实施）
 
@@ -117,14 +118,14 @@
 
 ## 九、列表页头部统一（2026-11-02 实施）
 
-影响 `components/PageHeader.vue` / `composables/useGoBack.js` / `style.css`，以及 Artifacts、Documents、Bills、Memory、Notes、Summary、Theme、Agent、Prompt、Tool、Settings、Me 各页：
+影响 `components/PageHeader.vue` / `components/TopBarActions.vue` / `components/PageTopBar.vue` / `composables/useGoBack.js` / `style.css`，以及 Artifacts、Documents、Bills、Memory、Notes、Summary、Theme、Agent、Prompt、Tool、Settings、Me 各页：
 
-- 全部功能列表页用同一套 `PageHeader`：大标题 `.page-heading`（桌面 28px / 手机 24px，700，`letter-spacing: -0.02em`）+ 可选返回、搜索（点开才展开）、筛选（手机底部面板 / 桌面 popover，内容由页面插槽提供）+ 右侧操作插槽。
-- 手机端这些页隐藏 `PageTopBar`，标题直接顶到安全区下；桌面保留顶栏但不再显示页面标题和返回（`meta.contentHeader`），返回跟内容区大标题。
+- 全部功能列表页用同一套 `PageHeader`：大标题 `.ph-title`（桌面 20px / 手机 24px，700，`letter-spacing: -0.02em`）+ 可选返回、搜索（点开才展开）、筛选（手机底部面板 / 桌面 popover，内容由页面插槽提供）+ 右侧操作插槽。
+- 手机端这些页没有 `PageTopBar`，标题直接顶到安全区下；**桌面也只有这一行**——全局入口（`TopBarActions`：功能菜单 / 主题 / 头像）直接并进 `PageHeader` 右侧，用一根 1px 竖线和页面操作分开。此前是「56px 全局顶栏 + 页头」两条独立行，视觉上像两个顶栏。并入后全局按钮跟内容列（1120/760）右缘对齐，不再贴窗口边。
 - 滚动容器统一 `.page-scroll`：桌面 `0 16px 28px`，手机 `calc(safe-top + 4px) 12px 20px`。
 - 内容宽度统一：功能列表页（灵阅/文档/账单/记忆/笔记/摘要/主题/智能体/Prompt/工具）桌面 **1120px 居中**（`padding: 0 max(16px, calc((100% - 1120px)/2)) 28px`：容器本身保持全宽，宽屏两侧空白处也能滚动；1920 下左右内边距各 400，内容盒就是 1120），由 `.page-scroll` 一处控制；设置/我的用各自 scoped 的 760px 覆盖（同样「容器全宽 + 内边距收窄」的写法），聊天页独立（卡片 1080）。灵阅原先单独写死的 900px 上限已删——那是双列大卡时代的遗留，导致它比兄弟页窄一圈。
 - 卡片页列数统一：记忆/笔记/摘要/主题/智能体/Prompt/工具全部 `:cols="isMobile ? 1 : 3"`，断点与应用自身的 1100 同源（不用 Naive 的 `responsive="screen"`：它按窗口的 s=640 / m=1024 算，会在 1024–1099 这段「已是手机壳」的宽度里给出 3 列）。桌面 3 列（1120 下卡 ~363），手机 1 列，与灵阅「≤1099 单列」一致。文档页例外：卡片带正文预览，**恒单列**（`:cols="1"`）。
-- 桌面 `PageHeader` 吸顶：`@media (min-width: 1100px)` 下 `.ph` 用 `position: sticky; top: 0` 常驻标题/返回（桌面顶栏在 `meta.contentHeader` 页不显示返回，不吸顶就滚没了）。手机不吸顶——安全区和键盘判断复杂，且纵向留白本来就紧。**吸顶条不铺纯色**：页面底是 `background-attachment: fixed` 的四层渐变 + `body::before` 白纱，只铺一层色会跟四周差出一个可见色块，所以把渐变和白纱抽成 `--app-bg-image` / `--app-veil`（深色主题只改 `--app-veil`），`.ph` 用同一套 + `background-attachment: fixed` 复刻，静止和滚动都看不出接缝。`.page-scroll` 同时加 `scroll-padding-top: 72px`，避免键盘 Tab 滚进来的卡片被页头压住（72 是按页头**基础**高度估的；展开搜索行或带筛选胶囊时页头会更高，那时可能仍被压掉一截，暂不为这一个边角上 ResizeObserver）。
+- 桌面 `PageHeader` 吸顶：`@media (min-width: 1100px)` 下 `.ph` 用 `position: sticky; top: 0` 常驻标题/返回/页面操作/全局按钮（这一行就是桌面唯一的顶栏）。手机不吸顶——安全区和键盘判断复杂，且纵向留白本来就紧。**吸顶条不铺纯色**：页面底是 `background-attachment: fixed` 的四层渐变 + `body::before` 白纱，只铺一层色会跟四周差出一个可见色块，所以把渐变和白纱抽成 `--app-bg-image` / `--app-veil`（深色主题只改 `--app-veil`），`.ph` 用同一套 + `background-attachment: fixed` 复刻，静止和滚动都看不出接缝。`.page-scroll` 同时加 `scroll-padding-top: 64px`，避免键盘 Tab 滚进来的卡片被页头压住（64 是按页头**基础**高度 58 估的；展开搜索行或带筛选胶囊时页头会更高，那时可能仍被压掉一截，暂不为这一个边角上 ResizeObserver）。
 - 返回逻辑抽到 `useGoBack`：`meta.backToChat` 的列表页固定回 `/chat`；二级页（设置、管理后台的详情等）按历史回上一页，无历史兜底 `/chat`。`/settings` 是从「我的」/头像菜单进的二级页，**不吃** `backToChat`，返回原来那页。
 - 灵阅/文档筛选收进标签面板：灵阅多选取交集，文档单选；生效后在标题下显示可删胶囊、筛选图标带角标。文档标签改用 `GET /api/documents/tags`（默认 audience=finished，与列表同口径），不再从当前页文档里凑。
 - 筛选是**草稿式**：面板里的「清除」只清草稿、不发请求，点「查看结果」才提交；标题下胶囊行上的「清除」只清**标签**（搜索词有自己的 ×，行为在灵阅/文档两页一致）。空状态的「清除筛选」才连搜索词一起清。

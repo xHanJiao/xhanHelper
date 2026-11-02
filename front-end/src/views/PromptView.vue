@@ -15,7 +15,6 @@ import {
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
-import PageTopBar from '@/components/PageTopBar.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 const message = useMessage()
@@ -107,7 +106,6 @@ onMounted(fetchPrompts)
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar v-if="!isMobile" />
     <div class="page-scroll">
       <PageHeader title="System Prompt">
         <template #actions>

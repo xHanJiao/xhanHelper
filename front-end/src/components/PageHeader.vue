@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { NPopover } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
 import { useGoBack } from '@/composables/useGoBack'
+import TopBarActions from '@/components/TopBarActions.vue'
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -99,7 +100,7 @@ watch(() => props.filterable, (v) => {
         <span>返回</span>
       </button>
 
-      <h1 class="ph-title page-heading">{{ title }}</h1>
+      <h1 class="ph-title">{{ title }}</h1>
 
       <div class="ph-actions">
         <button
@@ -149,6 +150,9 @@ watch(() => props.filterable, (v) => {
 
         <slot name="actions"></slot>
       </div>
+
+      <span class="ph-divide" aria-hidden="true"></span>
+      <TopBarActions />
     </div>
 
     <div v-if="searchable && searchOpen" class="ph-search-row">
@@ -208,6 +212,7 @@ watch(() => props.filterable, (v) => {
     position: sticky;
     top: 0;
     z-index: 5;
+    padding-top: 12px;
     /* 复刻 body 的固定底 + 白纱：只铺纯色会跟四周渐变差一块，静止时能看出色块 */
     background-image: linear-gradient(var(--app-veil), var(--app-veil)), var(--app-bg-image);
     background-attachment: fixed;
@@ -229,7 +234,31 @@ watch(() => props.filterable, (v) => {
 }
 .ph-back svg { width: 15px; height: 15px; }
 .ph-back:hover { color: var(--color-primary); }
-.ph-title { flex: 1; min-width: 0; margin: 0; padding: 0; }
+.ph-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+@media (min-width: 1100px) {
+  /* 桌面顶栏只剩这一行，标题要让位给页面操作和全局按钮 */
+  .ph-title { font-size: 20px; }
+}
+.ph-divide {
+  display: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--color-border);
+  flex: 0 0 auto;
+}
+@media (min-width: 1100px) {
+  .ph-divide { display: block; }
+}
 .ph-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .ph-icon {
   position: relative;

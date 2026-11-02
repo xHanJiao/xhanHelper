@@ -329,6 +329,7 @@ img {
   flex: 0 0 auto;
 }
 .page-action.danger { color: var(--color-danger); }
+.page-action:disabled { opacity: 0.4; cursor: default; }
 
 /* 筛选面板 / 激活胶囊（灵阅、文档、账单共用） */
 .filter-label {
@@ -400,4 +401,6 @@ img {
 }
 @media (max-width: 1099px) {
   .page-heading { font-size: 24px; }
+  /* 手机端这些按钮是创建/选择/筛选的唯一入口，撑到接近 44px 的触控区 */
+  .page-action { padding: 10px 6px; }
 }

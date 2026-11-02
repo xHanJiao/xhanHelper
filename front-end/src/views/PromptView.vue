@@ -111,7 +111,7 @@ onMounted(fetchPrompts)
     <div class="page-scroll">
       <PageHeader title="System Prompt">
         <template #actions>
-          <button class="page-action" type="button" @click="openCreate">创建</button>
+          <button class="page-action" type="button" @click="openCreate">新建</button>
         </template>
       </PageHeader>
       <NGrid v-if="prompts.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">

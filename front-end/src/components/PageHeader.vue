@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NPopover } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
@@ -11,10 +11,13 @@ const props = defineProps({
   keyword: { type: String, default: '' },
   searchPlaceholder: { type: String, default: '搜索' },
   filterable: { type: Boolean, default: false },
-  filterCount: { type: Number, default: 0 }
+  filterCount: { type: Number, default: 0 },
+  // 选择态等场景由页面关掉，避免胶囊上的 × 在列表重拉时把选中项换掉
+  pills: { type: Boolean, default: true }
 })
 
-const emit = defineEmits(['update:keyword', 'search', 'apply', 'clear', 'open-filter'])
+// clear = 清面板草稿；reset = 清已生效的筛选（胶囊行上的「清除」）
+const emit = defineEmits(['update:keyword', 'search', 'apply', 'clear', 'reset', 'open-filter'])
 
 const route = useRoute()
 const { isMobile, isDesktop } = useMobile()
@@ -58,6 +61,30 @@ function applyFilters() {
   emit('apply')
   filterOpen.value = false
 }
+
+// 手机底部面板是模态：Esc 关闭 + 锁背景滚动（桌面 popover 不锁）
+const sheetOpen = computed(() => isMobile.value && filterOpen.value)
+function onKeydown(e) {
+  if (e.key === 'Escape') filterOpen.value = false
+}
+watch(sheetOpen, (open) => {
+  if (open) {
+    window.addEventListener('keydown', onKeydown)
+    document.body.style.overflow = 'hidden'
+    return
+  }
+  window.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
+
+// 选择态等把 filterable 关掉时，面板要跟着卸载，否则退出后自己弹回来
+watch(() => props.filterable, (v) => {
+  if (!v) filterOpen.value = false
+})
 </script>
 
 <template>
@@ -136,18 +163,24 @@ function applyFilters() {
       <button class="page-action" type="button" @click="searchOpen = false">取消</button>
     </div>
 
-    <div v-if="(keyword && !searchOpen) || filterCount" class="ph-pills">
+    <div v-if="pills && ((keyword && !searchOpen) || filterCount)" class="ph-pills">
       <span v-if="keyword && !searchOpen" class="filter-pill">
         搜索：{{ keyword }}
         <button type="button" aria-label="清空搜索" @click="clearKeyword">×</button>
       </span>
       <slot name="pills"></slot>
-      <button v-if="filterCount" class="ph-clear-all" type="button" @click="clearFilters">清除</button>
+      <button v-if="filterCount" class="ph-clear-all" type="button" @click="emit('reset')">清除</button>
     </div>
 
     <Teleport to="body">
       <div v-if="isMobile && filterOpen" class="ph-scrim" @click="filterOpen = false"></div>
-      <div v-if="isMobile && filterOpen" class="ph-sheet">
+      <div
+        v-if="isMobile && filterOpen"
+        class="ph-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="筛选"
+      >
         <div class="ph-handle"></div>
         <div class="ph-sheet-head">
           <b>筛选</b>
@@ -314,4 +347,10 @@ function applyFilters() {
 [data-theme="dark"] .ph-apply { color: #10221B; }
 .ph-pop { width: 300px; }
 .ph-pop .ph-apply { height: 40px; font-size: 13px; }
+
+@media (max-width: 1099px) {
+  /* 手机端筛选/搜索是唯一入口，按钮撑到接近 44px 的触控区 */
+  .ph-icon { width: 38px; height: 38px; }
+  .ph-back { padding: 8px 4px; }
+}
 </style>

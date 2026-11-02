@@ -106,7 +106,8 @@ const routes = [
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/SettingsView.vue'),
-    meta: { hideTabs: true, backToChat: true, contentHeader: true }
+    // 二级页：返回上一页（/me 或聊天），不硬跳聊天
+    meta: { hideTabs: true, contentHeader: true }
   },
   {
     path: '/me',

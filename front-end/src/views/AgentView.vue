@@ -161,7 +161,7 @@ onMounted(fetchAgents)
     <div class="page-scroll">
       <PageHeader title="智能体">
         <template #actions>
-          <button class="page-action" type="button" @click="openCreate">创建</button>
+          <button class="page-action" type="button" @click="openCreate">新建</button>
         </template>
       </PageHeader>
       <NSpin :show="loading">

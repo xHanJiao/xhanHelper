@@ -107,8 +107,6 @@ function resetFilters() {
 
 function clearFilters() {
   draftTags.value = []
-  selectedTags.value = []
-  fetchList()
 }
 
 function enterSelect() {
@@ -189,12 +187,14 @@ onMounted(() => {
         :searchable="!selecting"
         :filterable="!selecting && tags.length > 0"
         :filter-count="selectedTags.length"
+        :pills="!selecting"
         v-model:keyword="keyword"
         search-placeholder="搜索标题/摘要"
         @search="fetchList()"
         @open-filter="openFilter"
         @apply="applyFilters"
         @clear="clearFilters"
+        @reset="resetFilters"
       >
         <template #actions>
           <template v-if="selecting">

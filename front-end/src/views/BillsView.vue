@@ -25,8 +25,15 @@ const total = ref(0)
 
 const filterDateRange = ref(null)
 const filterCategory = ref(null)
-const draftDateRange = ref(null)
+const draftStart = ref(null)
+const draftEnd = ref(null)
 const draftCategory = ref(null)
+
+// 本地年月日拼串：toISOString() 是 UTC，东八区会整体差一天
+function ymd(t) {
+  const d = new Date(t)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const categoryOptions = [
   { label: '全部', value: null },
@@ -65,8 +72,8 @@ async function fetchBills() {
     let url = `/api/bills?limit=${pageSize}&offset=${offset}`
     if (filterDateRange.value) {
       const [start, end] = filterDateRange.value
-      if (start) url += `&start_date=${new Date(start).toISOString().split('T')[0]}`
-      if (end) url += `&end_date=${new Date(end).toISOString().split('T')[0]}`
+      if (start) url += `&start_date=${ymd(start)}`
+      if (end) url += `&end_date=${ymd(end)}`
     }
     if (filterCategory.value) url += `&category=${encodeURIComponent(filterCategory.value)}`
 
@@ -86,19 +93,26 @@ function handleFilterChange() {
 }
 
 function openFilter() {
-  draftDateRange.value = filterDateRange.value ? [...filterDateRange.value] : null
+  draftStart.value = filterDateRange.value?.[0] ?? null
+  draftEnd.value = filterDateRange.value?.[1] ?? null
   draftCategory.value = filterCategory.value
 }
 
 function applyFilters() {
-  filterDateRange.value = draftDateRange.value ? [...draftDateRange.value] : null
+  filterDateRange.value = (draftStart.value || draftEnd.value) ? [draftStart.value, draftEnd.value] : null
   filterCategory.value = draftCategory.value
   handleFilterChange()
 }
 
+// 草稿式：只清面板里的草稿，点「查看结果」才提交，避免清一次拉一次
 function clearFilters() {
-  draftDateRange.value = null
+  draftStart.value = null
+  draftEnd.value = null
   draftCategory.value = null
+}
+
+// 胶囊行上的「清除」：已生效的筛选一次清掉
+function resetFilters() {
   filterDateRange.value = null
   filterCategory.value = null
   handleFilterChange()
@@ -119,8 +133,8 @@ async function handleExport() {
     const params = []
     if (filterDateRange.value) {
       const [start, end] = filterDateRange.value
-      if (start) params.push(`start_date=${new Date(start).toISOString().split('T')[0]}`)
-      if (end) params.push(`end_date=${new Date(end).toISOString().split('T')[0]}`)
+      if (start) params.push(`start_date=${ymd(start)}`)
+      if (end) params.push(`end_date=${ymd(end)}`)
     }
     if (filterCategory.value) params.push(`category=${encodeURIComponent(filterCategory.value)}`)
     if (params.length) url += '?' + params.join('&')
@@ -133,29 +147,13 @@ async function handleExport() {
     const blob = await res.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `bills-${new Date().toISOString().split('T')[0]}.csv`
+    a.download = `bills-${ymd(Date.now())}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
     message.success('导出成功')
   } catch (e) {
     message.error('导出失败')
   }
-}
-
-function handleImport({ file }) {
-  const reader = new FileReader()
-  reader.onload = async (e) => {
-    try {
-      const res = await api.postRaw('/api/bills/import', e.target.result, 'text/plain')
-      if (res.imported !== undefined) {
-        message.success(`导入完成：成功 ${res.imported} 条，跳过 ${res.skipped} 条`)
-      }
-      fetchBills()
-    } catch (err) {
-      message.error('导入失败')
-    }
-  }
-  reader.readAsText(file.file)
 }
 
 onMounted(fetchBills)
@@ -172,6 +170,7 @@ onMounted(fetchBills)
         @open-filter="openFilter"
         @apply="applyFilters"
         @clear="clearFilters"
+        @reset="resetFilters"
       >
         <template #actions>
           <button v-if="!isMobile" class="page-action" type="button" @click="handleExport">导出</button>
@@ -199,14 +198,25 @@ onMounted(fetchBills)
             style="width: 100%; margin-bottom: 16px;"
           />
           <div class="filter-label">日期范围</div>
-          <NDatePicker
-            v-model:value="draftDateRange"
-            type="daterange"
-            clearable
-            size="small"
-            placeholder="选择日期范围"
-            style="width: 100%;"
-          />
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <NDatePicker
+              v-model:value="draftStart"
+              type="date"
+              clearable
+              size="small"
+              placeholder="开始日期"
+              style="flex: 1; min-width: 0;"
+            />
+            <span style="color: var(--color-text-muted);">–</span>
+            <NDatePicker
+              v-model:value="draftEnd"
+              type="date"
+              clearable
+              size="small"
+              placeholder="结束日期"
+              style="flex: 1; min-width: 0;"
+            />
+          </div>
         </template>
       </PageHeader>
 

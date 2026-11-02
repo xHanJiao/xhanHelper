@@ -121,6 +121,15 @@ function removeTag() {
   fetchDocuments()
 }
 
+function clearDraftTag() {
+  draftTag.value = null
+}
+
+function resetFilters() {
+  keyword.value = ''
+  removeTag()
+}
+
 function parseTags(tags) {
   if (!tags) return []
   return tags.split(',').map(t => t.trim()).filter(Boolean)
@@ -156,7 +165,8 @@ onMounted(() => {
         @search="handleSearch"
         @open-filter="openFilter"
         @apply="applyTag"
-        @clear="removeTag"
+        @clear="clearDraftTag"
+        @reset="removeTag"
       >
         <template #pills>
           <span v-if="selectedTag" class="filter-pill">
@@ -194,7 +204,10 @@ onMounted(() => {
           />
         </NGi>
       </NGrid>
-      <NEmpty v-else-if="!loading" description="还没有文档" />
+      <div v-else-if="!loading" class="empty">
+        <NEmpty :description="(selectedTag || keyword) ? '没有匹配的文档' : '还没有文档'" />
+        <button v-if="selectedTag || keyword" type="button" class="page-action" @click="resetFilters">清除筛选</button>
+      </div>
       <div v-if="total > pageSize" style="margin-top: var(--space-lg); display: flex; justify-content: center;">
         <NPagination
           v-model:page="page"
@@ -220,4 +233,5 @@ onMounted(() => {
 
 <style scoped>
 .doc-scroll { width: 100%; }
+.empty { display: grid; justify-items: center; gap: 6px; padding: 12px 0; }
 </style>

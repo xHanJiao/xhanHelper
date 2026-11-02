@@ -109,7 +109,7 @@ onMounted(fetchTools)
     <div class="page-scroll">
       <PageHeader title="动态工具">
         <template #actions>
-          <button class="page-action" type="button" @click="openCreate">创建</button>
+          <button class="page-action" type="button" @click="openCreate">新建</button>
         </template>
       </PageHeader>
       <NGrid v-if="tools.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">

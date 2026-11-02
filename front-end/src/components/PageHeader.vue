@@ -208,9 +208,9 @@ watch(() => props.filterable, (v) => {
     position: sticky;
     top: 0;
     z-index: 5;
-    background: color-mix(in srgb, var(--color-bg) 86%, transparent);
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
+    /* 复刻 body 的固定底 + 白纱：只铺纯色会跟四周渐变差一块，静止时能看出色块 */
+    background-image: linear-gradient(var(--app-veil), var(--app-veil)), var(--app-bg-image);
+    background-attachment: fixed;
   }
 }
 .ph-row { display: flex; align-items: center; gap: 8px; }

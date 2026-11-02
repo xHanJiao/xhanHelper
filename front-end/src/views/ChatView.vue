@@ -140,7 +140,7 @@ function exitSelectionMode() {
   if (!isMobile.value) {
     inputVisible.value = true
   }
-  // 手机也重置：否则再点「发消息」会直接弹成 75vh
+  // 手机也重置：否则再点「发消息」会直接弹成展开态
   inputExpanded.value = false
 }
 
@@ -183,13 +183,16 @@ const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
 const inputVisible = ref(true)
 const inputExpanded = ref(false)
-// 「↓」按钮贴在输入卡上沿：输入卡高度会变（收起/展开/加图），写死 bottom 会压在卡上
+// 「↓」按钮贴在输入卡上沿：输入卡高度会变（收起/展开/加图），写死 bottom 会压在卡上。
+// 按钮绝对定位在 .chat-card 内，基准取卡片底边，键盘弹出缩壳时也不会错位。
 const scrollBtnBottom = ref(120)
 let composerObserver = null
 function updateScrollBtnBottom() {
   const el = mobileInputRef.value
   if (!el) return
-  scrollBtnBottom.value = Math.round(window.innerHeight - el.getBoundingClientRect().top) + 12
+  const card = el.closest('.chat-card')
+  if (!card) return
+  scrollBtnBottom.value = Math.round(card.getBoundingClientRect().bottom - el.getBoundingClientRect().top) + 12
 }
 // 消息容器高度变了（收起/展开/挂附件）也要重算「↓」该不该露，别等下一次 scroll
 function updateAwayFromBottom() {
@@ -669,7 +672,33 @@ async function handleSend() {
 }
 
 function handleStop() {
+  const convId = chat.conversationId
+  // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
+  // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
+  // 服务端会照常跑完；等 done 回传 id 后才有服务端停止能力。
+  const partial = chat.streamingMessage
   cancel()
+  if (partial && (partial.content || partial.reasoning)) {
+    chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
+  }
+  chat.streamingMessage = null
+  chat.statusMessage = null
+  if (!convId) return
+  api.post('/api/chat/stop', { conversation_id: convId }).catch(err => {
+    console.error('Stop chat failed', err)
+  })
+}
+
+// SSE 断开不会终止服务端执行，重新拉一次通常能拿到完整结果。
+async function retryAfterError() {
+  chat.error = null
+  if (!chat.conversationId) return
+  await loadHistory(chat.conversationId)
+  await nextTick()
+  requestAnimationFrame(() => {
+    const el = messagesContainerRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
 }
 
 // 会话的模式/无痕状态来自列表接口（mode / ephemeral）；冷启动时列表可能晚于
@@ -931,16 +960,17 @@ function handleContainerClick(e) {
           :visible="planVisible"
         />
         -->
-        <div v-if="chat.error && !chat.streamingMessage" style="text-align: center; margin: var(--space-md) 0;">
-          <NButton size="small" type="error" quaternary>
-            {{ chat.error }}
-          </NButton>
+        <div v-if="chat.error && !chat.streamingMessage" class="chat-error">
+          <span class="chat-error-text">{{ chat.error }}</span>
+          <button type="button" class="chat-error-retry" @click="retryAfterError">
+            {{ chat.conversationId ? '重新加载' : '知道了' }}
+          </button>
         </div>
 
         <div
           ref="messagesEndRef"
           :style="{
-            // 手机上输入卡自己就占 75vh，再塞 75vh 占位会把可视区撑成空白
+            // 手机上输入卡展开时会占掉大半个可视区，再塞占位会把可视区撑成空白
             height: inputExpanded && !isMobile ? '35vh' : '15px',
             transition: 'height 0.2s ease-out'
           }"
@@ -982,7 +1012,7 @@ function handleContainerClick(e) {
           background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,
-          height: inputVisible ? (inputExpanded ? '75vh' : 'auto') : '0',
+          height: inputVisible ? (inputExpanded ? 'min(75vh, 100%)' : 'auto') : '0',
           overflow: 'hidden',
           opacity: inputVisible ? 1 : 0,
           transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out'
@@ -1097,6 +1127,7 @@ function handleContainerClick(e) {
   min-width: 0;
 }
 .chat-card {
+  position: relative;
   flex: 1;
   min-height: 0;
   width: calc(100% - 48px);
@@ -1218,7 +1249,7 @@ function handleContainerClick(e) {
   pointer-events: none;
 }
 .scroll-bottom-btn {
-  position: fixed;
+  position: absolute;
   left: 50%;
   transform: translateX(-50%);
   z-index: 101;
@@ -1235,6 +1266,26 @@ function handleContainerClick(e) {
   color: var(--color-text-secondary);
   font-size: 18px;
   user-select: none;
+}
+.chat-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: var(--space-md) 0;
+  color: var(--color-danger);
+  font-size: 12.5px;
+}
+.chat-error-text { line-height: 1.5; overflow-wrap: anywhere; }
+.chat-error-retry {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 0.5px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 @media (max-width: 1099px) {
   .chat-composer-card { border-radius: 18px; padding: 6px 8px; }

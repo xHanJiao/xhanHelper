@@ -28,4 +28,15 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
 md.renderer.rules.table_open = () => '<div class="table-wrap"><table>'
 md.renderer.rules.table_close = () => '</table></div>'
 
+// 代码块右上角复制按钮。v-html 里挂不了事件，点击由 App.vue 的全局代理处理。
+// 导出 PDF 时传 env.noCopy，避免把按钮印进文档。
+md.renderer.rules.fence = (tokens, idx, options, env) => {
+  const token = tokens[idx]
+  const langName = (token.info || '').trim().split(/\s+/)[0]
+  const lang = langName ? ` class="language-${md.utils.escapeHtml(langName)}"` : ''
+  const code = `<pre><code${lang}>${md.utils.escapeHtml(token.content)}</code></pre>`
+  if (env?.noCopy) return code
+  return `<div class="code-block"><button type="button" class="code-copy" data-code-copy>复制</button>${code}</div>`
+}
+
 export default md

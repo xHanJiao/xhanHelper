@@ -13,7 +13,6 @@ const groups = computed(() => {
   const main = [
     { label: '灵阅', sub: 'HTML 页面', path: '/artifacts', icon: '✦' },
     { label: '文档', sub: 'Markdown', path: '/documents', icon: '▤' },
-    { label: '图片', sub: '图床', path: '/images', icon: '◍' },
     { label: '账单', sub: '记录', path: '/bills', icon: '¥' },
     { label: '记忆', sub: '长期', path: '/memories', icon: '◎' },
     { label: '主题', sub: '状态页', path: '/themes', icon: '✳' },

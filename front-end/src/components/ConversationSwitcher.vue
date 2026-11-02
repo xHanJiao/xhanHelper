@@ -218,7 +218,7 @@ watch(() => route.fullPath, () => { open.value = false })
   right: 12px;
   width: auto;
   max-width: none;
-  max-height: calc(100dvh - var(--safe-top) - 90px);
+  max-height: calc(100dvh - var(--keyboard-inset, 0px) - var(--safe-top) - 90px);
   overflow-y: auto;
 }
 .conv-search { margin-bottom: 7px; }

@@ -2,15 +2,18 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMobile } from '@/composables/useMobile'
+import { useKeyboardInset } from '@/composables/useKeyboardInset'
 import BottomTabs from '@/components/BottomTabs.vue'
 
 const route = useRoute()
 const { isMobile } = useMobile()
 const adminBlocked = computed(() => route.meta.adminOnly === true && isMobile.value)
+const { inset: keyboardInset } = useKeyboardInset(isMobile)
+const keyboardOpen = computed(() => keyboardInset.value > 0)
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :style="{ '--keyboard-inset': keyboardInset + 'px' }">
     <div v-if="adminBlocked" class="admin-blocked">
       <div class="admin-card">
         <div class="admin-icon">⌘</div>
@@ -22,13 +25,13 @@ const adminBlocked = computed(() => route.meta.adminOnly === true && isMobile.va
     <div v-else class="app-main">
       <router-view />
     </div>
-    <BottomTabs v-if="isMobile && !route.meta.hideTabs && !route.meta.adminOnly" />
+    <BottomTabs v-if="isMobile && !keyboardOpen && !route.meta.hideTabs && !route.meta.adminOnly" />
   </div>
 </template>
 
 <style scoped>
 .app-shell {
-  height: 100dvh;
+  height: calc(100dvh - var(--keyboard-inset, 0px));
   display: flex;
   flex-direction: column;
   min-height: 0;

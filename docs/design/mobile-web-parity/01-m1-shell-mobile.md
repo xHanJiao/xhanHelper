@@ -64,7 +64,7 @@ front-end/src/
 - 顶栏高 48px，`padding-top: env(safe-area-inset-top)`。
 - 主区 `overflow-y: auto`，底部给输入区和 Tab 留空间。
 - 底部 Tab 高 56px + `env(safe-area-inset-bottom)`；4 项：对话 / 灵阅 / 文档 / 我的。
-- 聊天页输入区在 Tab 上方；键盘弹起时隐藏 Tab，输入区贴键盘上沿（用 `visualViewport` 或 `dvh` 兜底）。
+- 聊天页输入区在 Tab 上方；键盘弹起时隐藏 Tab，输入区贴键盘上沿（`useKeyboardInset` 监听 `visualViewport` 写 `--keyboard-inset`）。
 - 内容页（灵阅/文档/我的）用全屏路由，底部 Tab 保持可见；二级详情页隐藏 Tab，只留返回。
 
 ### 安全区与键盘
@@ -75,7 +75,7 @@ front-end/src/
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 html, body, #app { height: 100%; }
-.app-shell { height: 100dvh; }
+.app-shell { height: calc(100dvh - var(--keyboard-inset, 0px)); }
 ```
 
 - `index.html` 必须加 `viewport-fit=cover`。

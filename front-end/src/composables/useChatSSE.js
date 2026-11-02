@@ -27,6 +27,19 @@ export function useChatSSE() {
   const auth = useAuthStore()
   let abortController = null
 
+  // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
+  // shortcut: error 之后的 done 里带的本轮灵阅卡片会跳过（等「重新加载」再回来），
+  // 只影响收尾轮失败的边角场景，真要补就在 done 里单独合并 artifacts。
+  function failStream(message) {
+    const partial = chat.streamingMessage
+    if (partial?.content || partial?.reasoning) {
+      chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
+    }
+    chat.streamingMessage = null
+    chat.statusMessage = null
+    chat.error = message
+  }
+
   async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral } = {}) {
     if (chat.isStreaming) return
 
@@ -87,7 +100,7 @@ export function useChatSSE() {
         return
       }
       console.error('Chat error', err)
-      chat.error = err.message || '网络连接失败，请重试'
+      failStream(err.message || '网络连接失败，请重试')
     } finally {
       chat.isStreaming = false
     }
@@ -196,16 +209,20 @@ export function useChatSSE() {
       }
       case 'done': {
         const d = JSON.parse(rawData)
-        const finalMsg = {
-          ...chat.streamingMessage,
-          id: d.message_id,
-          toolCalls: []
+        // 服务端可能「先 error 再 done」（收尾轮未收敛 / 另一台设备停止），
+        // failStream 已经把半截消息收尾了；这时只更新元数据，别再推一条空消息。
+        if (chat.streamingMessage) {
+          const finalMsg = {
+            ...chat.streamingMessage,
+            id: d.message_id,
+            toolCalls: []
+          }
+          // 本轮产出的灵阅卡片：done 直接带标题摘要，不用等下一次拉消息列表
+          if (Array.isArray(d.artifacts) && d.artifacts.length) {
+            finalMsg.artifacts = d.artifacts
+          }
+          chat.addMessage(finalMsg)
         }
-        // 本轮产出的灵阅卡片：done 直接带标题摘要，不用等下一次拉消息列表
-        if (Array.isArray(d.artifacts) && d.artifacts.length) {
-          finalMsg.artifacts = d.artifacts
-        }
-        chat.addMessage(finalMsg)
         chat.streamingMessage = null
 
         // 将前端临时 ID 替换为后端真实数据库 ID
@@ -240,7 +257,7 @@ export function useChatSSE() {
         break
       }
       case 'error':
-        chat.error = rawData
+        failStream(rawData)
         break
     }
   }

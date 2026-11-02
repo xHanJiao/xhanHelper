@@ -249,6 +249,34 @@ img {
   border-radius: 8px;
 }
 
+/* Markdown 代码块复制按钮（聊天 / 文档 / 分享页共用） */
+.code-block {
+  position: relative;
+}
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-block:hover .code-copy,
+.code-copy:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .code-copy { opacity: 1; }
+}
+
 .message-content .table-wrap {
   overflow-x: auto;
   margin: 0 0 10px;

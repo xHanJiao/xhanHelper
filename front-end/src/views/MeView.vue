@@ -12,7 +12,6 @@ const isAdmin = computed(() => auth.user?.isAdmin === true)
 const name = computed(() => auth.user?.username || 'xhanHelper')
 
 const items = [
-  { label: '图片', sub: '图床', path: '/images', icon: '◍' },
   { label: '账单', sub: '记录', path: '/bills', icon: '¥' },
   { label: '记忆', sub: '长期', path: '/memories', icon: '◎' },
   { label: '主题', sub: '状态页', path: '/themes', icon: '✳' },
@@ -55,16 +54,10 @@ function go(path) {
         <button class="row card" type="button" @click="go('/settings')">
           <span>已归档会话</span><span class="row-meta">在设置中查看</span><span class="chev">›</span>
         </button>
-        <button class="row card" type="button" @click="go('/settings')">
-          <span>无痕会话</span><span class="row-meta">关闭</span><span class="chev">›</span>
-        </button>
       </div>
 
       <div class="section">
         <div class="section-title">帮助</div>
-        <button class="row card" type="button">
-          <span>快捷操作说明</span><span class="chev">›</span>
-        </button>
         <button class="row card" type="button" @click="go('/settings')">
           <span>设置</span><span class="chev">›</span>
         </button>

@@ -1,10 +1,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import MarkdownIt from 'markdown-it'
 import { NSpin, NCard, NDivider, NButton } from 'naive-ui'
 import { api } from '@/api/client'
 import { useThemeStore } from '@/stores/theme'
+import md from '@/utils/markdown'
 
 const route = useRoute()
 const token = route.params.token
@@ -13,13 +13,6 @@ const theme = useThemeStore()
 const loading = ref(true)
 const error = ref(null)
 const doc = ref(null)
-
-const md = new MarkdownIt()
-
-const tableOpen = md.renderer.rules.table_open || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
-const tableClose = md.renderer.rules.table_close || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
-md.renderer.rules.table_open = (...a) => '<div class="table-wrap">' + tableOpen(...a)
-md.renderer.rules.table_close = (...a) => tableClose(...a) + '</div>'
 
 function parseTags(tags) {
   if (!tags) return []

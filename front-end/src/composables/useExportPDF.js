@@ -242,7 +242,7 @@ function openAndPrint(html) {
 export function useExportPDF() {
   function exportPDF(content, title = '', contentType = 'markdown') {
     const bodyHTML = contentType === 'markdown'
-      ? md.render(rewriteImageURLs(content || ''))
+      ? md.render(rewriteImageURLs(content || ''), { noCopy: true })
       : plainTextToHTML(content || '')
     const titleStr = title || '未命名文档'
     const html = buildPrintHTML(titleStr, bodyHTML)

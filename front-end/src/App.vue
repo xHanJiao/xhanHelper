@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NConfigProvider, NMessageProvider } from 'naive-ui'
 import { useThemeStore } from '@/stores/theme'
@@ -19,6 +19,39 @@ watch(() => auth.token, (newToken, oldToken) => {
     }
   }
 })
+
+// 代码块「复制」按钮在 v-html 里，只能靠事件代理；捕获阶段拦下，
+// 避免同时触发消息选择模式或正文内链跳转。
+async function onCodeCopyClick(e) {
+  const btn = e.target?.closest?.('[data-code-copy]')
+  if (!btn) return
+  e.preventDefault()
+  e.stopPropagation()
+  const code = btn.closest('.code-block')?.querySelector('pre code')?.textContent || ''
+  let copied = true
+  try {
+    await navigator.clipboard.writeText(code)
+  } catch (err) {
+    console.error('Copy code via clipboard API failed, falling back to execCommand', err)
+    copied = false
+    const ta = document.createElement('textarea')
+    ta.value = code
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      copied = document.execCommand('copy')
+    } catch (e) {
+      console.error('Copy code fallback (execCommand) failed', e)
+    } finally {
+      ta.remove()
+    }
+  }
+  btn.textContent = copied ? '已复制' : '复制失败'
+  setTimeout(() => { btn.textContent = '复制' }, 1500)
+}
+
+onMounted(() => document.addEventListener('click', onCodeCopyClick, true))
+onBeforeUnmount(() => document.removeEventListener('click', onCodeCopyClick, true))
 
 const themeOverrides = computed(() => {
   const dark = theme.isDark

@@ -78,7 +78,7 @@ watch(sheetOpen, async (open) => {
   }
   window.removeEventListener('keydown', onKeydown)
   document.body.style.overflow = ''
-  filterBtn.value?.focus()
+  filterBtn.value?.focus({ preventScroll: true })
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)

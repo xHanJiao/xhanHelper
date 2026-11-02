@@ -98,11 +98,18 @@ function openFilter() {
   draftCategory.value = filterCategory.value
 }
 
+// 选反了就顺手把另一端挪过来，applyFilters 永远能提交（面板不会被关掉后丢草稿）
+function onDraftStart(v) {
+  draftStart.value = v
+  if (v && draftEnd.value && v > draftEnd.value) draftEnd.value = v
+}
+
+function onDraftEnd(v) {
+  draftEnd.value = v
+  if (v && draftStart.value && v < draftStart.value) draftStart.value = v
+}
+
 function applyFilters() {
-  if (draftStart.value && draftEnd.value && draftStart.value > draftEnd.value) {
-    message.warning('开始日期不能晚于结束日期')
-    return
-  }
   filterDateRange.value = (draftStart.value || draftEnd.value) ? [draftStart.value, draftEnd.value] : null
   filterCategory.value = draftCategory.value
   handleFilterChange()
@@ -206,21 +213,23 @@ onMounted(fetchBills)
           <div class="filter-label">日期范围</div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <NDatePicker
-              v-model:value="draftStart"
+              :value="draftStart"
               type="date"
               clearable
               size="small"
               placeholder="开始日期"
               style="flex: 1; min-width: 0;"
+              @update:value="onDraftStart"
             />
             <span style="color: var(--color-text-muted);">–</span>
             <NDatePicker
-              v-model:value="draftEnd"
+              :value="draftEnd"
               type="date"
               clearable
               size="small"
               placeholder="结束日期"
               style="flex: 1; min-width: 0;"
+              @update:value="onDraftEnd"
             />
           </div>
         </template>

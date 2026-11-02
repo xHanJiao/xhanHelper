@@ -72,7 +72,7 @@ function newChat() {
       </button>
 
       <ConversationSwitcher v-if="showConversation" />
-      <button v-if="showConversation" class="icon-btn" type="button" title="新对话" @click="newChat">
+      <button v-if="showConversation" class="icon-btn" type="button" aria-label="新对话" title="新对话" @click="newChat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
 
@@ -158,6 +158,8 @@ function newChat() {
 /* 与 .chat-card 同宽：卡片是 calc(100% - 48px) / max 1080，两侧最小 24 */
 @media (min-width: 1100px) {
   .app-topbar.align-card { padding-inline: max(24px, calc((100% - 1080px) / 2)); }
+  /* 会话胶囊 34px，旁边的「＋」跟着等高（全局 .icon-btn 是 32，手机上会撑到 38 当触控区） */
+  .app-topbar .icon-btn { width: 34px; height: 34px; }
 }
 .topbar-left {
   display: flex;
@@ -195,22 +197,6 @@ function newChat() {
 }
 .back-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
 .back-btn svg { width: 15px; height: 15px; }
-.icon-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  border: 0.5px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.24);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-  padding: 0;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-[data-theme="dark"] .icon-btn { background: rgba(255, 255, 255, 0.04); }
-.icon-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
-.icon-btn svg { width: 16px; height: 16px; }
 .agent-popover { min-width: 180px; }
 .agent-popover-header { font-size: 12px; color: var(--color-text-muted); padding: 4px 12px; margin-bottom: 4px; }
 .agent-popover-item {

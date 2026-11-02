@@ -27,7 +27,13 @@ async function logout() {
   <div v-if="isDesktop" class="tb-actions">
     <FunctionMenu />
 
-    <button class="icon-btn" type="button" :title="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()">
+    <button
+      class="icon-btn"
+      type="button"
+      :aria-label="theme.isDark ? '切到浅色' : '切到深色'"
+      :title="theme.isDark ? '浅色' : '深色'"
+      @click="theme.toggle()"
+    >
       <svg v-if="theme.isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
       <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
     </button>
@@ -54,22 +60,6 @@ async function logout() {
 
 <style scoped>
 .tb-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
-.icon-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  border: 0.5px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.24);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-  padding: 0;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-[data-theme="dark"] .icon-btn { background: rgba(255, 255, 255, 0.04); }
-.icon-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
-.icon-btn svg { width: 16px; height: 16px; }
 .avatar {
   width: 30px;
   height: 30px;

@@ -205,19 +205,25 @@ onMounted(() => {
       >
         <template #actions>
           <template v-if="selecting">
-            <button class="page-action" type="button" @click="exitSelect">取消</button>
+            <button class="icon-btn" type="button" aria-label="取消选择" title="取消选择" @click="exitSelect">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
             <NPopconfirm
               :positive-text="`删除 ${selectedCount} 条`"
               negative-text="取消"
               @positive-click="deleteSelected"
             >
               <template #trigger>
-                <button class="page-action danger" type="button" :disabled="!selectedCount || deleting">删除</button>
+                <button class="icon-btn danger" type="button" aria-label="删除所选" title="删除所选" :disabled="!selectedCount || deleting">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7"/><path d="M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9L17.5 7"/></svg>
+                </button>
               </template>
               删除 {{ selectedCount }} 条灵阅？不可恢复，已分享的链接会立即失效。
             </NPopconfirm>
           </template>
-          <button v-else-if="items.length" class="page-action" type="button" @click="enterSelect">选择</button>
+          <button v-else-if="items.length" class="icon-btn" type="button" aria-label="选择" title="选择" @click="enterSelect">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.5 12.2l2.6 2.6 4.6-5.2"/></svg>
+          </button>
         </template>
 
         <template #pills>

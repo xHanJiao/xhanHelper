@@ -107,7 +107,9 @@ onMounted(fetchTools)
     <div class="page-scroll">
       <PageHeader title="动态工具">
         <template #actions>
-          <button class="page-action" type="button" @click="openCreate">新建</button>
+          <button class="icon-btn" type="button" aria-label="新建" title="新建" @click="openCreate">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
         </template>
       </PageHeader>
       <NGrid v-if="tools.length > 0" :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">

@@ -27,12 +27,6 @@ async function fetchList() {
   }
 }
 
-function openCreate() {
-  editing.value = null
-  formValue.value = { name: '', description: '' }
-  modalVisible.value = true
-}
-
 function openEdit(item) {
   editing.value = item
   formValue.value = { name: item.name, description: item.description }
@@ -40,23 +34,14 @@ function openEdit(item) {
 }
 
 async function handleSubmit() {
-  if (!formValue.value.name.trim()) {
-    message.warning('请输入主题名称')
-    return
-  }
   submitting.value = true
   try {
-    if (editing.value) {
-      await api.patch(`/api/themes/${editing.value.id}`, { description: formValue.value.description })
-      message.success('已更新')
-    } else {
-      await api.post('/api/themes', formValue.value)
-      message.success('创建成功')
-    }
+    await api.patch(`/api/themes/${editing.value.id}`, { description: formValue.value.description })
+    message.success('已更新')
     modalVisible.value = false
     await fetchList()
   } catch (e) {
-    message.error((editing.value ? '更新' : '创建') + '失败: ' + (e.message || ''))
+    message.error('更新失败: ' + (e.message || ''))
   } finally {
     submitting.value = false
   }
@@ -127,13 +112,9 @@ onMounted(fetchList)
 <template>
   <div style="display: flex; flex-direction: column; height: 100%; background: transparent; min-width: 0;">
     <div class="page-scroll">
-      <PageHeader title="主题">
-        <template #actions>
-          <button class="page-action" type="button" @click="openCreate">新建</button>
-        </template>
-      </PageHeader>
+      <PageHeader title="主题" />
       <NSpin v-if="loading && items.length === 0" />
-      <NEmpty v-else-if="items.length === 0" description="暂无主题，点击右上角新建" style="margin-top: 80px;" />
+      <NEmpty v-else-if="items.length === 0" description="暂无主题，助手会在对话里自动发现" style="margin-top: 80px;" />
       <NGrid v-else :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">
         <NGi v-for="item in items" :key="item.id">
           <ListItemCard
@@ -150,15 +131,15 @@ onMounted(fetchList)
 
     <NModal v-model:show="modalVisible" preset="card" title="主题" style="width: 480px;">
       <NForm label-placement="top">
-        <NFormItem label="名称" required>
-          <NInput v-model:value="formValue.name" placeholder="如：睡眠管理、职业发展" :disabled="!!editing" />
+        <NFormItem label="名称">
+          <NInput v-model:value="formValue.name" disabled />
         </NFormItem>
         <NFormItem label="描述">
           <NInput v-model:value="formValue.description" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="这个主题追踪什么？" />
         </NFormItem>
         <div style="display: flex; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-md);">
           <NButton @click="modalVisible = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleSubmit">{{ editing ? '保存' : '创建' }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleSubmit">保存</NButton>
         </div>
       </NForm>
     </NModal>

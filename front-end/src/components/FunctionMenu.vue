@@ -49,9 +49,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
 <template>
   <div ref="rootRef" class="function-menu">
-    <button class="function-trigger" type="button" @click.stop="open = !open">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="width:14px;height:14px"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-      <span>功能</span>
+    <button
+      class="icon-btn"
+      type="button"
+      aria-label="功能"
+      title="功能"
+      :aria-expanded="open"
+      @click.stop="open = !open"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
     </button>
 
     <div v-if="open" class="function-panel" @click.stop>
@@ -78,22 +84,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
 <style scoped>
 .function-menu { position: relative; }
-.function-trigger {
-  height: 32px;
-  padding: 0 11px;
-  border-radius: 999px;
-  border: 0.5px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.24);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-[data-theme="dark"] .function-trigger { background: rgba(255, 255, 255, 0.04); }
-.function-trigger:hover { background: var(--color-primary-soft); color: var(--color-primary); }
 .function-panel {
   position: absolute;
   top: calc(100% + 8px);

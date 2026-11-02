@@ -95,9 +95,8 @@ watch(() => props.filterable, (v) => {
 <template>
   <div class="ph">
     <div class="ph-row">
-      <button v-if="showBack" class="ph-back" type="button" @click="goBack">
+      <button v-if="showBack" class="ph-back" type="button" aria-label="返回" title="返回" @click="goBack">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-        <span>返回</span>
       </button>
 
       <h1 class="ph-title">{{ title }}</h1>
@@ -105,9 +104,10 @@ watch(() => props.filterable, (v) => {
       <div class="ph-actions">
         <button
           v-if="searchable && !searchOpen"
-          class="ph-icon"
+          class="icon-btn"
           type="button"
           aria-label="搜索"
+          title="搜索"
           @click="openSearch"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
@@ -121,7 +121,7 @@ watch(() => props.filterable, (v) => {
           @update:show="v => filterOpen = v"
         >
           <template #trigger>
-            <button class="ph-icon" type="button" aria-label="筛选" @click="openFilter">
+            <button class="icon-btn" type="button" aria-label="筛选" title="筛选" @click="openFilter">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
               <span v-if="filterCount" class="ph-badge">{{ filterCount }}</span>
             </button>
@@ -139,9 +139,10 @@ watch(() => props.filterable, (v) => {
         <button
           v-else-if="filterable"
           ref="filterBtn"
-          class="ph-icon"
+          class="icon-btn"
           type="button"
           aria-label="筛选"
+          title="筛选"
           @click="openFilter"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
@@ -219,21 +220,23 @@ watch(() => props.filterable, (v) => {
   }
 }
 .ph-row { display: flex; align-items: center; gap: 8px; }
+/* 只有箭头：给足点击范围，靠 hover 底色说明它是按钮 */
 .ph-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 2px;
+  flex: 0 0 auto;
   border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12.5px;
-  padding: 4px 2px;
+  padding: 0;
   cursor: pointer;
-  white-space: nowrap;
 }
-.ph-back svg { width: 15px; height: 15px; }
-.ph-back:hover { color: var(--color-primary); }
+.ph-back svg { width: 18px; height: 18px; }
+.ph-back:hover { background: var(--color-primary-soft); color: var(--color-primary); }
 .ph-title {
   flex: 1;
   min-width: 0;
@@ -260,23 +263,6 @@ watch(() => props.filterable, (v) => {
   .ph-divide { display: block; }
 }
 .ph-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.ph-icon {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  border: 0.5px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.24);
-  color: var(--color-text-secondary);
-  display: grid;
-  place-items: center;
-  padding: 0;
-  cursor: pointer;
-  flex: 0 0 auto;
-}
-[data-theme="dark"] .ph-icon { background: rgba(255, 255, 255, 0.04); }
-.ph-icon:hover { background: var(--color-primary-soft); color: var(--color-primary); }
-.ph-icon svg { width: 16px; height: 16px; }
 .ph-badge {
   position: absolute;
   top: -3px;
@@ -397,8 +383,7 @@ watch(() => props.filterable, (v) => {
 .ph-pop .ph-apply { height: 40px; font-size: 13px; }
 
 @media (max-width: 1099px) {
-  /* 手机端筛选/搜索是唯一入口，按钮撑到接近 44px 的触控区 */
-  .ph-icon { width: 38px; height: 38px; }
-  .ph-back { padding: 8px 4px; }
+  /* 手机端：返回和筛选/搜索按钮撑到接近 44px 的触控区（.icon-btn 的尺寸在 style.css） */
+  .ph-back { width: 38px; height: 38px; }
 }
 </style>

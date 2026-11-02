@@ -159,7 +159,9 @@ onMounted(fetchAgents)
     <div class="page-scroll">
       <PageHeader title="智能体">
         <template #actions>
-          <button class="page-action" type="button" @click="openCreate">新建</button>
+          <button class="icon-btn" type="button" aria-label="新建" title="新建" @click="openCreate">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
         </template>
       </PageHeader>
       <NSpin :show="loading">

@@ -325,7 +325,34 @@ img {
   .page-scroll { scroll-padding-top: 64px; }
 }
 
-/* 头部右侧的文字操作（选择/新建/导出） */
+/* 顶栏图标按钮（页头的搜索/筛选、页面的新建/选择…、全局的功能/主题共用一种药丸） */
+.icon-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.24);
+  color: var(--color-text-secondary);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+[data-theme="dark"] .icon-btn { background: rgba(255, 255, 255, 0.04); }
+.icon-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+.icon-btn svg { width: 16px; height: 16px; }
+.icon-btn.danger { color: var(--color-danger); }
+.icon-btn.danger:hover { background: var(--color-danger-soft); color: var(--color-danger); }
+.icon-btn:disabled { opacity: 0.4; cursor: default; }
+@media (max-width: 1099px) {
+  /* 手机端是唯一入口，撑到接近 44px 的触控区 */
+  .icon-btn { width: 38px; height: 38px; }
+}
+
+/* 头部右侧的文字操作（只剩搜索行的「取消」与正文的「清除筛选」） */
 .page-action {
   border: 0;
   background: transparent;
@@ -403,6 +430,6 @@ img {
 
 /* Tab 页（灵阅 / 文档 / 我的）统一大标题的字体由 PageHeader 的 .ph-title 控制 */
 @media (max-width: 1099px) {
-  /* 手机端这些按钮是创建/选择/筛选的唯一入口，撑到接近 44px 的触控区 */
+  /* 搜索行的「取消」、正文的「清除筛选」这类文字操作也撑到接近 44px 的触控区 */
   .page-action { padding: 10px 6px; }
 }

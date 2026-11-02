@@ -7,6 +7,8 @@ import { useThemeStore } from '@/stores/theme'
 import { useConversationsStore } from '@/stores/conversations'
 import { useMobile } from '@/composables/useMobile'
 import { api } from '@/api/client'
+import { CHAT_FONT_OPTIONS, readChatFont, setChatFont } from '@/utils/chatFont'
+import { isMacEmbedded } from '@/utils/embed'
 import PageTopBar from '@/components/PageTopBar.vue'
 
 const router = useRouter()
@@ -14,11 +16,19 @@ const auth = useAuthStore()
 const theme = useThemeStore()
 const convs = useConversationsStore()
 const message = useMessage()
-const { isDesktop } = useMobile()
+const { isDesktop, isMobile } = useMobile()
 const envMode = import.meta.env.MODE
 
 const isAdmin = computed(() => auth.user?.isAdmin === true)
 const username = computed(() => auth.user?.username || 'xhanHelper')
+const fontScale = ref(readChatFont())
+const appVersion = __APP_VERSION__
+const isEmbedded = isMacEmbedded()
+
+function chooseFont(name) {
+  fontScale.value = name
+  setChatFont(name)
+}
 
 const showPassword = ref(false)
 const oldPassword = ref('')
@@ -27,23 +37,54 @@ const confirmPassword = ref('')
 const saving = ref(false)
 
 const archived = ref([])
+const archivedTotal = ref(0)
 const archivedLoading = ref(false)
+const archivedError = ref(false)
+const restoringId = ref('')
 
-async function loadArchived() {
+async function loadArchived(offset = 0) {
+  if (archivedLoading.value) return
   archivedLoading.value = true
-  const res = await convs.fetchArchived(0)
-  archived.value = res.list
-  archivedLoading.value = false
+  archivedError.value = false
+  try {
+    const res = await convs.fetchArchived(offset)
+    if (offset === 0) {
+      archived.value = res.list
+    } else {
+      const merged = new Map(archived.value.map(c => [c.id, c]))
+      for (const c of res.list) merged.set(c.id, c)
+      archived.value = [...merged.values()]
+    }
+    archivedTotal.value = res.total
+  } catch (e) {
+    console.error('Failed to load archived conversations', e)
+    if (!archived.value.length) archivedError.value = true
+    message.error('归档会话加载失败')
+  } finally {
+    archivedLoading.value = false
+  }
+}
+
+async function loadMoreArchived() {
+  await loadArchived(archived.value.length)
 }
 
 async function restore(conv) {
+  if (restoringId.value) return
+  restoringId.value = conv.id
   try {
     await api.post(`/api/conversations/${conv.id}/restore`, {})
     archived.value = archived.value.filter(c => c.id !== conv.id)
+    archivedTotal.value = Math.max(0, archivedTotal.value - 1)
     convs.fetchList()
     message.success('已恢复')
+    // 当前页刚好删空：自动补下一页，别让列表停在空状态
+    if (!archived.value.length && archivedTotal.value > 0) loadArchived(0)
   } catch (e) {
+    console.error('Failed to restore conversation', e)
     message.error('恢复失败')
+  } finally {
+    restoringId.value = ''
   }
 }
 
@@ -94,13 +135,26 @@ onMounted(loadArchived)
           <div class="row">
             <span class="label">主题</span>
             <div class="seg">
-              <button type="button" :class="{ on: !theme.isDark }" @click="theme.setAndSave(false)">浅色</button>
-              <button type="button" :class="{ on: theme.isDark }" @click="theme.setAndSave(true)">深色</button>
-              <button type="button" disabled title="M3 接入">跟随系统</button>
+              <button type="button" :disabled="isEmbedded" :title="isEmbedded ? '跟随应用外观' : undefined" :aria-pressed="theme.mode === 'light'" :class="{ on: theme.mode === 'light' }" @click="theme.setMode('light')">浅色</button>
+              <button type="button" :disabled="isEmbedded" :title="isEmbedded ? '跟随应用外观' : undefined" :aria-pressed="theme.mode === 'dark'" :class="{ on: theme.mode === 'dark' }" @click="theme.setMode('dark')">深色</button>
+              <button type="button" :disabled="isEmbedded" :title="isEmbedded ? '跟随应用外观' : undefined" :aria-pressed="theme.mode === 'system'" :class="{ on: theme.mode === 'system' }" @click="theme.setMode('system')">跟随系统</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="label">字号</span>
+            <div class="seg">
+              <button
+                v-for="opt in CHAT_FONT_OPTIONS"
+                :key="opt.value"
+                type="button"
+                :aria-pressed="fontScale === opt.value"
+                :class="{ on: fontScale === opt.value }"
+                @click="chooseFont(opt.value)"
+              >{{ opt.label }}</button>
             </div>
           </div>
         </div>
-        <div class="note">字号设置会在 M3 接入；当前聊天正文使用 15px 基线。</div>
+        <div class="note">字号只作用于聊天气泡；文档阅读器的字号在阅读页单独调。</div>
       </div>
 
       <div class="group">
@@ -115,23 +169,36 @@ onMounted(loadArchived)
       <div class="group">
         <div class="group-title">会话</div>
         <div class="card">
-          <div class="row"><span class="label">已归档会话</span><span class="value">{{ archived.length }}</span></div>
-          <div v-if="archivedLoading" class="archived-empty">加载中…</div>
+          <div class="row"><span class="label">已归档会话</span><span class="value">{{ archivedError ? '—' : archivedTotal }}</span></div>
+          <div v-if="archivedLoading && !archived.length" class="archived-empty">加载中…</div>
+          <div v-else-if="archivedError" class="archived-empty">
+            加载失败<button type="button" class="archived-retry" @click="loadArchived(0)">重试</button>
+          </div>
           <div v-else-if="!archived.length" class="archived-empty">没有已归档会话</div>
           <div v-for="conv in archived" :key="conv.id" class="archived-row">
             <span class="archived-title">{{ conv.title || '未命名对话' }}</span>
-            <button type="button" @click="restore(conv)">恢复</button>
+            <button type="button" :disabled="archivedLoading || !!restoringId" @click="restore(conv)">
+              {{ restoringId === conv.id ? '恢复中…' : '恢复' }}
+            </button>
           </div>
+          <button
+            v-if="archived.length < archivedTotal"
+            class="archived-more"
+            type="button"
+            :disabled="archivedLoading || !!restoringId"
+            @click="loadMoreArchived"
+          >{{ archivedLoading ? '加载中…' : '加载更多' }}</button>
         </div>
       </div>
 
       <div class="group">
         <div class="group-title">关于</div>
         <div class="card">
-          <div class="row"><span class="label">版本</span><span class="value">Web · {{ $route.meta.bare ? '公开页' : '主应用' }}</span></div>
-          <div class="row"><span class="label">后端环境</span><span class="value">{{ envMode }}</span></div>
+          <div class="row"><span class="label">版本</span><span class="value">Web {{ appVersion }}</span></div>
+          <div class="row"><span class="label">前端构建</span><span class="value">{{ envMode }}</span></div>
           <div v-if="isAdmin && isDesktop" class="row row-btn" @click="router.push('/admin')"><span class="label">管理后台</span><span class="chev">›</span></div>
         </div>
+        <div v-if="isMobile" class="note">安装到桌面：iPhone 用 Safari 分享 → 添加到主屏幕；Android 用浏览器菜单 → 安装应用。</div>
         <div class="note">管理后台只在桌面端提供；手机上不显示入口。</div>
       </div>
     </div>
@@ -177,6 +244,11 @@ onMounted(loadArchived)
 .archived-row { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-top: 0.5px solid var(--color-border); font-size: 12.5px; }
 .archived-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archived-row button { border: 0; background: var(--color-primary-soft); color: var(--color-primary); border-radius: 7px; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+.archived-row button:disabled { opacity: 0.5; cursor: default; }
+.archived-retry { margin-left: 8px; border: 0; background: transparent; color: var(--color-primary); font-size: 11.5px; padding: 0; cursor: pointer; }
+.archived-more { width: 100%; border: 0; border-top: 0.5px solid var(--color-border); background: transparent; color: var(--color-primary); padding: 10px; font-size: 12px; cursor: pointer; }
+.archived-more:hover { background: var(--color-primary-soft); }
+.archived-more:disabled { color: var(--color-text-muted); cursor: default; }
 .pwd-form { display: flex; flex-direction: column; gap: 10px; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

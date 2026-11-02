@@ -51,6 +51,8 @@
   --font-size-base: 14px;
   --font-size-md: 15px;
   --font-size-lg: 16px;
+  /* 聊天气泡正文；设置页「字号」改它 */
+  --chat-font-size: 15px;
 
   --shadow-sm: 0 1px 3px rgba(59, 46, 31, 0.05);
   --shadow-md: 0 6px 18px rgba(59, 46, 31, 0.07);

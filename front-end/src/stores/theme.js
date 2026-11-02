@@ -5,11 +5,6 @@ import { isMacEmbedded } from '@/utils/embed'
 
 const KEY = 'xhanhelper_theme'
 
-function isNightTime() {
-  const h = new Date().getHours()
-  return h >= 18 || h < 8
-}
-
 function systemPrefersDark() {
   return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
@@ -22,6 +17,14 @@ function apply(isDark, naiveTheme) {
 export const useThemeStore = defineStore('theme', () => {
   const isDark = ref(false)
   const naiveTheme = ref(null)
+  // 'light' | 'dark' | 'system'。内嵌 macOS WebView 恒为 system：app 外观经窗口传导，app 是唯一来源。
+  const mode = ref('system')
+
+  function paint() {
+    const followSystem = isMacEmbedded() || mode.value === 'system'
+    isDark.value = followSystem ? systemPrefersDark() : mode.value === 'dark'
+    apply(isDark.value, naiveTheme)
+  }
 
   function load() {
     // 分享页是公开独立页，始终以浅色为默认，且不读用户偏好
@@ -31,24 +34,26 @@ export const useThemeStore = defineStore('theme', () => {
       return
     }
     try {
-      if (isMacEmbedded()) {
-        // 内嵌 WebView：app 外观经窗口 effectiveAppearance 传导到媒体查询，
-        // app 是主题唯一来源，忽略 localStorage/时间启发
-        isDark.value = systemPrefersDark()
-      } else {
-        const saved = localStorage.getItem(KEY)
-        isDark.value = saved !== null ? saved === 'dark' : isNightTime()
-      }
-    } catch {
-      isDark.value = isNightTime()
+      const saved = localStorage.getItem(KEY)
+      mode.value = !isMacEmbedded() && (saved === 'light' || saved === 'dark') ? saved : 'system'
+    } catch (e) {
+      console.error('Failed to read theme preference', e)
+      mode.value = 'system'
     }
-    apply(isDark.value, naiveTheme)
+    paint()
+  }
+
+  function setMode(m) {
+    if (isMacEmbedded()) return
+    mode.value = m === 'light' || m === 'dark' ? m : 'system'
+    paint()
+    try { localStorage.setItem(KEY, mode.value) } catch (e) {
+      console.error('Failed to save theme preference', e)
+    }
   }
 
   function toggle() {
-    isDark.value = !isDark.value
-    apply(isDark.value, naiveTheme)
-    try { localStorage.setItem(KEY, isDark.value ? 'dark' : 'light') } catch {}
+    setMode(isDark.value ? 'light' : 'dark')
   }
 
   // 仅当前会话生效，不写 localStorage（分享页开关用）
@@ -57,25 +62,15 @@ export const useThemeStore = defineStore('theme', () => {
     apply(isDark.value, naiveTheme)
   }
 
-  // 设置页用：明确选择浅/深，写入 localStorage
-  function setAndSave(v) {
-    isDark.value = !!v
-    apply(isDark.value, naiveTheme)
-    try { localStorage.setItem(KEY, isDark.value ? 'dark' : 'light') } catch {}
-  }
-
-  // 内嵌模式：app 切主题 → 媒体查询变化 → 页面即时跟随
   if (typeof window !== 'undefined') {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    mq.addEventListener('change', (e) => {
-      if (isMacEmbedded()) {
-        isDark.value = e.matches
-        apply(isDark.value, naiveTheme)
-      }
+    const sharePage = window.location.pathname.startsWith('/s/')
+    // 内嵌模式：app 切主题 → 媒体查询变化 → 页面即时跟随；跟随系统时同理
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (!sharePage && (isMacEmbedded() || mode.value === 'system')) paint()
     })
   }
 
   load()
 
-  return { isDark, naiveTheme, toggle, set, setAndSave }
+  return { isDark, naiveTheme, mode, toggle, set, setMode }
 })

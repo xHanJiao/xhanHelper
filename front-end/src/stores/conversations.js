@@ -98,9 +98,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     try {
       const res = await api.get(`/api/conversations?archived=true&limit=${pageSize}&offset=${offset}`)
       return { list: res.conversations || [], total: res.total || 0 }
-    } catch (e) {
-      console.error('Failed to fetch archived conversations', e)
-      return { list: [], total: 0 }
     } finally {
       loading.value = false
     }

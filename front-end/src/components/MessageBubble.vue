@@ -192,7 +192,7 @@ onBeforeUnmount(() => {
     <!-- 用户消息 -->
     <div v-if="isUser" style="width: 100%; display: flex; justify-content: flex-end;">
       <div style="display: flex; flex-direction: column; align-items: flex-end; max-width: 85%;">
-        <div class="user-bubble" style="border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: 15px; line-height: 1.6; position: relative;">
+        <div class="user-bubble" style="border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: var(--chat-font-size); line-height: 1.6; position: relative;">
           <div v-if="imageIds.length" class="user-images" :class="{ single: imageIds.length === 1 }">
             <button
               v-for="id in imageIds"
@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
       <div style="flex: 1; min-width: 0; max-width: 100%; border-radius: var(--radius-lg); padding: var(--space-xs) var(--space-sm);">
-        <div v-if="contentHtml" class="assistant-content" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
+        <div v-if="contentHtml" class="assistant-content" style="font-size: var(--chat-font-size); line-height: 1.7; color: var(--color-text);">
           <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
         <ArtifactCards :items="message.artifacts || []" />

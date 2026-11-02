@@ -20,13 +20,16 @@
         if (embedded) {
           // 内嵌 WebView：跟随 app 外观（经窗口 effectiveAppearance 传导到媒体查询）
           theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        } else if (location.pathname.indexOf('/s/') === 0) {
+          // 分享页始终浅色（与 stores/theme.js 一致）
+          theme = 'light';
         } else {
           var t = localStorage.getItem('xhanhelper_theme');
-          if (t != null) {
-            theme = t === 'dark' ? 'dark' : 'light';
+          if (t === 'dark' || t === 'light') {
+            theme = t;
           } else {
-            var h = new Date().getHours();
-            theme = (h >= 18 || h < 8) ? 'dark' : 'light';
+            // 未设置或选了「跟随系统」
+            theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           }
         }
         document.documentElement.setAttribute('data-theme', theme);

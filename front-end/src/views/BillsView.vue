@@ -99,6 +99,10 @@ function openFilter() {
 }
 
 function applyFilters() {
+  if (draftStart.value && draftEnd.value && draftStart.value > draftEnd.value) {
+    message.warning('开始日期不能晚于结束日期')
+    return
+  }
   filterDateRange.value = (draftStart.value || draftEnd.value) ? [draftStart.value, draftEnd.value] : null
   filterCategory.value = draftCategory.value
   handleFilterChange()
@@ -119,12 +123,14 @@ function resetFilters() {
 }
 
 function formatRange(range) {
-  if (!range || !range[0]) return ''
+  if (!range) return ''
   const fmt = (t) => {
     const d = new Date(t)
     return `${d.getMonth() + 1}/${d.getDate()}`
   }
-  return range[1] ? `${fmt(range[0])} – ${fmt(range[1])}` : fmt(range[0])
+  // 允许只选一端；两端都有才画区间
+  if (range[0] && range[1]) return `${fmt(range[0])} – ${fmt(range[1])}`
+  return fmt(range[0] || range[1])
 }
 
 async function handleExport() {

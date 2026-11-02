@@ -109,6 +109,18 @@ function clearFilters() {
   draftTags.value = []
 }
 
+// 胶囊行上的「清除」只清标签，搜索词有自己的 ×
+function resetTagFilter() {
+  selectedTags.value = []
+  fetchList()
+}
+
+// 选择态里改搜索会重拉列表，先把选择退掉，别留下已不在列表里的 id
+function runSearch() {
+  if (selecting.value) exitSelect()
+  fetchList()
+}
+
 function enterSelect() {
   selecting.value = true
   selectedIds.value = []
@@ -186,15 +198,14 @@ onMounted(() => {
         :title="selecting ? `已选 ${selectedCount}` : '灵阅'"
         :searchable="!selecting"
         :filterable="!selecting && tags.length > 0"
-        :filter-count="selectedTags.length"
-        :pills="!selecting"
+        :filter-count="selecting ? 0 : selectedTags.length"
         v-model:keyword="keyword"
         search-placeholder="搜索标题/摘要"
-        @search="fetchList()"
+        @search="runSearch"
         @open-filter="openFilter"
         @apply="applyFilters"
         @clear="clearFilters"
-        @reset="resetFilters"
+        @reset="resetTagFilter"
       >
         <template #actions>
           <template v-if="selecting">
@@ -214,7 +225,7 @@ onMounted(() => {
         </template>
 
         <template #pills>
-          <span v-for="t in selectedTags" :key="t" class="filter-pill">
+          <span v-for="t in (selecting ? [] : selectedTags)" :key="t" class="filter-pill">
             {{ t }}
             <button type="button" :aria-label="`移除标签 ${t}`" @click="removeTag(t)">×</button>
           </span>

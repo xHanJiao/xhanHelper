@@ -11,9 +11,7 @@ const props = defineProps({
   keyword: { type: String, default: '' },
   searchPlaceholder: { type: String, default: '搜索' },
   filterable: { type: Boolean, default: false },
-  filterCount: { type: Number, default: 0 },
-  // 选择态等场景由页面关掉，避免胶囊上的 × 在列表重拉时把选中项换掉
-  pills: { type: Boolean, default: true }
+  filterCount: { type: Number, default: 0 }
 })
 
 // clear = 清面板草稿；reset = 清已生效的筛选（胶囊行上的「清除」）
@@ -29,6 +27,8 @@ const showBack = computed(() => isDesktop.value || route.meta.topLevel !== true)
 const searchOpen = ref(false)
 const searchInput = ref(null)
 const filterOpen = ref(false)
+const sheetEl = ref(null)
+const filterBtn = ref(null)
 
 function openSearch() {
   searchOpen.value = true
@@ -67,18 +67,22 @@ const sheetOpen = computed(() => isMobile.value && filterOpen.value)
 function onKeydown(e) {
   if (e.key === 'Escape') filterOpen.value = false
 }
-watch(sheetOpen, (open) => {
+// shortcut: 只把焦点移进面板、关闭时还原，不做完整的 Tab 焦点环 trap（面板里最多两个控件）
+watch(sheetOpen, async (open) => {
   if (open) {
     window.addEventListener('keydown', onKeydown)
     document.body.style.overflow = 'hidden'
+    await nextTick()
+    sheetEl.value?.focus()
     return
   }
   window.removeEventListener('keydown', onKeydown)
   document.body.style.overflow = ''
+  filterBtn.value?.focus()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
-  document.body.style.overflow = ''
+  if (sheetOpen.value) document.body.style.overflow = ''
 })
 
 // 选择态等把 filterable 关掉时，面板要跟着卸载，否则退出后自己弹回来
@@ -133,6 +137,7 @@ watch(() => props.filterable, (v) => {
 
         <button
           v-else-if="filterable"
+          ref="filterBtn"
           class="ph-icon"
           type="button"
           aria-label="筛选"
@@ -163,7 +168,7 @@ watch(() => props.filterable, (v) => {
       <button class="page-action" type="button" @click="searchOpen = false">取消</button>
     </div>
 
-    <div v-if="pills && ((keyword && !searchOpen) || filterCount)" class="ph-pills">
+    <div v-if="(keyword && !searchOpen) || filterCount" class="ph-pills">
       <span v-if="keyword && !searchOpen" class="filter-pill">
         搜索：{{ keyword }}
         <button type="button" aria-label="清空搜索" @click="clearKeyword">×</button>
@@ -176,10 +181,12 @@ watch(() => props.filterable, (v) => {
       <div v-if="isMobile && filterOpen" class="ph-scrim" @click="filterOpen = false"></div>
       <div
         v-if="isMobile && filterOpen"
+        ref="sheetEl"
         class="ph-sheet"
         role="dialog"
         aria-modal="true"
         aria-label="筛选"
+        tabindex="-1"
       >
         <div class="ph-handle"></div>
         <div class="ph-sheet-head">
@@ -311,6 +318,7 @@ watch(() => props.filterable, (v) => {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
+.ph-sheet:focus { outline: none; }
 .ph-handle {
   width: 36px;
   height: 4px;

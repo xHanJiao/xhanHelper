@@ -11,14 +11,25 @@ const props = defineProps({
 
 const url = ref('')
 const failed = ref(false)
+// 只有私有图床要鉴权；/images/ 是公开图，外链/blob 直接交给 <img>，
+// 既不会拼错 URL，也不会把 Bearer 发给第三方
+const NEEDS_AUTH = /^\/api\/images\//
+let owned = false
 
 async function load() {
   url.value = ''
   failed.value = false
+  owned = false
   if (!props.src) return
+  if (!NEEDS_AUTH.test(props.src)) {
+    url.value = props.src
+    return
+  }
   try {
     const blob = await api.blob(props.src)
+    if (!blob.type.startsWith('image/')) throw new Error(`unexpected content-type: ${blob.type}`)
     url.value = URL.createObjectURL(blob)
+    owned = true
   } catch (e) {
     console.error('Failed to load image', props.src, e)
     failed.value = true
@@ -26,11 +37,11 @@ async function load() {
 }
 
 watch(() => props.src, () => {
-  if (url.value) URL.revokeObjectURL(url.value)
+  if (owned && url.value) URL.revokeObjectURL(url.value)
   load()
 }, { immediate: true })
 
-onBeforeUnmount(() => { if (url.value) URL.revokeObjectURL(url.value) })
+onBeforeUnmount(() => { if (owned && url.value) URL.revokeObjectURL(url.value) })
 </script>
 
 <template>

@@ -1,84 +1,520 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { NButton, NSpin } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  NButton,
+  NDrawer,
+  NDrawerContent,
+  NDropdown,
+  NInput,
+  NModal,
+  NPopover,
+  NSpin,
+  useMessage
+} from 'naive-ui'
 import { api } from '@/api/client'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
+import ImageLightbox from '@/components/media/ImageLightbox.vue'
+import { useMobile } from '@/composables/useMobile'
+import { useExportPDF } from '@/composables/useExportPDF'
+import { ensureDocumentShareUrl, writeClipboard, downloadMarkdown } from '@/utils/document'
 import md from '@/utils/markdown'
 
-// 文档最小阅读页：M2 只读（目录/批注在 M3）。列宽对齐 macOS 阅读器 728px。
 const route = useRoute()
+const router = useRouter()
+const message = useMessage()
+const { isMobile } = useMobile()
+const { exportPDF } = useExportPDF()
+
 const doc = ref(null)
-const loading = ref(false)
+const loading = ref(true)
 const failed = ref('')
+const html = ref('')
+const toc = ref([])
+const paperRef = ref(null)
+const tocOpen = ref(false)
+const previewSrc = ref('')
 
 const title = computed(() => doc.value?.title || '文档')
-const html = computed(() => (doc.value?.content ? md.render(doc.value.content) : ''))
+const tags = computed(() => parseTags(doc.value?.tags))
 
+// ---- 字号（只作用于本页） ----
+const FONT_KEY = 'doc.fontScale'
+const FONT_STEPS = computed(() => (isMobile.value ? [100, 110, 120] : [100, 110, 120, 125]))
+const scale = ref(readScale())
+
+function readScale() {
+  const n = Number(localStorage.getItem(FONT_KEY))
+  return n >= 100 && n <= 125 ? n : 100
+}
+
+function setScale(n) {
+  scale.value = n
+  localStorage.setItem(FONT_KEY, String(n))
+}
+
+watch(isMobile, (m) => {
+  // 只降显示值，不回写：桌面选过 125% 的人用一次手机也不该被永久降级
+  if (m && scale.value > 120) scale.value = 120
+}, { immediate: true })
+
+// ---- 解析一次：生成目录 id + 渲染正文 ----
+function inlineText(token) {
+  return (token?.children || [])
+    .filter((c) => c.type === 'text' || c.type === 'code_inline')
+    .map((c) => c.content)
+    .join('')
+    .trim()
+}
+
+function build() {
+  const tokens = md.parse(doc.value?.content || '', {})
+  // 文档的 title 与 content 分列，模型常把标题又写成正文第一个 #。纸面已有大标题，跳过它。
+  const first = tokens.findIndex((t) => t.type === 'heading_open')
+  if (first >= 0 && tokens[first].tag === 'h1'
+    && inlineText(tokens[first + 1]) === (doc.value?.title || '').trim()) {
+    tokens.splice(first, 3)
+  }
+  const items = []
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t.type !== 'heading_open') continue
+    const level = Number(t.tag.slice(1))
+    if (level > 3) continue
+    const text = inlineText(tokens[i + 1])
+    if (!text) continue
+    const id = `doc-h-${items.length}`
+    t.attrSet('id', id)
+    items.push({ id, level, text })
+  }
+  toc.value = items
+  html.value = md.renderer.render(tokens, md.options, {})
+}
+
+// ---- 图片：私有图床要带 Bearer，渲染后换成 blob URL；外链保持原样 ----
+let blobUrls = []
+let renderSeq = 0
+
+function clearBlobs() {
+  blobUrls.forEach((u) => URL.revokeObjectURL(u))
+  blobUrls = []
+}
+
+async function hydrateImages() {
+  const seq = renderSeq
+  await nextTick()
+  const root = paperRef.value
+  if (!root) return
+  const imgs = [...root.querySelectorAll('img')]
+  imgs.forEach((img) => { img.loading = 'lazy' })
+  await Promise.allSettled(imgs.map(async (img) => {
+    const src = img.getAttribute('src') || ''
+    // /images/ 是公开图（文档配图），直接交给浏览器缓存；这里只补历史遗留的私有路径
+    if (!src.startsWith('/api/images/')) return
+    try {
+      const blob = await api.blob(src)
+      if (!blob.type.startsWith('image/')) throw new Error(`unexpected content-type: ${blob.type}`)
+      const url = URL.createObjectURL(blob)
+      if (seq !== renderSeq) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrls.push(url)
+      img.src = url
+    } catch (e) {
+      // 图被删/无权限：保留 alt，正文不因一张图整页失败
+      console.error('Failed to load document image', src, e)
+      img.classList.add('img-failed')
+    }
+  }))
+}
+
+// ---- 加载 ----
 async function load() {
+  const seq = ++renderSeq
   loading.value = true
   failed.value = ''
+  // 起手清空：切换/失败时不能留着上一篇的正文、目录和分享入口
+  doc.value = null
+  toc.value = []
+  html.value = ''
+  tocOpen.value = false
+  clearBlobs()
   try {
-    doc.value = await api.get(`/api/documents/${route.params.id}`)
+    const data = await api.get(`/api/documents/${route.params.id}`)
+    if (seq !== renderSeq) return
+    // 文档 404 是裸 {error}，unwrap 不会抛；没有 id 就当失败
+    if (!data?.id) throw new Error('文档不存在或已删除')
+    doc.value = data
+    build()
+    // 先把正文渲染出来，hydrateImages 才拿得到 DOM；补图失败不能把整篇文档打回错误页
+    loading.value = false
+    hydrateImages().catch((e) => console.error('Failed to hydrate document images', e))
   } catch (e) {
+    if (seq !== renderSeq) return
     console.error('Failed to load document', e)
+    doc.value = null
+    toc.value = []
+    html.value = ''
     failed.value = e?.message || '加载失败'
   } finally {
-    loading.value = false
+    if (seq === renderSeq) loading.value = false
   }
 }
 
 onMounted(load)
 watch(() => route.params.id, (id) => { if (id) load() })
+onBeforeUnmount(() => {
+  renderSeq++ // 让在途的 hydrate 结果被丢弃
+  clearBlobs()
+})
+
+function parseTags(raw) {
+  if (!raw) return []
+  return raw.split(',').map((t) => t.trim()).filter(Boolean)
+}
+
+// ---- 目录跳转 / 内链 / 图片 ----
+function goHeading(id) {
+  tocOpen.value = false
+  nextTick(() => {
+    const el = paperRef.value?.querySelector(`#${id}`)
+    el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  })
+}
+
+function onPaperClick(e) {
+  const link = e.target.closest?.('a[data-route]')
+  if (link) {
+    e.preventDefault()
+    router.push(link.getAttribute('data-route'))
+    return
+  }
+  if (e.target.tagName === 'IMG') {
+    // 图被外链包着时点图就是点链接，别同时开灯箱
+    if (e.target.closest('a')) return
+    previewSrc.value = e.target.src
+  }
+}
+
+// ---- 分享 / 下载 / PDF ----
+const shareOpen = ref(false)
+const shareUrl = ref('')
+const sharing = ref(false)
+
+async function share() {
+  if (sharing.value || !doc.value) return
+  sharing.value = true
+  try {
+    shareUrl.value = await ensureDocumentShareUrl(doc.value.id)
+    shareOpen.value = true
+  } catch (e) {
+    console.error('Failed to share document', e)
+    message.error('创建分享链接失败')
+  } finally {
+    sharing.value = false
+  }
+}
+
+async function copyShare() {
+  try {
+    await writeClipboard(shareUrl.value)
+    message.success('已复制到剪贴板')
+    shareOpen.value = false
+  } catch (e) {
+    console.error('Failed to copy share url', e)
+    message.error('复制失败，请手动选择链接')
+  }
+}
+
+function downloadMd() {
+  downloadMarkdown(doc.value?.content, doc.value?.title)
+}
+
+const menuOptions = computed(() => {
+  const items = [{ label: '下载 .md', key: 'download' }, { label: '导出 PDF', key: 'pdf' }]
+  if (isMobile.value) items.unshift({ label: '分享链接', key: 'share' })
+  return items
+})
+
+function onMenu(key) {
+  if (key === 'download') downloadMd()
+  else if (key === 'pdf') exportPDF(doc.value?.content, doc.value?.title, 'markdown')
+  else if (key === 'share') share()
+}
 </script>
 
 <template>
   <div class="page">
-    <PageTopBar :title="title" />
-    <div class="scroll">
-      <div v-if="loading" class="center"><NSpin size="small" /></div>
-      <div v-else-if="failed" class="center">
-        <p class="err">{{ failed }}</p>
-        <NButton size="small" @click="load">重试</NButton>
+    <PageTopBar :title="title">
+      <template #right>
+        <TopBarBtn v-if="doc && !isMobile" label="分享" @click="share" />
+        <NPopover v-if="doc && !isMobile" trigger="click" placement="bottom-end">
+          <template #trigger>
+            <button class="icon-text" type="button" aria-label="字号">Aa</button>
+          </template>
+          <div class="font-panel">
+            <button
+              v-for="n in FONT_STEPS"
+              :key="n"
+              type="button"
+              class="font-option"
+              :class="{ active: n === scale }"
+              @click="setScale(n)"
+            >{{ n }}%</button>
+          </div>
+        </NPopover>
+        <NDropdown v-if="doc" trigger="click" placement="bottom-end" :options="menuOptions" @select="onMenu">
+          <button class="icon-text more" type="button" aria-label="更多操作">⋯</button>
+        </NDropdown>
+      </template>
+    </PageTopBar>
+
+    <div class="reader">
+      <aside v-if="toc.length" class="toc-side">
+        <div class="toc-title">目录</div>
+        <nav>
+          <button
+            v-for="h in toc"
+            :key="h.id"
+            type="button"
+            class="toc-link"
+            :class="`lv${h.level}`"
+            @click="goHeading(h.id)"
+          >{{ h.text }}</button>
+        </nav>
+      </aside>
+
+      <div class="scroll">
+        <div v-if="loading" class="center"><NSpin size="small" /></div>
+        <div v-else-if="failed" class="center">
+          <p class="err">{{ failed }}</p>
+          <NButton size="small" @click="load">重试</NButton>
+        </div>
+        <div v-else class="paper message-content" :style="{ '--doc-scale': scale / 100 }">
+          <h1 class="doc-title">{{ title }}</h1>
+          <div class="doc-meta">
+            <span v-if="doc?.updated_at">更新于 {{ new Date(doc.updated_at).toLocaleString() }}</span>
+            <span v-for="tag in tags" :key="tag" class="doc-tag">{{ tag }}</span>
+          </div>
+          <article ref="paperRef" class="doc-body" v-html="html" @click="onPaperClick"></article>
+        </div>
       </div>
-      <article v-else class="paper message-content" v-html="html"></article>
     </div>
+
+    <div v-if="isMobile && !loading && !failed" class="mobile-bar">
+      <button v-if="toc.length" type="button" class="bar-btn" @click="tocOpen = true">目录</button>
+      <NPopover trigger="click" placement="top">
+        <template #trigger>
+          <button type="button" class="bar-btn" aria-label="字号">Aa {{ scale }}%</button>
+        </template>
+        <div class="font-panel">
+          <button
+            v-for="n in FONT_STEPS"
+            :key="n"
+            type="button"
+            class="font-option"
+            :class="{ active: n === scale }"
+            @click="setScale(n)"
+          >{{ n }}%</button>
+        </div>
+      </NPopover>
+    </div>
+
+    <NDrawer v-model:show="tocOpen" placement="bottom" :height="'58vh'">
+      <NDrawerContent title="目录" closable>
+        <nav class="drawer-toc">
+          <button
+            v-for="h in toc"
+            :key="h.id"
+            type="button"
+            class="toc-link"
+            :class="`lv${h.level}`"
+            @click="goHeading(h.id)"
+          >{{ h.text }}</button>
+        </nav>
+      </NDrawerContent>
+    </NDrawer>
+
+    <NModal v-model:show="shareOpen" preset="card" title="分享文档" style="width: min(480px, 92vw);">
+      <div class="share-row">
+        <NInput :value="shareUrl" readonly />
+        <NButton type="primary" size="small" @click="copyShare">复制</NButton>
+      </div>
+      <div class="share-hint">链接长期有效</div>
+    </NModal>
+
+    <ImageLightbox :src="previewSrc" :visible="!!previewSrc" @close="previewSrc = ''" />
   </div>
 </template>
 
 <style scoped>
 .page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.scroll { flex: 1; overflow-y: auto; padding: 6px 16px 40px; }
+.reader { flex: 1; min-height: 0; display: flex; }
+.toc-side {
+  width: 220px;
+  flex: 0 0 220px;
+  overflow-y: auto;
+  padding: 18px 10px 28px 22px;
+  border-right: 0.5px solid var(--color-border);
+}
+.toc-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 0 8px 8px;
+}
+.toc-link {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toc-link:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+.toc-link.lv2 { padding-left: 20px; font-size: 12px; }
+.toc-link.lv3 { padding-left: 32px; font-size: 12px; color: var(--color-text-muted); }
+.drawer-toc { padding-bottom: 16px; }
+
+.scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 6px 16px 40px; }
 .paper {
   max-width: 728px;
   margin: 0 auto;
-  padding: 24px 26px 32px;
+  padding: 28px 34px 40px;
   border-radius: 14px;
   background: var(--color-surface);
   border: 0.5px solid var(--color-border);
   box-shadow: var(--shadow-sm);
-  font-size: 15px;
+  font-size: calc(15px * var(--doc-scale, 1));
   line-height: 1.75;
   color: var(--color-text);
 }
-.paper :deep(h1) { font-size: 24px; margin: 0 0 10px; }
-.paper :deep(h2) { font-size: 19px; margin: 22px 0 8px; }
-.paper :deep(h3) { font-size: 16px; margin: 18px 0 6px; }
-.paper :deep(p) { margin: 0 0 10px; }
-.paper :deep(ul),
-.paper :deep(ol) { margin: 0 0 10px; padding-left: 22px; }
-.paper :deep(blockquote) {
-  margin: 0 0 10px;
-  padding: 4px 12px;
+.doc-title {
+  font-size: 1.7em;
+  line-height: 1.3;
+  margin: 0 0 8px;
+  color: var(--color-text);
+}
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  padding-bottom: 16px;
+  border-bottom: 0.5px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.doc-tag {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.doc-body :deep(h1) { font-size: 1.6em; margin: 1.1em 0 0.4em; scroll-margin-top: 16px; }
+.doc-body :deep(h2) { font-size: 1.25em; margin: 1.2em 0 0.4em; scroll-margin-top: 16px; }
+.doc-body :deep(h3) { font-size: 1.08em; margin: 1em 0 0.35em; scroll-margin-top: 16px; }
+.doc-body :deep(h4) { font-size: 1em; margin: 0.9em 0 0.3em; }
+.doc-body :deep(p) { margin: 0 0 0.7em; }
+.doc-body :deep(ul),
+.doc-body :deep(ol) { margin: 0 0 0.7em; padding-left: 1.5em; }
+.doc-body :deep(blockquote) {
+  margin: 0 0 0.7em;
+  padding: 2px 12px;
   border-left: 3px solid var(--color-primary-soft);
   color: var(--color-text-secondary);
 }
-.paper :deep(a) { color: var(--color-primary); text-decoration: none; }
-.paper :deep(a:hover) { text-decoration: underline; }
+.doc-body :deep(a) { color: var(--color-primary); text-decoration: none; }
+.doc-body :deep(a:hover) { text-decoration: underline; }
+.doc-body :deep(img) { max-width: 100%; height: auto; border-radius: 8px; cursor: zoom-in; }
+.doc-body :deep(img.img-failed) { min-height: 40px; background: var(--color-tool); }
+.doc-body :deep(.table-wrap) { overflow-x: auto; margin: 0 0 0.7em; }
+.doc-body :deep(table) { border-collapse: collapse; min-width: 460px; }
+.doc-body :deep(th),
+.doc-body :deep(td) { border-bottom: 1px solid var(--color-border); padding: 7px 8px; text-align: left; }
+.doc-body :deep(pre) { background: var(--color-input); padding: 12px; border-radius: var(--radius-md); overflow-x: auto; }
+.doc-body :deep(code) { background: var(--color-tool); padding: 2px 6px; border-radius: 6px; font-size: 0.9em; }
+.doc-body :deep(pre code) { background: none; padding: 0; }
 .center { display: grid; place-items: center; gap: 10px; padding: 60px 0; }
 .err { font-size: 12.5px; color: var(--color-text-secondary); margin: 0; }
+
+.icon-text {
+  border: 0.5px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.24);
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  height: 28px;
+  min-width: 32px;
+  padding: 0 9px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+[data-theme="dark"] .icon-text { background: rgba(255, 255, 255, 0.04); }
+.icon-text:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+.icon-text.more { font-size: 15px; line-height: 1; }
+.font-panel { display: flex; gap: 6px; }
+.font-option {
+  border: 0.5px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.font-option.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+[data-theme="dark"] .font-option.active { color: #10221B; }
+
+.mobile-bar {
+  position: absolute;
+  left: 50%;
+  bottom: max(14px, var(--safe-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface-strong) 82%, transparent);
+  border: 0.5px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 20;
+}
+.bar-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.bar-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+
+.share-row { display: flex; gap: 8px; }
+.share-row :deep(.n-input) { flex: 1; }
+.share-hint { margin-top: 10px; font-size: 12px; color: var(--color-text-muted); }
+
 @media (max-width: 1099px) {
-  .scroll { padding: 4px 10px 28px; }
-  .paper { padding: 18px 16px 26px; border-radius: 12px; font-size: 16px; }
+  .toc-side { display: none; }
+  .scroll { padding: 4px 10px 88px; }
+  .paper {
+    padding: 20px 18px 30px;
+    border-radius: 12px;
+    font-size: calc(16px * var(--doc-scale, 1));
+  }
 }
 </style>

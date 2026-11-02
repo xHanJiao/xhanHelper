@@ -20,6 +20,7 @@ import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import { useExportPDF } from '@/composables/useExportPDF'
+import { ensureDocumentShareUrl, writeClipboard, downloadMarkdown } from '@/utils/document'
 
 const message = useMessage()
 const router = useRouter()
@@ -43,30 +44,22 @@ const shareUrl = ref('')
 
 async function handleShare(doc) {
   try {
-    let shareRes
-    try {
-      shareRes = await api.get(`/api/documents/${doc.id}/share`)
-    } catch (e) {
-      shareRes = null
-    }
-
-    if (!shareRes) {
-      shareRes = await api.post(`/api/documents/${doc.id}/share`, {})
-    }
-
-    shareUrl.value = window.location.origin + shareRes.url
+    shareUrl.value = await ensureDocumentShareUrl(doc.id)
     showShareModal.value = true
   } catch (e) {
+    console.error('Failed to share document', e)
     message.error('创建分享链接失败')
   }
 }
 
-function copyShareUrl() {
-  navigator.clipboard.writeText(shareUrl.value).then(() => {
+async function copyShareUrl() {
+  try {
+    await writeClipboard(shareUrl.value)
     message.success('已复制到剪贴板')
-  }).catch(() => {
-    message.error('复制失败')
-  })
+  } catch (e) {
+    console.error('Failed to copy share url', e)
+    message.error('复制失败，请手动选择链接')
+  }
 }
 
 async function fetchDocuments() {
@@ -94,23 +87,8 @@ async function fetchDocuments() {
   }
 }
 
-function sanitizeFilename(title) {
-  return (title || 'document')
-    .replace(/[/\\:*?"<>|]/g, '_')
-    .slice(0, 100)
-}
-
 function handleDownload(doc) {
-  const filename = sanitizeFilename(doc.title) + '.md'
-  const blob = new Blob([doc.content], { type: 'text/markdown' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadMarkdown(doc.content, doc.title)
 }
 
 async function handleDelete(doc) {

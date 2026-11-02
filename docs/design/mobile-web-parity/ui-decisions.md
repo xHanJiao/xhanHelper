@@ -80,3 +80,16 @@
 - 审查后补：三个纯图标 pill 补 `aria-label`；收起态容器加 `inert`（不可聚焦/不播报）；输入框展开时隐藏「↓」按钮（避免压在输入框上）；点「↓」不再强行展开输入框；切会话重置展开态。
 - 桌面卡片拉宽：聊天卡 `max-width` 820 → **1080**，正文列 / 输入卡 760 → **960**。原来 1440 宽屏下卡片只占一半、顶栏两侧按钮显得虚浮；手机（≤1099）仍是全宽无卡片。
 - 顶栏与卡片齐平：`PageTopBar` 新增 `alignCard`（对话页启用），桌面端 `padding-inline: max(24px, calc((100% - 1080px) / 2))`，会话胶囊左沿 / 头像右沿正好压在卡片描边上；其他通栏管理页不传该属性，行为不变。
+
+## 六、文档阅读器（2026-11-02 实施）
+
+影响 `views/DocumentReadView.vue` / `components/media/AuthImage.vue` / `views/DocumentsView.vue`：
+
+- **目录**：markdown-it 只解析一次，给 `h1–h3` 按顺序写 `id="doc-h-N"`，目录与标题共用同一组 id。桌面左栏 220px；`<1100` 隐藏，底部浮条「目录 / Aa」，「目录」开底部抽屉。不做滚动高亮，点击即跳（`scrollIntoView` + `scroll-margin-top`）。
+- **字号**：桌面 100 / 110 / 120 / 125%，手机 100 / 110 / 120%；存 `localStorage` 的 `doc.fontScale`，只作用于阅读页。正文基准桌面 15px、手机 16px，标题用 em 跟随缩放。
+- **分享**：`utils/document.js` 的 `ensureDocumentShareUrl` 统一处理 —— 已分享就复用，未分享（404，`JSONError` 带 `errorCode` 会抛 `ApiError`）就 `POST` 创建，其它错误照抛；弹窗展示完整链接并复制（`navigator.clipboard` 不可用时退回 `execCommand`）。列表页与阅读页共用；列表页原先只走 clipboard，LAN http 下必失败，此次一并补上。
+- **下载 / PDF**：顶栏 `⋯` 菜单放「下载 .md」「导出 PDF」（复用 `useExportPDF`）；手机菜单额外带「分享链接」。
+- **状态**：`loading` 初值 true；`load()` 起手清空 doc/toc/html，404 或脏响应走失败页，失败页不保留上一篇的分享/下载入口。
+- **重复标题**：正文第一个标题是 `h1` 且与 `doc.title` 相同时跳过（正文与目录都不再出现第二条同名标题）；`##` 开头、后面再写同名 `#` 的文档不去重。
+- **图片**：`/images/…` 是公开图（文档配图会被 `promoteDocImages` 升为 public），直接交给 `<img>`，吃浏览器一年缓存；只有历史遗留的 `/api/images/…` 才用 `api.blob`（并校验返回的是 `image/*`）。外链保留原样；点击开 `ImageLightbox`。`AuthImage` 只对 `/api/images/…` 带 Bearer，且只 revoke 自己创建的 URL。
+- 正文内链（`data-route`）走 `router.push`；大标题 + 更新时间 + 标签放在纸面顶部。

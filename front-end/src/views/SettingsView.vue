@@ -222,7 +222,14 @@ onMounted(loadArchived)
 
 <style scoped>
 .settings-page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.settings-scroll { max-width: 760px; width: 100%; margin: 0 auto; }
+.settings-scroll {
+  /* 容器保持全宽（宽屏两侧也能滚），用内边距把内容收进 760 */
+  padding-left: max(16px, calc((100% - 760px) / 2));
+  padding-right: max(16px, calc((100% - 760px) / 2));
+}
+@media (max-width: 1099px) {
+  .settings-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }
+}
 .group { margin-bottom: 16px; }
 .group-title { font-size: 10.5px; letter-spacing: 0.08em; color: var(--color-text-muted); padding: 0 4px 7px; }
 .card { border-radius: 12px; background: var(--color-surface); border: 0.5px solid var(--color-border); box-shadow: var(--shadow-sm); overflow: hidden; }

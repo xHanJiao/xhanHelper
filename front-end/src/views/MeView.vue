@@ -77,7 +77,14 @@ function go(path) {
   flex-direction: column;
   min-height: 0;
 }
-.me-scroll { max-width: 760px; width: 100%; margin: 0 auto; }
+.me-scroll {
+  /* 容器保持全宽（宽屏两侧也能滚），用内边距把内容收进 760 */
+  padding-left: max(16px, calc((100% - 760px) / 2));
+  padding-right: max(16px, calc((100% - 760px) / 2));
+}
+@media (max-width: 1099px) {
+  .me-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }
+}
 .card {
   background: var(--color-surface);
   border: 0.5px solid var(--color-border);

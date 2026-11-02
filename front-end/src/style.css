@@ -312,10 +312,8 @@ img {
 .page-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 0 16px 28px;
-  max-width: 1120px;
-  width: 100%;
-  margin: 0 auto;
+  /* 容器保持全宽（宽屏两侧也能滚），用内边距把内容收进 1120 */
+  padding: 0 max(16px, calc((100% - 1120px) / 2)) 28px;
 }
 @media (max-width: 1099px) {
   .page-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }

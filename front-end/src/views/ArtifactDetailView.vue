@@ -5,17 +5,38 @@ import { NButton, NSpin, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import PageTopBar from '@/components/PageTopBar.vue'
 
-// 灵阅详情：整页 HTML 放进 sandbox iframe（等同关 JS + 禁同源），背景全透明交给纸张底。
+// 灵阅详情：整页 HTML 放进 iframe，背景全透明交给纸张底。
+// 安全：产物入库时已清洗（script/iframe/form 删除、on* 与外部 URL 过滤）并内嵌 CSP
+// （default-src 'none'），iframe 只给 allow-same-origin，不给 allow-scripts / forms /
+// top-navigation。
+// 为什么不用 srcdoc + sandbox=""：产物自带的 CSS `:target` 放大层靠点 `#锚点` 跳转，
+// srcdoc 里点它会导航到 about:srcdoc#… 把文档卸载成白屏；sandbox="" 的不透明源又不让
+// 跳到 blob: 文档。所以内容走 blob URL、sandbox 放开 allow-same-origin —— 锚点是同文档
+// 跳转，放大层就能像 macOS 客户端一样展开。
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 
 const artifact = ref(null)
-const html = ref('')
+const frameSrc = ref('')
 const loading = ref(false)
 const failed = ref('')
+let frameUrl = ''
 
 const title = computed(() => artifact.value?.title || '灵阅')
+
+function setFrame(markup) {
+  clearFrame()
+  if (!markup) return
+  frameUrl = URL.createObjectURL(new Blob([markup], { type: 'text/html' }))
+  frameSrc.value = frameUrl
+}
+
+function clearFrame() {
+  if (frameUrl) URL.revokeObjectURL(frameUrl)
+  frameUrl = ''
+  frameSrc.value = ''
+}
 
 async function load() {
   loading.value = true
@@ -23,7 +44,7 @@ async function load() {
   try {
     const res = await api.get(`/api/artifacts/${route.params.id}`)
     artifact.value = res
-    html.value = res.html || ''
+    setFrame(res.html || '')
   } catch (e) {
     console.error('Failed to load artifact', e)
     failed.value = e?.message || '加载失败'
@@ -58,7 +79,7 @@ async function remove() {
 
 onMounted(load)
 watch(() => route.params.id, (id) => { if (id) load() })
-onBeforeUnmount(() => { html.value = '' })
+onBeforeUnmount(clearFrame)
 </script>
 
 <template>
@@ -77,10 +98,10 @@ onBeforeUnmount(() => { html.value = '' })
         <NButton size="small" @click="load">重试</NButton>
       </div>
       <iframe
-        v-else-if="html"
+        v-else-if="frameSrc"
         class="frame"
-        :srcdoc="html"
-        sandbox=""
+        :src="frameSrc"
+        sandbox="allow-same-origin"
         referrerpolicy="no-referrer"
         :title="title"
       ></iframe>

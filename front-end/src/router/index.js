@@ -22,61 +22,61 @@ const routes = [
     path: '/memories',
     name: 'Memories',
     component: () => import('@/views/MemoryView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/notes',
     name: 'Notes',
     component: () => import('@/views/NotesView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/bills',
     name: 'Bills',
     component: () => import('@/views/BillsView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/agents',
     name: 'Agents',
     component: () => import('@/views/AgentView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/prompts',
     name: 'Prompts',
     component: () => import('@/views/PromptView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/tools',
     name: 'Tools',
     component: () => import('@/views/ToolView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/summaries',
     name: 'Summaries',
     component: () => import('@/views/SummaryView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/summaries/:id/messages',
     name: 'SummaryMessages',
     component: () => import('@/views/SummaryMessagesView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { hideTabs: true }
   },
   {
     path: '/themes',
     name: 'Themes',
     component: () => import('@/views/ThemeView.vue'),
-    meta: { backToChat: true, hideTabs: true }
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
     path: '/documents',
     name: 'Documents',
     component: () => import('@/views/DocumentsView.vue'),
-    meta: { topLevel: true }
+    meta: { topLevel: true, backToChat: true, contentHeader: true }
   },
   {
     path: '/documents/:id',
@@ -88,7 +88,7 @@ const routes = [
     path: '/artifacts',
     name: 'Artifacts',
     component: () => import('@/views/ArtifactsView.vue'),
-    meta: { topLevel: true }
+    meta: { topLevel: true, backToChat: true, contentHeader: true }
   },
   {
     path: '/artifacts/:id',
@@ -100,19 +100,19 @@ const routes = [
     path: '/images',
     name: 'Images',
     component: () => import('@/views/ImagesView.vue'),
-    meta: { hideTabs: true }
+    meta: { hideTabs: true, backToChat: true }
   },
   {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/SettingsView.vue'),
-    meta: { hideTabs: true }
+    meta: { hideTabs: true, backToChat: true, contentHeader: true }
   },
   {
     path: '/me',
     name: 'Me',
     component: () => import('@/views/MeView.vue'),
-    meta: { topLevel: true }
+    meta: { topLevel: true, backToChat: true, contentHeader: true }
   },
   {
     path: '/admin',
@@ -130,13 +130,13 @@ const routes = [
     path: '/admin/message-debug/:id',
     name: 'MessageDebug',
     component: () => import('@/views/MessageDebugView.vue'),
-    meta: { backToChat: true, adminOnly: true }
+    meta: { adminOnly: true }
   },
   {
     path: '/admin/replay-compare/:id',
     name: 'ReplayCompare',
     component: () => import('@/views/ReplayCompareView.vue'),
-    meta: { backToChat: true, adminOnly: true }
+    meta: { adminOnly: true }
   },
   {
     path: '/admin/eval',

@@ -4,8 +4,6 @@ import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
-import { useScrollTopBar } from '@/composables/useScrollTopBar'
-import { useDevice } from '@/composables/useDevice'
 import {
   NButton,
   NModal,
@@ -22,11 +20,10 @@ import {
 import { useMobile } from '@/composables/useMobile'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
-const { isIOS } = useDevice()
 const router = useRouter()
 const chat = useChatStore()
 const convs = useConversationsStore()
@@ -37,8 +34,6 @@ const modalVisible = ref(false)
 const editing = ref(null)
 const formValue = ref({ name: '', system_prompt: '', deep_mode: false, temperature: null, max_tokens: null, thinking: true })
 const submitting = ref(false)
-const contentContainerRef = ref(null)
-const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 
 async function fetchAgents() {
@@ -157,37 +152,18 @@ function getCardPrimaryActions(agent) {
   ]
 }
 
-function handleContainerClick(e) {
-  if (!isIOS) return
-
-  const container = contentContainerRef.value
-  if (!container) return
-
-  const rect = container.getBoundingClientRect()
-  const clickY = e.clientY - rect.top
-  const topThird = rect.height / 3
-
-  if (clickY <= topThird) {
-    showBar()
-  }
-}
-
 onMounted(fetchAgents)
 </script>
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar title="智能体管理" :visible="!isMobile || isBarVisible">
-      <template #right>
-        <TopBarBtn label="创建智能体" @click="openCreate" />
-      </template>
-    </PageTopBar>
-    <div
-      ref="contentContainerRef"
-      @touchstart="isMobile ? showBar() : null"
-      @click="handleContainerClick"
-      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
-    >
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll">
+      <PageHeader title="智能体">
+        <template #actions>
+          <button class="page-action" type="button" @click="openCreate">创建</button>
+        </template>
+      </PageHeader>
       <NSpin :show="loading">
         <NGrid v-if="agents.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
           <NGi v-for="agent in agents" :key="agent.id">

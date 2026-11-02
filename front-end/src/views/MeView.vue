@@ -4,10 +4,11 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
 import PageTopBar from '@/components/PageTopBar.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { isDesktop } = useMobile()
+const { isDesktop, isMobile } = useMobile()
 const isAdmin = computed(() => auth.user?.isAdmin === true)
 const name = computed(() => auth.user?.username || 'xhanHelper')
 
@@ -26,9 +27,9 @@ function go(path) {
 
 <template>
   <div class="me-page">
-    <PageTopBar title="我的" />
-    <div class="me-scroll">
-      <div class="me-heading">我的</div>
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll me-scroll">
+      <PageHeader title="我的" />
 
       <div class="profile card">
         <div class="avatar">{{ name.slice(0, 1).toUpperCase() }}</div>
@@ -76,20 +77,7 @@ function go(path) {
   flex-direction: column;
   min-height: 0;
 }
-.me-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 16px 28px;
-  max-width: 760px;
-  width: 100%;
-  margin: 0 auto;
-}
-.me-heading {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  padding: 2px 2px 14px;
-}
+.me-scroll { max-width: 760px; width: 100%; margin: 0 auto; }
 .card {
   background: var(--color-surface);
   border: 0.5px solid var(--color-border);

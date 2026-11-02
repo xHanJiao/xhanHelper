@@ -3,8 +3,6 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
-import { useScrollTopBar } from '@/composables/useScrollTopBar'
-import { useDevice } from '@/composables/useDevice'
 import {
   NButton,
   NInput,
@@ -12,20 +10,18 @@ import {
   NGrid,
   NGi,
   NEmpty,
-  NSelect,
   NModal,
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { useExportPDF } from '@/composables/useExportPDF'
 import { ensureDocumentShareUrl, writeClipboard, downloadMarkdown } from '@/utils/document'
 
 const message = useMessage()
 const router = useRouter()
 const { isMobile } = useMobile()
-const { isIOS } = useDevice()
 const { exportPDF } = useExportPDF()
 
 const documents = ref([])
@@ -35,9 +31,8 @@ const pageSize = 12
 const total = ref(0)
 const keyword = ref('')
 const selectedTag = ref(null)
-const tagOptions = ref([])
-const contentContainerRef = ref(null)
-const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
+const docTags = ref([])
+const draftTag = ref(null)
 
 const showShareModal = ref(false)
 const shareUrl = ref('')
@@ -72,14 +67,6 @@ async function fetchDocuments() {
     const res = await api.get(url)
     documents.value = res.documents || []
     total.value = res.total || 0
-
-    const allTags = new Set()
-    documents.value.forEach(d => {
-      if (d.tags) {
-        d.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => allTags.add(t))
-      }
-    })
-    tagOptions.value = [...allTags].map(t => ({ label: t, value: t }))
   } catch (e) {
     message.error('加载文档列表失败')
   } finally {
@@ -96,6 +83,7 @@ async function handleDelete(doc) {
     await api.delete(`/api/documents/${doc.id}`)
     message.success('删除成功')
     fetchDocuments()
+    fetchDocTags()
   } catch (e) {
     message.error('删除失败')
   }
@@ -106,8 +94,29 @@ function handleSearch() {
   fetchDocuments()
 }
 
-function handleTagFilter(tag) {
-  selectedTag.value = tag
+// 标签从接口拿全量（当前页文档里凑出来的标签不全）
+async function fetchDocTags() {
+  try {
+    const res = await api.get('/api/documents/tags')
+    docTags.value = (Array.isArray(res?.tags) ? res.tags : []).filter((t) => t?.name).slice(0, 20)
+  } catch (e) {
+    console.error('Failed to load document tags', e)
+  }
+}
+
+function openFilter() {
+  draftTag.value = selectedTag.value
+}
+
+function applyTag() {
+  selectedTag.value = draftTag.value
+  page.value = 1
+  fetchDocuments()
+}
+
+function removeTag() {
+  draftTag.value = null
+  selectedTag.value = null
   page.value = 1
   fetchDocuments()
 }
@@ -127,54 +136,51 @@ function getCardActions(doc) {
   ]
 }
 
-function handleContainerClick(e) {
-  if (!isIOS) return
-  const container = contentContainerRef.value
-  if (!container) return
-  const rect = container.getBoundingClientRect()
-  const clickY = e.clientY - rect.top
-  const topThird = rect.height / 3
-  if (clickY <= topThird) {
-    showBar()
-  }
-}
-
-onMounted(fetchDocuments)
+onMounted(() => {
+  fetchDocuments()
+  fetchDocTags()
+})
 </script>
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar title="文档" :visible="!isMobile || isBarVisible">
-      <template #right>
-        <div style="display: flex; align-items: center; gap: var(--space-md);">
-          <NSelect
-            v-model:value="selectedTag"
-            :options="tagOptions"
-            placeholder="标签筛选"
-            clearable
-            :style="{ width: isMobile ? '120px' : '160px' }"
-            size="small"
-            @update:value="handleTagFilter"
-          />
-          <NInput
-            v-model:value="keyword"
-            placeholder="搜索..."
-            clearable
-            :style="{ width: isMobile ? '120px' : '200px' }"
-            size="small"
-            @keyup.enter="handleSearch"
-            @clear="handleSearch"
-          />
-          <TopBarBtn v-if="!isMobile" label="搜索" @click="handleSearch" />
-        </div>
-      </template>
-    </PageTopBar>
-    <div
-      ref="contentContainerRef"
-      @touchstart="isMobile ? showBar() : null"
-      @click="handleContainerClick"
-      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
-    >
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll doc-scroll">
+      <PageHeader
+        title="文档"
+        searchable
+        :filterable="docTags.length > 0"
+        :filter-count="selectedTag ? 1 : 0"
+        v-model:keyword="keyword"
+        search-placeholder="搜索文档"
+        @search="handleSearch"
+        @open-filter="openFilter"
+        @apply="applyTag"
+        @clear="removeTag"
+      >
+        <template #pills>
+          <span v-if="selectedTag" class="filter-pill">
+            {{ selectedTag }}
+            <button type="button" aria-label="移除标签筛选" @click="removeTag">×</button>
+          </span>
+        </template>
+        <template #filters>
+          <div class="filter-label">按标签筛选<span class="filter-hint">单选</span></div>
+          <div class="filter-wrap">
+            <button
+              v-for="t in docTags"
+              :key="t.name"
+              type="button"
+              class="filter-chip"
+              :class="{ on: draftTag === t.name }"
+              @click="draftTag = draftTag === t.name ? null : t.name"
+            >
+              <span class="tick">✓</span>{{ t.name }}<span class="n">{{ t.count }}</span>
+            </button>
+          </div>
+        </template>
+      </PageHeader>
+
       <NGrid v-if="documents.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="doc in documents" :key="doc.id">
           <ListItemCard
@@ -211,3 +217,7 @@ onMounted(fetchDocuments)
     </NModal>
   </div>
 </template>
+
+<style scoped>
+.doc-scroll { width: 100%; }
+</style>

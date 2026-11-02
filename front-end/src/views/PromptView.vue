@@ -2,8 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
-import { useScrollTopBar } from '@/composables/useScrollTopBar'
-import { useDevice } from '@/composables/useDevice'
 import {
   NButton,
   NModal,
@@ -18,19 +16,16 @@ import {
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
-const { isIOS } = useDevice()
 
 const prompts = ref([])
 const loading = ref(false)
 const modalVisible = ref(false)
 const formValue = ref({ prompt_type: 'flash', system_prompt: '' })
 const submitting = ref(false)
-const contentContainerRef = ref(null)
-const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 const typeOptions = [
   { label: 'Flash（日常对话）', value: 'flash' },
@@ -107,37 +102,18 @@ function getCardActions(p) {
   return actions
 }
 
-function handleContainerClick(e) {
-  if (!isIOS) return
-
-  const container = contentContainerRef.value
-  if (!container) return
-
-  const rect = container.getBoundingClientRect()
-  const clickY = e.clientY - rect.top
-  const topThird = rect.height / 3
-
-  if (clickY <= topThird) {
-    showBar()
-  }
-}
-
 onMounted(fetchPrompts)
 </script>
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar title="System Prompt 管理" :visible="!isMobile || isBarVisible">
-      <template #right>
-        <TopBarBtn label="创建 Prompt" @click="openCreate" />
-      </template>
-    </PageTopBar>
-    <div
-      ref="contentContainerRef"
-      @touchstart="isMobile ? showBar() : null"
-      @click="handleContainerClick"
-      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
-    >
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll">
+      <PageHeader title="System Prompt">
+        <template #actions>
+          <button class="page-action" type="button" @click="openCreate">创建</button>
+        </template>
+      </PageHeader>
       <NGrid v-if="prompts.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="p in prompts" :key="p.id">
           <ListItemCard

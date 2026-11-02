@@ -306,3 +306,98 @@ img {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* 列表页统一滚动容器：手机顶部让出安全区（这些页在手机端隐藏了 PageTopBar） */
+.page-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 28px;
+}
+@media (max-width: 1099px) {
+  .page-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }
+}
+
+/* 头部右侧的文字操作（选择/新建/导出） */
+.page-action {
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 2px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.page-action.danger { color: var(--color-danger); }
+
+/* 筛选面板 / 激活胶囊（灵阅、文档、账单共用） */
+.filter-label {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  padding: 0 2px 9px;
+}
+.filter-hint { color: var(--color-text-muted); font-size: 10.5px; margin-left: 4px; }
+.filter-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 2px 14px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.filter-chip {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.24);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+[data-theme="dark"] .filter-chip { background: rgba(255, 255, 255, 0.04); }
+.filter-chip .n { font-size: 10px; color: var(--color-text-muted); }
+.filter-chip.on {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.filter-chip.on .n { color: var(--color-primary); opacity: 0.7; }
+.filter-chip .tick { display: none; font-size: 11px; }
+.filter-chip.on .tick { display: inline; }
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 0.5px solid transparent;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 11.5px;
+}
+.filter-pill button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Tab 页（灵阅 / 文档 / 我的）统一大标题：只统一字体，间距由各页容器给 */
+.page-heading {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+@media (max-width: 1099px) {
+  .page-heading { font-size: 24px; }
+}

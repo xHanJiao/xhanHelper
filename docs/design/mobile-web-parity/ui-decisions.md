@@ -109,8 +109,19 @@
 
 影响 `views/ArtifactsView.vue`，后端接口均已存在：
 
-- 标签 chip：`GET /api/artifacts/tags` 取 `{tags:[{name,count}]}`，按次数降序只展示前 20 个；请求失败只记 console，列表照常可用。多选按**交集**过滤（`?tags=a,b`，与服务端同口径），最多同时选 10 个，超出提示并拒绝。
-- 搜索继续走服务端 `keyword`（Enter / 清空触发），与标签叠加；点「全部」只清标签、保留搜索词。
+- 标签筛选：`GET /api/artifacts/tags` 取 `{tags:[{name,count}]}`，筛选面板里按次数降序展示前 20 个（带篇数）；请求失败只记 console，列表照常可用。多选按**交集**过滤（`?tags=a,b`，与服务端同口径），最多同时选 10 个，超出提示并拒绝。
+- 搜索走服务端 `keyword`（Enter / 清空触发），与标签叠加；筛选面板的「清除」只清标签、保留搜索词。
 - 多选删除：页头「选择」进入选择态（列表为空时不显示）；卡片右上角圆形勾选圈，点卡片 = 选中/取消（不跳详情），hover 位移关闭；页头换成「已选 N / 取消 / 删除」。
 - 「删除」走 `NPopconfirm`，文案「删除 N 条灵阅？不可恢复，已分享的链接会立即失效」→ `POST /api/artifacts/batch-delete`。单次上限 100（与服务端 `maxBatchDelete` 一致），超出提示不发请求。
 - 成功后按选中 id 本地移除、`total` 减实际删除数并退出选择态；「加载更多」新增的条目默认不选中。筛选无结果时给「清除筛选」（清空关键词 + 标签）。
+
+## 九、列表页头部统一（2026-11-02 实施）
+
+影响 `components/PageHeader.vue` / `composables/useGoBack.js` / `style.css`，以及 Artifacts、Documents、Bills、Memory、Notes、Summary、Theme、Agent、Prompt、Tool、Settings、Me 各页：
+
+- 全部功能列表页用同一套 `PageHeader`：大标题 `.page-heading`（桌面 28px / 手机 24px，700，`letter-spacing: -0.02em`）+ 可选返回、搜索（点开才展开）、筛选（手机底部面板 / 桌面 popover，内容由页面插槽提供）+ 右侧操作插槽。
+- 手机端这些页隐藏 `PageTopBar`，标题直接顶到安全区下；桌面保留顶栏但不再显示页面标题和返回（`meta.contentHeader`），返回跟内容区大标题。
+- 滚动容器统一 `.page-scroll`：桌面 `0 16px 28px`，手机 `calc(safe-top + 4px) 12px 20px`。
+- 列表页返回固定回 `/chat`（`meta.backToChat`），详情页回上一页，逻辑抽到 `useGoBack`。
+- 灵阅/文档筛选收进标签面板：灵阅多选取交集，文档单选；生效后在标题下显示可删胶囊、筛选图标带角标。文档标签改用 `GET /api/documents/tags`（默认 audience=finished，与列表同口径），不再从当前页文档里凑。
+- 账单：筛选面板放分类 + 日期范围，导出保留在桌面标题行；记忆/笔记/摘要：标题 + 搜索；主题/智能体/Prompt/工具：标题 + 新建；设置/我的：只有标题。

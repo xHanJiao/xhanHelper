@@ -10,6 +10,7 @@ import { api } from '@/api/client'
 import { CHAT_FONT_OPTIONS, readChatFont, setChatFont } from '@/utils/chatFont'
 import { isMacEmbedded } from '@/utils/embed'
 import PageTopBar from '@/components/PageTopBar.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -125,9 +126,9 @@ onMounted(loadArchived)
 
 <template>
   <div class="settings-page">
-    <PageTopBar title="设置" />
-    <div class="settings-scroll">
-      <div class="settings-heading">设置</div>
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll settings-scroll">
+      <PageHeader title="设置" />
 
       <div class="group">
         <div class="group-title">外观</div>
@@ -221,8 +222,7 @@ onMounted(loadArchived)
 
 <style scoped>
 .settings-page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.settings-scroll { flex: 1; overflow-y: auto; padding: 0 16px 28px; max-width: 760px; width: 100%; margin: 0 auto; }
-.settings-heading { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; padding: 2px 2px 14px; }
+.settings-scroll { max-width: 760px; width: 100%; margin: 0 auto; }
 .group { margin-bottom: 16px; }
 .group-title { font-size: 10.5px; letter-spacing: 0.08em; color: var(--color-text-muted); padding: 0 4px 7px; }
 .card { border-radius: 12px; background: var(--color-surface); border: 0.5px solid var(--color-border); box-shadow: var(--shadow-sm); overflow: hidden; }

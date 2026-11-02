@@ -2,11 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
-import { useScrollTopBar } from '@/composables/useScrollTopBar'
-import { useDevice } from '@/composables/useDevice'
 import {
-  NButton,
-  NInput,
   NPagination,
   NGrid,
   NGi,
@@ -15,12 +11,11 @@ import {
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { useExportPDF } from '@/composables/useExportPDF'
 
 const message = useMessage()
 const { isMobile } = useMobile()
-const { isIOS } = useDevice()
 const { exportPDF } = useExportPDF()
 
 const notes = ref([])
@@ -29,8 +24,6 @@ const page = ref(1)
 const pageSize = 12
 const total = ref(0)
 const keyword = ref('')
-const contentContainerRef = ref(null)
-const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 async function fetchNotes() {
   loading.value = true
@@ -75,48 +68,20 @@ function getCardActions(note) {
   ]
 }
 
-function handleContainerClick(e) {
-  if (!isIOS) return
-
-  const container = contentContainerRef.value
-  if (!container) return
-
-  const rect = container.getBoundingClientRect()
-  const clickY = e.clientY - rect.top
-  const topThird = rect.height / 3
-
-  if (clickY <= topThird) {
-    showBar()
-  }
-}
-
 onMounted(fetchNotes)
 </script>
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar title="笔记管理" :visible="!isMobile || isBarVisible">
-      <template #right>
-        <div style="display: flex; align-items: center; gap: var(--space-md);">
-          <NInput
-            v-model:value="keyword"
-            placeholder="搜索..."
-            clearable
-            :style="{ width: isMobile ? '140px' : '240px' }"
-            size="small"
-            @keyup.enter="handleSearch"
-            @clear="handleSearch"
-          />
-          <TopBarBtn v-if="!isMobile" label="搜索" @click="handleSearch" />
-        </div>
-      </template>
-    </PageTopBar>
-    <div
-      ref="contentContainerRef"
-      @touchstart="isMobile ? showBar() : null"
-      @click="handleContainerClick"
-      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
-    >
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll">
+      <PageHeader
+        title="笔记"
+        searchable
+        v-model:keyword="keyword"
+        search-placeholder="搜索笔记"
+        @search="handleSearch"
+      />
       <NGrid v-if="notes.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="note in notes" :key="note.id">
           <ListItemCard

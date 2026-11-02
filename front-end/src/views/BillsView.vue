@@ -3,35 +3,30 @@ import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
-import { useScrollTopBar } from '@/composables/useScrollTopBar'
-import { useDevice } from '@/composables/useDevice'
 import {
   NDataTable,
-  NButton,
   NSelect,
   NDatePicker,
   NPagination,
-  NUpload,
   useMessage
 } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const auth = useAuthStore()
 const message = useMessage()
 const { isMobile } = useMobile()
-const { isIOS } = useDevice()
 
 const bills = ref([])
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
-const contentContainerRef = ref(null)
-const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 const filterDateRange = ref(null)
 const filterCategory = ref(null)
+const draftDateRange = ref(null)
+const draftCategory = ref(null)
 
 const categoryOptions = [
   { label: '全部', value: null },
@@ -90,6 +85,34 @@ function handleFilterChange() {
   fetchBills()
 }
 
+function openFilter() {
+  draftDateRange.value = filterDateRange.value ? [...filterDateRange.value] : null
+  draftCategory.value = filterCategory.value
+}
+
+function applyFilters() {
+  filterDateRange.value = draftDateRange.value ? [...draftDateRange.value] : null
+  filterCategory.value = draftCategory.value
+  handleFilterChange()
+}
+
+function clearFilters() {
+  draftDateRange.value = null
+  draftCategory.value = null
+  filterDateRange.value = null
+  filterCategory.value = null
+  handleFilterChange()
+}
+
+function formatRange(range) {
+  if (!range || !range[0]) return ''
+  const fmt = (t) => {
+    const d = new Date(t)
+    return `${d.getMonth() + 1}/${d.getDate()}`
+  }
+  return range[1] ? `${fmt(range[0])} – ${fmt(range[1])}` : fmt(range[0])
+}
+
 async function handleExport() {
   try {
     let url = `/api/bills/export`
@@ -135,58 +158,58 @@ function handleImport({ file }) {
   reader.readAsText(file.file)
 }
 
-function handleContainerClick(e) {
-  if (!isIOS) return
-
-  const container = contentContainerRef.value
-  if (!container) return
-
-  const rect = container.getBoundingClientRect()
-  const clickY = e.clientY - rect.top
-  const topThird = rect.height / 3
-
-  if (clickY <= topThird) {
-    showBar()
-  }
-}
-
 onMounted(fetchBills)
 </script>
 
 <template>
   <div style="height: 100%; display: flex; flex-direction: column; background: transparent;">
-    <PageTopBar title="账单管理" :visible="!isMobile || isBarVisible">
-      <template #right>
-        <div style="display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap;">
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll">
+      <PageHeader
+        title="账单"
+        filterable
+        :filter-count="(filterCategory ? 1 : 0) + (filterDateRange ? 1 : 0)"
+        @open-filter="openFilter"
+        @apply="applyFilters"
+        @clear="clearFilters"
+      >
+        <template #actions>
+          <button v-if="!isMobile" class="page-action" type="button" @click="handleExport">导出</button>
+        </template>
+
+        <template #pills>
+          <span v-if="filterCategory" class="filter-pill">
+            {{ filterCategory }}
+            <button type="button" aria-label="移除分类筛选" @click="filterCategory = null; handleFilterChange()">×</button>
+          </span>
+          <span v-if="filterDateRange" class="filter-pill">
+            {{ formatRange(filterDateRange) }}
+            <button type="button" aria-label="移除日期筛选" @click="filterDateRange = null; handleFilterChange()">×</button>
+          </span>
+        </template>
+
+        <template #filters>
+          <div class="filter-label">分类</div>
+          <NSelect
+            v-model:value="draftCategory"
+            :options="categoryOptions"
+            size="small"
+            clearable
+            placeholder="全部分类"
+            style="width: 100%; margin-bottom: 16px;"
+          />
+          <div class="filter-label">日期范围</div>
           <NDatePicker
-            v-if="!isMobile"
-            v-model:value="filterDateRange"
+            v-model:value="draftDateRange"
             type="daterange"
             clearable
             size="small"
-            style="width: 240px;"
             placeholder="选择日期范围"
-            @update:value="handleFilterChange"
+            style="width: 100%;"
           />
-          <NSelect
-            v-model:value="filterCategory"
-            :options="categoryOptions"
-            :style="{ width: isMobile ? '100px' : '120px' }"
-            size="small"
-            placeholder="分类"
-            clearable
-            @update:value="handleFilterChange"
-          />
-          <TopBarBtn v-if="!isMobile" label="导出" @click="handleExport" />
-        </div>
-      </template>
-    </PageTopBar>
-    <div
-      ref="contentContainerRef"
-      @touchstart="isMobile ? showBar() : null"
-      @click="handleContainerClick"
-      style="flex: 1; overflow: auto; padding: var(--space-lg);"
-    >
+        </template>
+      </PageHeader>
+
       <NDataTable
         :columns="columns"
         :data="bills"

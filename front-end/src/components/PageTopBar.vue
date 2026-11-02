@@ -8,6 +8,7 @@ import { useThemeStore } from '@/stores/theme'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import ConversationSwitcher from '@/components/ConversationSwitcher.vue'
 import FunctionMenu from '@/components/FunctionMenu.vue'
+import { useGoBack } from '@/composables/useGoBack'
 
 const props = defineProps({
   title: { type: String, default: '' },
@@ -31,9 +32,19 @@ const auth = useAuthStore()
 const theme = useThemeStore()
 
 const displayName = computed(() => auth.user?.username || '我')
-const showBack = computed(() => !props.showConversation && route.meta.topLevel !== true)
+// 用 PageHeader 的列表页：顶栏不再重复返回和标题，只留右侧全局按钮
+const showBack = computed(() =>
+  !props.showConversation
+  && route.meta.contentHeader !== true
+  && (isDesktop.value || route.meta.topLevel !== true)
+)
 // 顶级页（对话/灵阅/文档/我的）自己有标题，顶栏不再重复品牌名
-const titleText = computed(() => props.title || (props.showConversation || route.meta.topLevel ? '' : 'xhanHelper'))
+const titleText = computed(() =>
+  route.meta.contentHeader
+    ? ''
+    : (props.title || (props.showConversation || route.meta.topLevel ? '' : 'xhanHelper'))
+)
+const goBack = useGoBack()
 
 function handlePopoverShow(v) {
   showAgentPopover.value = v
@@ -48,11 +59,6 @@ function handleSelectAgent(agentId) {
 function handleUnbind() {
   showAgentPopover.value = false
   emit('select-agent', null)
-}
-
-function goBack() {
-  if (window.history.length > 1) router.back()
-  else router.push('/chat')
 }
 
 function newChat() {
@@ -225,6 +231,8 @@ async function logout() {
   cursor: pointer;
   padding: 5px 4px;
   border-radius: 8px;
+  white-space: nowrap; /* CJK 会在字间断行，窄屏把「返回」拆成上下两行 */
+  flex-shrink: 0;
 }
 .back-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
 .back-btn svg { width: 15px; height: 15px; }

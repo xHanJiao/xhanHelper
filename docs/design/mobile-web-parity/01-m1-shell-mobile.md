@@ -66,6 +66,7 @@ front-end/src/
 - 底部 Tab 高 56px + `env(safe-area-inset-bottom)`；4 项：对话 / 灵阅 / 文档 / 我的。
 - 聊天页输入区在 Tab 上方；键盘弹起时隐藏 Tab，输入区贴键盘上沿（`useKeyboardInset` 监听 `visualViewport` 写 `--keyboard-inset`）。
 - 内容页（灵阅/文档/我的）用全屏路由，底部 Tab 保持可见；二级详情页隐藏 Tab，只留返回。
+- 顶栏「返回」：手机维持 Tab 页不显示（Tab 已能切过去），桌面除聊天外一律显示；列表页固定回聊天（`meta.backToChat`），详情页回上一页、无历史兜底 `/chat`。按钮文字 `white-space: nowrap`，窄屏不会被拆成上下两行。
 
 ### 安全区与键盘
 

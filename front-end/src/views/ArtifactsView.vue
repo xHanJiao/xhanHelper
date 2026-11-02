@@ -1,14 +1,17 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NInput, NPopconfirm, NSpin, useMessage } from 'naive-ui'
+import { NButton, NPopconfirm, NSpin, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
+import { useMobile } from '@/composables/useMobile'
 import PageTopBar from '@/components/PageTopBar.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 // 灵阅列表：单列大卡（手机）、桌面自动 2–3 列。卡片只显示标题/摘要/标签/日期，
 // 正文点进去再取（列表接口不带 html）。
 const router = useRouter()
 const message = useMessage()
+const { isMobile } = useMobile()
 
 const items = ref([])
 const total = ref(0)
@@ -19,6 +22,8 @@ const pageSize = 20
 // 标签 chip 多选 = 交集（后端 ?tags=a,b 就是交集口径）
 const tags = ref([])
 const selectedTags = ref([])
+// 面板里的草稿：点「查看结果」才提交，关掉面板不弄脏当前筛选
+const draftTags = ref([])
 const MAX_TAGS = 10
 
 // 多选删除：上限与后端 maxBatchDelete 一致
@@ -27,12 +32,6 @@ const selecting = ref(false)
 const selectedIds = ref([])
 const deleting = ref(false)
 const selectedCount = computed(() => selectedIds.value.length)
-// 已选标签可能因频次变化掉出前 20：补到 chip 行最前面，否则没有入口取消它
-const chipTags = computed(() => {
-  const names = new Set(tags.value.map((t) => t.name))
-  const extra = selectedTags.value.filter((t) => !names.has(t)).map((name) => ({ name, count: 0 }))
-  return [...extra, ...tags.value]
-})
 
 // 请求序号：快速切标签 / 加载更多在飞时切筛选，只让最后一次响应落地
 let listSeq = 0
@@ -73,17 +72,30 @@ async function fetchTags() {
   }
 }
 
-function toggleTag(name) {
-  const i = selectedTags.value.indexOf(name)
+function openFilter() {
+  draftTags.value = [...selectedTags.value]
+}
+
+function toggleDraftTag(name) {
+  const i = draftTags.value.indexOf(name)
   if (i >= 0) {
-    selectedTags.value.splice(i, 1)
+    draftTags.value.splice(i, 1)
   } else {
-    if (selectedTags.value.length >= MAX_TAGS) {
+    if (draftTags.value.length >= MAX_TAGS) {
       message.warning(`最多同时筛选 ${MAX_TAGS} 个标签`)
       return
     }
-    selectedTags.value.push(name)
+    draftTags.value.push(name)
   }
+}
+
+function applyFilters() {
+  selectedTags.value = [...draftTags.value]
+  fetchList()
+}
+
+function removeTag(name) {
+  selectedTags.value = selectedTags.value.filter((t) => t !== name)
   fetchList()
 }
 
@@ -93,8 +105,8 @@ function resetFilters() {
   fetchList()
 }
 
-function clearTags() {
-  if (!selectedTags.value.length) return
+function clearFilters() {
+  draftTags.value = []
   selectedTags.value = []
   fetchList()
 }
@@ -170,63 +182,60 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <PageTopBar />
-    <div class="scroll">
-      <div class="head">
-        <template v-if="selecting">
-          <div class="heading sel-count">已选 {{ selectedCount }}</div>
-          <div class="sel-actions">
-            <NButton size="small" quaternary @click="exitSelect">取消</NButton>
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll art-scroll">
+      <PageHeader
+        :title="selecting ? `已选 ${selectedCount}` : '灵阅'"
+        :searchable="!selecting"
+        :filterable="!selecting && tags.length > 0"
+        :filter-count="selectedTags.length"
+        v-model:keyword="keyword"
+        search-placeholder="搜索标题/摘要"
+        @search="fetchList()"
+        @open-filter="openFilter"
+        @apply="applyFilters"
+        @clear="clearFilters"
+      >
+        <template #actions>
+          <template v-if="selecting">
+            <button class="page-action" type="button" @click="exitSelect">取消</button>
             <NPopconfirm
               :positive-text="`删除 ${selectedCount} 条`"
               negative-text="取消"
               @positive-click="deleteSelected"
             >
               <template #trigger>
-                <NButton size="small" type="error" :disabled="!selectedCount" :loading="deleting">删除</NButton>
+                <button class="page-action danger" type="button" :disabled="!selectedCount || deleting">删除</button>
               </template>
               删除 {{ selectedCount }} 条灵阅？不可恢复，已分享的链接会立即失效。
             </NPopconfirm>
+          </template>
+          <button v-else-if="items.length" class="page-action" type="button" @click="enterSelect">选择</button>
+        </template>
+
+        <template #pills>
+          <span v-for="t in selectedTags" :key="t" class="filter-pill">
+            {{ t }}
+            <button type="button" :aria-label="`移除标签 ${t}`" @click="removeTag(t)">×</button>
+          </span>
+        </template>
+
+        <template #filters>
+          <div class="filter-label">按标签筛选<span class="filter-hint">可多选，取交集</span></div>
+          <div class="filter-wrap">
+            <button
+              v-for="t in tags"
+              :key="t.name"
+              type="button"
+              class="filter-chip"
+              :class="{ on: draftTags.includes(t.name) }"
+              @click="toggleDraftTag(t.name)"
+            >
+              <span class="tick">✓</span>{{ t.name }}<span class="n">{{ t.count }}</span>
+            </button>
           </div>
         </template>
-        <template v-else>
-          <div class="heading">灵阅</div>
-          <NInput
-            v-model:value="keyword"
-            size="small"
-            clearable
-            placeholder="搜索标题/摘要"
-            class="search"
-            @keyup.enter="fetchList()"
-            @clear="fetchList()"
-          />
-          <NButton v-if="items.length" size="small" quaternary @click="enterSelect">选择</NButton>
-        </template>
-      </div>
-
-      <div v-if="tags.length && !selecting" class="chips">
-        <button
-          type="button"
-          class="chip"
-          :class="{ active: !selectedTags.length }"
-          :aria-pressed="!selectedTags.length"
-          @click="clearTags"
-        >
-          全部
-        </button>
-        <button
-          v-for="t in chipTags"
-          :key="t.name"
-          type="button"
-          class="chip"
-          :class="{ active: selectedTags.includes(t.name) }"
-          :aria-pressed="selectedTags.includes(t.name)"
-          :title="t.count ? `${t.count} 篇` : ''"
-          @click="toggleTag(t.name)"
-        >
-          {{ t.name }}
-        </button>
-      </div>
+      </PageHeader>
 
       <div v-if="loading && !items.length" class="hint"><NSpin size="small" /></div>
       <div v-else-if="!items.length" class="empty">
@@ -275,39 +284,7 @@ onMounted(() => {
 
 <style scoped>
 .page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.scroll { flex: 1; overflow-y: auto; padding: 0 16px 28px; max-width: 900px; width: 100%; margin: 0 auto; }
-.head { display: flex; align-items: center; gap: 12px; padding: 2px 2px 14px; }
-.heading { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; flex: 1; }
-.sel-count { font-size: 20px; font-weight: 600; }
-.sel-actions { display: flex; align-items: center; gap: 8px; }
-.search { max-width: 260px; }
-
-.chips {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 0 2px 12px;
-  scrollbar-width: none;
-}
-.chips::-webkit-scrollbar { display: none; }
-.chip {
-  flex: 0 0 auto;
-  border: 0.5px solid var(--color-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  padding: 3px 11px;
-  font-size: 12px;
-  line-height: 1.6;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.chip:hover { background: var(--color-primary-soft); }
-.chip.active {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
+.art-scroll { max-width: 900px; width: 100%; margin: 0 auto; }
 
 .hint { display: grid; place-items: center; padding: 40px 0; }
 .empty { text-align: center; padding: 60px 12px; color: var(--color-text-secondary); }
@@ -380,11 +357,6 @@ onMounted(() => {
 .date { font-size: 10px; color: var(--color-text-muted); flex: 0 0 auto; }
 .more { display: flex; justify-content: center; padding: 18px 0 4px; }
 @media (max-width: 1099px) {
-  .scroll { padding: 0 12px 20px; }
-  .heading { font-size: 24px; }
-  .sel-count { font-size: 17px; }
-  .head { flex-wrap: wrap; }
-  .search { max-width: none; flex: 1 1 100%; order: 3; }
   .grid { grid-template-columns: 1fr; }
 }
 </style>

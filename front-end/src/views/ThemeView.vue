@@ -1,10 +1,13 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@/api/client'
+import { useMobile } from '@/composables/useMobile'
 import { NModal, NForm, NFormItem, NInput, NButton, NSpin, NGrid, NGi, NEmpty, NTag, useMessage } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
-import TopBarBtn from '@/components/TopBarBtn.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import ListItemCard from '@/components/ListItemCard.vue'
+
+const { isMobile } = useMobile()
 
 const message = useMessage()
 const items = ref([])
@@ -124,12 +127,13 @@ onMounted(fetchList)
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100%; background: transparent; min-width: 0;">
-    <PageTopBar title="主题管理" :visible="true">
-      <template #right>
-        <TopBarBtn label="新建主题" @click="openCreate" />
-      </template>
-    </PageTopBar>
-    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
+    <PageTopBar v-if="!isMobile" />
+    <div class="page-scroll">
+      <PageHeader title="主题">
+        <template #actions>
+          <button class="page-action" type="button" @click="openCreate">新建</button>
+        </template>
+      </PageHeader>
       <NSpin v-if="loading && items.length === 0" />
       <NEmpty v-else-if="items.length === 0" description="暂无主题，点击右上角新建" style="margin-top: 80px;" />
       <NGrid v-else cols="1 s:2 m:3" :x-gap="16" :y-gap="16" responsive="screen">

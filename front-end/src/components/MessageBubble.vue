@@ -8,8 +8,13 @@ import AuthImage from '@/components/media/AuthImage.vue'
 import ImageLightbox from '@/components/media/ImageLightbox.vue'
 import ArtifactCards from '@/components/chat/ArtifactCards.vue'
 import md from '@/utils/markdown'
+import { useAuthStore } from '@/stores/auth'
+import { useMobile } from '@/composables/useMobile'
 
 const router = useRouter()
+const auth = useAuthStore()
+const { isMobile } = useMobile()
+const isAdmin = computed(() => auth.user?.isAdmin === true)
 const nMessage = useMessage()
 
 const props = defineProps({
@@ -101,10 +106,15 @@ const dropdownOptions = computed(() => {
   if (selectionMode.value) {
     return [{ label: '复制内容', key: 'copy' }]
   }
-  return [
+  const options = [
     { label: '复制内容', key: 'copy' },
     { label: '分享…', key: 'share' },
   ]
+  // 与 macOS 一致：只在用户消息上给管理员留调试入口；手机端后台不可进，不显示
+  if (isUser.value && isAdmin && !props.isSharedView && !isMobile.value) {
+    options.push({ label: '调试此消息', key: 'debug' })
+  }
+  return options
 })
 
 function openDropdown(x, y) {
@@ -142,6 +152,8 @@ function handleDropdownSelect(key) {
   } else if (key === 'share') {
     // enter selection mode, auto-select current round
     enterSelection(props.roundKey)
+  } else if (key === 'debug') {
+    router.push(`/admin/message-debug/${props.message.id}`)
   }
 }
 

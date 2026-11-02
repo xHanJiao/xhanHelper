@@ -16,6 +16,7 @@ import { api } from '@/api/client'
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import ImageLightbox from '@/components/media/ImageLightbox.vue'
+import AnnotationList from '@/components/document/AnnotationList.vue'
 import { useMobile } from '@/composables/useMobile'
 import { useExportPDF } from '@/composables/useExportPDF'
 import { ensureDocumentShareUrl, writeClipboard, downloadMarkdown } from '@/utils/document'
@@ -141,6 +142,13 @@ async function load() {
   html.value = ''
   tocOpen.value = false
   clearBlobs()
+  annotations.value = []
+  annoTotal.value = 0
+  annoLoading.value = false
+  annoFailed.value = ''
+  annoOpen.value = false
+  activeAnnoId.value = ''
+  clearAnnoHighlight()
   try {
     const data = await api.get(`/api/documents/${route.params.id}`)
     if (seq !== renderSeq) return
@@ -151,6 +159,8 @@ async function load() {
     // 先把正文渲染出来，hydrateImages 才拿得到 DOM；补图失败不能把整篇文档打回错误页
     loading.value = false
     hydrateImages().catch((e) => console.error('Failed to hydrate document images', e))
+    // 批注是附加信息，加载失败不影响正文
+    loadAnnotations(seq)
   } catch (e) {
     if (seq !== renderSeq) return
     console.error('Failed to load document', e)
@@ -168,7 +178,134 @@ watch(() => route.params.id, (id) => { if (id) load() })
 onBeforeUnmount(() => {
   renderSeq++ // 让在途的 hydrate 结果被丢弃
   clearBlobs()
+  clearAnnoHighlight()
+  wideMq?.removeEventListener('change', onWide)
 })
+
+// ---- 只读批注（列表 + 按 quote 定位；offset 是源文 rune 偏移，对不上渲染 DOM，不用） ----
+const annotations = ref([])
+const annoTotal = ref(0)
+const annoLoading = ref(false)
+const annoFailed = ref('')
+const annoOpen = ref(false)
+const activeAnnoId = ref('')
+const showAnno = computed(() => annotations.value.length > 0 || !!annoFailed.value)
+const annoLabel = computed(() => (annoTotal.value ? `批注 ${annoTotal.value}` : '批注'))
+const annoDrawerSize = computed(() => (isMobile.value ? { height: '60vh' } : { width: 380 }))
+
+// 桌面 ≥1200 才有右栏，比 useMobile 的断点（1100）晚一档，单独听
+const wide = ref(window.matchMedia('(min-width: 1200px)').matches)
+let wideMq = null
+function onWide(e) { wide.value = e.matches }
+onMounted(() => {
+  wideMq = window.matchMedia('(min-width: 1200px)')
+  wideMq.addEventListener('change', onWide)
+})
+// 抽屉打开时被拉到宽屏：右栏已能顶上，别两份列表同时展示
+watch(wide, (v) => { if (v) annoOpen.value = false })
+
+async function loadAnnotations(seq) {
+  if (!doc.value || annoLoading.value) return
+  annoLoading.value = true
+  try {
+    const data = await api.get(`/api/documents/${doc.value.id}/annotations?limit=200&offset=0`)
+    if (seq !== renderSeq) return
+    annotations.value = Array.isArray(data?.annotations) ? data.annotations : []
+    annoTotal.value = Number(data?.total) || annotations.value.length
+    // 成功才清错误；重试期间保留 failed 让侧栏不卸载、spinner 有机会渲染
+    annoFailed.value = ''
+  } catch (e) {
+    if (seq !== renderSeq) return
+    console.error('Failed to load annotations', e)
+    annoFailed.value = '批注加载失败'
+  } finally {
+    if (seq === renderSeq) annoLoading.value = false
+  }
+}
+
+let annoTimer = 0
+const HL = 'doc-anno-flash'
+
+function clearAnnoHighlight() {
+  if (annoTimer) {
+    clearTimeout(annoTimer)
+    annoTimer = 0
+  }
+  window.CSS?.highlights?.delete?.(HL)
+}
+
+// quote 已由 macOS 端 fold() / 服务端保存时投影过（丢 * _ ~ | 与空白折叠）；
+// 投影规则必须与 client/xHelper/.../DocumentReaderView.swift 的 fold() 保持一致，改一边要同步另一边。
+const MD_MARKERS = '*_`~|'
+
+// 渲染后的正文里一段话常被 <strong>/<code>/<a> 拆成多个文本节点，
+// 所以拼成一条带位置的字符串再找，最后映射回 Range。
+function findQuoteRange(root, rawQuote) {
+  const quote = (rawQuote || '').split('').filter((c) => !MD_MARKERS.includes(c)).join('')
+    .replace(/\s+/g, ' ').trim()
+  if (!quote) return null
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const nodes = []
+  let text = ''
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    nodes.push({ node: n, start: text.length })
+    text += n.data
+  }
+  let norm = ''
+  const map = []
+  let space = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (/\s/.test(c)) {
+      space = true
+      continue
+    }
+    if (MD_MARKERS.includes(c)) continue // 丢行内标记，不占投影下标
+    if (space && norm) {
+      norm += ' '
+      map.push(i)
+    }
+    space = false
+    norm += c
+    map.push(i)
+  }
+  const at = norm.indexOf(quote)
+  if (at < 0) return null
+  const locate = (abs) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      if (abs >= nodes[i].start) return { node: nodes[i].node, offset: abs - nodes[i].start }
+    }
+    return null
+  }
+  const s = locate(map[at])
+  const e = locate(map[at + quote.length - 1] + 1)
+  if (!s || !e) return null
+  const range = document.createRange()
+  range.setStart(s.node, s.offset)
+  range.setEnd(e.node, e.offset)
+  return range
+}
+
+function selectAnnotation(a) {
+  nextTick(() => {
+    if (!paperRef.value) return
+    const range = findQuoteRange(paperRef.value, a.quote)
+    if (!range) {
+      activeAnnoId.value = ''
+      clearAnnoHighlight()
+      message.info('正文中未找到该划线原文')
+      return
+    }
+    activeAnnoId.value = a.id
+    annoOpen.value = false
+    range.startContainer.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    // 老 Safari 没有 Custom Highlight API：只滚动，不画高亮
+    if (!window.CSS?.highlights || typeof Highlight === 'undefined') return
+    clearAnnoHighlight()
+    window.CSS.highlights.set(HL, new Highlight(range))
+    annoTimer = setTimeout(clearAnnoHighlight, 1600)
+  })
+}
 
 function parseTags(raw) {
   if (!raw) return []
@@ -249,6 +386,7 @@ function onMenu(key) {
   <div class="page">
     <PageTopBar :title="title">
       <template #right>
+        <TopBarBtn v-if="showAnno && !wide && !isMobile" :label="annoLabel" @click="annoOpen = true" />
         <TopBarBtn v-if="doc && !isMobile" label="分享" @click="share" />
         <NPopover v-if="doc && !isMobile" trigger="click" placement="bottom-end">
           <template #trigger>
@@ -301,10 +439,24 @@ function onMenu(key) {
           <article ref="paperRef" class="doc-body" v-html="html" @click="onPaperClick"></article>
         </div>
       </div>
+
+      <aside v-if="showAnno && wide" class="anno-side">
+        <div class="toc-title">{{ annoTotal ? `批注 · ${annoTotal}` : '批注' }}</div>
+        <AnnotationList
+          :items="annotations"
+          :total="annoTotal"
+          :loading="annoLoading"
+          :failed="annoFailed"
+          :active-id="activeAnnoId"
+          @select="selectAnnotation"
+          @retry="loadAnnotations(renderSeq)"
+        />
+      </aside>
     </div>
 
     <div v-if="isMobile && !loading && !failed" class="mobile-bar">
       <button v-if="toc.length" type="button" class="bar-btn" @click="tocOpen = true">目录</button>
+      <button v-if="showAnno" type="button" class="bar-btn" @click="annoOpen = true">{{ annoLabel }}</button>
       <NPopover trigger="click" placement="top">
         <template #trigger>
           <button type="button" class="bar-btn" aria-label="字号">Aa {{ scale }}%</button>
@@ -334,6 +486,20 @@ function onMenu(key) {
             @click="goHeading(h.id)"
           >{{ h.text }}</button>
         </nav>
+      </NDrawerContent>
+    </NDrawer>
+
+    <NDrawer v-model:show="annoOpen" :placement="isMobile ? 'bottom' : 'right'" v-bind="annoDrawerSize">
+      <NDrawerContent title="批注" closable>
+        <AnnotationList
+          :items="annotations"
+          :total="annoTotal"
+          :loading="annoLoading"
+          :failed="annoFailed"
+          :active-id="activeAnnoId"
+          @select="selectAnnotation"
+          @retry="loadAnnotations(renderSeq)"
+        />
       </NDrawerContent>
     </NDrawer>
 
@@ -386,6 +552,14 @@ function onMenu(key) {
 .toc-link.lv2 { padding-left: 20px; font-size: 12px; }
 .toc-link.lv3 { padding-left: 32px; font-size: 12px; color: var(--color-text-muted); }
 .drawer-toc { padding-bottom: 16px; }
+
+.anno-side {
+  width: 320px;
+  flex: 0 0 320px;
+  overflow-y: auto;
+  padding: 18px 14px 28px;
+  border-left: 0.5px solid var(--color-border);
+}
 
 .scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 6px 16px 40px; }
 .paper {
@@ -482,6 +656,8 @@ function onMenu(key) {
   left: 50%;
   bottom: max(14px, var(--safe-bottom));
   transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 20px);
   display: flex;
   gap: 8px;
   padding: 6px;
@@ -500,6 +676,7 @@ function onMenu(key) {
   border-radius: 999px;
   padding: 7px 14px;
   font-size: 12.5px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .bar-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
@@ -517,4 +694,10 @@ function onMenu(key) {
     font-size: calc(16px * var(--doc-scale, 1));
   }
 }
+</style>
+
+<style>
+/* ::highlight 里 var() 解析不出来，颜色写死为 token 实值（primary-soft 的实色近似） */
+article.doc-body::highlight(doc-anno-flash) { background-color: #CFE8DA; }
+[data-theme="dark"] article.doc-body::highlight(doc-anno-flash) { background-color: #2E5749; }
 </style>

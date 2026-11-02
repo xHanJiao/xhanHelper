@@ -93,3 +93,14 @@
 - **重复标题**：正文第一个标题是 `h1` 且与 `doc.title` 相同时跳过（正文与目录都不再出现第二条同名标题）；`##` 开头、后面再写同名 `#` 的文档不去重。
 - **图片**：`/images/…` 是公开图（文档配图会被 `promoteDocImages` 升为 public），直接交给 `<img>`，吃浏览器一年缓存；只有历史遗留的 `/api/images/…` 才用 `api.blob`（并校验返回的是 `image/*`）。外链保留原样；点击开 `ImageLightbox`。`AuthImage` 只对 `/api/images/…` 带 Bearer，且只 revoke 自己创建的 URL。
 - 正文内链（`data-route`）走 `router.push`；大标题 + 更新时间 + 标签放在纸面顶部。
+
+## 七、只读批注（2026-11-02 实施）
+
+影响 `views/DocumentReadView.vue` / `components/document/AnnotationList.vue`：
+
+- 取数与正文分开：`GET /api/documents/:id/annotations?limit=200&offset=0` 失败只在批注面板里显示「加载失败 + 重试」，正文照常可用；加载成功但没有批注时不显示任何批注入口。
+- 布局：桌面 ≥1200px 右栏 320px；1100–1199（非手机但放不下）与手机都把列表放进抽屉（桌面右侧 / 手机底部 60vh）。手机底部浮条变成「目录 / 批注 N / Aa」，顺序固定、不换行。
+- 定位不用 `start_offset/end_offset`（源文 rune 偏移对不上渲染后的 DOM）：把正文文本节点拼成一条带位置的字符串，按 macOS `DocumentReaderView.swift` 的 `fold()` 同一套投影（丢 ``* _ ` ~ |`` 五个行内标记 + 空白折叠）后 `indexOf(quote)`，再映射回 `Range`；quote 也先过同一投影。跨 `**粗体**` / `code` / 链接的划线、以及 `user_memories` 这类带标记字符的原文都能命中，投影规则两边要一起改；`scrollIntoView({ block:'center' })` 后用 CSS Custom Highlight API 临时高亮 1.6s（`::highlight` 里 `var()` 解析不出来，颜色写死 token 实值，深浅各一条）。老 Safari 没有该 API 时只滚动、不画高亮。
+- 计数用接口 `total`（不是本页条数）；单页 200、上限 500，超出时列表底部提示「仅显示前 N / total 条」。
+- 条目只读：`quote`（最多 3 行）+ `note`（最多 4 行）+「N 条回复」+「原文已改写」/「原文有改动」徽标。不展示 `last_reply`，不提供新建/回复/删除/重新定位。
+- 找不到 quote（失活批注）只 `message.info` 提示，不报错；切文档/卸载时清空列表、清高亮与定时器。

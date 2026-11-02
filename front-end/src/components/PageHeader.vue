@@ -208,10 +208,10 @@ watch(() => props.filterable, (v) => {
     position: sticky;
     top: 0;
     z-index: 5;
-    background: rgba(247, 238, 221, 0.86);
+    background: color-mix(in srgb, var(--color-bg) 86%, transparent);
+    -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
-  [data-theme="dark"] .ph { background: rgba(28, 28, 30, 0.86); }
 }
 .ph-row { display: flex; align-items: center; gap: 8px; }
 .ph-back {

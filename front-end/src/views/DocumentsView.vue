@@ -191,7 +191,7 @@ onMounted(() => {
         </template>
       </PageHeader>
 
-      <NGrid v-if="documents.length > 0" cols="1 s:2 m:3" responsive="screen" :x-gap="16" :y-gap="16">
+      <NGrid v-if="documents.length > 0" :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">
         <NGi v-for="doc in documents" :key="doc.id">
           <ListItemCard
             :title="doc.title"

@@ -165,7 +165,7 @@ onMounted(fetchAgents)
         </template>
       </PageHeader>
       <NSpin :show="loading">
-        <NGrid v-if="agents.length > 0" cols="1 s:2 m:3" responsive="screen" :x-gap="16" :y-gap="16">
+        <NGrid v-if="agents.length > 0" :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">
           <NGi v-for="agent in agents" :key="agent.id">
             <ListItemCard
               :title="agent.name"

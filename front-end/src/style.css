@@ -318,6 +318,10 @@ img {
 @media (max-width: 1099px) {
   .page-scroll { padding: calc(var(--safe-top) + 4px) 12px 20px; }
 }
+/* 桌面页头吸顶：让聚焦元素滚进来时避开页头 */
+@media (min-width: 1100px) {
+  .page-scroll { scroll-padding-top: 72px; }
+}
 
 /* 头部右侧的文字操作（选择/新建/导出） */
 .page-action {

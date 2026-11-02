@@ -83,7 +83,7 @@ onMounted(fetchSummaries)
         search-placeholder="搜索摘要"
         @search="handleSearch"
       />
-      <NGrid v-if="summaries.length > 0" cols="1 s:2 m:3" responsive="screen" :x-gap="16" :y-gap="16">
+      <NGrid v-if="summaries.length > 0" :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">
         <NGi v-for="s in summaries" :key="s.id">
           <ListItemCard
             :title="s.conversation_id ? `会话 ${s.conversation_id.slice(0, 8)}...` : '未知会话'"

@@ -136,7 +136,7 @@ onMounted(fetchList)
       </PageHeader>
       <NSpin v-if="loading && items.length === 0" />
       <NEmpty v-else-if="items.length === 0" description="暂无主题，点击右上角新建" style="margin-top: 80px;" />
-      <NGrid v-else cols="1 s:2 m:3" :x-gap="16" :y-gap="16" responsive="screen">
+      <NGrid v-else :cols="isMobile ? 1 : 3" :x-gap="16" :y-gap="16">
         <NGi v-for="item in items" :key="item.id">
           <ListItemCard
             :title="item.name"

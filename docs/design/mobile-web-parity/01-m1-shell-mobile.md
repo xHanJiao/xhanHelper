@@ -84,7 +84,7 @@ html, body, #app { height: 100%; }
 - 输入区 `padding-bottom: max(12px, var(--safe-bottom))`。
 - 监听 `visualViewport.resize`，把 `--keyboard-inset` 设为 `window.innerHeight - visualViewport.height - visualViewport.offsetTop`；输入区 `bottom: var(--keyboard-inset)`。
 - 不用 `100vh`；所有 `height: 100vh` 改 `100dvh`。
-- **PWA 顶部模糊**：iOS 26/27 会给「已安装到主屏」的 PWA 顶部画一层渐变压暗模糊，**web 侧关不掉**——实心色块遮罩试过伪元素（`body::after`）和真实元素（`.pwa-top-shield`），真机均无效，已删除。现方案是让开：`style.css` 在 `@media (display-mode: standalone) and (max-width: 1099px)` 里把 `--safe-top` 覆写成 `calc(env(safe-area-inset-top, 0px) + 32px)`，让顶栏/页面标题整体落到模糊带下方，模糊只作用于纯背景。32px 是模糊带超出状态栏的目测值，只需改这一个数。
+- **PWA 顶部模糊**：iOS 26/27 会给「已安装到主屏」的 PWA 顶部画一层系统渐变压暗模糊。查 WebKit 源码得出的机制（非公开 API）：`_shouldHideTopScrollPocket == _hasVisibleColorExtensionView(Top)`，即**上端存在「可见的 fixed 元素」时不画模糊**，并且拿该元素的 `background-color` 去涂状态栏。判定条件：采样点是上端中央距顶 4px；元素或祖先须 `fixed`/`sticky`；宽高都要 >10px 且宽度 ≥ 视口 90%；`opacity < 0.1` 会被弃用；颜色读 computed style 而非渲染像素。据此在 `AppShell.vue` 放 `.pwa-blur-killer`（`height: 11px` + `z-index: 2147483647` + `background-clip: text`，空元素所以不画任何像素）。**注意：该机制被 `_obscuredInsets.top > 0` 门控——`black-translucent` 那种 edge-to-edge PWA 里整条链路是死的，任何元素都无效**；所以 `apple-mobile-web-app-status-bar-style` 不能是 `black-translucent`。显隐用 `@media (display-mode: standalone) and (max-width: 1099px)`。另有一条兜底：同媒体查询里把 `--safe-top` 加宽 32px，让顶栏落到模糊带下方（模糊只作用于纯背景）。
 
 ## 六、会话下拉
 

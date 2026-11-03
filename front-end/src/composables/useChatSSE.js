@@ -30,8 +30,7 @@ export function useChatSSE() {
   let abortController = null
 
   // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
-  // shortcut: error 之后的 done 里带的本轮灵阅卡片会跳过（等「重新加载」再回来），
-  // 只影响收尾轮失败的边角场景，真要补就在 done 里单独合并 artifacts。
+  // 服务端随后仍会发 done（带本轮灵阅卡片），由 done 分支补到这条本地消息上。
   function failStream(message) {
     const partial = chat.streamingMessage
     if (partial?.content || partial?.reasoning) {
@@ -228,6 +227,14 @@ export function useChatSSE() {
             finalMsg.artifacts = d.artifacts
           }
           chat.addMessage(finalMsg)
+        } else {
+          // failStream 已把半截消息收尾成普通消息：卡片和真实 id 补到它上面，
+          // 否则本轮灵阅卡片要等重新拉消息列表才出来。
+          const partial = chat.messages.findLast(m => m.role === 'assistant' && String(m.id).startsWith('local-'))
+          if (partial) {
+            if (d.message_id) partial.id = d.message_id
+            if (Array.isArray(d.artifacts) && d.artifacts.length) partial.artifacts = d.artifacts
+          }
         }
         chat.streamingMessage = null
 

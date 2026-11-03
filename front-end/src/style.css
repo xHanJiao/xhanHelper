@@ -433,3 +433,17 @@ img {
   /* 搜索行的「取消」、正文的「清除筛选」这类文字操作也撑到接近 44px 的触控区 */
   .page-action { padding: 10px 6px; }
 }
+
+/* iOS Safari 聚焦字号 <16px 的输入控件会把整页放大（看着像输入框撑满两侧）。
+   手机上输入控件字号保底 16px 关掉它；聊天输入框仍跟随字号设置，但不小于 16px。
+   粗指针 + -webkit-touch-callout 双保险：桌面 Safari / Chromium / Android 不受影响。 */
+@media (hover: none) and (pointer: coarse) {
+  @supports (-webkit-touch-callout: none) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    textarea,
+    .n-input,
+    [contenteditable] {
+      font-size: max(16px, var(--chat-font-size, 16px)) !important;
+    }
+  }
+}

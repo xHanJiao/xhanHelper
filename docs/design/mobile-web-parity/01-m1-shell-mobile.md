@@ -62,6 +62,7 @@ front-end/src/
 ## 五、手机 shell
 
 - 顶栏高 48px，`padding-top: env(safe-area-inset-top)`。右侧常驻深浅色切换按钮（一键浅↔深，复用桌面 `TopBarActions` 的主题按钮；内嵌 WebView 隐藏，外观由 app 决定）。
+- iOS Safari 聚焦字号 <16px 的输入控件会自动放大整页：手机端所有输入控件字号保底 16px（`style.css` 末尾的 iOS 专用规则，聊天输入框取 `max(16px, --chat-font-size)`），双指缩放不受影响。
 - 主区 `overflow-y: auto`，底部给输入区和 Tab 留空间。
 - 底部 Tab 高 56px + `env(safe-area-inset-bottom)`；4 项：对话 / 灵阅 / 文档 / 我的。
 - 聊天页输入区在 Tab 上方；键盘弹起时隐藏 Tab，输入区贴键盘上沿（`useKeyboardInset` 监听 `visualViewport` 写 `--keyboard-inset`）。

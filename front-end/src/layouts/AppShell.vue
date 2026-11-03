@@ -68,7 +68,7 @@ const keyboardOpen = computed(() => keyboardInset.value > 0)
     height: 11px;
     z-index: 2147483647;
     pointer-events: none;
-    background-color: var(--color-bg);
+    background-color: var(--pwa-top-color);
     -webkit-background-clip: text;
     background-clip: text;
   }

@@ -14,9 +14,6 @@ const keyboardOpen = computed(() => keyboardInset.value > 0)
 
 <template>
   <div class="app-shell" :style="{ '--keyboard-inset': keyboardInset + 'px' }">
-    <!-- iOS 26/27 给主屏 PWA 顶部压的系统模糊：最顶端有真实绘制元素时系统改画实心，
-         伪元素不行（踩过），所以这里必须是真的 div。浏览器/内嵌 WebView 下 display:none。 -->
-    <div class="pwa-top-shield" aria-hidden="true"></div>
     <div v-if="adminBlocked" class="admin-blocked">
       <div class="admin-card">
         <div class="admin-icon">⌘</div>
@@ -40,24 +37,6 @@ const keyboardOpen = computed(() => keyboardInset.value > 0)
   min-height: 0;
   position: relative;
   z-index: 1;
-}
-/* 高度取 safe-top：各页顶部都留了这段 padding，色块只盖状态栏、不压内容。
-   z-index 低于 lightbox(3000) / naive 弹窗，高于顶栏(30)。 */
-.pwa-top-shield {
-  display: none;
-}
-@media (display-mode: standalone) and (max-width: 1099px) {
-  .pwa-top-shield {
-    display: block;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: var(--safe-top);
-    background: var(--color-bg);
-    pointer-events: none;
-    z-index: 900;
-  }
 }
 .app-main {
   flex: 1;

@@ -84,7 +84,7 @@ html, body, #app { height: 100%; }
 - 输入区 `padding-bottom: max(12px, var(--safe-bottom))`。
 - 监听 `visualViewport.resize`，把 `--keyboard-inset` 设为 `window.innerHeight - visualViewport.height - visualViewport.offsetTop`；输入区 `bottom: var(--keyboard-inset)`。
 - 不用 `100vh`；所有 `height: 100vh` 改 `100dvh`。
-- **PWA 顶部模糊**：iOS 26/27 会给「已安装到主屏」的 PWA 顶部压一层系统级渐变压暗模糊（Safari 标签页、app 内嵌 WebView 没有）。规避方式是在屏幕最顶端放一个**真实绘制元素** `AppShell.vue` 里的 `.pwa-top-shield`（`height: var(--safe-top)` + 实心 `--color-bg`），系统会改画成实心、不再模糊。**必须是真元素，`body::after` 之类的伪元素无效**（真机验证过）。显隐用 `@media (display-mode: standalone) and (max-width: 1099px)` 控制，不依赖 JS（`navigator.standalone` 仅作真机排查时的兜底判据）。
+- **PWA 顶部模糊**：iOS 26/27 会给「已安装到主屏」的 PWA 顶部画一层渐变压暗模糊，**web 侧关不掉**——实心色块遮罩试过伪元素（`body::after`）和真实元素（`.pwa-top-shield`），真机均无效，已删除。现方案是让开：`style.css` 在 `@media (display-mode: standalone) and (max-width: 1099px)` 里把 `--safe-top` 覆写成 `calc(env(safe-area-inset-top, 0px) + 32px)`，让顶栏/页面标题整体落到模糊带下方，模糊只作用于纯背景。32px 是模糊带超出状态栏的目测值，只需改这一个数。
 
 ## 六、会话下拉
 

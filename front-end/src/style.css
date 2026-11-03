@@ -75,6 +75,14 @@
   --app-veil: rgba(255, 255, 255, 0.18);
 }
 
+/* iOS 26/27 给「已安装到主屏」的 PWA 顶部画一层渐变压暗模糊，web 侧关不掉
+   （实心色块遮罩，伪元素和真元素都试过，无效）。这层模糊比状态栏高，会糊到顶栏按钮，
+   所以直接把顶部安全区整体加宽，让顶栏/页面标题落到模糊带下面 —— 模糊只剩纯背景，看不出。
+   32px 是真机目测的超出量，调整只需改这一个数。 */
+@media (display-mode: standalone) and (max-width: 1099px) {
+  :root { --safe-top: calc(env(safe-area-inset-top, 0px) + 32px); }
+}
+
 [data-theme="dark"] {
   --app-accent: #92C8B4;
   --accent-secondary: #41C9E2;

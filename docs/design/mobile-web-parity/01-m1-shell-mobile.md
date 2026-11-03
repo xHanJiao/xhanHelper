@@ -121,7 +121,7 @@ html, body, #app { height: 100%; }
   - `<meta name="apple-mobile-web-app-status-bar-style" content="default">`
   - `<link rel="manifest" href="/manifest.webmanifest">`
   - `<link rel="apple-touch-icon" href="/icons/icon-180.png">`
-- 图标：用现有 `favicon.svg` 生成 180/192/512 PNG；暖米底 + 墨绿字/图形。
+- 图标：`public/icons/icon-{180,192,512}.png` 来自海豚源图（2048×2048）：去掉水印、四角补成全出血正方形蓝底，圆角交给系统裁；标签页 `favicon-32/64.png` 用同一张图裁到海豚主体（原图缩到 16px 看不清）。
 - **不加 service worker**，避免缓存旧版本和 iOS 的怪问题。
 
 ## 九、路由改造

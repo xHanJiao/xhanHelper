@@ -84,6 +84,7 @@ html, body, #app { height: 100%; }
 - 输入区 `padding-bottom: max(12px, var(--safe-bottom))`。
 - 监听 `visualViewport.resize`，把 `--keyboard-inset` 设为 `window.innerHeight - visualViewport.height - visualViewport.offsetTop`；输入区 `bottom: var(--keyboard-inset)`。
 - 不用 `100vh`；所有 `height: 100vh` 改 `100dvh`。
+- **PWA 顶部模糊**：iOS 26/27 会给「已安装到主屏」的 PWA 顶部压一层系统级渐变压暗模糊（Safari 标签页、app 内嵌 WebView 没有）。`style.css` 用 `@media (display-mode: standalone) and (max-width: 1099px)` 在 `body::after` 贴一条 `height: var(--safe-top)` 的实心 `--color-bg`，系统改采样成纯色。判据用纯 CSS 媒体查询，不依赖 JS（`navigator.standalone` 可作为真机排查时的兜底判据）。
 
 ## 六、会话下拉
 

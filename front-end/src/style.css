@@ -184,6 +184,24 @@ body::before {
   z-index: 0;
 }
 
+/* iOS 26/27 会给已安装到主屏的 PWA 顶部压一层系统级渐变压暗模糊（Safari 标签页和
+   app 内嵌 WebView 没有）。在屏幕最顶端贴一条实心色块，系统就改采样成纯色，不再模糊。
+   高度取 safe-top：各页顶部都留了这段 padding，色块只盖住状态栏，不压内容。
+   z-index 低于 lightbox(3000) / naive 弹窗，高于顶栏(30)。 */
+@media (display-mode: standalone) and (max-width: 1099px) {
+  body::after {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--safe-top);
+    background: var(--color-bg);
+    pointer-events: none;
+    z-index: 900;
+  }
+}
+
 img {
   max-width: 100%;
   height: auto;

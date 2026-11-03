@@ -1,3 +1,4 @@
+import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useAuthStore } from '@/stores/auth'
@@ -25,6 +26,7 @@ export function useChatSSE() {
   const chat = useChatStore()
   const convs = useConversationsStore()
   const auth = useAuthStore()
+  const router = useRouter()
   let abortController = null
 
   // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
@@ -250,6 +252,8 @@ export function useChatSSE() {
 
         if (!chat.conversationId && d.conversation_id) {
           chat.conversationId = d.conversation_id
+          // 会话懒创建后让路由跟上：否则 URL 停在 /chat，顶栏「新对话」推到同一路由等于没点
+          router.replace(`/chat/${d.conversation_id}`)
           convs.prepend({
             id: d.conversation_id,
             title: d.title || '新对话',

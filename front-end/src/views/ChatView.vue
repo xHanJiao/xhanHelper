@@ -50,9 +50,9 @@
  *   watch(chat.streamingMessage?.reasoning) (L451)  → scrollToBottom()
  *   watch(chat.llmParams)                   (L107)  → 同步更新 llmSettings
  *
- * ── 七、输入框展开/收起 ──────────────────────────────────────────────────────
- *   watch(inputVisible)  (L60)   → nextTick + 触发 textarea input 事件（自适应高度）
- *   watch(inputExpanded) (L452)  → 条件滚动到底部
+ * ── 七、输入框收起 ──────────────────────────────────────────────────────────
+ *   toggleInput()          → 手机上 ⌄ 按钮收起/展开整张输入卡（收起要同时 blur 退键盘）
+ *   watch(inputVisible)    → nextTick + 触发 textarea input 事件（自适应高度）
  *
  * ── 八、页面卸载 ─────────────────────────────────────────────────────────────
  *   onBeforeUnmount (L446): cancel() 中断正在进行的 SSE 流
@@ -140,8 +140,6 @@ function exitSelectionMode() {
   if (!isMobile.value) {
     inputVisible.value = true
   }
-  // 手机也重置：否则再点「发消息」会直接弹成展开态
-  inputExpanded.value = false
 }
 
 function toggleRound(roundKey) {
@@ -182,8 +180,7 @@ provide('exitSelectionMode', exitSelectionMode)
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
 const inputVisible = ref(true)
-const inputExpanded = ref(false)
-// 「↓」按钮贴在输入卡上沿：输入卡高度会变（收起/展开/加图），写死 bottom 会压在卡上。
+// 「↓」按钮贴在输入卡上沿：输入卡高度会变（收起/加图），写死 bottom 会压在卡上。
 // 按钮绝对定位在 .chat-card 内，基准取卡片底边，键盘弹出缩壳时也不会错位。
 const scrollBtnBottom = ref(120)
 let composerObserver = null
@@ -228,10 +225,6 @@ function toggleInput() {
     // 收起要连键盘一起收：只把高度收 0，iOS 上焦点还在，键盘不会退
     document.querySelector('.chat-input textarea')?.blur()
   }
-}
-
-function toggleExpand() {
-  inputExpanded.value = !inputExpanded.value
 }
 
 // 智能体列表（用于切换/解绑）
@@ -509,7 +502,6 @@ watch(() => route.params.id, async (newId, oldId) => {
     // 切换会话时跳过输入框 CSS 过渡，避免过渡期间 scrollHeight 变化导致定位不准
     skipInputTransition.value = true
     inputVisible.value = true
-    inputExpanded.value = false
     isFirstLoad.value = true
     // 延迟 200ms 才允许「上滑加载更多历史」触发，防止初入页面时的滚动事件误触发分页
     isInitialScrollDone.value = false
@@ -553,7 +545,6 @@ watch(() => route.params.id, async (newId, oldId) => {
     // 与分支 A 相同的 UI 重置 + 历史加载 + 滚动定位流程
     skipInputTransition.value = true
     inputVisible.value = true
-    inputExpanded.value = false
     isFirstLoad.value = true
     isInitialScrollDone.value = false
     await loadHistory(newId)
@@ -587,7 +578,6 @@ watch(() => route.params.id, async (newId, oldId) => {
   // ====================================================================
   } else if (!newId) {
     inputVisible.value = true
-    inputExpanded.value = false
     isInitialScrollDone.value = false
     if (chat.isStreaming) cancel()
     chat.reset()
@@ -604,13 +594,6 @@ onBeforeUnmount(() => {
 
 watch(() => chat.streamingMessage?.content, () => scrollToBottom())
 watch(() => chat.streamingMessage?.reasoning, () => scrollToBottom())
-watch(inputExpanded, () => {
-  const container = messagesContainerRef.value
-  if (!container) return
-  const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-  if (distFromBottom <= 80) scrollToBottom()
-})
-
 async function handleSend() {
   if (chat.isStreaming) return
 
@@ -643,7 +626,6 @@ async function handleSend() {
     created_at: new Date().toISOString()
   })
   inputValue.value = ''
-  inputExpanded.value = false
   // 预览 URL 在这里回收：消息里的图改走鉴权接口读，不依赖本地 objectURL
   clearDrafts()
 
@@ -972,8 +954,7 @@ function handleContainerClick(e) {
         <div
           ref="messagesEndRef"
           :style="{
-            // 手机上输入卡展开时会占掉大半个可视区，再塞占位会把可视区撑成空白
-            height: inputExpanded && !isMobile ? '35vh' : '15px',
+            height: '15px',
             transition: 'height 0.2s ease-out'
           }"
         />
@@ -982,7 +963,7 @@ function handleContainerClick(e) {
 
     <!-- 查看历史消息时，滚动到底部按钮 -->
     <div
-      v-if="isAwayFromBottom && !inputExpanded"
+      v-if="isAwayFromBottom"
       @click="handleScrollToBottomBtn"
       class="scroll-bottom-btn"
       :style="{ bottom: scrollBtnBottom + 'px' }"
@@ -1003,7 +984,7 @@ function handleContainerClick(e) {
           background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,
-          height: inputVisible ? (inputExpanded ? '50vh' : 'auto') : '0',
+          height: inputVisible ? 'auto' : '0',
           overflow: 'hidden',
           opacity: inputVisible ? 1 : 0,
           transform: inputVisible ? 'scaleY(1)' : 'scaleY(0.8)',
@@ -1014,7 +995,7 @@ function handleContainerClick(e) {
           background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,
-          height: inputVisible ? (inputExpanded ? 'min(75vh, 100%)' : 'auto') : '0',
+          height: inputVisible ? 'auto' : '0',
           overflow: 'hidden',
           opacity: inputVisible ? 1 : 0,
           transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out'
@@ -1030,9 +1011,6 @@ function handleContainerClick(e) {
         @change="onFilesChosen"
       />
       <div class="chat-composer-card" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
-        <button v-if="isMobile" class="composer-handle" type="button" aria-label="收起输入框" @click="toggleInput">
-          <span></span>
-        </button>
         <AttachmentTray
           v-if="draftImages.length"
           :items="draftImages"
@@ -1047,9 +1025,9 @@ function handleContainerClick(e) {
           type="textarea"
           placeholder="发消息..."
           :disabled="chat.isStreaming"
-          :autosize="inputExpanded ? false : { minRows: 1, maxRows: isMobile ? 4 : 6 }"
+          :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
           class="chat-input"
-          @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !inputExpanded) { e.preventDefault(); handleSend() }}"
+          @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
           :bordered="false"
           style="background: transparent; flex: 1;"
         />
@@ -1079,14 +1057,9 @@ function handleContainerClick(e) {
               </template>
               {{ chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）' }}
             </NTooltip>
-            <NTooltip :disabled="isMobile" placement="top">
-              <template #trigger>
-                <button class="icon-pill wide" type="button" :aria-label="inputExpanded ? '收起输入框' : '展开输入框'" @click="toggleExpand">
-                  {{ inputExpanded ? '⤡' : '⤢' }}
-                </button>
-              </template>
-              {{ inputExpanded ? '收起输入框' : '展开输入框' }}
-            </NTooltip>
+            <button v-if="isMobile" class="icon-pill" type="button" aria-label="收起输入框" @click="toggleInput">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
           </div>
           <div class="composer-actions">
             <NButton
@@ -1186,23 +1159,6 @@ function handleContainerClick(e) {
   align-items: center;
   flex: 0 0 auto;
 }
-.composer-handle {
-  width: 100%;
-  height: 22px;
-  margin: -2px 0 2px;
-  border: 0;
-  background: transparent;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  cursor: pointer;
-}
-.composer-handle span {
-  width: 34px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--color-border-strong);
-}
 .composer-reopen {
   position: fixed;
   right: 14px;
@@ -1237,7 +1193,6 @@ function handleContainerClick(e) {
 .icon-pill svg { width: 17px; height: 17px; }
 .icon-pill:hover:not(:disabled) { background: var(--color-primary-soft); color: var(--color-primary); }
 .icon-pill:disabled { opacity: 0.35; cursor: default; }
-.icon-pill.wide { font-size: 15px; }
 .icon-pill.on {
   background: var(--color-primary-soft);
   border-color: var(--color-border);

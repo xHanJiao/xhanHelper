@@ -68,9 +68,9 @@ func TestParseResourceZone_EmptyAndInvalid(t *testing.T) {
 }
 
 func TestParseResourceZone_IgnoresNonResourceBlocks(t *testing.T) {
-	pkts := ParseResourceZone(`<history><round><message role="user">hi</message></round></history><user_query>q</user_query><current_datetime>t</current_datetime><reminders><reminder id="r">x</reminder></reminders>`)
+	pkts := ParseResourceZone(`<history><round><message role="user">hi</message></round></history><user_query>q</user_query><current_datetime>t</current_datetime>`)
 	if len(pkts) != 0 {
-		t.Errorf("history/user_query/datetime/reminders should not enter resource zone, got %d", len(pkts))
+		t.Errorf("history/user_query/datetime should not enter resource zone, got %d", len(pkts))
 	}
 }
 
@@ -174,10 +174,10 @@ func TestMergeResourceZone_ReplaceCleansOldContentKey(t *testing.T) {
 
 func TestMergeResourceZone_IgnoresNonZoneTypes(t *testing.T) {
 	prev := []retrieval.ContextPacket{{ID: "h1", Type: TypeHistory, Text: "h"}}
-	fresh := []retrieval.ContextPacket{{ID: "r1", Type: TypeReminder, Text: "r"}}
+	fresh := []retrieval.ContextPacket{{ID: "d1", Type: TypeCurrentDatetime, Text: "d"}}
 	out := MergeResourceZone(prev, fresh, DefaultZoneQuotas())
 	if len(out) != 0 {
-		t.Errorf("history/reminder should not enter zone: %v", out)
+		t.Errorf("history/datetime should not enter zone: %v", out)
 	}
 }
 

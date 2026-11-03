@@ -145,7 +145,7 @@ unified_search 覆盖 memory/note/summary/theme/history 五域（语义+关键�
 
 实施要点落地情况：B0（theme 只注入 matched）、B1（历史消息简化重放 `[MM-DD HH:mm] 原文`，`SimpleUserContent`）、
 B2（`ctxflow/resource_zone.go`：增量解析上一条 XMLContext + ID/内容双索引去重 + quota + 预算帽 4000）、
-B3（reminder 不进资源区每轮重查）、配置 `retrieval.resource_zone`。单测覆盖 parse/merge/quota/budget/round-trip。
+B3（reminder 不进资源区；2026-11-03 起连 user message 也不再注入，见文末「后续变更」）、配置 `retrieval.resource_zone`。单测覆盖 parse/merge/quota/budget/round-trip。
 
 ### 目标
 
@@ -157,11 +157,11 @@ B3（reminder 不进资源区每轮重查）、配置 `retrieval.resource_zone`�
    （encoding/xml 反解，零额外 DB 读——`computeWindowSize` 已持有 lastUserMsg）
    + 本轮检索结果 merge
 3. **quota 制**（数据驱动）：note 10 / memory 8 / summary 2 / topic 5（只收 matched）；
-   reminder 不进资源区、每轮重查（upcoming 1 + expired 1，已确认 ack/cancelled/mentioned 过滤闭环）
+   reminder 不进资源区，也不注入 user message（2026-11-03 起，见文末「后续变更」）
 4. **预算帽** 总预算 7000 chars 兜底 + per-type 预算（profile 1600/note 3000/summary 800/memory 600/topic 200，
 数据依据：近30天实测 note p75 272×10、memory 62×8、summary 265×2、topic 16×5、profile 块 p90 1407）；
 两阶段：先每类独立截断（防跨类挤占），再总预算按砍序 memory→note→theme→summary→profile 兜底
-5. **ID 去重**：summary/reminder/theme 已有 id；memory/note 新增 `id,attr`（旧 XML 降级内容匹配）；
+5. **ID 去重**：summary/theme 已有 id；memory/note 新增 `id,attr`（旧 XML 降级内容匹配）；
    summary 另走 0.85 余弦判重
 6. **时间线序**：历史累计在前 + 新检索追加在后（不重算相似度，quota 后条目少排序收益小）
 7. **theme 注入策略**：只注入 matched（带 StateText 详情的），unmatched 不再注入
@@ -277,3 +277,14 @@ outline 偏移/条数/标题截断、标题 50 字边界与 update 不传 title 
    存量 dev 库实测 0 行全角（102 行半角），故 `tagMatchClause` 的 SQL 不动。
 4. **`limit=0` 与不传无法区分** → `limit` 改指针语义：不传 = 默认 20，`0` = 只取总数
    返回空列表（GORM `Limit(0)` 等于不加 LIMIT，repo 里需显式早返回），负数 = 明确报错。
+
+## 后续变更
+
+- **2026-11-03：提醒不再注入 user message**（用户拍板，原「每轮重查 upcoming 12h + expired 未处理」
+  判定为伪需求 —— 到点提醒已由客户端日历/系统通知承担，提前注入无收益）。
+  - 删除 `orchestrator.buildReminderPackets` / `truncateReminderInjection` 及 `reminderRepo` 依赖；
+    `ctxflow` 的 `reminder` 块类型、`DescReminder` 一并删除
+  - 到点提醒链路不变：`reminder` 工具 → `Reminder(pending)` → 客户端镜像日历/回落通知 →
+    用户点击 → `POST /api/reminders/:id/ack`（插 `trigger_message` 拉回会话）
+  - 连带删除已无调用方的 `ReminderRepo.ListUpcoming` / `ListExpiredUnmentioned` / `MarkMentioned`
+    与工具函数 `mark_reminder_mentioned`；`mentioned_at` 列保留（客户端 Codable 解它）

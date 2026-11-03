@@ -38,7 +38,7 @@ func (t *ReminderTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
 		ShortDesc: "提醒。设/查/取消待办。",
 		Funcs:     []string{"create_reminder", "list_reminders", "search_reminders"},
-		Others:    "取消、标记已提及 等",
+		Others:    "取消提醒 等",
 	}, true
 }
 
@@ -98,18 +98,6 @@ func (t *ReminderTool) Functions() []FuncSchema {
 				"required": []string{"query"},
 			},
 		},
-		{
-			Name:        "mark_reminder_mentioned",
-			Display:     "标记提醒已提起",
-			Description: "标记一条过期提醒已被你在对话中提起过，避免重复提起同一个过期提醒。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id": map[string]interface{}{"type": "string", "description": "提醒 ID"},
-				},
-				"required": []string{"id"},
-			},
-		},
 	}
 }
 
@@ -131,8 +119,6 @@ func (t *ReminderTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 		return t.listReminders(ec, args)
 	case "search_reminders":
 		return t.searchReminders(ec, args)
-	case "mark_reminder_mentioned":
-		return t.markReminderMentioned(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("未知函数: %s", funcName)}
 	}
@@ -288,36 +274,6 @@ func (t *ReminderTool) searchReminders(ec *ExecuteContext, args json.RawMessage)
 	data, _ := json.Marshal(map[string]interface{}{
 		"items": list,
 		"total": total,
-	})
-	return &Result{Success: true, Data: data}
-}
-
-func (t *ReminderTool) markReminderMentioned(ec *ExecuteContext, args json.RawMessage) *Result {
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if req.ID == "" {
-		return &Result{Success: false, Error: "id 不能为空"}
-	}
-
-	rem, err := t.reminderRepo.FindByID(ec.Ctx, ec.UserID, req.ID)
-	if err != nil {
-		log.Printf("[reminder] mark_mentioned find error: %v", err)
-		return &Result{Success: false, Error: "提醒不存在"}
-	}
-
-	if err := t.reminderRepo.MarkMentioned(ec.Ctx, ec.UserID, req.ID); err != nil {
-		log.Printf("[reminder] mark_mentioned error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("标记失败: %v", err)}
-	}
-
-	log.Printf("[reminder] mentioned: %s", req.ID[:8])
-	data, _ := json.Marshal(map[string]interface{}{
-		"id":           rem.ID,
-		"mentioned_at": time.Now(),
 	})
 	return &Result{Success: true, Data: data}
 }

@@ -528,42 +528,6 @@ func TestNativeToolCallsToInternal_MultipleSeparators(t *testing.T) {
 	}
 }
 
-// ==================== truncateReminderInjection ====================
-
-func TestTruncateReminderInjection_Short(t *testing.T) {
-	text := "每周查贝壳挂牌数据（08-17 09:00）"
-	got := truncateReminderInjection(text)
-	if got != text {
-		t.Errorf("short reminder should pass through, got %q", got)
-	}
-	if strings.Contains(got, "已截断") {
-		t.Error("short reminder should not carry truncation notice")
-	}
-}
-
-func TestTruncateReminderInjection_Long_KeepsDeadline(t *testing.T) {
-	deadline := "（08-17 09:00）"
-	text := "每周例行：查贝壳挂牌数据——万熙天地（丹园/兰园）+ 富力开远城（32层楼栋）+ 万科东望（上樾/上珺/上瑞，参照系）三室150平内近一年新挂房源基线汇总对比。"
-	text += strings.Repeat("详细挂牌价格数据与成交均价对比分析内容", 5)
-	text += deadline
-	if len([]rune(text)) <= reminderInjectedHead+reminderInjectedTail {
-		t.Fatalf("test fixture too short to trigger truncation: %d", len([]rune(text)))
-	}
-	got := truncateReminderInjection(text)
-	if !strings.Contains(got, deadline) {
-		t.Errorf("deadline (tail) should be preserved, got %.120s", got)
-	}
-	if !strings.Contains(got, "…") {
-		t.Errorf("long reminder should be middle-truncated, got %.120s", got)
-	}
-	if !strings.Contains(got, "search_reminders") {
-		t.Errorf("should hint search_reminders, got %.120s", got)
-	}
-	if len([]rune(got)) > reminderInjectedHead+reminderInjectedTail+len("（已截断，可调 search_reminders 查看全文）")+1 {
-		t.Errorf("truncated reminder too long: %d", len([]rune(got)))
-	}
-}
-
 // ==================== filterToolDefs ====================
 
 func TestFilterToolDefs_NoExcludes(t *testing.T) {

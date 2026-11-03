@@ -187,7 +187,6 @@ type Orchestrator struct {
 	memRepo                 *service.UserMemoryRepo   // 记忆 confirm_count 计数（口径 B，见 buildUserMessage）
 	contextRetriever        *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter        ctxflow.ContextFormatter  // 上下文格式化（接口）
-	reminderRepo            *service.ReminderRepo
 	profileFactRepo         profileFactGetter
 	imageStore              *service.ImageStore // 图床（懒补 file_id / 标记引用）
 	activity                *activity.Store     // 活动埋点 events.db；nil = 采集关闭
@@ -249,7 +248,6 @@ type OrchestratorConfig struct {
 	ResourceZoneBudget        int                       // 资源区总预算帽（chars）
 	ResourceZoneBudgets       ctxflow.ZoneBudgets       // 资源区每类型预算（chars）
 	ResourceZoneQuotas        ctxflow.ZoneQuotas        // 资源区每类型配额
-	ReminderRepo              *service.ReminderRepo
 	ProfileFactRepo           *service.UserProfileFactRepo
 	ImageStore                *service.ImageStore // 图床（图片输入：懒补 file_id、标记引用）
 	Activity                  *activity.Store     // 活动埋点 events.db；nil = 采集关闭
@@ -326,7 +324,6 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		resourceZoneBudget:        cfg.ResourceZoneBudget,
 		resourceZoneBudgets:       cfg.ResourceZoneBudgets,
 		resourceZoneQuotas:        cfg.ResourceZoneQuotas,
-		reminderRepo:              cfg.ReminderRepo,
 		profileFactRepo:           cfg.ProfileFactRepo,
 		imageStore:                cfg.ImageStore,
 		activity:                  cfg.Activity,
@@ -765,9 +762,6 @@ func (o *Orchestrator) buildUserMessage(
 		extraPackets = append(extraPackets, ctxflow.NoticePacket(req.ModeNotice))
 	}
 
-	reminderPkts := o.buildReminderPackets(ctx, req.UserID)
-	extraPackets = append(extraPackets, reminderPkts...)
-
 	// —— 公共资源区：资源类检索结果（memory/note/theme）收敛到资源区 ——
 	// 增量式：只解析上一条消息的 XMLContext + 本轮检索 merge（去重 → quota → 预算帽），
 	// 历史消息重放不再携带注入资源（BuildMessagesForFlash 已简化）。
@@ -799,7 +793,7 @@ func (o *Orchestrator) buildUserMessage(
 		}
 	}
 
-	// 非资源类 packets（history/reminders/datetime/notice）+ user_query 走常规格式化。
+	// 非资源类 packets（history/datetime/notice）+ user_query 走常规格式化。
 	// 资源类 packets 已进资源区，从常规注入中剔除（避免重复）。
 	var packets map[string][]retrieval.ContextPacket
 	if zoneXML != "" {
@@ -920,53 +914,6 @@ func (o *Orchestrator) emitUserMessageEvent(req *RunRequest, userMsg *model.Mess
 	return userMsg.ID
 }
 
-// buildReminderPackets 查询用户 pending 提醒，生成 ContextPacket 列表注入 user message。
-// 长提醒（>120 字）中间截断，保留 deadline（尾部），LLM 可调 search_reminders 查看全文。
-func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) []retrieval.ContextPacket {
-	if o.reminderRepo == nil {
-		return nil
-	}
-	now := time.Now()
-	upcoming, _ := o.reminderRepo.ListUpcoming(ctx, userID, now, reminderUpcomingWindow, 5)
-	expired, _ := o.reminderRepo.ListExpiredUnmentioned(ctx, userID, now, 3)
-
-	var packets []retrieval.ContextPacket
-	for _, r := range upcoming {
-		packets = append(packets, retrieval.ContextPacket{
-			ID:   r.ID,
-			Type: ctxflow.TypeReminder,
-			Text: truncateReminderInjection(fmt.Sprintf("%s（%s）", r.Content, r.Deadline.In(config.BJ).Format("01-02 15:04"))),
-		})
-	}
-	for _, r := range expired {
-		ago := formatDuration(now.Sub(r.Deadline))
-		packets = append(packets, retrieval.ContextPacket{
-			ID:   r.ID,
-			Type: ctxflow.TypeReminder,
-			Text: truncateReminderInjection(fmt.Sprintf("%s（过期 %s）", r.Content, ago)),
-		})
-	}
-	return packets
-}
-
-// truncateReminderInjection 长提醒注入中间截断（保留 deadline 等尾部信息）。
-func truncateReminderInjection(text string) string {
-	truncated := util.TruncateMiddle(text, reminderInjectedHead, reminderInjectedTail)
-	if truncated != text {
-		return truncated + "（已截断，可调 search_reminders 查看全文）"
-	}
-	return truncated
-}
-
-// 长提醒注入截断参数：单条超过 120 字时中间截断，保留头部 100 字与尾部 20 字。
-const (
-	reminderInjectedHead = 100
-	reminderInjectedTail = 20
-)
-
-// reminderUpcomingWindow 只注入未来 12 小时内的 pending 提醒，更远的留给 search_reminders。
-const reminderUpcomingWindow = 12 * time.Hour
-
 // buildProfilePackets 加载用户画像稳定层（facts 表 active 事实），按字段聚合后生成 ContextPacket。
 // 画像为空时不注入任何块。字段按名字母序排序，保证块内顺序确定，缓存友好。
 func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) []retrieval.ContextPacket {
@@ -996,20 +943,6 @@ func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) [
 		return packets[i].ID < packets[j].ID
 	})
 	return packets
-}
-
-// formatDuration 将时间间隔格式化为可读中文。
-func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return "刚刚"
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%d 分钟", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%d 小时", int(d.Hours()))
-	}
-	return fmt.Sprintf("%d 天", int(d.Hours()/24))
 }
 
 // checkSummaryRelevance 用 embedding 窗口检查摘要与当前对话的相关性。

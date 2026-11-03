@@ -50,7 +50,7 @@ func DefaultZoneBudgets() ZoneBudgets {
 }
 
 // zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/topics/recent），
-// history/reminders/datetime/notice/user_query 忽略（不进资源区）。
+// history/datetime/notice/user_query 忽略（不进资源区）。
 type zoneContainer struct {
 	Profile   *profileBlock   `xml:"profile"`
 	Memories  *memoriesBlock  `xml:"memories"`

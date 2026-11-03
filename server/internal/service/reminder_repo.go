@@ -64,26 +64,6 @@ func (r *ReminderRepo) List(ctx context.Context, userID, status string, limit, o
 	return list, total, nil
 }
 
-func (r *ReminderRepo) ListExpiredUnmentioned(ctx context.Context, userID string, now time.Time, limit int) ([]model.Reminder, error) {
-	var list []model.Reminder
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline < ? AND mentioned_at = ?", userID, model.ReminderStatusPending, now, model.ReminderZeroTime).
-		Order("deadline DESC").
-		Limit(limit).
-		Find(&list).Error
-	return list, err
-}
-
-func (r *ReminderRepo) ListUpcoming(ctx context.Context, userID string, from time.Time, within time.Duration, limit int) ([]model.Reminder, error) {
-	var list []model.Reminder
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline >= ? AND deadline <= ?", userID, model.ReminderStatusPending, from, from.Add(within)).
-		Order("deadline ASC").
-		Limit(limit).
-		Find(&list).Error
-	return list, err
-}
-
 func (r *ReminderRepo) Ack(ctx context.Context, userID, id, msgID string) error {
 	// 空 id 时 GORM 丢弃 PK → 退化成该用户全部提醒置为已确认。挡调用方 typo。
 	if id == "" {
@@ -102,12 +82,6 @@ func (r *ReminderRepo) Cancel(ctx context.Context, userID, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Reminder{}).
 		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.ReminderStatusPending).
 		Update("status", model.ReminderStatusCancelled).Error
-}
-
-func (r *ReminderRepo) MarkMentioned(ctx context.Context, userID, id string) error {
-	return r.db.WithContext(ctx).Model(&model.Reminder{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Update("mentioned_at", time.Now()).Error
 }
 
 func (r *ReminderRepo) UpdateGeneratedContent(ctx context.Context, id, body, triggerMsg string) error {

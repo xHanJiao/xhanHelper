@@ -3,20 +3,14 @@ package agent
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-
 	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/retrieval"
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
-	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -939,39 +933,6 @@ func TestFlattenRound_ReActMultiRound(t *testing.T) {
 		if ids[i] != want {
 			t.Errorf("pos %d: expected %s, got %s", i, want, ids[i])
 		}
-	}
-}
-
-func TestBuildReminderPackets_DeadlineInBJ(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "t.db")), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	if err := db.AutoMigrate(&model.Reminder{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	repo := service.NewReminderRepo(db)
-	deadline := time.Now().Add(2 * time.Hour)
-	seed := &model.Reminder{
-		ID:             "r1",
-		UserID:         "u1",
-		Content:        "开会",
-		Deadline:       deadline,
-		Status:         model.ReminderStatusPending,
-		AcknowledgedAt: model.ReminderZeroTime,
-		MentionedAt:    model.ReminderZeroTime,
-	}
-	if err := repo.Create(context.Background(), seed); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	o := &Orchestrator{reminderRepo: repo}
-	pkts := o.buildReminderPackets(context.Background(), "u1")
-	if len(pkts) != 1 {
-		t.Fatalf("expected 1 packet, got %d", len(pkts))
-	}
-	want := deadline.In(config.BJ).Format("01-02 15:04")
-	if !strings.Contains(pkts[0].Text, want) {
-		t.Errorf("deadline 应按北京时间注入, got %q want %q", pkts[0].Text, want)
 	}
 }
 

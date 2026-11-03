@@ -48,14 +48,14 @@ func TestReminderTool_FunctionsCount(t *testing.T) {
 	defer cleanup()
 
 	fns := tool.Functions()
-	if len(fns) != 5 {
-		t.Fatalf("expected 5 functions, got %d", len(fns))
+	if len(fns) != 4 {
+		t.Fatalf("expected 4 functions, got %d", len(fns))
 	}
 	names := map[string]bool{}
 	for _, f := range fns {
 		names[f.Name] = true
 	}
-	for _, name := range []string{"create_reminder", "cancel_reminder", "list_reminders", "search_reminders", "mark_reminder_mentioned"} {
+	for _, name := range []string{"create_reminder", "cancel_reminder", "list_reminders", "search_reminders"} {
 		if !names[name] {
 			t.Errorf("missing function: %s", name)
 		}
@@ -303,56 +303,6 @@ func TestReminderTool_SearchReminders(t *testing.T) {
 	json.Unmarshal(emptyResult.Data, &emptyData)
 	if emptyData.Total != 0 {
 		t.Errorf("total: got %d, want 0", emptyData.Total)
-	}
-}
-
-func TestReminderTool_MarkReminderMentioned(t *testing.T) {
-	tool, cleanup := setupReminderTool(t)
-	defer cleanup()
-
-	deadline := time.Now().Add(1 * time.Hour)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user1"}
-
-	createResult := tool.Execute(ec, "create_reminder", a(map[string]string{
-		"content":  "test",
-		"deadline": deadline.Format(time.RFC3339),
-	}))
-	var createData struct{ ID string }
-	json.Unmarshal(createResult.Data, &createData)
-
-	result := tool.Execute(ec, "mark_reminder_mentioned", a(map[string]string{"id": createData.ID}))
-	if !result.Success {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-
-	var data struct {
-		ID          string `json:"id"`
-		MentionedAt string `json:"mentioned_at"`
-	}
-	json.Unmarshal(result.Data, &data)
-	if data.MentionedAt == "" {
-		t.Error("mentioned_at should not be empty")
-	}
-}
-
-func TestReminderTool_MarkReminderMentioned_WrongUser(t *testing.T) {
-	tool, cleanup := setupReminderTool(t)
-	defer cleanup()
-
-	deadline := time.Now().Add(1 * time.Hour)
-	ec1 := &ExecuteContext{Ctx: context.Background(), UserID: "user1"}
-	ec2 := &ExecuteContext{Ctx: context.Background(), UserID: "user2"}
-
-	createResult := tool.Execute(ec1, "create_reminder", a(map[string]string{
-		"content":  "test",
-		"deadline": deadline.Format(time.RFC3339),
-	}))
-	var createData struct{ ID string }
-	json.Unmarshal(createResult.Data, &createData)
-
-	result := tool.Execute(ec2, "mark_reminder_mentioned", a(map[string]string{"id": createData.ID}))
-	if result.Success {
-		t.Fatal("expected error for wrong user")
 	}
 }
 

@@ -26,8 +26,6 @@ const (
 		"可以通过消息检索工具结合这两个ID来获取对应的详细聊天记录；" +
 		"parent 属性指向更早一段摘要的ID，可用 get_summary 工具追溯，" +
 		"也可用 get_summary.query_by_time 按时间范围查看更早的摘要。本条自动附着。"
-	DescReminder = "用户的待办提醒列表，包含即将到期的和已过期未处理的提醒。如果当前话题自然停顿或结束，" +
-		"可以适时提起一条提醒（尤其优先即将到期的）。提起后用 mark_reminder_mentioned 标记对应提醒 id，避免重复提起。"
 )
 
 // PacketMeta 标记接口——只允许包内定义的 struct 放入 ContextPacket.Meta。

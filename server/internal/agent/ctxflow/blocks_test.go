@@ -344,17 +344,6 @@ func TestSortPacketsByType_SummaryKeepsChronological(t *testing.T) {
 	}
 }
 
-func TestSortPacketsByType_ReminderKeepsProducerOrder(t *testing.T) {
-	pkts := []retrieval.ContextPacket{
-		{ID: "upcoming-2", Score: 0, Text: "到期提醒"},
-		{ID: "expired-1", Score: 0, Text: "过期提醒"},
-	}
-	sortPacketsByType(TypeReminder, pkts)
-	if pkts[0].ID != "upcoming-2" || pkts[1].ID != "expired-1" {
-		t.Fatalf("reminder order should be preserved: %s,%s", pkts[0].ID, pkts[1].ID)
-	}
-}
-
 func TestFormatUserMessage_ProfileItemsSorted(t *testing.T) {
 	f := NewXMLFormatter()
 	packets := map[string][]retrieval.ContextPacket{

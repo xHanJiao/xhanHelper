@@ -171,68 +171,6 @@ func TestReminderRepo_List(t *testing.T) {
 	}
 }
 
-func TestReminderRepo_ListExpiredUnmentioned(t *testing.T) {
-	repo, cleanup := setupReminderRepo(t)
-	defer cleanup()
-
-	now := time.Now()
-
-	// expired, not mentioned
-	seedReminder(t, repo, "user1", "过期1", now.Add(-2*time.Hour), model.ReminderStatusPending)
-
-	// expired but acknowledged
-	ack := seedReminder(t, repo, "user1", "过期2", now.Add(-1*time.Hour), model.ReminderStatusAcknowledged)
-
-	// expired but already mentioned
-	mentioned := seedReminder(t, repo, "user1", "过期3", now.Add(-3*time.Hour), model.ReminderStatusPending)
-	repo.MarkMentioned(context.Background(), "user1", mentioned.ID)
-
-	// upcoming
-	seedReminder(t, repo, "user1", "将来1", now.Add(1*time.Hour), model.ReminderStatusPending)
-
-	list, err := repo.ListExpiredUnmentioned(context.Background(), "user1", now, 10)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("expected 1 expired unmentioned, got %d", len(list))
-	}
-	if len(list) > 0 && list[0].Content != "过期1" {
-		t.Errorf("expected 过期1, got %s", list[0].Content)
-	}
-
-	_ = ack
-}
-
-func TestReminderRepo_ListUpcoming(t *testing.T) {
-	repo, cleanup := setupReminderRepo(t)
-	defer cleanup()
-
-	now := time.Now()
-
-	seedReminder(t, repo, "user1", "将来1", now.Add(1*time.Hour), model.ReminderStatusPending)
-	seedReminder(t, repo, "user1", "将来2", now.Add(3*time.Hour), model.ReminderStatusPending)
-	seedReminder(t, repo, "user1", "将来3", now.Add(2*time.Hour), model.ReminderStatusPending)
-	seedReminder(t, repo, "user1", "过期", now.Add(-1*time.Hour), model.ReminderStatusPending)
-	seedReminder(t, repo, "user1", "太远", now.Add(10*24*time.Hour), model.ReminderStatusPending)
-
-	list, err := repo.ListUpcoming(context.Background(), "user1", now, 48*time.Hour, 10)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(list) != 3 {
-		t.Errorf("expected 3 upcoming, got %d", len(list))
-	}
-
-	// verify ASC order
-	if list[0].Content != "将来1" {
-		t.Errorf("first should be 将来1, got %s", list[0].Content)
-	}
-	if list[2].Content != "将来2" {
-		t.Errorf("last should be 将来2, got %s", list[2].Content)
-	}
-}
-
 func TestReminderRepo_Ack(t *testing.T) {
 	repo, cleanup := setupReminderRepo(t)
 	defer cleanup()
@@ -286,24 +224,6 @@ func TestReminderRepo_Cancel_AcknowledgedAllowed(t *testing.T) {
 	// Cancel has WHERE status = pending, so acknowledged won't match
 	if err == nil {
 		t.Log("cancel on acknowledged returned nil — no rows affected, which is expected")
-	}
-}
-
-func TestReminderRepo_MarkMentioned(t *testing.T) {
-	repo, cleanup := setupReminderRepo(t)
-	defer cleanup()
-
-	deadline := time.Now().Add(-1 * time.Hour)
-	rem := seedReminder(t, repo, "user1", "test", deadline, model.ReminderStatusPending)
-
-	err := repo.MarkMentioned(context.Background(), "user1", rem.ID)
-	if err != nil {
-		t.Fatalf("mark: %v", err)
-	}
-
-	found, _ := repo.FindByID(context.Background(), "user1", rem.ID)
-	if found.MentionedAt.IsZero() {
-		t.Error("mentioned_at should not be zero")
 	}
 }
 

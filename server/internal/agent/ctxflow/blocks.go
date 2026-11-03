@@ -12,7 +12,6 @@ import (
 const (
 	TypeProfile         = "profile"
 	TypeSummary         = "summary"
-	TypeReminder        = "reminder"
 	TypeHistory         = "history"
 	TypeMemory          = "memory"
 	TypeNote            = "note"
@@ -24,7 +23,7 @@ const (
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
 // profile 是最稳定的用户事实画像，放在最前面，便于 LLM 优先关注。
-var typeOrder = []string{TypeProfile, TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
+var typeOrder = []string{TypeProfile, TypeSummary, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -127,20 +126,6 @@ type summariesBlock struct {
 
 func (*summariesBlock) TypeKey() string { return TypeSummary }
 
-// --- reminder ---
-type reminderItem struct {
-	ID      string `xml:"id,attr" json:"id"`
-	Content string `xml:",chardata" json:"content"`
-}
-
-type remindersBlock struct {
-	XMLName     struct{}       `xml:"reminders" json:"-"`
-	Description string         `xml:"description,attr" json:"description"`
-	Items       []reminderItem `xml:"reminder" json:"items"`
-}
-
-func (*remindersBlock) TypeKey() string { return TypeReminder }
-
 // --- current_datetime ---
 type currentDatetimeBlock struct {
 	XMLName struct{} `xml:"current_datetime" json:"-"`
@@ -211,7 +196,6 @@ var blockBuilders = map[string]blockBuilder{
 	TypeMemory:          buildMemoriesBlock,
 	TypeNote:            buildNotesBlock,
 	TypeHistory:         buildHistoryBlock,
-	TypeReminder:        buildRemindersBlock,
 	TypeTheme:           buildThemesBlock,
 	TypeSummary:         buildSummariesBlock,
 	TypeRecent:          buildRecentBlock,
@@ -336,16 +320,6 @@ func buildSummariesBlock(items []retrieval.ContextPacket) Block {
 			}
 		}
 		b.Items = append(b.Items, it)
-	}
-	return &b
-}
-
-func buildRemindersBlock(items []retrieval.ContextPacket) Block {
-	b := remindersBlock{
-		Description: retrieval.DescReminder,
-	}
-	for _, pkt := range items {
-		b.Items = append(b.Items, reminderItem{ID: pkt.ID, Content: pkt.Text})
 	}
 	return &b
 }
@@ -499,7 +473,6 @@ func sortBlocks(blocks []Block) {
 //   - profile：按字段名（packet.ID）字母序——字段名是白名单常量，永远稳定，与更新时间无关
 //   - summary：按 SummaryMeta.CreatedAt 时间旧→新，与 buildSummaryPackets 的阅读顺序一致（确定性 + 语义保持）
 //   - 检索类（memory/note/history/theme）：Score 降序 → 同分按 ID 字母序（保证确定性）
-//   - reminder：保持生产者顺序（upcoming 在 expired 前，语义上有意义，内部各自已按 deadline 排序）
 //   - datetime/notice：单 item，无需排序
 func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
 	switch typ {
@@ -516,8 +489,6 @@ func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
 			}
 			return packets[i].ID < packets[j].ID
 		})
-	case TypeReminder:
-		// 保持生产者顺序，不重排
 	case TypeRecent:
 		// recent 按时间正序注入，不重排
 	default:

@@ -1010,7 +1010,7 @@ function handleContainerClick(e) {
           transformOrigin: 'bottom right',
           transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
         } : {
-          padding: inputVisible ? '6px 12px calc(8px + var(--safe-bottom))' : '0 12px',
+          padding: inputVisible ? '6px 12px 8px' : '0 12px',
           background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,

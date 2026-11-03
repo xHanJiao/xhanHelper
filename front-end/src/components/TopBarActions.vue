@@ -5,13 +5,16 @@ import { NPopover } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
+import { isMacEmbedded } from '@/utils/embed'
 import FunctionMenu from '@/components/FunctionMenu.vue'
 
-// 桌面全局入口：功能菜单 / 主题 / 头像。列表页并入吸顶页头，其余页由 PageTopBar 复用。
+// 全局入口：功能菜单 / 主题 / 头像。手机只有主题（功能菜单与头像在底部 Tab / 我的）。列表页并入页头，其余页由 PageTopBar 复用。
 const router = useRouter()
 const { isDesktop } = useMobile()
 const auth = useAuthStore()
 const theme = useThemeStore()
+// 内嵌 WebView 的外观由 app 决定，切了不生效
+const isEmbedded = isMacEmbedded()
 
 const showUserPopover = ref(false)
 const displayName = computed(() => auth.user?.username || '我')
@@ -24,10 +27,11 @@ async function logout() {
 </script>
 
 <template>
-  <div v-if="isDesktop" class="tb-actions">
-    <FunctionMenu />
+  <div class="tb-actions">
+    <FunctionMenu v-if="isDesktop" />
 
     <button
+      v-if="!isEmbedded"
       class="icon-btn"
       type="button"
       :aria-label="theme.isDark ? '切到浅色' : '切到深色'"
@@ -39,6 +43,7 @@ async function logout() {
     </button>
 
     <NPopover
+      v-if="isDesktop"
       trigger="click"
       :show="showUserPopover"
       placement="bottom-end"

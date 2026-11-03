@@ -41,7 +41,8 @@ const hasTooltip = computed(() => !!props.tooltip)
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 10px;
+  padding: 0 12px;
+  height: 34px;
   font-size: 13px;
   color: var(--color-text-secondary);
   background: var(--color-primary-soft);

@@ -134,7 +134,7 @@ function newChat() {
 
       <slot name="right"></slot>
 
-      <TopBarActions v-if="isDesktop" />
+      <TopBarActions />
     </div>
   </header>
 </template>

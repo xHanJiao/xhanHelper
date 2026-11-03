@@ -96,7 +96,7 @@ Web 只读方案（简化）：
 分组：
 
 1. **外观**
-   - 浅色 / 深色 / 跟随系统（存 `xhanhelper_theme`：`light|dark|system`，未设置默认 `system`；内嵌 macOS WebView 恒跟随系统；`index.html` 首帧脚本同步，避免闪烁）
+   - 浅色 / 深色 / 跟随系统（存 `xhanhelper_theme`：`light|dark|system`，未设置默认 `system`；内嵌 macOS WebView 恒跟随系统；`index.html` 首帧脚本同步，避免闪烁）。手机顶栏另有深浅快捷切换按钮（`TopBarActions` 的主题按钮），点一下直接切 `light`/`dark`，「跟随系统」仍只在设置页选
    - 字号：小 / 标准 / 大（13.5 / 15 / 16.5px，写 `--chat-font-size`，**只作用于聊天气泡**；存 `chat.fontScale`）。文档阅读器字号独立（`doc.fontScale`），两者不合并
 2. **账号**
    - 用户名、修改密码（复用现有弹窗）、退出登录

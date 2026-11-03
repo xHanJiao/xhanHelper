@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useMobile } from '@/composables/useMobile'
 import MarkdownIt from 'markdown-it'
 import {
@@ -69,6 +69,28 @@ const { isMobile } = useMobile()
 const confirmModalVisible = ref(false)
 const pendingConfirmAction = ref(null)
 const expanded = ref(false)
+
+// 内容是否真的被 max-height 裁掉了：只有真溢出才加底部淡出。
+// 光靠 content.length 判断会误伤，mask 淡出在「没超长」时看着就是丢字。
+const wrapperEl = ref(null)
+const overflowing = ref(false)
+let resizeObserver = null
+
+function measureOverflow() {
+  const el = wrapperEl.value
+  if (el) overflowing.value = el.scrollHeight > el.clientHeight + 1
+}
+
+onMounted(() => {
+  measureOverflow()
+  if (!wrapperEl.value) return
+  resizeObserver = new ResizeObserver(measureOverflow)
+  resizeObserver.observe(wrapperEl.value)
+})
+
+onBeforeUnmount(() => resizeObserver?.disconnect())
+
+watch(() => props.content, () => nextTick(measureOverflow))
 
 function handleActionClick(action) {
   if (action.confirm) {
@@ -165,14 +187,14 @@ function handleContentClick() {
 
     <div
       v-if="content"
+      ref="wrapperEl"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 120 && (!expanded || isMobile) }"
+      :class="{ 'clickable': content.length > 120 && (!expanded || isMobile), fading: overflowing && !expanded }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
       @click="handleContentClick"
     >
       <div v-if="contentType === 'markdown'" class="card-content markdown-body" v-html="renderedContent"></div>
       <div v-else class="card-content">{{ content }}</div>
-      <div v-if="content.length > 120 && !expanded" class="content-fade"></div>
     </div>
 
     <div v-if="tags && tags.length > 0" class="card-tags">
@@ -292,14 +314,12 @@ function handleContentClick() {
   white-space: pre-wrap;
 }
 
-.content-fade {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 40px;
-  background: linear-gradient(to bottom, transparent, var(--color-surface));
-  pointer-events: none;
+/* 内容被裁断时让文字自己淡出（mask），不靠覆盖一层白雾：
+   卡片是半透明的，覆盖色永远对不准底色，深色主题更对不上。
+   只在实测溢出时加（见 measureOverflow），否则短内容最后两行会凭空消失。 */
+.card-content-wrapper.fading {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 56px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 56px), transparent 100%);
 }
 
 .card-tags {

@@ -1,5 +1,4 @@
 <script setup>
-import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -20,12 +19,10 @@ function isActive(tab) {
 function go(tab) {
   if (router.currentRoute.value.path !== tab.path) router.push(tab.path)
 }
-
-const isHidden = computed(() => route.meta.hideTabs === true)
 </script>
 
 <template>
-  <nav v-if="!isHidden" class="bottom-tabs" aria-label="主导航">
+  <nav class="bottom-tabs" aria-label="主导航">
     <button
       v-for="tab in tabs"
       :key="tab.key"

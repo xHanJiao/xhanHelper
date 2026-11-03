@@ -38,7 +38,8 @@ function formatTime(value) {
 }
 
 async function refresh() {
-  if (!convs.list.length) await convs.fetchList()
+  // 冷启动时 ChatView 也会拉列表，正在加载中就不再发一次
+  if (!convs.list.length && !convs.loading) await convs.fetchList()
 }
 
 function toggle() {

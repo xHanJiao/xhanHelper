@@ -848,6 +848,7 @@ async function toggleMode() {
   try {
     await api.patch(`/api/conversations/${chat.conversationId}/mode`, { mode: next })
     chat.mode = next
+    convs.updateMode(chat.conversationId, next)
     nMessage.info(hint)
   } catch (e) {
     console.error('Failed to switch conversation mode', e)
@@ -866,6 +867,7 @@ async function toggleEphemeral() {
   try {
     await api.patch(`/api/conversations/${chat.conversationId}/ephemeral`, { ephemeral: next })
     chat.ephemeral = next
+    convs.updateEphemeral(chat.conversationId, next)
     nMessage.info(hint)
   } catch (e) {
     console.error('Failed to toggle ephemeral', e)

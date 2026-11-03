@@ -43,6 +43,10 @@ export function useChatSSE() {
   async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral } = {}) {
     if (chat.isStreaming) return
 
+    // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再点开关不该改写已落库的值）
+    const createdMode = initMode || 'work'
+    const createdEphemeral = !!ephemeral
+
     abortController = new AbortController()
     chat.isStreaming = true
     chat.error = null
@@ -246,7 +250,14 @@ export function useChatSSE() {
 
         if (!chat.conversationId && d.conversation_id) {
           chat.conversationId = d.conversation_id
-          convs.prepend({ id: d.conversation_id, title: d.title || '新对话', agent_id: chat.agentId, agent_name: chat.agentName })
+          convs.prepend({
+            id: d.conversation_id,
+            title: d.title || '新对话',
+            agent_id: chat.agentId,
+            agent_name: chat.agentName,
+            mode: createdMode,
+            ephemeral: createdEphemeral
+          })
         }
         if (d.title) {
           convs.updateTitle(d.conversation_id, d.title)

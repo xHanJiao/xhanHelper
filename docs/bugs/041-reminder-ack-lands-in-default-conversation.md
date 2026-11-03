@@ -59,3 +59,7 @@ macOS 客户端点系统提醒通知 → 提醒被确认，同时中栏**跳到�
 - 来源对话若已删，同样只 ack + 弹文案。
 - `reminders` 表多一列靠 AutoMigrate；云端库要等下次部署启动才生效。
 - iOS 启动仍会打开默认会话（`ContentView` 的 `.task(id: defaultConversation?.id)`），本次没动。
+
+## 后续变更
+
+- **2026-11-03**：Web 前端 `/chat` 恢复「启动定位」，但**不再走默认会话**——冷启动首次进来取会话列表第一条（置顶优先，其次 `updated_at` 倒序），`router.replace` 到那条并加载最近消息；顶栏「新对话」仍是空白新对话（模块级 `coldStartPending` 只消费一次）。同时底栏「对话」tab 与列表页返回按钮改为回上次看的会话（`chat.conversationId`），不再清空。影响文件：`front-end/src/views/ChatView.vue`、`front-end/src/components/BottomTabs.vue`、`front-end/src/components/ConversationSwitcher.vue`、`front-end/src/composables/useGoBack.js`。

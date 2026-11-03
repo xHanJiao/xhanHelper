@@ -1,3 +1,9 @@
+<script>
+// 模块级（跨组件实例、整页加载只初始化一次）：
+// 冷启动第一次落到 /chat 时定位最新会话；之后点顶栏「新对话」仍算空白新对话。
+let coldStartPending = true
+</script>
+
 <script setup>
 /**
  * ============================================================================
@@ -23,7 +29,8 @@
  *     【分支 B】同会话重载 (needsRefetch=true)
  *       → 流程同分支 A，完成后 chat.needsRefetch = false
  *     【分支 C】无会话 ID
- *       → chat.reset()（空白欢迎页，会话由首条消息懒创建；不再跳默认会话）
+ *       → 冷启动首次：fetchList() 后 router.replace 到列表第一条（最新会话）
+ *       → 其余情况：chat.reset()（空白欢迎页，会话由首条消息懒创建）
  *
  * ── 三、用户发送消息 ─────────────────────────────────────────────────────────
  *   handleSend() (L459):
@@ -60,7 +67,7 @@
  */
 
 import { ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted, provide } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
@@ -83,6 +90,7 @@ import PageTopBar from '@/components/PageTopBar.vue'
 import { useMobile } from '@/composables/useMobile'
 
 const route = useRoute()
+const router = useRouter()
 const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel } = useChatSSE()
@@ -493,6 +501,11 @@ function normalizeMessage(msg) {
 // 2. 外部事件要求重新加载当前会话（如信箱跳转）→ newId 不变，但 chat.needsRefetch 被设为 true
 // 3. 用户直接访问 /chat 无 id 或 id 被清空 → newId 为 undefined/null
 watch(() => route.params.id, async (newId, oldId) => {
+  // 整页加载后的第一次路由解析才算「冷启动」，无论落在 /chat 还是 /chat/:id。
+  // 放在这里消费而不是在分支 C 里，避免「深链打开 /chat/A → 点新对话」又弹回最新会话。
+  const coldStart = coldStartPending
+  coldStartPending = false
+
   exitSelectionMode()
   // --- 离开旧会话时，取消正在进行的 SSE 流 ---
   // 避免旧会话的流式响应继续污染新会话的消息列表
@@ -582,14 +595,26 @@ watch(() => route.params.id, async (newId, oldId) => {
 
   // ====================================================================
   // 分支 C：路由里没有会话 ID（用户访问 /chat 或被重定向到无 id 状态）
-  // 直接显示空白欢迎页；会话由首条消息懒创建（SSE 回传 conversation_id）。
-  // 不再自动跳默认会话 —— 那个概念正在淡出（客户端启动已是空白新对话）。
+  // 冷启动首次进来定位到会话列表第一条（置顶优先，其次更新时间倒序），
+  // 之后跳转会重进分支 A 拉最近消息并滚到底；
+  // 其余情况（顶栏「新对话」）直接显示空白页，会话由首条消息懒创建。
   // ====================================================================
   } else if (!newId) {
     inputVisible.value = true
     inputExpanded.value = false
     isInitialScrollDone.value = false
     if (chat.isStreaming) cancel()
+
+    if (coldStart) {
+      // 顺带把列表换成最新的，顶栏会话切换器直接可用
+      await convs.fetchList()
+      const latest = convs.list[0]
+      if (latest?.id) {
+        router.replace(`/chat/${latest.id}`)
+        return
+      }
+    }
+
     chat.reset()
   }
 }, { immediate: true })

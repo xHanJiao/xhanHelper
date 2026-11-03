@@ -1,9 +1,11 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useChatStore } from '@/stores/chat'
 
 const route = useRoute()
 const router = useRouter()
+const chat = useChatStore()
 
 const tabs = [
   { key: 'chat', label: '对话', path: '/chat', icon: 'chat' },
@@ -18,7 +20,9 @@ function isActive(tab) {
 }
 
 function go(tab) {
-  if (router.currentRoute.value.path !== tab.path) router.push(tab.path)
+  // 「对话」回到上次看的会话，别把 store 里还在的会话丢掉；没有会话才开空白新对话
+  const path = tab.key === 'chat' && chat.conversationId ? `/chat/${chat.conversationId}` : tab.path
+  if (router.currentRoute.value.path !== path) router.push(path)
 }
 
 const isHidden = computed(() => route.meta.hideTabs === true)

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useMobile } from '@/composables/useMobile'
 import MarkdownIt from 'markdown-it'
 import {
@@ -70,6 +70,31 @@ const confirmModalVisible = ref(false)
 const pendingConfirmAction = ref(null)
 const expanded = ref(false)
 
+// 内容是否真的被 max-height 裁掉了：只有真溢出才加底部淡出。
+// 光靠 content.length 判断会误伤，mask 淡出在「没超长」时看着就是丢字。
+const wrapperEl = ref(null)
+const overflowing = ref(false)
+let resizeObserver = null
+
+function measureOverflow() {
+  const el = wrapperEl.value
+  // 展开时 clientHeight 等于内容高度，测出来必然是「没溢出」，
+  // 会把折叠态的结论冲掉；这里只量折叠态。
+  if (!el || expanded.value) return
+  overflowing.value = el.scrollHeight > el.clientHeight + 1
+}
+
+onMounted(() => {
+  measureOverflow()
+  if (!wrapperEl.value) return
+  resizeObserver = new ResizeObserver(measureOverflow)
+  resizeObserver.observe(wrapperEl.value)
+})
+
+onBeforeUnmount(() => resizeObserver?.disconnect())
+
+watch(() => props.content, () => nextTick(measureOverflow))
+
 function handleActionClick(action) {
   if (action.confirm) {
     pendingConfirmAction.value = action
@@ -104,6 +129,13 @@ function handleDropdownSelect(key) {
   if (action) {
     handleActionClick(action)
   }
+}
+
+function handleContentClick() {
+  // 和淡出用同一个判据：真的被裁断了才允许点开，否则点了也没变化
+  if (!overflowing.value) return
+  // 展开后内容可能很长，手机上不必再划到底部找「收起」，点正文即收起
+  if (isMobile.value || !expanded.value) expanded.value = !expanded.value
 }
 </script>
 
@@ -159,14 +191,14 @@ function handleDropdownSelect(key) {
 
     <div
       v-if="content"
+      ref="wrapperEl"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 120 && !expanded }"
+      :class="{ 'clickable': overflowing && (!expanded || isMobile), fading: overflowing && !expanded }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
-      @click="content.length > 120 && !expanded && (expanded = true)"
+      @click="handleContentClick"
     >
       <div v-if="contentType === 'markdown'" class="card-content markdown-body" v-html="renderedContent"></div>
       <div v-else class="card-content">{{ content }}</div>
-      <div v-if="content.length > 120 && !expanded" class="content-fade"></div>
     </div>
 
     <div v-if="tags && tags.length > 0" class="card-tags">
@@ -179,9 +211,9 @@ function handleDropdownSelect(key) {
       <span v-if="metadata" class="card-metadata">
         {{ metadata }}
       </span>
-      <NSpace v-if="primaryActions.length > 0 || (content.length > 120 && expanded)" size="small">
+      <NSpace v-if="primaryActions.length > 0 || (overflowing && expanded)" size="small">
         <NButton
-          v-if="content.length > 120 && expanded"
+          v-if="overflowing && expanded"
           size="tiny"
           quaternary
           @click="expanded = false"
@@ -286,14 +318,14 @@ function handleDropdownSelect(key) {
   white-space: pre-wrap;
 }
 
-.content-fade {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 40px;
-  background: linear-gradient(to bottom, transparent, var(--color-surface));
-  pointer-events: none;
+/* 内容被裁断时让文字自己淡出（mask），不靠覆盖一层白雾：
+   卡片是半透明的，覆盖色永远对不准底色，深色主题更对不上。
+   只在实测溢出时加（见 measureOverflow），否则短内容最后两行会凭空消失。
+   渐隐长度取 min(88px, 40%)：200px 高的文档卡仍是 88px，
+   120px（智能体列表）/160px 的卡不会被吃掉大半个内容区。 */
+.card-content-wrapper.fading {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - min(88px, 40%)), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - min(88px, 40%)), transparent 100%);
 }
 
 .card-tags {

@@ -84,6 +84,12 @@ html, body, #app { height: 100%; }
 - 输入区 `padding-bottom: max(12px, var(--safe-bottom))`。
 - 监听 `visualViewport.resize`，把 `--keyboard-inset` 设为 `window.innerHeight - visualViewport.height - visualViewport.offsetTop`；输入区 `bottom: var(--keyboard-inset)`。
 - 不用 `100vh`；所有 `height: 100vh` 改 `100dvh`。
+- **PWA 顶部模糊/白条**：iOS 26 起，主屏 PWA 的状态栏区域会出现一条白色/发糊的带子（iOS 26.1 上是公认的回归）。两个成因分别处理：
+  - **取色**：iOS 26 不认 `theme-color`，顶栏取色读的是根元素的 `background-color`，**不认 `background-image`**。`body` 的背景是 `--app-bg-image`（渐变=图片），拿不到实底就回退白色 —— 所以 `body` 必须显式补一条 `background-color: var(--color-bg)`。
+  - **色块颜色**：iOS 拿 `.pwa-blur-killer` 的 `background-color` 涂状态栏，必须和「页面顶部中央（距顶 4px）」的实测像素一致，否则会出现一条明显的接缝。当前值 `--pwa-top-color`：浅色 `#E7E6D4`、深色 `#494C43`（**改背景渐变后要重新采一次**）。页面顶部是横向渐变，单色块无法逐点匹配，左右两端理论上仍有 ≤10/255 的差；要彻底消除得把页面顶部 ~70px 也压成同色。
+  - **系统模糊**：WebKit 里 `_shouldHideTopScrollPocket == _hasVisibleColorExtensionView(Top)`，即上端存在「可见的 fixed 元素」时**不画模糊**，并拿它的 `background-color` 涂状态栏。判定：采样点在上端中央距顶 4px；元素或祖先须 `fixed`/`sticky`；宽高 >10px 且宽度 ≥ 视口 90%；`opacity < 0.1` 弃用；颜色读 computed style 而非渲染像素。据此在 `AppShell.vue` 放 `.pwa-blur-killer`：`height: 11px` + `z-index: 2147483647` + `background-clip: text`（空元素 → 一个像素都不画）。
+  - 该机制被 `_obscuredInsets.top > 0` 门控：`black-translucent` 那种 edge-to-edge PWA 里整条链路是死的，任何元素都无效 —— 所以 `apple-mobile-web-app-status-bar-style` 不能是 `black-translucent`。
+  - 已试过并**确认无效/更丑**的方案：把 `--safe-top` 加宽让开模糊带（顶部会露出一块白）、实心色块遮罩（伪元素与真实元素都试过）。
 
 ## 六、会话下拉
 

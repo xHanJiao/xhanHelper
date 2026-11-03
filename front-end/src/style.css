@@ -73,6 +73,9 @@
     radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.18), transparent 60%),
     linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
   --app-veil: rgba(255, 255, 255, 0.18);
+  /* 主屏 PWA 的状态栏带色：取页面顶部中央（上端 4px）的实测像素值 —— iOS 拿它涂状态栏，
+     和页面顶部同色才看不出"一条带"。改背景渐变（色斑/透明度）必须重新采一次。 */
+  --pwa-top-color: #E7E6D4;
 }
 
 [data-theme="dark"] {
@@ -118,6 +121,8 @@
   --shadow-card: 0 18px 50px rgba(0, 0, 0, 0.34);
 
   --app-veil: rgba(0, 0, 0, 0.18);
+  /* 深色下页面顶部中央的实测像素值（同 :root 的说明） */
+  --pwa-top-color: #494C43;
 }
 
 /* 全局过渡 */
@@ -173,6 +178,9 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background: var(--app-bg-image);
   background-attachment: fixed;
+  /* 必须显式给一个实底：iOS 26 的顶栏/状态栏取色读的是 background-color，
+     不认 background-image，没有实底就回退成白色（顶部一条白带）。 */
+  background-color: var(--color-bg);
 }
 
 body::before {

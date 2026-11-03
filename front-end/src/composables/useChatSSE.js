@@ -1,3 +1,4 @@
+import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useAuthStore } from '@/stores/auth'
@@ -25,15 +26,20 @@ export function useChatSSE() {
   const chat = useChatStore()
   const convs = useConversationsStore()
   const auth = useAuthStore()
+  const router = useRouter()
   let abortController = null
+  // failStream 本次收尾的消息 id：done 只认它，避免把真实 id/灵阅卡片
+  // 补到上一轮「停止」遗留的 local- 消息上（那条永远不会有真实 id）。
+  let failedLocalId = null
 
   // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
-  // shortcut: error 之后的 done 里带的本轮灵阅卡片会跳过（等「重新加载」再回来），
-  // 只影响收尾轮失败的边角场景，真要补就在 done 里单独合并 artifacts。
+  // 服务端随后仍会发 done（带本轮灵阅卡片），由 done 分支补到这条本地消息上。
   function failStream(message) {
     const partial = chat.streamingMessage
+    failedLocalId = null
     if (partial?.content || partial?.reasoning) {
-      chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
+      failedLocalId = `local-${Date.now()}`
+      chat.addMessage({ ...partial, id: failedLocalId, toolCalls: [] })
     }
     chat.streamingMessage = null
     chat.statusMessage = null
@@ -42,6 +48,10 @@ export function useChatSSE() {
 
   async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral } = {}) {
     if (chat.isStreaming) return
+
+    // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再点开关不该改写已落库的值）
+    const createdMode = initMode || 'work'
+    const createdEphemeral = !!ephemeral
 
     abortController = new AbortController()
     chat.isStreaming = true
@@ -222,7 +232,16 @@ export function useChatSSE() {
             finalMsg.artifacts = d.artifacts
           }
           chat.addMessage(finalMsg)
+        } else {
+          // failStream 已把半截消息收尾成普通消息：卡片和真实 id 补到它上面，
+          // 否则本轮灵阅卡片要等重新拉消息列表才出来。
+          const partial = failedLocalId ? chat.messages.find(m => m.id === failedLocalId) : null
+          if (partial) {
+            if (d.message_id) partial.id = d.message_id
+            if (Array.isArray(d.artifacts) && d.artifacts.length) partial.artifacts = d.artifacts
+          }
         }
+        failedLocalId = null
         chat.streamingMessage = null
 
         // 将前端临时 ID 替换为后端真实数据库 ID
@@ -246,7 +265,16 @@ export function useChatSSE() {
 
         if (!chat.conversationId && d.conversation_id) {
           chat.conversationId = d.conversation_id
-          convs.prepend({ id: d.conversation_id, title: d.title || '新对话', agent_id: chat.agentId, agent_name: chat.agentName })
+          // 会话懒创建后让路由跟上：否则 URL 停在 /chat，顶栏「新对话」推到同一路由等于没点
+          router.replace(`/chat/${d.conversation_id}`)
+          convs.prepend({
+            id: d.conversation_id,
+            title: d.title || '新对话',
+            agent_id: chat.agentId,
+            agent_name: chat.agentName,
+            mode: createdMode,
+            ephemeral: createdEphemeral
+          })
         }
         if (d.title) {
           convs.updateTitle(d.conversation_id, d.title)

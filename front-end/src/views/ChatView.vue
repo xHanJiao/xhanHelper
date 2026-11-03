@@ -848,6 +848,7 @@ async function toggleMode() {
   try {
     await api.patch(`/api/conversations/${chat.conversationId}/mode`, { mode: next })
     chat.mode = next
+    convs.updateMode(chat.conversationId, next)
     nMessage.info(hint)
   } catch (e) {
     console.error('Failed to switch conversation mode', e)
@@ -866,6 +867,7 @@ async function toggleEphemeral() {
   try {
     await api.patch(`/api/conversations/${chat.conversationId}/ephemeral`, { ephemeral: next })
     chat.ephemeral = next
+    convs.updateEphemeral(chat.conversationId, next)
     nMessage.info(hint)
   } catch (e) {
     console.error('Failed to toggle ephemeral', e)
@@ -1008,7 +1010,7 @@ function handleContainerClick(e) {
           transformOrigin: 'bottom right',
           transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
         } : {
-          padding: inputVisible ? '6px 12px calc(8px + var(--safe-bottom))' : '0 12px',
+          padding: inputVisible ? '6px 12px 8px' : '0 12px',
           background: 'transparent',
           borderTop: 'none',
           flexShrink: 0,

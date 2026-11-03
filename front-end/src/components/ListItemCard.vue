@@ -318,8 +318,8 @@ function handleContentClick() {
    卡片是半透明的，覆盖色永远对不准底色，深色主题更对不上。
    只在实测溢出时加（见 measureOverflow），否则短内容最后两行会凭空消失。 */
 .card-content-wrapper.fading {
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 56px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 56px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 88px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 88px), transparent 100%);
 }
 
 .card-tags {

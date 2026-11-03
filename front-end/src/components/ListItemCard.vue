@@ -78,7 +78,10 @@ let resizeObserver = null
 
 function measureOverflow() {
   const el = wrapperEl.value
-  if (el) overflowing.value = el.scrollHeight > el.clientHeight + 1
+  // 展开时 clientHeight 等于内容高度，测出来必然是「没溢出」，
+  // 会把折叠态的结论冲掉；这里只量折叠态。
+  if (!el || expanded.value) return
+  overflowing.value = el.scrollHeight > el.clientHeight + 1
 }
 
 onMounted(() => {
@@ -129,7 +132,8 @@ function handleDropdownSelect(key) {
 }
 
 function handleContentClick() {
-  if (props.content.length <= 120) return
+  // 和淡出用同一个判据：真的被裁断了才允许点开，否则点了也没变化
+  if (!overflowing.value) return
   // 展开后内容可能很长，手机上不必再划到底部找「收起」，点正文即收起
   if (isMobile.value || !expanded.value) expanded.value = !expanded.value
 }
@@ -189,7 +193,7 @@ function handleContentClick() {
       v-if="content"
       ref="wrapperEl"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 120 && (!expanded || isMobile), fading: overflowing && !expanded }"
+      :class="{ 'clickable': overflowing && (!expanded || isMobile), fading: overflowing && !expanded }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
       @click="handleContentClick"
     >
@@ -207,9 +211,9 @@ function handleContentClick() {
       <span v-if="metadata" class="card-metadata">
         {{ metadata }}
       </span>
-      <NSpace v-if="primaryActions.length > 0 || (content.length > 120 && expanded)" size="small">
+      <NSpace v-if="primaryActions.length > 0 || (overflowing && expanded)" size="small">
         <NButton
-          v-if="content.length > 120 && expanded"
+          v-if="overflowing && expanded"
           size="tiny"
           quaternary
           @click="expanded = false"
@@ -316,10 +320,12 @@ function handleContentClick() {
 
 /* 内容被裁断时让文字自己淡出（mask），不靠覆盖一层白雾：
    卡片是半透明的，覆盖色永远对不准底色，深色主题更对不上。
-   只在实测溢出时加（见 measureOverflow），否则短内容最后两行会凭空消失。 */
+   只在实测溢出时加（见 measureOverflow），否则短内容最后两行会凭空消失。
+   渐隐长度取 min(88px, 40%)：200px 高的文档卡仍是 88px，
+   120px（智能体列表）/160px 的卡不会被吃掉大半个内容区。 */
 .card-content-wrapper.fading {
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 88px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 88px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - min(88px, 40%)), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - min(88px, 40%)), transparent 100%);
 }
 
 .card-tags {

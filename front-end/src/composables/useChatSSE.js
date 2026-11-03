@@ -28,13 +28,18 @@ export function useChatSSE() {
   const auth = useAuthStore()
   const router = useRouter()
   let abortController = null
+  // failStream 本次收尾的消息 id：done 只认它，避免把真实 id/灵阅卡片
+  // 补到上一轮「停止」遗留的 local- 消息上（那条永远不会有真实 id）。
+  let failedLocalId = null
 
   // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
   // 服务端随后仍会发 done（带本轮灵阅卡片），由 done 分支补到这条本地消息上。
   function failStream(message) {
     const partial = chat.streamingMessage
+    failedLocalId = null
     if (partial?.content || partial?.reasoning) {
-      chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
+      failedLocalId = `local-${Date.now()}`
+      chat.addMessage({ ...partial, id: failedLocalId, toolCalls: [] })
     }
     chat.streamingMessage = null
     chat.statusMessage = null
@@ -230,12 +235,13 @@ export function useChatSSE() {
         } else {
           // failStream 已把半截消息收尾成普通消息：卡片和真实 id 补到它上面，
           // 否则本轮灵阅卡片要等重新拉消息列表才出来。
-          const partial = chat.messages.findLast(m => m.role === 'assistant' && String(m.id).startsWith('local-'))
+          const partial = failedLocalId ? chat.messages.find(m => m.id === failedLocalId) : null
           if (partial) {
             if (d.message_id) partial.id = d.message_id
             if (Array.isArray(d.artifacts) && d.artifacts.length) partial.artifacts = d.artifacts
           }
         }
+        failedLocalId = null
         chat.streamingMessage = null
 
         // 将前端临时 ID 替换为后端真实数据库 ID

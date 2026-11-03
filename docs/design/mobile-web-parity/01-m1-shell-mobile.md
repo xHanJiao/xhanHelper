@@ -137,7 +137,7 @@ html, body, #app { height: 100%; }
 ```
 /chat/:id?            shell
 /artifacts            shell（手机 Tab 灵阅）
-/artifacts/:id        shell，详情页隐藏 Tab
+/artifacts/:id        shell，详情页保留 Tab
 /documents            shell（手机 Tab 文档）
 /documents/:id        shell，详情页隐藏 Tab
 /images               shell
@@ -152,7 +152,11 @@ html, body, #app { height: 100%; }
 ```
 
 - `router.beforeEach` 里：`/admin*` 在手机宽度下跳 `/me?admin=desktop-only` 或显示提示页。
-- 详情页 `meta.hideTabs = true`，手机隐藏底部 Tab。
+- 底栏显隐的唯一判据是路由 `meta.hideTabs`（`AppShell.vue` 的渲染条件），规则是「这页还属不属于某个一级 tab 的内容」：
+  - **属于 → 保留 Tab**：`/artifacts/:id`（灵阅详情是「灵阅」tab 里的内容）。
+  - **不属于 → `hideTabs: true`**：挂在对话或「我的」下面的工具页与全屏页 —— `/memories` `/notes` `/bills` `/agents` `/prompts` `/tools` `/summaries` `/themes` `/images` `/settings`。
+  - **已知例外**：`/documents/:id` 同属「文档」tab，但它底部有 `bottom: max(14px, --safe-bottom)` 的悬浮工具条（`DocumentReadView.vue` 的 `.mobile-bar`），放开 Tab 会被压住。要改先把这个 bottom 抬到 `--bottom-tabs-height` 之上，在此之前维持 `hideTabs`。
+- 在详情页（如 `/artifacts/:id`）点已经激活的 tab 会回到它的根路径（列表），沿用 iOS 惯例，**不是 bug**。这条只在 `BottomTabs.go()` 里没有特例的 tab 上成立。
 
 ## 十、迁移顺序
 
@@ -183,3 +187,8 @@ html, body, #app { height: 100%; }
 - M1 是全局布局改造，容易把各页面的滚动/高度搞坏；先改壳、再逐页修，不要一次重写所有页面。
 - `useMobile` 改成单例后，注意初始化时机（`App.vue` 挂载前 `window` 已存在）。
 - iOS 键盘行为差异大，必须真机验；headless Chrome 只能看静态布局。
+
+## 后续变更
+
+- 2026-11-03：灵阅详情 `/artifacts/:id` 放开底部 Tab（用户要求：其他一级 tab 激活时底栏都不消失，保持一致）。去掉该路由的 `meta.hideTabs`，并删掉 `BottomTabs` 里恒为 false 的 `isHidden` 守卫（判据只在 `AppShell` 一处）。影响 `front-end/src/router/index.js`、`front-end/src/components/BottomTabs.vue`。文档阅读页 `/documents/:id` 维持隐藏，原因见第九节。
+

@@ -93,8 +93,7 @@ const routes = [
   {
     path: '/artifacts/:id',
     name: 'ArtifactDetail',
-    component: () => import('@/views/ArtifactDetailView.vue'),
-    meta: { hideTabs: true }
+    component: () => import('@/views/ArtifactDetailView.vue')
   },
   {
     path: '/images',

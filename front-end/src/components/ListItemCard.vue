@@ -105,6 +105,12 @@ function handleDropdownSelect(key) {
     handleActionClick(action)
   }
 }
+
+function handleContentClick() {
+  if (props.content.length <= 120) return
+  // 展开后内容可能很长，手机上不必再划到底部找「收起」，点正文即收起
+  if (isMobile.value || !expanded.value) expanded.value = !expanded.value
+}
 </script>
 
 <template>
@@ -160,9 +166,9 @@ function handleDropdownSelect(key) {
     <div
       v-if="content"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 120 && !expanded }"
+      :class="{ 'clickable': content.length > 120 && (!expanded || isMobile) }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
-      @click="content.length > 120 && !expanded && (expanded = true)"
+      @click="handleContentClick"
     >
       <div v-if="contentType === 'markdown'" class="card-content markdown-body" v-html="renderedContent"></div>
       <div v-else class="card-content">{{ content }}</div>

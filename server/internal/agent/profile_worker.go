@@ -36,7 +36,7 @@ const coldStartMaxIterations = 6
 const coldStartFinalRoundPrompt = `[系统] 本轮已达最大步数限制。请不要再调用任何工具，直接根据你已收集到的信息输出用户画像 JSON。
 按输出格式要求输出：{"字段名":["事实1","事实2"]}。没找到信息的字段省略；完全没找到输出 {}。`
 
-// coldStartTools — 冷启动开放的只读工具（统一搜索覆盖 memory/note/summary/theme/history 五个域）。
+// coldStartTools — 冷启动开放的只读工具（统一搜索覆盖 memory/note/summary/event/history 五个域）。
 const coldStartTools = "unified_search"
 
 // profileRules — 正常增量提取的规则（注入 user message XML <rules>）。
@@ -167,7 +167,7 @@ func coldStartSystemPrompt() string {
 
 你只有一个工具：unified_search
 - unified_search.semantic_search(query, types, top_k)
-  语义搜索。types 可选 memory/note/summary/theme/history，默认全部。top_k 默认 5
+  语义搜索。types 可选 memory/note/summary/event/history，默认全部。top_k 默认 5
 - unified_search.keyword_search(keywords, types, topic, top_k)
   关键词搜索。keywords 用空格/逗号分隔。types 同上，topic 仅对 memory/note 生效
 

@@ -83,6 +83,10 @@ type RunRequest struct {
 	PrevZonePackets []retrieval.ContextPacket
 	PrevEventRefs   []retrieval.EventRef
 
+	// PinnedEventIDs — 用户 event.enable 钉住的事件（Conversation.Extra.EventFocus.Enabled）。
+	// 每轮无条件 full 注入；权威来源只在这里，不从上一轮 XML 推断。
+	PinnedEventIDs []string
+
 	// RecentUserMessages 新窗口（SkipHistory）时由 ReduceRecentRounds 压缩的最近对话，
 	// 时间正序的 user / assistant 交替序列（assistant 仅最终文本回复，不含 tool call）。
 	// 渲染后注入资源区 recent 段，供 LLM 知晓上个窗口用户说了什么、自己回了什么。
@@ -436,6 +440,7 @@ func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]
 		Summary:           req.Summary,
 		Event:             req.Event,
 		PrevEventRefs:     prevEventRefs,
+		PinnedEventIDs:    req.PinnedEventIDs,
 		IsNewSession:      req.Window.IsNewSession,
 		ExcludeMsgIDs:     excludeMsgIDs,
 	}

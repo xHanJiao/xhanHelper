@@ -66,3 +66,10 @@ func TestEventZonePackets(t *testing.T) {
 		t.Fatalf("normal retrieval should use fresh events, got %+v", got)
 	}
 }
+
+func TestMkSearchOptions_PinnedEventIDs(t *testing.T) {
+	opts := mkSearchOptions(&RunRequest{PinnedEventIDs: []string{"e1", "e2"}}, nil, nil, nil)
+	if len(opts.PinnedEventIDs) != 2 || opts.PinnedEventIDs[0] != "e1" {
+		t.Fatalf("pinned event ids not wired into SearchOptions: %+v", opts.PinnedEventIDs)
+	}
+}

@@ -137,8 +137,8 @@ func TestUnifiedSearch_SemanticAllTypes(t *testing.T) {
 		"summary": &mockContextSource{name: "summary", pkts: []retrieval.ContextPacket{
 			{ID: "s1", Type: "summary", Score: 0.66, Meta: retrieval.SummaryMeta{SummaryID: "s1", SummaryText: "讨论了健身", Topics: "健康", CoverFromMsgID: "m1", CoverToMsgID: "m5"}},
 		}},
-		"theme": &mockContextSource{name: "theme", pkts: []retrieval.ContextPacket{
-			{ID: "t1", Type: "theme", Score: 0.78, Meta: retrieval.ThemeMeta{Description: "日本旅行", StateText: "进行中"}},
+		"event": &mockContextSource{name: "event", pkts: []retrieval.ContextPacket{
+			{ID: "e1", Type: "event", Score: 0.78, Meta: retrieval.EventMeta{EventID: "e1", Title: "日本旅行", Summary: "在做攻略", Mode: retrieval.EventModeFull, MemoryCount: 3}},
 		}},
 	}
 	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
@@ -163,8 +163,8 @@ func TestUnifiedSearch_SemanticAllTypes(t *testing.T) {
 	if out.Summaries == nil {
 		t.Error("expected summaries")
 	}
-	if out.Themes == nil {
-		t.Error("expected themes")
+	if out.Events == nil {
+		t.Error("expected events")
 	}
 }
 
@@ -361,8 +361,8 @@ func TestUnifiedSearch_SemanticDescriptionPresent(t *testing.T) {
 		"summary": &mockContextSource{name: "summary", pkts: []retrieval.ContextPacket{
 			{ID: "s1", Type: "summary", Meta: retrieval.SummaryMeta{SummaryID: "s1", SummaryText: "摘要"}},
 		}},
-		"theme": &mockContextSource{name: "theme", pkts: []retrieval.ContextPacket{
-			{ID: "t1", Type: "theme", Meta: retrieval.ThemeMeta{Description: "主题"}},
+		"event": &mockContextSource{name: "event", pkts: []retrieval.ContextPacket{
+			{ID: "e1", Type: "event", Meta: retrieval.EventMeta{EventID: "e1", Title: "事件"}},
 		}},
 	}
 	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
@@ -381,8 +381,8 @@ func TestUnifiedSearch_SemanticDescriptionPresent(t *testing.T) {
 	if out.Summaries.Description != retrieval.DescSummary {
 		t.Errorf("summary description mismatch, got %q", out.Summaries.Description)
 	}
-	if out.Themes.Description != retrieval.DescThemes {
-		t.Errorf("theme description mismatch, got %q", out.Themes.Description)
+	if out.Events.Description != retrieval.DescEvents {
+		t.Errorf("event description mismatch, got %q", out.Events.Description)
 	}
 }
 
@@ -456,10 +456,12 @@ func TestUnifiedSearch_SummaryMetaFields(t *testing.T) {
 	}
 }
 
-func TestUnifiedSearch_ThemeMetaFields(t *testing.T) {
+func TestUnifiedSearch_EventMetaFields(t *testing.T) {
 	sources := map[string]retrieval.ContextSource{
-		"theme": &mockContextSource{name: "theme", pkts: []retrieval.ContextPacket{
-			{ID: "t1", Type: "theme", Score: 0.78, Meta: retrieval.ThemeMeta{Description: "日本旅行计划", StateText: "进行中"}},
+		"event": &mockContextSource{name: "event", pkts: []retrieval.ContextPacket{
+			{ID: "e1", Type: "event", Score: 0.78, Meta: retrieval.EventMeta{
+				EventID: "e1", Title: "日本旅行计划", Summary: "在做攻略", Mode: retrieval.EventModeCompact, MemoryCount: 5,
+			}},
 		}},
 	}
 	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
@@ -469,16 +471,19 @@ func TestUnifiedSearch_ThemeMetaFields(t *testing.T) {
 	var out searchResult
 	json.Unmarshal(res.Data, &out)
 
-	items := out.Themes.Data.([]interface{})
+	items := out.Events.Data.([]interface{})
 	first := items[0].(map[string]interface{})
-	if first["id"] != "t1" {
-		t.Errorf("expected id=t1, got %v", first["id"])
+	if first["id"] != "e1" {
+		t.Errorf("expected id=e1, got %v", first["id"])
 	}
-	if first["description"] != "日本旅行计划" {
-		t.Errorf("expected description=日本旅行计划, got %v", first["description"])
+	if first["name"] != "日本旅行计划" {
+		t.Errorf("expected name=日本旅行计划, got %v", first["name"])
 	}
-	if first["state_text"] != "进行中" {
-		t.Errorf("expected state_text=进行中, got %v", first["state_text"])
+	if first["summary"] != "在做攻略" {
+		t.Errorf("expected summary=在做攻略, got %v", first["summary"])
+	}
+	if first["mode"] != retrieval.EventModeCompact {
+		t.Errorf("expected mode=compact, got %v", first["mode"])
 	}
 }
 
@@ -509,7 +514,7 @@ type appReposForTest struct {
 	mem     *service.UserMemoryRepo
 	note    *service.NoteRepo
 	summary *service.ConversationSummaryRepo
-	theme   *service.ThemeStateRepo
+	event   *service.EventRepo
 	msg     *service.MessageRepo
 }
 
@@ -523,7 +528,7 @@ func setupUnifiedSearchDB(t *testing.T) (*UnifiedSearchTool, *appReposForTest, f
 		&model.UserMemory{},
 		&model.Note{},
 		&model.ConversationSummary{},
-		&model.ThemeState{},
+		&model.Event{},
 		&model.Message{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
@@ -533,7 +538,7 @@ func setupUnifiedSearchDB(t *testing.T) (*UnifiedSearchTool, *appReposForTest, f
 		mem:     service.NewUserMemoryRepo(db),
 		note:    service.NewNoteRepo(db),
 		summary: service.NewConversationSummaryRepo(db),
-		theme:   service.NewThemeStateRepo(db),
+		event:   service.NewEventRepo(db),
 		msg:     service.NewMessageRepo(db),
 	}
 
@@ -544,7 +549,7 @@ func setupUnifiedSearchDB(t *testing.T) (*UnifiedSearchTool, *appReposForTest, f
 		repos.mem,
 		repos.note,
 		repos.summary,
-		repos.theme,
+		repos.event,
 	)
 	return tool, repos, func() {}
 }
@@ -584,13 +589,13 @@ func seedAllDomains(t *testing.T, repos *appReposForTest, userID string) {
 		}
 	}
 
-	themes := []model.ThemeState{
-		{ID: "th-1", UserID: userID, Name: "日本旅行计划", Description: "正在做攻略和预算", Status: "active", StateText: "进行中", CreatedAt: time.Now().Add(-240 * time.Hour)},
-		{ID: "th-2", UserID: userID, Name: "学习 Rust", Description: "通过写一个 KV 存储练手", Status: "active", StateText: "进行中", CreatedAt: time.Now().Add(-120 * time.Hour)},
+	events := []model.Event{
+		{ID: "ev-1", UserID: userID, Name: "日本旅行计划", Summary: "正在做攻略和预算", CreatedAt: time.Now().Add(-240 * time.Hour)},
+		{ID: "ev-2", UserID: userID, Name: "学习 Rust", Summary: "通过写一个 KV 存储练手", CreatedAt: time.Now().Add(-120 * time.Hour)},
 	}
-	for _, th := range themes {
-		if err := repos.theme.Create(ctx, &th); err != nil {
-			t.Fatalf("seed theme %s: %v", th.ID, err)
+	for _, e := range events {
+		if err := repos.event.Create(ctx, &e); err != nil {
+			t.Fatalf("seed event %s: %v", e.ID, err)
 		}
 	}
 
@@ -783,7 +788,7 @@ func TestUnifiedSearch_KeywordSummaryFields(t *testing.T) {
 	}
 }
 
-func TestUnifiedSearch_KeywordThemeInMemoryMatch(t *testing.T) {
+func TestUnifiedSearch_KeywordEvent(t *testing.T) {
 	tool, repos, cleanup := setupUnifiedSearchDB(t)
 	defer cleanup()
 	userID := "user-1"
@@ -791,21 +796,21 @@ func TestUnifiedSearch_KeywordThemeInMemoryMatch(t *testing.T) {
 
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
 
-	t.Run("match theme name", func(t *testing.T) {
+	t.Run("match event name", func(t *testing.T) {
 		res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]string{"keywords": "日本"}))
 		var out map[string]interface{}
 		json.Unmarshal(res.Data, &out)
-		if _, ok := out["themes"]; !ok {
-			t.Error("expected themes for keyword '日本'")
+		if _, ok := out["events"]; !ok {
+			t.Error("expected events for keyword '日本'")
 		}
 	})
 
-	t.Run("match theme description", func(t *testing.T) {
+	t.Run("match event summary", func(t *testing.T) {
 		res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]string{"keywords": "KV"}))
 		var out map[string]interface{}
 		json.Unmarshal(res.Data, &out)
-		if _, ok := out["themes"]; !ok {
-			t.Error("expected themes for keyword 'KV'")
+		if _, ok := out["events"]; !ok {
+			t.Error("expected events for keyword 'KV'")
 		}
 	})
 }

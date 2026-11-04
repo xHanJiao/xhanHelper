@@ -6,7 +6,6 @@ import (
 	"log"
 	"math"
 	"sort"
-	"strings"
 	"sync"
 
 	"xhan-helper/internal/agent/retrieval"
@@ -25,7 +24,7 @@ type searchResult struct {
 	Memories  *unifiedDomainResult `json:"memories,omitempty"`
 	Notes     *unifiedDomainResult `json:"notes,omitempty"`
 	Summaries *unifiedDomainResult `json:"summaries,omitempty"`
-	Themes    *unifiedDomainResult `json:"themes,omitempty"`
+	Events    *unifiedDomainResult `json:"events,omitempty"`
 	History   *unifiedDomainResult `json:"history,omitempty"`
 }
 
@@ -48,15 +47,6 @@ type summaryItem struct {
 	Score           float64 `json:"score,omitempty"`
 }
 
-type themeItem struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name,omitempty"`
-	Description string  `json:"description"`
-	StateText   string  `json:"state_text,omitempty"`
-	Status      string  `json:"status,omitempty"`
-	Score       float64 `json:"score,omitempty"`
-}
-
 type historyItem struct {
 	ID             string  `json:"id"`
 	Content        string  `json:"content"`
@@ -72,7 +62,7 @@ func roundScore(s float64) float64 {
 
 // ==================== 工具 ====================
 
-// UnifiedSearchTool 统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、主题
+// UnifiedSearchTool 统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、事件
 type UnifiedSearchTool struct {
 	sources  map[string]retrieval.ContextSource
 	embedder app.Embedder
@@ -81,7 +71,7 @@ type UnifiedSearchTool struct {
 	memRepo     *service.UserMemoryRepo
 	noteRepo    *service.NoteRepo
 	summaryRepo *service.ConversationSummaryRepo
-	themeRepo   *service.ThemeStateRepo
+	eventRepo   *service.EventRepo
 }
 
 // NewUnifiedSearchTool 创建统一搜索工具
@@ -92,7 +82,7 @@ func NewUnifiedSearchTool(
 	memRepo *service.UserMemoryRepo,
 	noteRepo *service.NoteRepo,
 	summaryRepo *service.ConversationSummaryRepo,
-	themeRepo *service.ThemeStateRepo,
+	eventRepo *service.EventRepo,
 ) *UnifiedSearchTool {
 	return &UnifiedSearchTool{
 		sources:     sources,
@@ -101,7 +91,7 @@ func NewUnifiedSearchTool(
 		memRepo:     memRepo,
 		noteRepo:    noteRepo,
 		summaryRepo: summaryRepo,
-		themeRepo:   themeRepo,
+		eventRepo:   eventRepo,
 	}
 }
 
@@ -110,12 +100,12 @@ func (t *UnifiedSearchTool) Name() string { return "unified_search" }
 
 // Description 工具描述
 func (t *UnifiedSearchTool) Description() string {
-	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、主题、历史消息五个域，返回结构化 JSON"
+	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、事件、历史消息五个域，返回结构化 JSON"
 }
 
 func (t *UnifiedSearchTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "统一检索。语义/关键词搜记忆、笔记、摘要、主题、历史消息。",
+		ShortDesc: "统一检索。语义/关键词搜记忆、笔记、摘要、事件、历史消息。",
 		Funcs:     []string{"semantic_search", "keyword_search"},
 	}, true
 }
@@ -136,7 +126,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 					"types": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},
-						"description": "限定搜索域，可选值: memory/note/summary/theme/history，默认全部",
+						"description": "限定搜索域，可选值: memory/note/summary/event/history，默认全部",
 					},
 					"top_k": map[string]interface{}{
 						"type": "integer", "description": "每类结果数上限，默认 5，最大 10",
@@ -148,7 +138,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "keyword_search",
 			Display:     "关键词搜索",
-			Description: "用关键词精确搜索记忆、笔记、摘要、主题和历史消息，返回结构化 JSON。适合查找包含特定词汇的内容",
+			Description: "用关键词精确搜索记忆、笔记、摘要、事件和历史消息，返回结构化 JSON。适合查找包含特定词汇的内容",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -158,7 +148,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 					"types": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},
-						"description": "限定搜索域，可选值: memory/note/summary/theme/history，默认全部",
+						"description": "限定搜索域，可选值: memory/note/summary/event/history，默认全部",
 					},
 					"topic": map[string]interface{}{
 						"type": "string", "description": "主题过滤，仅对记忆和笔记生效",
@@ -209,7 +199,7 @@ func (t *UnifiedSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMess
 	}
 	types := a.Types
 	if len(types) == 0 {
-		types = []string{"memory", "note", "summary", "theme"}
+		types = []string{"memory", "note", "summary", "event"}
 	}
 
 	subQueries := splitSubQueries(a.Query)
@@ -258,6 +248,7 @@ func (t *UnifiedSearchTool) buildSearchOptions(userID, query string, emb []float
 		Note:      retrieval.SourceConfig{Threshold: 0.5, Limit: topK},
 		Summary:   retrieval.SourceConfig{Threshold: 0.55, Limit: topK},
 		Theme:     retrieval.SourceConfig{Threshold: 0.6, Limit: topK},
+		Event:     retrieval.SourceConfig{Threshold: 0.5, Limit: topK},
 		History:   retrieval.SourceConfig{Threshold: 0.55, Limit: topK},
 	}
 }
@@ -294,7 +285,7 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 	}
 	types := a.Types
 	if len(types) == 0 {
-		types = []string{"memory", "note", "summary", "theme"}
+		types = []string{"memory", "note", "summary", "event"}
 	}
 
 	keywords := splitKeywords(a.Keywords)
@@ -303,6 +294,7 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 	}
 
 	packets := make(map[string][]retrieval.ContextPacket)
+	var eventHits []eventHit
 	for _, typ := range types {
 		switch typ {
 		case "memory":
@@ -320,10 +312,12 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 			if len(pkts) > 0 {
 				packets["summary"] = pkts
 			}
-		case "theme":
-			pkts := t.searchThemesByKeyword(ec, keywords, a.TopK)
-			if len(pkts) > 0 {
-				packets["theme"] = pkts
+		case "event":
+			hits, err := searchEventsByKeyword(ec.Ctx, t.eventRepo, t.memRepo, ec.UserID, keywords, a.TopK)
+			if err != nil {
+				log.Printf("[unified_search] event keyword: %v", err)
+			} else if len(hits) > 0 {
+				eventHits = hits
 			}
 		case "history":
 			pkts := t.searchHistoryByKeyword(ec, keywords, a.TopK)
@@ -334,6 +328,9 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 	}
 
 	result := t.buildSearchResult(packets, false)
+	if len(eventHits) > 0 {
+		result.Events = &unifiedDomainResult{Description: retrieval.DescEvents, Data: eventHits}
+	}
 	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}
 }
@@ -362,10 +359,10 @@ func (t *UnifiedSearchTool) buildSearchResult(packets map[string][]retrieval.Con
 				Description: retrieval.DescSummary,
 				Data:        t.convertSummaryPackets(pkts, includeScore),
 			}
-		case "theme":
-			result.Themes = &unifiedDomainResult{
-				Description: retrieval.DescThemes,
-				Data:        t.convertThemePackets(pkts, includeScore),
+		case "event":
+			result.Events = &unifiedDomainResult{
+				Description: retrieval.DescEvents,
+				Data:        t.convertEventPackets(pkts, includeScore),
 			}
 		case "history":
 			result.History = &unifiedDomainResult{
@@ -416,13 +413,22 @@ func (t *UnifiedSearchTool) convertSummaryPackets(pkts []retrieval.ContextPacket
 	return items
 }
 
-func (t *UnifiedSearchTool) convertThemePackets(pkts []retrieval.ContextPacket, includeScore bool) []themeItem {
-	items := make([]themeItem, 0, len(pkts))
+func (t *UnifiedSearchTool) convertEventPackets(pkts []retrieval.ContextPacket, includeScore bool) []eventHit {
+	items := make([]eventHit, 0, len(pkts))
 	for _, p := range pkts {
-		it := themeItem{ID: p.ID}
-		if meta, ok := p.Meta.(retrieval.ThemeMeta); ok {
-			it.Description = meta.Description
-			it.StateText = meta.StateText
+		meta, ok := p.Meta.(retrieval.EventMeta)
+		if !ok {
+			continue
+		}
+		it := eventHit{
+			ID:          meta.EventID,
+			Name:        meta.Title,
+			Summary:     meta.Summary,
+			Mode:        meta.Mode,
+			MemoryCount: meta.MemoryCount,
+		}
+		if !meta.UpdatedAt.IsZero() {
+			it.LastMemoryAt = formatMsgTime(meta.UpdatedAt)
 		}
 		if includeScore {
 			it.Score = roundScore(p.Score)
@@ -495,32 +501,6 @@ func (t *UnifiedSearchTool) searchSummariesByKeyword(ec *ExecuteContext, keyword
 		})
 	}
 	return pkts
-}
-
-func (t *UnifiedSearchTool) searchThemesByKeyword(ec *ExecuteContext, keywords []string, limit int) []retrieval.ContextPacket {
-	themes, err := t.themeRepo.ListActive(ec.Ctx, ec.UserID)
-	if err != nil {
-		log.Printf("[unified_search] theme keyword: %v", err)
-		return nil
-	}
-	var matched []retrieval.ContextPacket
-	for _, th := range themes {
-		combined := strings.ToLower(th.Name + " " + th.Description + " " + th.StateText)
-		for _, kw := range keywords {
-			if strings.Contains(combined, strings.ToLower(kw)) {
-				matched = append(matched, retrieval.ContextPacket{
-					ID:   th.ID,
-					Type: "theme",
-					Meta: retrieval.ThemeMeta{Description: th.Description, StateText: th.StateText},
-				})
-				break
-			}
-		}
-	}
-	if len(matched) > limit {
-		matched = matched[:limit]
-	}
-	return matched
 }
 
 func (t *UnifiedSearchTool) searchHistoryByKeyword(ec *ExecuteContext, keywords []string, limit int) []retrieval.ContextPacket {

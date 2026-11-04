@@ -145,7 +145,7 @@ func (a *EventAssembler) assembleBatch(ctx context.Context, userID string, batch
 	userMsg := buildAssemblyUserMessage(batch, candidates)
 	react := NewMiniReAct(&MiniReActConfig{
 		Client:           a.flashClient,
-		Tools:            a.registry.GetLLMToolsFiltered([]string{"unified_search"}),
+		Tools:            a.registry.GetLLMToolsFiltered([]string{"unified_search", "event"}),
 		ToolRegistry:     a.registry,
 		SystemPrompt:     eventAssemblySystemPrompt(a.maxIterations),
 		FinalRoundPrompt: eventAssemblyFinalRoundPrompt,
@@ -154,7 +154,10 @@ func (a *EventAssembler) assembleBatch(ctx context.Context, userID string, batch
 		MaxToolResult:    2000,
 		Caller:           "event-assemble",
 		// 拼装循环必须只读：即使 LLM 幻觉出别的工具名，也在这里被白名单拦掉。
-		SubAgent: SubAgentExt{AllowedTools: map[string][]string{"unified_search": nil}},
+		SubAgent: SubAgentExt{AllowedTools: map[string][]string{
+			"unified_search": nil,
+			"event":          {"get"},
+		}},
 	})
 	result, err := react.Run(ctx, userMsg)
 	if err != nil {
@@ -640,8 +643,9 @@ func eventAssemblySystemPrompt(maxIterations int) string {
 - 事件名用用户自己的说法，尽量具体；不写目标、完成条件、参与方。
 
 —————— 工具 ——————
-unified_search（只读）：候选里没有、但怀疑某条记忆属于别的事件时，用 semantic_search/keyword_search 搜记忆。
-（当前版本还没有 event 域检索 / event.get，只能搜记忆，看不到事件全文。）
+unified_search（只读）：搜记忆或事件。semantic_search / keyword_search 的 types 可传 memory/event；
+  候选里没有、但怀疑某条记忆属于别的事件时，用 semantic_search(types=["memory","event"]) 搜。
+event.get（只读）：拿到事件 ID 后读完整事件（summary + 全部记忆）。
 候选里已有 sim ≥ 0.75 且明显是同一件事 → 直接分配，不要搜。
 只有「像事件但候选都不匹配」或「怀疑两个事件重复」才允许搜。最多 %d 轮。
 

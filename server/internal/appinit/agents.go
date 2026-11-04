@@ -73,7 +73,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			"memory":  memSource,
 			"note":    noteSource,
 			"summary": summarySource,
-			"theme":   themeSource,
+			"event":   eventSource,
 			"history": simpleHistorySource,
 		},
 		infra.Embedder,
@@ -81,9 +81,25 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		repos.Mem,
 		repos.Note,
 		repos.ConversationSummary,
-		repos.ThemeState,
+		repos.Event,
 	)
 	tools.Registry.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
+
+	// 事件工具组：查询 / 钉住 / 改名 / 删除 / 合并（设计 §7.1）。
+	eventTool := tool.NewEventTool(
+		repos.Event, repos.Mem, repos.Conversation, infra.Embedder, eventSource,
+		cfg.Retrieval.ResourceZone.QuotaEventPinned,
+	)
+	tools.Registry.Register(tool.NewLoggingWrapper(eventTool, log.Default()))
+
+	// 事件拼装只读注册表：只放 unified_search + event.get（设计 §7.3）。
+	// 循环只读是结构保证，不依赖 prompt 自觉。
+	eventAssemblyReg := tool.NewRegistry()
+	eventAssemblyReg.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
+	eventAssemblyReg.Register(tool.NewLoggingWrapper(eventTool.ReadOnly(), log.Default()))
+	eventAssemblyReg.ValidateNativeFC()
+	eventAssemblyReg.ValidateReadOnlyFuncs()
+	eventAssemblyReg.ValidateCatalog()
 
 	// --- ReflectionOrchestrator + CronRunner (先于 orch 创建) ---
 	reflectionOrch := agent.NewReflectionOrchestrator(&agent.ReflectionOrchestratorConfig{
@@ -165,7 +181,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 事件拼装：session 结束后把本 session 新增/变更的记忆归到事件（等记忆写完才跑）。
 	eventAssembler := agent.NewEventAssembler(&agent.EventAssemblerConfig{
 		FlashClient:   llmClients.BgFlash,
-		Registry:      tools.Registry,
+		Registry:      eventAssemblyReg,
 		EventRepo:     repos.Event,
 		MemRepo:       repos.Mem,
 		EmbeddingRepo: repos.Embedding,

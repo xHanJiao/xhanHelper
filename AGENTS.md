@@ -139,8 +139,8 @@ type Tool interface {
 | `unified_search` | **统一检索入口**：语义/关键词搜索，覆盖 memory / note / summary / event / history 五域 |
 | `message_search` | 历史消息按时间范围 / ID / 数量精确查（语义检索走 `unified_search`） |
 | `get_summary` | 对话摘要按时间 / ID 查 |
-| `get_topic_stats` / `get_topic_detail` | topic 聚类统计 / 指定 topic 下笔记与记忆全文 |
-| `get_bill_stats` | 账单结构化统计（供 Mission / 反思用） |
+| `get_topic_stats` / `get_topic_detail` | 保留未接线（只服务已停写的主题子系统） |
+| `get_bill_stats` | 保留未接线（与 topic 工具同批停用） |
 | `reminder` | 待办提醒创建/查询/取消/提及标记 |
 | `plan` | 会话执行计划（todo）管理 |
 | `task` | 子任务/子 agent：`web_explore` / `file_explore` / `user_context`，白名单双保险 |

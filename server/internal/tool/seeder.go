@@ -40,7 +40,7 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "document", Description: "文档管理工具，创建/查看(窗口读)/更新/删除文档，支持标签检索", Category: "document"},
 	{Name: "image", Description: "图片列表：查看用户上传过的图片（含描述），给文档配图时用来挑图", Category: "document"},
 	{Name: "agent", Description: "管理智能体：创建、查看、删除自定义 AI 助手", Category: "agent"},
-	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/主题/历史消息，支持语义与关键词两种模式", Category: "search"},
+	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/事件/历史消息，支持语义与关键词两种模式", Category: "search"},
 	{Name: "message_search", Description: "查询历史消息：时间范围/ID 范围/按 ID 获取/数量统计", Category: "search"},
 	{Name: "web", Description: "联网搜索与网页正文抓取（DeepSeek 官方 Search/Fetch）", Category: "search"},
 	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},

@@ -235,6 +235,8 @@ type SessionSnapshot struct {
 | `unified_search`（memory + event 域） | 候选里没有、怀疑是同一件事时自己搜 |
 | `event.get` | 想看某个候选的完整记忆再判断是否重复 |
 
+> 阶段 2 先只挂 `unified_search`（且 event 域还没接），`event.get` 与 event 域检索在阶段 4 补齐；在此之前 prompt 明确告诉模型「只能搜记忆、看不到事件全文」。
+
 **关键性质：循环全程只读**，所有写库都在 `FinalContent` 解析后一次性做。循环失败/超轮次 = 什么都不发生，记忆留在普通池，安全。
 
 **成本控制**（prompt 硬规则）：
@@ -267,7 +269,8 @@ type SessionSnapshot struct {
 prompt 规则靠模型自觉，再加一道代码闸：
 
 1. 事件名归一化（小写、去标点空格）后与现有事件完全一致 → **拒绝创建**；
-2. 新事件的 `name + summary` 嵌入与现有事件 summary 的余弦 ≥ **0.88** → **拒绝创建**。
+2. 新事件的 `name + summary` 嵌入与现有事件 summary 的余弦 ≥ **0.88** → **拒绝创建**；
+3. 嵌入调用失败 → **拒绝创建**（fail-closed，记忆留普通池下轮重试），不做「跳过语义查重」的降级。
 
 拒绝就**不建**，这些记忆留在普通池，下个 session 自然重试。宁可不建，也不建错的。
 

@@ -56,6 +56,7 @@ func (r *EventRepo) Create(ctx context.Context, e *model.Event) error {
 
 // CreateWithMemories 新建事件并挂载记忆（同一事务），同时推进 last_memory_at。
 // 拼装的主路径走这里：避免「事件建了但没挂上记忆」留下空壳。
+// 注意：失败时事务回滚，但 e.ID 已经在事务内被赋值——调用方失败后不得使用该 ID。
 func (r *EventRepo) CreateWithMemories(ctx context.Context, e *model.Event, memoryIDs []string) error {
 	ids := uniqStrings(memoryIDs)
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -164,16 +165,24 @@ func (r *EventRepo) UpdateSummary(ctx context.Context, userID, id, name, summary
 	if len(updates) == 0 {
 		return nil
 	}
-	ok, err := r.existsActive(ctx, userID, id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("event update summary %s: %w", id, gorm.ErrRecordNotFound)
-	}
-	return r.db.WithContext(ctx).Model(&model.Event{ID: id}).
+	res := r.db.WithContext(ctx).Model(&model.Event{ID: id}).
 		Where("user_id = ? AND is_deleted = ?", userID, false).
-		Updates(updates).Error
+		Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 可能是并发软删，也可能是值未变化（MySQL 默认只报 changed rows）。
+		// 再查一次存活，区分「已删/不存在」与「无变化」。
+		ok, err := r.existsActive(ctx, userID, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("event update summary %s: %w", id, gorm.ErrRecordNotFound)
+		}
+	}
+	return nil
 }
 
 // SetLastMemoryAt 把事件的「最后记忆时间」推进到 t（只增不减，避免乱序写入把它拉回去）。

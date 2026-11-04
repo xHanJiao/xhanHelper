@@ -35,6 +35,7 @@ type IOAudit struct {
 var auditWhitelist = map[string]map[string]bool{
 	CategoryPostChat: {
 		SubMemoryExtract:    true,
+		SubEventAssemble:    true,
 		SubProfileExtract:   true,
 		SubProfileColdStart: true,
 		SubSummary:          true,

@@ -1,6 +1,7 @@
 -- 027: 事件表（记忆聚合）+ user_memories.event_id
 -- 事件不存正文：正文是 user_memories.event_id 指向它的记忆；合并/删除时由 EventRepo 搬移或置空。
 -- 与 AutoMigrate 双保险：云端 AutoMigrate 失败只打日志继续启动，这里保证 schema 一定就绪。
+-- 执行顺序：先跑本 SQL，再启动新二进制；反过来 CREATE TABLE 会因表已存在而中断。
 CREATE TABLE events (
   id             VARCHAR(36)  NOT NULL PRIMARY KEY,
   user_id        VARCHAR(36)  NOT NULL,

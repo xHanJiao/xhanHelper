@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
@@ -103,6 +104,7 @@ type AssemblyStats struct {
 	Updated  int
 	Merged   int
 	Rejected int // 被创建校验拒绝的新事件数
+	Failed   int // 写库失败次数（与「LLM 输出空」区分）
 }
 
 // Assemble 处理一批记忆（内部按 batchSize 分批，全部处理）。
@@ -121,6 +123,7 @@ func (a *EventAssembler) Assemble(ctx context.Context, userID string, memories [
 		stats.Updated += st.Updated
 		stats.Merged += st.Merged
 		stats.Rejected += st.Rejected
+		stats.Failed += st.Failed
 		if err != nil {
 			return stats, fmt.Errorf("event assemble batch %d/%d: %w", stats.Batches, (len(memories)+a.batchSize-1)/a.batchSize, err)
 		}
@@ -144,7 +147,7 @@ func (a *EventAssembler) assembleBatch(ctx context.Context, userID string, batch
 		Client:           a.flashClient,
 		Tools:            a.registry.GetLLMToolsFiltered([]string{"unified_search"}),
 		ToolRegistry:     a.registry,
-		SystemPrompt:     eventAssemblySystemPrompt,
+		SystemPrompt:     eventAssemblySystemPrompt(a.maxIterations),
 		FinalRoundPrompt: eventAssemblyFinalRoundPrompt,
 		UserID:           userID,
 		MaxIterations:    a.maxIterations,
@@ -174,15 +177,21 @@ func (a *EventAssembler) assembleBatch(ctx context.Context, userID string, batch
 	return a.applyPlan(ctx, userID, &plan, batchByID, active), nil
 }
 
-// loadActiveEvents 加载全部未删除事件（含已删的不要，创建校验只对比存活事件）。
+// loadActiveEvents 加载全部未删除事件（分页取全量，不静默截断）。
 func (a *EventAssembler) loadActiveEvents(ctx context.Context, userID string) (map[string]*model.Event, error) {
-	list, err := a.eventRepo.List(ctx, userID, false, 200, 0)
-	if err != nil {
-		return nil, fmt.Errorf("list events: %w", err)
-	}
-	out := make(map[string]*model.Event, len(list))
-	for i := range list {
-		out[list[i].ID] = &list[i]
+	const pageSize = 200
+	out := make(map[string]*model.Event)
+	for offset := 0; ; offset += pageSize {
+		page, err := a.eventRepo.List(ctx, userID, false, pageSize, offset)
+		if err != nil {
+			return nil, fmt.Errorf("list events (offset %d): %w", offset, err)
+		}
+		for i := range page {
+			out[page[i].ID] = &page[i]
+		}
+		if len(page) < pageSize {
+			break
+		}
 	}
 	return out, nil
 }
@@ -351,6 +360,8 @@ type assemblyPlan struct {
 // merge 产生的旧 ID 在本批内重映射到新 ID（不留持久别名）。
 func (a *EventAssembler) applyPlan(ctx context.Context, userID string, plan *assemblyPlan, batch map[string]model.UserMemory, active map[string]*model.Event) AssemblyStats {
 	var stats AssemblyStats
+	// claimed 跨 new_events / assignments 生效：一条记忆只能归一个事件。
+	claimed := make(map[string]string)
 	aliases := a.applyMerges(ctx, userID, plan.Merge, active, &stats)
 	resolve := func(id string) string {
 		for i := 0; i < 10; i++ {
@@ -363,15 +374,16 @@ func (a *EventAssembler) applyPlan(ctx context.Context, userID string, plan *ass
 		return id
 	}
 
-	a.applyNewEvents(ctx, userID, plan.NewEvents, batch, active, &stats)
-	a.applyAssignments(ctx, userID, plan.Assignments, batch, active, resolve, &stats)
+	a.applyNewEvents(ctx, userID, plan.NewEvents, batch, active, claimed, &stats)
+	a.applyAssignments(ctx, userID, plan.Assignments, batch, active, claimed, resolve, &stats)
 	a.applyEventUpdates(ctx, userID, plan.EventUpdates, active, resolve, &stats)
 	return stats
 }
 
 func (a *EventAssembler) applyMerges(ctx context.Context, userID string, merges []assemblyMerge, active map[string]*model.Event, stats *AssemblyStats) map[string]string {
 	aliases := make(map[string]string)
-	// 同一批里 target 不能再当 source（禁止链式合并）。
+	// 同一批里 target 不能再当 source（禁止链式合并）：只要出现链，整组拒绝，
+	// 避免「A→B 已应用、B→C 被拒」这种半应用结果与 LLM 意图不一致。
 	targets := make(map[string]bool, len(merges))
 	for _, m := range merges {
 		if id := strings.TrimSpace(m.Into); id != "" {
@@ -379,12 +391,17 @@ func (a *EventAssembler) applyMerges(ctx context.Context, userID string, merges 
 		}
 	}
 	for _, m := range merges {
+		if from := strings.TrimSpace(m.From); from != "" && targets[from] {
+			log.Printf("[event] merge rejected: chain in batch (%s is also a target), skip all merges", from)
+			return aliases
+		}
+	}
+	for _, m := range merges {
 		from, into := strings.TrimSpace(m.From), strings.TrimSpace(m.Into)
-		if from == "" || into == "" || from == into {
+		if from == "" || into == "" {
 			continue
 		}
-		if targets[from] {
-			log.Printf("[event] merge rejected (chain): %s → %s", from, into)
+		if from == into {
 			continue
 		}
 		if active[from] == nil || active[into] == nil {
@@ -393,6 +410,7 @@ func (a *EventAssembler) applyMerges(ctx context.Context, userID string, merges 
 		}
 		if err := a.eventRepo.Merge(ctx, userID, from, into); err != nil {
 			log.Printf("[event] merge %s → %s error: %v", from, into, err)
+			stats.Failed++
 			continue
 		}
 		delete(active, from)
@@ -402,7 +420,7 @@ func (a *EventAssembler) applyMerges(ctx context.Context, userID string, merges 
 	return aliases
 }
 
-func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newEvents []assemblyNewEvent, batch map[string]model.UserMemory, active map[string]*model.Event, stats *AssemblyStats) {
+func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newEvents []assemblyNewEvent, batch map[string]model.UserMemory, active map[string]*model.Event, claimed map[string]string, stats *AssemblyStats) {
 	names := make(map[string]bool, len(active))
 	for _, e := range active {
 		names[normalizeEventName(e.Name)] = true
@@ -413,13 +431,23 @@ func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newE
 			continue
 		}
 		var ids []string
+		seen := make(map[string]bool, len(ne.MemoryIDs))
 		for _, id := range ne.MemoryIDs {
-			if _, ok := batch[id]; ok {
-				ids = append(ids, id)
+			if _, ok := batch[id]; !ok {
+				continue
 			}
+			if seen[id] {
+				continue
+			}
+			if owner := claimed[id]; owner != "" {
+				log.Printf("[event] new event %q: memory %s already claimed by %s, skip", name, id, owner)
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
 		}
 		if len(ids) == 0 {
-			log.Printf("[event] new event %q rejected: no batch memory", name)
+			log.Printf("[event] new event %q rejected: no unclaimed batch memory", name)
 			stats.Rejected++
 			continue
 		}
@@ -431,8 +459,13 @@ func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newE
 		}
 		dup, vec, embedErr := a.duplicateBySummary(ctx, name, ne.Summary, active)
 		if embedErr != nil {
-			log.Printf("[event] new event %q dedupe embed error (skip embed check): %v", name, embedErr)
-		} else if dup != "" {
+			// fail-closed：语义查重失效时宁可不建（记忆留普通池下轮重试），
+			// 也不冒「同义不同名长出两个事件」的险。
+			log.Printf("[event] new event %q rejected: dedupe embed failed: %v", name, embedErr)
+			stats.Rejected++
+			continue
+		}
+		if dup != "" {
 			log.Printf("[event] new event %q rejected: summary similar to %q", name, active[dup].Name)
 			stats.Rejected++
 			continue
@@ -441,18 +474,22 @@ func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newE
 		e := &model.Event{UserID: userID, Name: name, Summary: truncateRunes(strings.TrimSpace(ne.Summary), eventSummaryMaxRunes)}
 		if err := a.eventRepo.CreateWithMemories(ctx, e, ids); err != nil {
 			log.Printf("[event] create event %q error: %v", name, err)
+			stats.Failed++
 			continue
 		}
 		active[e.ID] = e
 		names[norm] = true
-		if embedErr == nil && vec != nil {
+		if vec != nil {
 			a.cacheVec(e.ID, e.Name+"\n"+e.Summary, vec)
+		}
+		for _, id := range ids {
+			claimed[id] = e.ID
 		}
 		stats.Created++
 	}
 }
 
-func (a *EventAssembler) applyAssignments(ctx context.Context, userID string, assignments []assemblyAssignment, batch map[string]model.UserMemory, active map[string]*model.Event, resolve func(string) string, stats *AssemblyStats) {
+func (a *EventAssembler) applyAssignments(ctx context.Context, userID string, assignments []assemblyAssignment, batch map[string]model.UserMemory, active map[string]*model.Event, claimed map[string]string, resolve func(string) string, stats *AssemblyStats) {
 	grouped := make(map[string][]string)
 	seen := make(map[string]bool, len(assignments))
 	for _, as := range assignments {
@@ -460,7 +497,11 @@ func (a *EventAssembler) applyAssignments(ctx context.Context, userID string, as
 		if _, ok := batch[memID]; !ok {
 			continue
 		}
-		// 一条记忆只归一个事件：同一批里重复出现时以第一条为准（避免 map 遍历顺序决定归属）。
+		// 一条记忆只归一个事件：new_events 已认领的跳过；assignments 内重复以第一条为准。
+		if owner := claimed[memID]; owner != "" {
+			log.Printf("[event] assignment skipped: memory %s already claimed by %s", memID, owner)
+			continue
+		}
 		if seen[memID] {
 			continue
 		}
@@ -475,7 +516,11 @@ func (a *EventAssembler) applyAssignments(ctx context.Context, userID string, as
 	for eid, ids := range grouped {
 		if err := a.eventRepo.AssignMemories(ctx, userID, eid, ids); err != nil {
 			log.Printf("[event] assign %d memories → %s error: %v", len(ids), eid, err)
+			stats.Failed++
 			continue
+		}
+		for _, id := range ids {
+			claimed[id] = eid
 		}
 		stats.Assigned += len(ids)
 	}
@@ -488,15 +533,22 @@ func (a *EventAssembler) applyEventUpdates(ctx context.Context, userID string, u
 		if e == nil {
 			continue
 		}
-		if err := a.eventRepo.UpdateSummary(ctx, userID, eid, up.Name, truncateRunes(up.Summary, eventSummaryMaxRunes)); err != nil {
+		name := strings.TrimSpace(up.Name)
+		if utf8.RuneCountInString(name) > eventNameMaxRunes {
+			// name 超长不该拖累 summary：丢掉 name，只写 summary。
+			log.Printf("[event] update %s: name over %d runes, drop name", eid, eventNameMaxRunes)
+			name = ""
+		}
+		if err := a.eventRepo.UpdateSummary(ctx, userID, eid, name, truncateRunes(up.Summary, eventSummaryMaxRunes)); err != nil {
 			log.Printf("[event] update summary %s error: %v", eid, err)
+			stats.Failed++
 			continue
 		}
-		if n := strings.TrimSpace(up.Name); n != "" {
-			e.Name = n
+		if name != "" {
+			e.Name = name
 		}
 		if strings.TrimSpace(up.Summary) != "" {
-			e.Summary = up.Summary
+			e.Summary = truncateRunes(up.Summary, eventSummaryMaxRunes)
 		}
 		a.invalidateCachedVec(eid)
 		stats.Updated++
@@ -505,7 +557,7 @@ func (a *EventAssembler) applyEventUpdates(ctx context.Context, userID string, u
 
 // duplicateBySummary 新事件 name+summary 与现有事件 summary 的余弦 ≥ dedupeSim 时返回重复事件 ID。
 // 同时返回新事件文本的向量，供创建成功后写入缓存（同批后续新事件直接复用）。
-// embedding 失败只降级为「不做语义查重」（名称精确查重仍然生效），不阻断拼装。
+// 任何一次 embedding 失败都返回 error（调用方 fail-closed：拒绝创建，记忆留普通池）。
 func (a *EventAssembler) duplicateBySummary(ctx context.Context, name, summary string, active map[string]*model.Event) (string, []float64, error) {
 	text := strings.TrimSpace(name + "\n" + summary)
 	vec, err := a.embedder.Embed(ctx, text)
@@ -517,8 +569,7 @@ func (a *EventAssembler) duplicateBySummary(ctx context.Context, name, summary s
 	for id, e := range active {
 		ev, err := a.eventVec(ctx, e)
 		if err != nil {
-			log.Printf("[event] dedupe embed event %s error: %v", id, err)
-			continue
+			return "", nil, fmt.Errorf("embed existing event %s: %w", id, err)
 		}
 		if sim := cosineSimilarity(vec, ev); sim > best {
 			best, bestID = sim, id
@@ -575,9 +626,13 @@ func normalizeEventName(name string) string {
 // eventSummaryMaxRunes — summary 硬上限（设计 §4.4：≤200 字）。
 const eventSummaryMaxRunes = 200
 
+// eventNameMaxRunes — 事件名上限，与 model.Event 的 size:100 对齐。
+const eventNameMaxRunes = 100
+
 // ==================== Prompt ====================
 
-const eventAssemblySystemPrompt = `你是「事件拼装」助手。把本批新记忆归到现实里同一件事的事件下；必要时新建事件或合并重复事件。
+func eventAssemblySystemPrompt(maxIterations int) string {
+	return fmt.Sprintf(`你是「事件拼装」助手。把本批新记忆归到现实里同一件事的事件下；必要时新建事件或合并重复事件。
 
 —————— 什么是事件 ——————
 - 现实里持续存在、用户主动跟进的一件事（如「回西安准备」「驾照考取」「求职」）。
@@ -586,8 +641,9 @@ const eventAssemblySystemPrompt = `你是「事件拼装」助手。把本批新
 
 —————— 工具 ——————
 unified_search（只读）：候选里没有、但怀疑某条记忆属于别的事件时，用 semantic_search/keyword_search 搜记忆。
+（当前版本还没有 event 域检索 / event.get，只能搜记忆，看不到事件全文。）
 候选里已有 sim ≥ 0.75 且明显是同一件事 → 直接分配，不要搜。
-只有「像事件但候选都不匹配」或「怀疑两个事件重复」才允许搜。最多 6 轮。
+只有「像事件但候选都不匹配」或「怀疑两个事件重复」才允许搜。最多 %d 轮。
 
 —————— 输出 ——————
 信息足够后，输出纯 JSON（不要 markdown 代码块）：
@@ -602,7 +658,8 @@ unified_search（只读）：候选里没有、但怀疑某条记忆属于别的
 - event_updates 用来重写被改动事件的 summary（≤200 字，写当前状态，未定的事写在里面）；只改名时 name 必填、summary 留空。
 - 记忆的 current_event_id 非空表示它已属于该事件；内容有变化时把该事件放进 event_updates。
 - merge 只在两个事件确实重复时用；同一批里不要写链式合并（A→B 又 B→C）。
-- 没有需要做的操作就输出 {"assignments":[],"new_events":[],"event_updates":[],"merge":[]}。`
+- 没有需要做的操作就输出 {"assignments":[],"new_events":[],"event_updates":[],"merge":[]}。`, maxIterations)
+}
 
 const eventAssemblyFinalRoundPrompt = `[系统] 本轮已达最大步数限制。请不要再调用任何工具，直接根据已掌握的信息输出拼装 JSON。
 格式：{"assignments":[],"new_events":[],"event_updates":[],"merge":[]}。`
@@ -622,7 +679,7 @@ func buildAssemblyUserMessage(batch []model.UserMemory, candidates []assemblyCan
 		fmt.Fprintf(&b, `<event id="%s" name="%s" memory_count="%d" last_memory_at="%s" sim="%.2f"%s>`+"\n",
 			html.EscapeString(c.Event.ID), html.EscapeString(c.Event.Name), c.MemoryCount, last, c.Sim,
 			recentAttr(c.Recent))
-		b.WriteString(html.EscapeString(truncateStr(c.Event.Summary, 300)))
+		b.WriteString(html.EscapeString(truncateRunes(c.Event.Summary, 300)))
 		b.WriteString("\n</event>\n")
 	}
 	b.WriteString("</candidates>\n<new_memories>\n")
@@ -631,9 +688,13 @@ func buildAssemblyUserMessage(batch []model.UserMemory, candidates []assemblyCan
 		if m.EventID != nil {
 			cur = *m.EventID
 		}
-		fmt.Fprintf(&b, `<memory id="%s" date="%s" topic="%s" current_event_id="%s">%s</memory>`+"\n",
-			html.EscapeString(m.ID), m.CreatedAt.Format("2006-01-02"), html.EscapeString(m.Topic), html.EscapeString(cur),
-			html.EscapeString(m.MemoryValue))
+		fmt.Fprintf(&b, `<memory id="%s" date="%s" topic="%s" tags="%s" current_event_id="%s">%s`,
+			html.EscapeString(m.ID), m.CreatedAt.Format("2006-01-02"), html.EscapeString(m.Topic),
+			html.EscapeString(m.Tags), html.EscapeString(cur), html.EscapeString(m.MemoryValue))
+		if m.Facts != nil && strings.TrimSpace(*m.Facts) != "" {
+			fmt.Fprintf(&b, "\n<facts>%s</facts>", html.EscapeString(truncateRunes(*m.Facts, 300)))
+		}
+		b.WriteString("</memory>\n")
 	}
 	b.WriteString("</new_memories>\n请输出拼装 JSON。")
 	return b.String()

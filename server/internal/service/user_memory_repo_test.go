@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
@@ -166,5 +167,48 @@ func TestUserMemoryRepo_UpdateOverwritesFacts(t *testing.T) {
 	}
 	if got.Facts != nil {
 		t.Errorf("nil facts must be written as NULL (覆盖), got %q", *got.Facts)
+	}
+}
+
+func TestListUpdatedSince(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := NewUserMemoryRepo(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	for _, id := range []string{"old", "edge", "new"} {
+		m := &model.UserMemory{
+			ID: id, UserID: "u1", MemoryKey: "k",
+			ContentHash: uuid.New().String(), MemoryValue: id,
+		}
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	setAt := func(id string, at time.Time) {
+		if err := db.Model(&model.UserMemory{ID: id}).UpdateColumn("updated_at", at).Error; err != nil {
+			t.Fatalf("set updated_at %s: %v", id, err)
+		}
+	}
+	setAt("old", now.Add(-2*time.Hour))
+	setAt("edge", now)
+	setAt("new", now.Add(time.Hour))
+
+	list, err := repo.ListUpdatedSince(ctx, "u1", now)
+	if err != nil {
+		t.Fatalf("list updated since: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != "edge" || list[1].ID != "new" {
+		t.Fatalf("expected [edge new] (>= boundary, ASC), got %+v", list)
+	}
+	// 别的用户不可见
+	if other, err := repo.ListUpdatedSince(ctx, "u2", now); err != nil || len(other) != 0 {
+		t.Fatalf("cross-user leak: %v %v", other, err)
 	}
 }

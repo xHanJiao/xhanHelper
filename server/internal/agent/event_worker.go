@@ -64,9 +64,9 @@ func (w *EventWorker) Process(ctx context.Context, sess *SessionSnapshot) error 
 	if err != nil {
 		return fmt.Errorf("assemble events: %w", err)
 	}
-	log.Printf("[event] assemble done: conv=%s memories=%d batches=%d created=%d assigned=%d updated=%d merged=%d rejected=%d",
+	log.Printf("[event] assemble done: conv=%s memories=%d batches=%d created=%d assigned=%d updated=%d merged=%d rejected=%d failed=%d",
 		shortConvID(sess.ConvID), stats.Memories, stats.Batches, stats.Created,
-		stats.Assigned, stats.Updated, stats.Merged, stats.Rejected)
+		stats.Assigned, stats.Updated, stats.Merged, stats.Rejected, stats.Failed)
 	return nil
 }
 

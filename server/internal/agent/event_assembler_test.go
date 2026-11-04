@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -16,10 +19,14 @@ import (
 
 // fakeEmbedder — 按文本返回固定向量的 embedding 桩（拼装单测不调真实 API）。
 type fakeEmbedder struct {
-	fn func(text string) []float64
+	fn  func(text string) []float64
+	err error
 }
 
 func (f *fakeEmbedder) Embed(_ context.Context, text string) ([]float64, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	if f.fn != nil {
 		return f.fn(text), nil
 	}
@@ -257,17 +264,17 @@ func TestApplyPlan_RejectChainMerge(t *testing.T) {
 		},
 	}, batchOf(m1), activeOf(eA, eB, eC))
 
-	if stats.Merged != 1 {
-		t.Fatalf("expected only one merge applied, got %d", stats.Merged)
+	if stats.Merged != 0 {
+		t.Fatalf("chain should reject all merges, got %d", stats.Merged)
 	}
-	if !loadEventByID(t, db, eA.ID).IsDeleted {
-		t.Fatal("A should be soft-deleted")
+	if loadEventByID(t, db, eA.ID).IsDeleted {
+		t.Fatal("A should stay active when the whole batch is rejected")
 	}
 	if loadEventByID(t, db, eB.ID).IsDeleted || loadEventByID(t, db, eC.ID).IsDeleted {
 		t.Fatal("B and C should stay active")
 	}
-	if got := loadMemoryByID(t, db, "m1").EventID; got == nil || *got != eB.ID {
-		t.Fatalf("m1 should move to B, got %v", got)
+	if got := loadMemoryByID(t, db, "m1").EventID; got == nil || *got != eA.ID {
+		t.Fatalf("m1 should stay on A, got %v", got)
 	}
 }
 
@@ -350,5 +357,129 @@ func TestEventWorker_SkipsWhenMemoryPhaseNotDone(t *testing.T) {
 	sess := &SessionSnapshot{ConvID: "c1", UserID: "u1", msgs: []model.Message{{CreatedAt: time.Now()}}}
 	if err := w.Process(context.Background(), sess); err != nil {
 		t.Fatalf("process: %v", err)
+	}
+}
+
+func TestMemoryWorker_ErrorDoesNotSetPhaseDone(t *testing.T) {
+	// 抽取失败 → 不置 done，EventWorker 会跳过（不用半成品记忆拼事件）。
+	extractor := NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: &syncMockLLM{}})
+	w := NewMemoryWorker(&MemoryWorkerConfig{Extractor: extractor, MemoryAutoExtract: true})
+	sess := &SessionSnapshot{ConvID: "c1", UserID: "u1", msgs: []model.Message{{Role: "user", Content: "hi"}}}
+	if err := w.Process(context.Background(), sess); err == nil {
+		t.Fatal("expected extraction error")
+	}
+	if sess.MemoryPhaseDone {
+		t.Fatal("MemoryPhaseDone must stay false on error")
+	}
+}
+
+func TestAssemble_BatchesAndAccumulates(t *testing.T) {
+	mock := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"assignments":[],"new_events":[],"event_updates":[],"merge":[]}`},
+		{Content: `{"assignments":[],"new_events":[],"event_updates":[],"merge":[]}`},
+	}}
+	a, db := setupEventAssembler(t, &fakeEmbedder{}, 0)
+	a.flashClient = mock
+	a.batchSize = 2
+	m1 := seedMemory(t, db, "u1", "m1", "a")
+	m2 := seedMemory(t, db, "u1", "m2", "b")
+	m3 := seedMemory(t, db, "u1", "m3", "c")
+
+	stats, err := a.Assemble(context.Background(), "u1", []model.UserMemory{*m1, *m2, *m3})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if stats.Batches != 2 || stats.Memories != 3 {
+		t.Fatalf("expected 2 batches / 3 memories, got %+v", stats)
+	}
+	if mock.callCount != 2 {
+		t.Fatalf("expected one LLM call per batch, got %d", mock.callCount)
+	}
+}
+
+func TestEventWorker_SuccessPath(t *testing.T) {
+	mock := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"assignments":[{"memory_id":"m1","event_id":"EVENT_ID"}],"new_events":[],"event_updates":[],"merge":[]}`},
+	}}
+	a, db := setupEventAssembler(t, &fakeEmbedder{}, 0)
+	a.flashClient = mock
+	e := seedEvent(t, db, "u1", "回西安准备", "打包中")
+	mock.responses[0].Content = strings.ReplaceAll(mock.responses[0].Content, "EVENT_ID", e.ID)
+	seedMemory(t, db, "u1", "m1", "开始打包")
+
+	w := NewEventWorker(&EventWorkerConfig{MemRepo: service.NewUserMemoryRepo(db), Assembler: a})
+	sess := &SessionSnapshot{
+		ConvID:          "c1",
+		UserID:          "u1",
+		msgs:            []model.Message{{CreatedAt: time.Now().Add(-time.Hour)}},
+		MemoryPhaseDone: true,
+	}
+	if err := w.Process(context.Background(), sess); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if got := loadMemoryByID(t, db, "m1").EventID; got == nil || *got != e.ID {
+		t.Fatalf("m1 should be assigned to event, got %v", got)
+	}
+}
+
+func TestApplyPlan_NewEventsDoNotShareMemory(t *testing.T) {
+	a, db := setupEventAssembler(t, &fakeEmbedder{fn: func(text string) []float64 {
+		if strings.HasPrefix(text, "A") {
+			return []float64{1, 0, 0}
+		}
+		return []float64{0, 1, 0}
+	}}, 0)
+	ctx := context.Background()
+	m1 := seedMemory(t, db, "u1", "m1", "唯一记忆")
+
+	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
+		NewEvents: []assemblyNewEvent{
+			{Name: "A 事件", Summary: "a", MemoryIDs: []string{"m1"}},
+			{Name: "B 事件", Summary: "b", MemoryIDs: []string{"m1"}},
+		},
+	}, batchOf(m1), map[string]*model.Event{})
+
+	if stats.Created != 1 || stats.Rejected != 1 {
+		t.Fatalf("expected one created + one rejected, got %+v", stats)
+	}
+	var events []model.Event
+	if err := db.Find(&events).Error; err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly one event, got %d", len(events))
+	}
+	if got := loadMemoryByID(t, db, "m1").EventID; got == nil || *got != events[0].ID {
+		t.Fatalf("m1 should belong to the first event, got %v", got)
+	}
+}
+
+func TestApplyPlan_NewEventFailsClosedOnEmbedError(t *testing.T) {
+	a, db := setupEventAssembler(t, &fakeEmbedder{err: errors.New("embed down")}, 0)
+	ctx := context.Background()
+	e := seedEvent(t, db, "u1", "旧事件", "旧摘要")
+	m1 := seedMemory(t, db, "u1", "m1", "新记忆")
+
+	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
+		NewEvents: []assemblyNewEvent{{Name: "新事件", Summary: "新摘要", MemoryIDs: []string{"m1"}}},
+	}, batchOf(m1), activeOf(e))
+
+	if stats.Created != 0 || stats.Rejected != 1 {
+		t.Fatalf("expected fail-closed rejection, got %+v", stats)
+	}
+	if got := loadMemoryByID(t, db, "m1").EventID; got != nil {
+		t.Fatalf("memory should stay in pool, got %v", got)
+	}
+}
+
+func TestBuildAssemblyUserMessage_KeepsChineseSummary(t *testing.T) {
+	long := strings.Repeat("中文摘要", 60) // 240 runes，超过 300 bytes
+	e := &model.Event{ID: "e1", Name: "事件", Summary: long}
+	msg := buildAssemblyUserMessage(nil, []assemblyCandidate{{Event: e}})
+	if !utf8.ValidString(msg) {
+		t.Fatal("prompt must be valid UTF-8")
+	}
+	if !strings.Contains(msg, long) {
+		t.Fatal("summary must not be byte-truncated")
 	}
 }

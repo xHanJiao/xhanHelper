@@ -398,8 +398,9 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 // ④ fs_read 一页 20KB 只注入 2KB。本函数：
 //  1. 反序列化到通用结构，收集树中全部字符串节点；
 //  2. 从最长的字符串开始按字符做"头 70% + 尾 20% + 标记"截断（保 UTF-8），直到重序列化进预算；
-//  3. LLM 永远收到合法 JSON，且有头有尾；
-//  4. 反序列化失败/无字符串节点/重序列化仍超限 → 回退字节切片（保底，不 panic）。
+//  3. 字符串截到底仍超限（数组条目太多，骨架本身撑爆预算）→ 从最长数组尾部丢条目；
+//  4. LLM 永远收到合法 JSON，且有头有尾；
+//  5. 反序列化失败/结构骨架仍超限 → 回退字节切片 / 最小标记 JSON（保底，不 panic）。
 func truncateToolResultJSON(data []byte, maxLen int) []byte {
 	if maxLen <= 0 || len(data) <= maxLen {
 		return data
@@ -410,42 +411,101 @@ func truncateToolResultJSON(data []byte, maxLen int) []byte {
 	}
 	var refs []strRef
 	collectStrRefs(v, &refs)
-	if len(refs) == 0 {
-		return data[:maxLen]
-	}
 
-	// 估算 JSON 骨架开销（字段名/引号/花括号/逗号），剩余预算分给字符串字段。
-	// 预留 64 字节给截断标记（…[已截断 N 字符]…），保证重序列化不超过 maxLen。
-	overhead := len(data)
-	for _, r := range refs {
-		overhead -= len(r.value())
-	}
-	budget := maxLen - overhead - 64
-	if budget < 128 {
-		budget = 128
-	}
+	if len(refs) > 0 {
+		// 估算 JSON 骨架开销（字段名/引号/花括号/逗号），剩余预算分给字符串字段。
+		// 预留 64 字节给截断标记（…[已截断 N 字符]…），保证重序列化不超过 maxLen。
+		overhead := len(data)
+		for _, r := range refs {
+			overhead -= len(r.value())
+		}
+		budget := maxLen - overhead - 64
+		if budget < 128 {
+			budget = 128
+		}
 
-	// 从最长字符串开始截断；截完一个就重试序列化，仍超限则对该 ref 预算减半继续截。
-	// 预算按 rune 计（truncateStringKeepHeadTail 按字符切），避免中文多字节导致的过度截断；
-	// 每 ref 用独立预算副本，不互相影响。
-	sort.Slice(refs, func(i, j int) bool { return len(refs[i].value()) > len(refs[j].value()) })
-	for _, r := range refs {
-		refBudget := budget
-		for {
-			if utf8.RuneCountInString(r.value()) <= refBudget {
-				break
-			}
-			r.set(truncateStringKeepHeadTail(r.value(), refBudget))
-			if out, err := json.Marshal(v); err == nil && len(out) <= maxLen {
-				return out
-			}
-			refBudget /= 2
-			if refBudget < 32 {
-				break
+		// 从最长字符串开始截断；截完一个就重试序列化，仍超限则对该 ref 预算减半继续截。
+		// 预算按 rune 计（truncateStringKeepHeadTail 按字符切），避免中文多字节导致的过度截断；
+		// 每 ref 用独立预算副本，不互相影响。
+		sort.Slice(refs, func(i, j int) bool { return len(refs[i].value()) > len(refs[j].value()) })
+		for _, r := range refs {
+			refBudget := budget
+			for {
+				if utf8.RuneCountInString(r.value()) <= refBudget {
+					break
+				}
+				r.set(truncateStringKeepHeadTail(r.value(), refBudget))
+				if out, err := json.Marshal(v); err == nil && len(out) <= maxLen {
+					return out
+				}
+				refBudget /= 2
+				if refBudget < 32 {
+					break
+				}
 			}
 		}
 	}
-	return data[:maxLen]
+	return truncateJSONArrays(v, maxLen)
+}
+
+// truncateJSONArrays — 字符串截断救不回来时的兜底：从最长的数组尾部丢条目，
+// 直到重序列化进预算。保留靠前条目（结果按时间/相关度靠前），并在根对象标注省略数。
+func truncateJSONArrays(v interface{}, maxLen int) []byte {
+	dropped := 0
+	for {
+		if dropped > 0 {
+			if m, ok := v.(map[string]interface{}); ok {
+				m[truncatedItemsKey] = fmt.Sprintf(truncatedItemsNote, dropped)
+			}
+		}
+		out, err := json.Marshal(v)
+		if err == nil && len(out) <= maxLen {
+			return out
+		}
+		drop := longestArrayDrop(v)
+		if drop == nil {
+			break
+		}
+		drop()
+		dropped++
+	}
+	// 骨架单独就超预算（maxLen 极小的极端情况）：返回合法的最小标记，不吐断裂 JSON。
+	marker, _ := json.Marshal(map[string]string{"truncated": "…[结果过大，已截断]…"})
+	return marker
+}
+
+const (
+	truncatedItemsKey  = "_truncated_entries"
+	truncatedItemsNote = "…[结果过大，已省略 %d 个条目]…"
+)
+
+// longestArrayDrop 返回「从树里最长的数组尾部丢一个元素」的闭包；没有可丢的数组时返回 nil。
+// 只处理挂在对象字段上的数组（工具结果都是对象）；数组里套数组的极端结构交给最小标记兜底。
+func longestArrayDrop(v interface{}) func() {
+	var best func()
+	bestLen := 0
+	var walk func(node interface{})
+	walk = func(node interface{}) {
+		switch t := node.(type) {
+		case map[string]interface{}:
+			for k, val := range t {
+				if arr, ok := val.([]interface{}); ok && len(arr) > bestLen {
+					arr, key := arr, k
+					best = func() { t[key] = arr[:len(arr)-1] }
+					bestLen = len(arr)
+				}
+			}
+			for _, val := range t {
+				walk(val)
+			}
+		case []interface{}:
+			for _, item := range t {
+				walk(item)
+			}
+		}
+	}
+	walk(v)
+	return best
 }
 
 // strRef — 一棵 JSON 树中某个字符串字段的引用（便于原地改写）。

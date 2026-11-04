@@ -845,7 +845,7 @@ onUnmounted(() => {
             <div v-for="q in (hooks.task_queues || [])" :key="q.task_type" style="padding-left: 8px; color: var(--color-text-muted);">
               · {{ q.task_type }}: <strong style="color: var(--color-text);">{{ q.pending }}</strong>
             </div>
-            <div>主题发现剩余: <strong>{{ hooks.discover_remaining }}</strong></div>
+            <div>每日回顾剩余: <strong>{{ hooks.discover_remaining }}</strong></div>
             <div>会话归档剩余: <strong>{{ hooks.archive_remaining }}</strong></div>
           </div>
         </NCard>

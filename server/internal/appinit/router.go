@@ -28,17 +28,15 @@ import (
 )
 
 // RegisterMonitorSnapshots 注册监控快照
-func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, convRepo *service.ConversationRepo, themeStateRepo *service.ThemeStateRepo) {
+func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, convRepo *service.ConversationRepo) {
 	snapshots := &snapshotProvider{
-		vectorStore:    vs,
-		mcpManager:     mcpManager,
-		convRepo:       convRepo,
-		themeStateRepo: themeStateRepo,
+		vectorStore: vs,
+		mcpManager:  mcpManager,
+		convRepo:    convRepo,
 	}
 	monitor.Register("vector_store", snapshots.VectorStore)
 	monitor.Register("mcp", snapshots.MCP)
 	monitor.Register("active_conversations", snapshots.ActiveConversations)
-	monitor.Register("themes", snapshots.Themes)
 }
 
 // AssertLocalEnv 本地模式启动断言（第 4 期）：local_env / APP_ENV / 数据根 / token 前缀
@@ -291,10 +289,9 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 
 // snapshotProvider 提供监控看板的快照数据
 type snapshotProvider struct {
-	vectorStore    *agent.VectorStore
-	mcpManager     *mcp.Manager
-	convRepo       *service.ConversationRepo
-	themeStateRepo *service.ThemeStateRepo
+	vectorStore *agent.VectorStore
+	mcpManager  *mcp.Manager
+	convRepo    *service.ConversationRepo
 }
 
 func (p *snapshotProvider) VectorStore() any {
@@ -316,15 +313,4 @@ func (p *snapshotProvider) ActiveConversations() any {
 		return 0
 	}
 	return p.convRepo.CountActive(context.Background(), time.Hour)
-}
-
-func (p *snapshotProvider) Themes() any {
-	if p.themeStateRepo == nil {
-		return nil
-	}
-	stats, err := p.themeStateRepo.GlobalStats(context.Background())
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return stats
 }

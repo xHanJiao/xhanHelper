@@ -117,3 +117,79 @@ func TestUnionDoesNotMutateInput(t *testing.T) {
 		t.Errorf("input mutated: %v", a)
 	}
 }
+
+// PurgeLegacyThemes：dry-run 只统计；write 清掉旧主题全部残留，note 数据不受影响；重跑幂等。
+func TestPurgeLegacyThemes(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.ThemeState{}, &model.ConceptEmbedding{}, &model.Embedding{}, &model.EmbeddingChunk{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if err := db.Create(&model.ThemeState{ID: "t1", UserID: "u1", Name: "旧主题"}).Error; err != nil {
+		t.Fatalf("seed theme: %v", err)
+	}
+	concepts := []model.ConceptEmbedding{
+		{ID: "c-theme", Type: model.EntityTypeTheme, Value: "旧主题", UserID: "u1", ParentType: model.EntityTypeTheme},
+		{ID: "c-topic", Type: "topic", Value: "保留", UserID: "u1"},
+	}
+	for i := range concepts {
+		if err := db.Create(&concepts[i]).Error; err != nil {
+			t.Fatalf("seed concept: %v", err)
+		}
+	}
+	themeChunkKey := model.ChunkVectorKey(model.EntityTypeTheme, "t1", 0)
+	noteChunkKey := model.ChunkVectorKey(model.EntityTypeNote, "n1", 0)
+	embeddings := []model.Embedding{
+		{ID: "e-theme", EntityType: model.EntityTypeTheme, EntityID: "c-theme", UserID: "u1", Model: "m"},
+		{ID: "e-theme-chunk", EntityType: model.EntityTypeChunk, EntityID: themeChunkKey, UserID: "u1", Model: "m"},
+		{ID: "e-note", EntityType: model.EntityTypeNote, EntityID: "n1", UserID: "u1", Model: "m"},
+		{ID: "e-note-chunk", EntityType: model.EntityTypeChunk, EntityID: noteChunkKey, UserID: "u1", Model: "m"},
+	}
+	for i := range embeddings {
+		if err := db.Create(&embeddings[i]).Error; err != nil {
+			t.Fatalf("seed embedding: %v", err)
+		}
+	}
+	chunks := []model.EmbeddingChunk{
+		{ID: "tc1", ParentType: model.EntityTypeTheme, ParentID: "t1", UserID: "u1", ChunkIndex: 0, Content: "x"},
+		{ID: "nc1", ParentType: model.EntityTypeNote, ParentID: "n1", UserID: "u1", ChunkIndex: 0, Content: "x"},
+	}
+	for i := range chunks {
+		if err := db.Create(&chunks[i]).Error; err != nil {
+			t.Fatalf("seed chunk: %v", err)
+		}
+	}
+
+	// dry-run：统计完整，一条不删。
+	sum, err := PurgeLegacyThemes(db, Options{Write: false})
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if want := (ThemePurgeSummary{Themes: 1, ThemeVectors: 1, ChunkVectors: 1, ChunkRows: 1, Concepts: 1}); *sum != want {
+		t.Fatalf("dry-run summary = %+v, want %+v", *sum, want)
+	}
+	assertCount(t, db, &model.ThemeState{}, "id = ?", "t1", 1)
+
+	// write：旧主题消失，note 数据与 topic concept 保留。
+	if _, err := PurgeLegacyThemes(db, Options{Write: true}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	assertCount(t, db, &model.ThemeState{}, "id = ?", "t1", 0)
+	assertCount(t, db, &model.ConceptEmbedding{}, "id = ?", "c-theme", 0)
+	assertCount(t, db, &model.ConceptEmbedding{}, "id = ?", "c-topic", 1)
+	assertCount(t, db, &model.Embedding{}, "id = ?", "e-theme", 0)
+	assertCount(t, db, &model.Embedding{}, "id = ?", "e-theme-chunk", 0)
+	assertCount(t, db, &model.Embedding{}, "id = ?", "e-note", 1)
+	assertCount(t, db, &model.Embedding{}, "id = ?", "e-note-chunk", 1)
+	assertCount(t, db, &model.EmbeddingChunk{}, "id = ?", "tc1", 0)
+	assertCount(t, db, &model.EmbeddingChunk{}, "id = ?", "nc1", 1)
+
+	// 幂等：重跑统计全 0。
+	sum, err = PurgeLegacyThemes(db, Options{Write: false})
+	if err != nil || *sum != (ThemePurgeSummary{}) {
+		t.Fatalf("rerun want empty summary, got (%+v,%v)", sum, err)
+	}
+}

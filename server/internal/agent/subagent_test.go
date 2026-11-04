@@ -1042,6 +1042,59 @@ func TestTruncateToolResultJSON_KeepsValidJSON(t *testing.T) {
 	}
 }
 
+// 大事件（event.get 返回几十条记忆）光条目骨架就超过 2000，字符串截断救不回来。
+// 必须丢数组尾部条目，而不是回退字节切片吐断裂 JSON——拼装循环靠这个 JSON 判断归属。
+func TestTruncateToolResultJSON_DropsArrayItemsWhenSkeletonTooBig(t *testing.T) {
+	memories := make([]map[string]interface{}, 0, 40)
+	for i := 0; i < 40; i++ {
+		memories = append(memories, map[string]interface{}{
+			"id":         fmt.Sprintf("mem-%036d", i),
+			"content":    strings.Repeat("科三考试细节，", 8),
+			"created_at": "2026-11-03",
+			"updated_at": "2026-11-03",
+			"facts":      []string{"用户原话一", "用户原话二"},
+		})
+	}
+	detail, _ := json.Marshal(map[string]interface{}{
+		"id": "evt-1", "name": "驾照考取", "summary": "科三待补考",
+		"memory_count": 40, "memories": memories, "is_deleted": false,
+	})
+	data, _ := json.Marshal(&tool.Result{Success: true, Data: detail})
+
+	out := truncateToolResultJSON(data, 2000)
+	if len(out) > 2000 {
+		t.Fatalf("截断后仍超预算: %d", len(out))
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("截断后必须是合法 JSON: %v\n%s", err, out)
+	}
+	if m["success"] != true {
+		t.Errorf("success 字段应保留: %+v", m)
+	}
+	if _, ok := m[truncatedItemsKey]; !ok {
+		t.Errorf("丢条目后应在根对象标注省略数: %v", m)
+	}
+	d, ok := m["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data 结构应保留: %v", m)
+	}
+	if d["id"] != "evt-1" || d["name"] != "驾照考取" || d["summary"] != "科三待补考" {
+		t.Errorf("事件元信息应保留: %v", d)
+	}
+	mems, ok := d["memories"].([]interface{})
+	if !ok || len(mems) == 0 || len(mems) >= 40 {
+		t.Fatalf("应保留部分记忆条目: %T len=%d", d["memories"], len(mems))
+	}
+	// 保留下来的每个条目结构完整（时间越新越靠前，丢的是尾部）
+	for _, item := range mems {
+		mem, ok := item.(map[string]interface{})
+		if !ok || mem["id"] == "" || mem["content"] == "" {
+			t.Fatalf("保留条目结构破损: %+v", item)
+		}
+	}
+}
+
 func TestTruncateToolResultJSON_NoTruncationBelowLimit(t *testing.T) {
 	data, _ := json.Marshal(&tool.Result{Success: true, Data: json.RawMessage(`{"content":"短内容"}`)})
 	out := truncateToolResultJSON(data, 2000)

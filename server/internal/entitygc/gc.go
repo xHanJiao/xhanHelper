@@ -6,6 +6,8 @@
 //   - PurgeCancelledNotes：把 status=取消态的笔记连根删除（行 + chunk/向量/版本），
 //     用户主动取消的笔记不再需要保留。整批一个事务，幂等。
 //
+// PurgeLegacyThemes：旧主题系统停用后一次性清理残留（状态页 / 向量 / chunk / concept）。
+//
 // 只覆盖 note / memory：concept 孤儿由 topic-merge 的 GC 处理，message 孤儿另属子系统。
 package entitygc
 
@@ -150,6 +152,77 @@ func PurgeCancelledNotes(db *gorm.DB, opts Options) (int, error) {
 		return 0, fmt.Errorf("清理取消态笔记（共 %d 条，事务已回滚）: %w", len(ids), err)
 	}
 	return len(ids), nil
+}
+
+// ThemePurgeSummary — 旧主题残留数据清理汇总。
+type ThemePurgeSummary struct {
+	Themes       int64 // theme_states 行
+	ThemeVectors int64 // embeddings.entity_type=theme（全文向量）
+	ChunkVectors int64 // embeddings.entity_type=chunk 且 entity_id 以 chunk:theme: 开头
+	ChunkRows    int64 // embedding_chunks.parent_type=theme
+	Concepts     int64 // concept_embeddings.type=theme
+}
+
+// PurgeLegacyThemes 清理旧主题系统的全部残留：状态页、全文/块向量、chunk 行、concept 行。
+// 旧主题已停写且无读取方（事件系统替代，设计 §8.4）。整批一个事务，幂等。
+func PurgeLegacyThemes(db *gorm.DB, opts Options) (*ThemePurgeSummary, error) {
+	ctx := context.Background()
+	sum := &ThemePurgeSummary{}
+	counts := []struct {
+		dst   *int64
+		model interface{}
+		query string
+		args  []interface{}
+	}{
+		{&sum.Themes, &model.ThemeState{}, "", nil},
+		{&sum.ThemeVectors, &model.Embedding{}, "entity_type = ?", []interface{}{model.EntityTypeTheme}},
+		{&sum.ChunkVectors, &model.Embedding{}, "entity_type = ? AND entity_id LIKE ?", []interface{}{model.EntityTypeChunk, model.ChunkVectorKeyPrefix(model.EntityTypeTheme) + "%"}},
+		{&sum.ChunkRows, &model.EmbeddingChunk{}, "parent_type = ?", []interface{}{model.EntityTypeTheme}},
+		{&sum.Concepts, &model.ConceptEmbedding{}, "type = ?", []interface{}{model.EntityTypeTheme}},
+	}
+	for _, c := range counts {
+		q := db.WithContext(ctx).Model(c.model)
+		if c.query != "" {
+			q = q.Where(c.query, c.args...)
+		}
+		if err := q.Count(c.dst).Error; err != nil {
+			return nil, fmt.Errorf("统计旧主题残留: %w", err)
+		}
+	}
+	if !opts.Write {
+		log.Printf("[entity-gc] (dry-run) 旧主题残留：theme_states %d，全文向量 %d，chunk 向量 %d，chunk 行 %d，concept %d",
+			sum.Themes, sum.ThemeVectors, sum.ChunkVectors, sum.ChunkRows, sum.Concepts)
+		return sum, nil
+	}
+
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		embRepo := service.NewEmbeddingRepo(tx)
+		chunkRepo := service.NewEmbeddingChunkRepo(tx)
+		conceptRepo := service.NewConceptEmbeddingRepo(tx)
+		if _, err := embRepo.DeleteChunksByParentType(ctx, model.EntityTypeTheme); err != nil {
+			return fmt.Errorf("删主题 chunk 向量: %w", err)
+		}
+		if _, err := chunkRepo.DeleteAllByType(ctx, model.EntityTypeTheme); err != nil {
+			return fmt.Errorf("删主题 chunk 行: %w", err)
+		}
+		if err := tx.WithContext(ctx).Where("entity_type = ?", model.EntityTypeTheme).
+			Delete(&model.Embedding{}).Error; err != nil {
+			return fmt.Errorf("删主题全文向量: %w", err)
+		}
+		if _, err := conceptRepo.DeleteByType(ctx, model.EntityTypeTheme); err != nil {
+			return fmt.Errorf("删主题 concept: %w", err)
+		}
+		if err := tx.WithContext(ctx).Where("id <> ''").Delete(&model.ThemeState{}).Error; err != nil {
+			return fmt.Errorf("删 theme_states: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("清理旧主题残留（事务已回滚）: %w", err)
+	}
+	log.Printf("[entity-gc] 已清理旧主题：theme_states %d，全文向量 %d，chunk 向量 %d，chunk 行 %d，concept %d",
+		sum.Themes, sum.ThemeVectors, sum.ChunkVectors, sum.ChunkRows, sum.Concepts)
+	return sum, nil
 }
 
 // pluckIDs 用 GORM Pluck 取一列（ids 在 Go 里比对，避免 SQL 跨列 collation 坑）。

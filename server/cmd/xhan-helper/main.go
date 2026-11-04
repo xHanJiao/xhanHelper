@@ -114,7 +114,7 @@ func main() {
 	}
 
 	// --- 监控 ---
-	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation, repos.ThemeState)
+	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation)
 	tools.MCPManager.StartIdleReaper(agents.BGCtx)
 
 	// --- 本地数据备份（仅本地模式；每小时检查、到期才跑）---

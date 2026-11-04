@@ -986,17 +986,17 @@ func TestMergePacketBatches_DedupKeepsHighestScore(t *testing.T) {
 
 func TestMergePacketBatches_DefaultMaxPerType(t *testing.T) {
 	batches := []map[string][]retrieval.ContextPacket{
-		{"theme": {
-			{ID: "t1", Type: "theme", Score: 1},
-			{ID: "t2", Type: "theme", Score: 1},
-			{ID: "t3", Type: "theme", Score: 1},
-			{ID: "t4", Type: "theme", Score: 1},
-			{ID: "t5", Type: "theme", Score: 1},
-			{ID: "t6", Type: "theme", Score: 1},
+		{"event": {
+			{ID: "e1", Type: "event", Score: 1},
+			{ID: "e2", Type: "event", Score: 1},
+			{ID: "e3", Type: "event", Score: 1},
+			{ID: "e4", Type: "event", Score: 1},
+			{ID: "e5", Type: "event", Score: 1},
+			{ID: "e6", Type: "event", Score: 1},
 		}},
 	}
 	out := mergePacketBatches(batches, 0)
-	if len(out["theme"]) != 5 {
-		t.Errorf("default maxPerType should be 5, got %d", len(out["theme"]))
+	if len(out["event"]) != 5 {
+		t.Errorf("default maxPerType should be 5, got %d", len(out["event"]))
 	}
 }

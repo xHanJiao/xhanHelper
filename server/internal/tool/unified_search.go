@@ -116,7 +116,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "semantic_search",
 			Display:     "语义搜索",
-			Description: "用自然语言语义搜索记忆、笔记、摘要、主题和历史消息，返回结构化 JSON。适合「查找相关...」「搜索关于...」等意图模糊的查询",
+			Description: "用自然语言语义搜索记忆、笔记、摘要、事件和历史消息，返回结构化 JSON。适合「查找相关...」「搜索关于...」等意图模糊的查询",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

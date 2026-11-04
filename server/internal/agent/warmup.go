@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"log"
-	"strings"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
@@ -11,97 +10,10 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// WarmupAll 启动时将 embedding 表中各类型向量加载到内存 VectorStore
-func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.EmbeddingRepo, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo, chunkDisabledParents []string) {
-	warmupThemeEmbeddings(ctx, embeddingRepo, vs, conceptEmbedRepo, themeStateRepo)
+// WarmupAll 启动时将 chunk/tool 向量加载到内存 VectorStore；旧 theme 向量已停写、无检索方，不再预热。
+func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.EmbeddingRepo, chunkDisabledParents []string) {
 	warmupChunkEmbeddings(ctx, embeddingRepo, vs, chunkDisabledParents)
 	warmupToolEmbeddings(ctx, embeddingRepo, vs)
-}
-
-func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
-	const pageSize = 100
-	loaded := 0
-
-	conceptIDToValue := make(map[string]string)
-	if conceptEmbedRepo != nil {
-		allConcepts, cerr := conceptEmbedRepo.ListByTypeAll(ctx, "theme")
-		if cerr != nil {
-			log.Printf("[warmup] concept list error: %v", cerr)
-		} else {
-			for _, c := range allConcepts {
-				conceptIDToValue[c.ID] = c.Value
-			}
-		}
-	}
-
-	userThemeMap := make(map[string]map[string]string)
-	seenUsers := make(map[string]bool)
-	{
-		for offset := 0; ; offset += pageSize {
-			embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeTheme, pageSize, offset)
-			if err != nil || len(embeddings) == 0 {
-				break
-			}
-			for _, emb := range embeddings {
-				if emb.UserID != "" && !seenUsers[emb.UserID] {
-					seenUsers[emb.UserID] = true
-					themes, terr := themeStateRepo.ListActive(ctx, emb.UserID)
-					if terr == nil {
-						nameMap := make(map[string]string)
-						for _, t := range themes {
-							nameMap[t.Name] = t.ID
-						}
-						userThemeMap[emb.UserID] = nameMap
-					}
-				}
-			}
-			if len(embeddings) < pageSize {
-				break
-			}
-		}
-	}
-
-	for offset := 0; ; offset += pageSize {
-		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeTheme, pageSize, offset)
-		if err != nil {
-			log.Printf("[warmup] theme embeddings ListByType error: %v", err)
-			break
-		}
-		if len(embeddings) == 0 {
-			break
-		}
-		for _, emb := range embeddings {
-			if emb.Embedding != nil {
-				vec, err := llm.StringToEmbedding(*emb.Embedding)
-				if err == nil && len(vec) > 0 {
-					meta := map[string]string{
-						"type":    model.VectorTypeTheme,
-						"user_id": emb.UserID,
-					}
-					if conceptValue, ok := conceptIDToValue[emb.EntityID]; ok {
-						meta["concept_value"] = conceptValue
-						nameMap := userThemeMap[emb.UserID]
-						if tid, ok := nameMap[conceptValue]; ok {
-							meta["theme_id"] = tid
-						} else {
-							for name, tid := range nameMap {
-								if strings.HasPrefix(conceptValue, name+" ") || conceptValue == name {
-									meta["theme_id"] = tid
-									break
-								}
-							}
-						}
-					}
-					vectorStore.Upsert(model.VectorPrefixTheme+emb.EntityID, vec, meta)
-					loaded++
-				}
-			}
-		}
-		if len(embeddings) < pageSize {
-			break
-		}
-	}
-	log.Printf("[warmup] theme embeddings: %d loaded into vector store", loaded)
 }
 
 func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore, disabledParents []string) {

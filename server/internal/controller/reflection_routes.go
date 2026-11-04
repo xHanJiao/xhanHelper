@@ -12,6 +12,7 @@ import (
 type ReflectionRoutesConfig struct {
 	R                      gin.IRouter
 	UserRepo               *service.UserRepo
+	ThemeHandler           *ThemeHandler
 	ReflectionAdminHandler *ReflectionAdminHandler
 	MessageTraceHandler    *MessageTraceHandler
 	MessageDebugHandler    *MessageDebugHandler
@@ -24,6 +25,11 @@ type ReflectionRoutesConfig struct {
 
 // RegisterReflectionRoutes 注册 Phase 6 反思系统相关路由（在 NewRouter 之后调用）
 func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
+	// 旧主题状态页只读（已停写；阶段 7 换 EventView 后删除）
+	auth := rc.R.Group("/api")
+	auth.Use(rc.AuthMiddleware)
+	auth.GET("/themes", rc.ThemeHandler.ListThemes)
+
 	// 管理员路由
 	admin := rc.R.Group("/api/admin")
 	admin.Use(rc.AuthMiddleware, rc.AdminMiddleware)

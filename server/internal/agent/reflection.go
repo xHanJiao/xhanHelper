@@ -110,7 +110,7 @@ func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID strin
 	return o.dailyReview(ctx, userID, "evening_review")
 }
 
-// dailyReview 早晚回顾：expire draft + active 衰减 + 对有新活动的主题运行分析
+// dailyReview 早晚回顾：旧主题维护已停写，只写一条 trace 记录节拍。
 func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, triggerType string) (int, error) {
 	traceID := uuid.New().String()
 	log.Printf("[reflection] trace=%s trigger=%s user=%s START", traceID[:8], triggerType, userID)

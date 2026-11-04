@@ -270,19 +270,16 @@ onMounted(loadAnchor)
             <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configB.max_tool_result_chars" class="replay-input" /></label>
             <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configB.max_iterations" class="replay-input" /></label>
           </div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px 12px; font-size: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--color-border);">
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 12px; font-size: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--color-border);">
             <div class="cfg-section">记忆检索</div>
             <div class="cfg-section">笔记检索</div>
             <div class="cfg-section">历史检索</div>
-            <div class="cfg-section">主题检索</div>
             <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.memory.threshold" step="0.05" class="replay-input" /></label>
             <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.note.threshold" step="0.05" class="replay-input" /></label>
             <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.history.threshold" step="0.05" class="replay-input" /></label>
-            <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.theme.threshold" step="0.05" class="replay-input" /></label>
             <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.memory.limit" class="replay-input" /></label>
             <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.note.limit" class="replay-input" /></label>
             <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.history.limit" class="replay-input" /></label>
-            <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.theme.limit" class="replay-input" /></label>
           </div>
         </div>
 

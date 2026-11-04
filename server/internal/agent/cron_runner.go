@@ -42,10 +42,10 @@ const activityRecomputeEvery = 24 * time.Hour
 type CronRunner struct {
 	orch              *ReflectionOrchestrator
 	userRepo          *service.UserRepo
-	discoverTimes     []string      // 发现候选主题定时列表
+	discoverTimes     []string      // 每日回顾定时列表（主题维护已停写，只留 trace 节拍）
 	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
 	delayedTaskRepo   *service.DelayedTaskRepo
-	sessionEndGroup   *PostChatWorkerGroup      // 对话后处理组（摘要/记忆/主题）
+	sessionEndGroup   *PostChatWorkerGroup      // 对话后处理组（摘要/记忆/事件）
 	ephemeralPurger   EphemeralPurger           // 无痕会话物理销毁器（Stage B）
 	sessionGapMinutes int                       // session 间隔阈值（分钟）
 	minActiveDays     int                       // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤

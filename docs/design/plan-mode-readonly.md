@@ -36,7 +36,7 @@
 | 工具 | 放行函数 |
 |---|---|
 | unified_search | 全部 |
-| message_search / theme_search / get_summary | 全部 |
+| message_search / get_summary | 全部 |
 | get_topic_stats / get_topic_detail / get_bill_stats | 全部 |
 | note | semantic_search / get_note / query_notes / count_notes / list_topics / get_note_versions |
 | document | get_document / query_documents / list_documents / get_document_versions / list_tags |

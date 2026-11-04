@@ -598,7 +598,7 @@ flowchart LR
 - 配置 `retrieval.theme`、`resource_zone.budget_topic` / `quota_topic`
 - 重放配置里的 `theme` 检索参数
 
-**保留代码但已停写**：`theme_discover.go`、`theme_analyst.go`、`theme_verifier.go`、`theme_embedder.go`、`theme_chunker.go`、`theme_store.go`、`state_updater.go`、`state_worker.go`、`tool/theme.go`、`model/theme_state.go`、`service/theme_state_repo.go`、`get_topic_stats` / `get_topic_detail`。
+**保留代码、运行时不接线（已停写）**：`theme_discover.go`、`theme_analyst.go`、`theme_verifier.go`、`theme_embedder.go`、`theme_chunker.go`、`theme_store.go`、`state_updater.go`、`state_worker.go`、`tool/theme.go`、`model/theme_state.go`、`service/theme_state_repo.go`、`get_topic_stats` / `get_topic_detail`。
 
 停写方式（运行时不接线，代码留待统一删除）：
 

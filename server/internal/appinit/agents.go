@@ -61,7 +61,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		summarySource.Warmup(bgCtx, infra.Embedder)
 
 		// 从 embedding 表加载向量到内存 store
-		agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, cfg.Vector.ChunkDisabledParents)
+		agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, cfg.Vector.ChunkDisabledParents)
 		ready.Store(true)
 	}()
 

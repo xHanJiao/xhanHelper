@@ -12,9 +12,8 @@ import (
 
 // ContextRetriever 并发运行所有 ContextSource，返回按 type 分组的结果。
 type ContextRetriever struct {
-	sources   []retrieval.ContextSource
-	modifiers map[string]ScoreModifier
-	config    *RetrieveConfig
+	sources []retrieval.ContextSource
+	config  *RetrieveConfig
 }
 
 // NewContextRetriever 创建检索器。
@@ -24,16 +23,9 @@ func NewContextRetriever(sources []retrieval.ContextSource, cfg *RetrieveConfig)
 		cfg = &c
 	}
 	return &ContextRetriever{
-		sources:   sources,
-		config:    cfg,
-		modifiers: make(map[string]ScoreModifier),
+		sources: sources,
+		config:  cfg,
 	}
-}
-
-// WithModifier 为指定 source 注册分数修饰器。
-func (r *ContextRetriever) WithModifier(name string, mod ScoreModifier) *ContextRetriever {
-	r.modifiers[name] = mod
-	return r
 }
 
 // Retrieve 并发运行所有 source，返回按 type 分组的结果。
@@ -93,13 +85,6 @@ func (r *ContextRetriever) Retrieve(ctx context.Context, opts retrieval.SearchOp
 				Error: s.err.Error(),
 			})
 			continue
-		}
-
-		// 应用 modifier
-		if mod, ok := r.modifiers[s.name]; ok {
-			for i := range s.packets {
-				s.packets[i] = mod(s.packets[i])
-			}
 		}
 
 		// 构建 trace

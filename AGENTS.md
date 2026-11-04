@@ -35,7 +35,7 @@ xhanHelper/
 │       │   ├── pipeline/       # 预处理管线（短输入检测/日期规范化）
 │       │   ├── promptbuilder/  # System Prompt 分层构建
 │       │   ├── ctxflow/        # 上下文检索 + XML 格式化
-│       │   ├── retrieval/      # ContextSource 实现（memory/note/history/summary/theme…）
+│       │   ├── retrieval/      # ContextSource 实现（memory/note/history/summary/event…）
 │       │   └── replay/         # 对话重放对比（admin 调试）
 │       ├── llm/         # LLM 抽象层（deepseek/ark/doubao/claude + embedding + files 图床）
 │       ├── llmcost/     # 成本中心：UsageRecorder + CostTracker 装饰器 + I/O 审计
@@ -136,12 +136,11 @@ type Tool interface {
 | `note` | 笔记 CRUD + 语义检索 + 版本快照/回滚 |
 | `document` | Markdown 文档 CRUD + 标签 + 窗口读（`char_offset`/`char_limit`，大文档回 outline，标题/正文有长度上限；无版本/回滚） |
 | `agent` | 自定义智能体管理 + 会话绑定 |
-| `unified_search` | **统一检索入口**：语义/关键词搜索，覆盖 memory / note / summary / theme / history 五域 |
+| `unified_search` | **统一检索入口**：语义/关键词搜索，覆盖 memory / note / summary / event / history 五域 |
 | `message_search` | 历史消息按时间范围 / ID / 数量精确查（语义检索走 `unified_search`） |
 | `get_summary` | 对话摘要按时间 / ID 查 |
 | `get_topic_stats` / `get_topic_detail` | topic 聚类统计 / 指定 topic 下笔记与记忆全文 |
 | `get_bill_stats` | 账单结构化统计（供 Mission / 反思用） |
-| `theme` / `theme_search` | 主题状态页管理（create/update/close/reactivate）/ 查询 |
 | `reminder` | 待办提醒创建/查询/取消/提及标记 |
 | `plan` | 会话执行计划（todo）管理 |
 | `task` | 子任务/子 agent：`web_explore` / `file_explore` / `user_context`，白名单双保险 |
@@ -158,8 +157,8 @@ type Tool interface {
 | `memory_worker.go` / `extractor.go` | `UserMemory` 提取 + 向量去重（阈值 `server.memory_dupe_threshold`，默认 0.85） |
 | `summary_worker.go` | `ConversationSummary` 增量合并 + embedding + chunk |
 | `profile_worker.go` | `UserProfileFact`（冷启动 / 增量 / 迁移，配额校验重试） |
-| `state_worker.go` / `state_updater.go` | `ThemeState` 状态页增量更新 |
-| `theme_*.go` | 主题发现（对话/统计两路提名）、分析、检验、chunk/embed |
+| ~~`state_worker.go` / `state_updater.go`~~ | 已停写（事件系统接管；代码保留未接线） |
+| ~~`theme_*.go`~~ | 已停写（主题发现/分析/检验；代码保留未接线） |
 | `mission_*.go` | Mission 发现与定期检查，报告投递信箱 |
 | `secretary.go` | 把分析发现转成人性化提醒文案 |
 | `ephemeral_destroyer.go` | 无痕会话销毁（同步软删 + 后台分批物理清理） |
@@ -212,7 +211,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 | 账单 / 笔记 / 记忆 / 摘要 | `bills.go` `notes.go` `memory.go` `summary.go` | 列表/统计/导出导入、批量增删、摘要按 id 取消息 |
 | 智能体 / 工具 / Prompt | `agents.go` `tools.go` `prompts.go` | CRUD + `agents-for-input-bar` + prompt 版本回滚 |
 | 文档 / 图片 / 提醒 | `documents.go` `images.go` `reminders.go` | 文档 CRUD + tags + 分享；图片上传/读取；提醒 ack/cancel |
-| 信箱 / 主题 / Mission | `reflection_routes.go` | mailbox 读/归档/发起对话、themes、missions |
+| 信箱 / 主题（只读）/ Mission | `reflection_routes.go` | mailbox 读/归档/发起对话、themes（只读）、missions |
 | 公开（无认证） | `router.go` | `/api/share/:token`、`/api/share/messages/:token`、`/images/:file`（仅 public） |
 | Admin | `reflection_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、reflection traces、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
 

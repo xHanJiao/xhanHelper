@@ -7,14 +7,14 @@ import (
 )
 
 // GuardProdWrite 破坏性写入前的护栏：回显解析后的 DB 路径；若疑似 prod 库
-// （路径不含 "-dev"）则要求 CONFIRM_PROD=yes，否则退出。
+// （路径既不含 "-dev" 也不含 "_test"）则要求 CONFIRM_PROD=yes，否则退出。
 //
 // 本地 prod 库 = ~/Library/Application Support/xhanHelper/xhan_helper.db；
-// dev 沙盒 = .../xhanHelper-dev/...（判据：路径带 "-dev"）。
+// dev 沙盒 = .../xhanHelper-dev/...（判据：路径带 "-dev"）；MySQL dev 库名带 "_test"。
 // 供 entity-gc / topic-clean 等本地维护工具统一调用，避免各写一份、口径漂移。
 func GuardProdWrite(dbPath string) {
 	log.Printf("[prodguard] --write 目标 DB：%s", dbPath)
-	if strings.Contains(dbPath, "-dev") {
+	if strings.Contains(dbPath, "-dev") || strings.Contains(dbPath, "_test") {
 		return
 	}
 	if os.Getenv("CONFIRM_PROD") == "yes" {

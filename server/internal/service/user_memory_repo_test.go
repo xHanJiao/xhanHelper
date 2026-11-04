@@ -212,3 +212,68 @@ func TestListUpdatedSince(t *testing.T) {
 		t.Fatalf("cross-user leak: %v %v", other, err)
 	}
 }
+
+// TestListBySourcesAfter 覆盖冷启动游标的两个关键点：来源过滤 + (created_at, id) 续跑不重不漏。
+func TestListBySourcesAfter(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := NewUserMemoryRepo(db)
+	ctx := context.Background()
+
+	t0 := time.Date(2026, 9, 24, 10, 0, 0, 0, time.Local)
+	t1 := t0.Add(time.Hour)
+	seed := []struct {
+		id, source string
+		at         time.Time
+	}{
+		{"m-b", model.MemorySourcePostChat, t0},
+		{"m-a", model.MemorySourceInline, t0},
+		{"m-c", model.MemorySourceInline, t1},
+		{"m-z", model.MemorySourceConvLegacy, t0}, // 存量不参与冷启动
+	}
+	for _, s := range seed {
+		m := &model.UserMemory{
+			ID: s.id, UserID: "u1", MemoryKey: "k", ContentHash: "h-" + s.id,
+			MemoryValue: "v-" + s.id, Source: s.source, CreatedAt: s.at,
+		}
+		if err := db.Create(m).Error; err != nil {
+			t.Fatalf("insert %s: %v", s.id, err)
+		}
+	}
+	sources := []string{model.MemorySourcePostChat, model.MemorySourceInline}
+
+	got, err := repo.ListBySourcesAfter(ctx, "u1", sources, nil, "", 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 3 || got[0].ID != "m-a" || got[1].ID != "m-b" || got[2].ID != "m-c" {
+		t.Fatalf("expected [m-a m-b m-c] (created_at,id asc), got %+v", memoryIDs(got))
+	}
+
+	after := t0
+	got, err = repo.ListBySourcesAfter(ctx, "u1", sources, &after, "m-a", 10)
+	if err != nil {
+		t.Fatalf("list after m-a: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "m-b" || got[1].ID != "m-c" {
+		t.Fatalf("expected [m-b m-c] after m-a, got %+v", memoryIDs(got))
+	}
+
+	n, err := repo.CountBySources(ctx, "u1", sources)
+	if err != nil || n != 3 {
+		t.Fatalf("count sources = %d, %v; want 3", n, err)
+	}
+}
+
+func memoryIDs(list []model.UserMemory) []string {
+	ids := make([]string, len(list))
+	for i, m := range list {
+		ids[i] = m.ID
+	}
+	return ids
+}

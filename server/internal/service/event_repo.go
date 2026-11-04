@@ -336,6 +336,27 @@ func (r *EventRepo) Delete(ctx context.Context, userID, id string) error {
 	})
 }
 
+// ResetUser 清空一个用户的全部事件数据：记忆退回普通池（UpdateColumn，不刷 updated_at），
+// 事件硬删。仅供一次性冷启动 --reset 使用；生产删除走 Delete（软删）。
+func (r *EventRepo) ResetUser(ctx context.Context, userID string) (events int64, memories int64, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&model.UserMemory{}).
+			Where("user_id = ? AND event_id IS NOT NULL", userID).
+			UpdateColumn("event_id", nil)
+		if res.Error != nil {
+			return res.Error
+		}
+		memories = res.RowsAffected
+		del := tx.Where("user_id = ?", userID).Delete(&model.Event{})
+		if del.Error != nil {
+			return del.Error
+		}
+		events = del.RowsAffected
+		return nil
+	})
+	return events, memories, err
+}
+
 // truncateEventSummary 截断到 MaxEventSummaryRunes，避免超长 summary 长期占注入预算。
 func truncateEventSummary(s string) string {
 	s = strings.TrimSpace(s)

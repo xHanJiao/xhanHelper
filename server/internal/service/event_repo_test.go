@@ -509,3 +509,40 @@ func TestEventRepo_UpdateSummaryTruncates(t *testing.T) {
 		t.Fatalf("summary should be trimmed, got %q", got.Summary[:10])
 	}
 }
+
+// TestEventRepoResetUser 冷启动 --reset：事件硬删，记忆回池且不刷 updated_at。
+func TestEventRepoResetUser(t *testing.T) {
+	repo, db := setupEventRepo(t)
+	ctx := context.Background()
+	e1 := mustCreate(t, repo, "u1", "回西安")
+	e2 := mustCreate(t, repo, "u1", "求职")
+	addMemory(t, db, "u1", "m1", "h1")
+	addMemory(t, db, "u1", "m2", "h2")
+	addMemory(t, db, "u1", "m3", "h3")
+	if err := repo.AssignMemories(ctx, "u1", e1.ID, []string{"m1"}); err != nil {
+		t.Fatalf("assign m1: %v", err)
+	}
+	if err := repo.AssignMemories(ctx, "u1", e2.ID, []string{"m2"}); err != nil {
+		t.Fatalf("assign m2: %v", err)
+	}
+	before := loadMemory(t, db, "m1").UpdatedAt
+
+	events, memories, err := repo.ResetUser(ctx, "u1")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if events != 2 || memories != 2 {
+		t.Fatalf("reset counted events=%d memories=%d, want 2/2", events, memories)
+	}
+	if n, err := repo.List(ctx, "u1", true, 10, 0); err != nil || len(n) != 0 {
+		t.Fatalf("events should be hard deleted, got %d, %v", len(n), err)
+	}
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if got := loadMemory(t, db, id).EventID; got != nil {
+			t.Fatalf("memory %s should be unassigned, got %q", id, *got)
+		}
+	}
+	if after := loadMemory(t, db, "m1").UpdatedAt; !after.Equal(before) {
+		t.Fatalf("reset must not touch updated_at: %v -> %v", before, after)
+	}
+}

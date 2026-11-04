@@ -163,6 +163,36 @@ func (r *UserMemoryRepo) ListUpdatedSince(ctx context.Context, userID string, si
 	return list, err
 }
 
+// ListBySourcesAfter 按 created_at 正序分页取指定来源的记忆（一次性冷启动用）。
+// after 非零时只取严格晚于 (after, afterID) 的行，用 id 做同秒 tiebreaker，保证断点续跑不重不漏。
+func (r *UserMemoryRepo) ListBySourcesAfter(ctx context.Context, userID string, sources []string, after *time.Time, afterID string, limit int) ([]model.UserMemory, error) {
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 40
+	}
+	q := r.db.WithContext(ctx).Where("user_id = ? AND source IN ?", userID, sources)
+	if after != nil {
+		q = q.Where("created_at > ? OR (created_at = ? AND id > ?)", *after, *after, afterID)
+	}
+	var list []model.UserMemory
+	err := q.Order("created_at ASC, id ASC").Limit(limit).Find(&list).Error
+	return list, err
+}
+
+// CountBySources 统计指定来源的记忆总数（冷启动报告的基数）。
+func (r *UserMemoryRepo) CountBySources(ctx context.Context, userID string, sources []string) (int64, error) {
+	if len(sources) == 0 {
+		return 0, nil
+	}
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("user_id = ? AND source IN ?", userID, sources).
+		Count(&n).Error
+	return n, err
+}
+
 // ListByEventIDs 返回挂在指定事件下的记忆（拼装候选打分用，按事件分组由调用方做）。
 func (r *UserMemoryRepo) ListByEventIDs(ctx context.Context, userID string, eventIDs []string) ([]model.UserMemory, error) {
 	if len(eventIDs) == 0 {

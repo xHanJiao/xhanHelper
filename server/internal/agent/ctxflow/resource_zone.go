@@ -236,14 +236,21 @@ func EventRefsFromPackets(pkts []retrieval.ContextPacket) []retrieval.EventRef {
 
 // CarryEventPackets 取上一轮事件原样携带（跳过检索 / 事件源失败时用）。
 //
-// 这条路径拿不到 Conversation.Extra，所以清掉 pinned 标签：权威来源是 PinnedEventIDs，
-// 保留标签可能已经过期（用户刚 disable）；下一轮 EventSource 会从 Extra 重新派生。
-// 跨窗口（newSession）时只把 full/compact 降为 summary + carried；index 没有 summary，
-// 保持 index（升级成 summary 会得到只有标题、没有状态的空壳，还会挤爆 summary 配额）。
+// 这条路径拿不到 Conversation.Extra 的完整内容，但调用方会把 PinnedEventIDs 传进来：
+//   - pinned 事件跨窗口保持原形态与记忆（「继续」最需要上下文，不能降级）；
+//   - 其余事件同窗口保留原形态，跨窗口把 full/compact 降为 summary carried
+//     （index 保持 index，避免变成没有 summary 的空壳）。
+//
+// 所有非 pinned 事件都会清掉 pinned 标签：权威来源是 PinnedEventIDs，保留旧标签可能已经过期
+// （用户刚 disable）；下一轮 EventSource 会从 Extra 重新派生。
 //
 // 注意：这里不做 DB 校验。删除/合并在第 N 轮发生、第 N+1 轮是短消息时，
 // 该事件会从 XML 多残留一轮；下一轮 EventSource 正常跑时会跳过（自愈延迟一轮）。
-func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool) []retrieval.ContextPacket {
+func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool, pinnedIDs []string) []retrieval.ContextPacket {
+	pinned := make(map[string]struct{}, len(pinnedIDs))
+	for _, id := range pinnedIDs {
+		pinned[id] = struct{}{}
+	}
 	var out []retrieval.ContextPacket
 	for _, p := range pkts {
 		if p.Type != TypeEvent {
@@ -251,6 +258,13 @@ func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool) []retrie
 		}
 		meta, ok := p.Meta.(retrieval.EventMeta)
 		if !ok || meta.EventID == "" {
+			continue
+		}
+		if _, isPinned := pinned[meta.EventID]; isPinned {
+			meta.Pinned = true
+			meta.Carried = false
+			p.Meta = meta
+			out = append(out, p)
 			continue
 		}
 		meta.Pinned = false
@@ -535,6 +549,9 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 		}
 		var victim string
 		for _, typ := range budgetTypePriority {
+			if typ == TypeEvent && !hasNonPinnedEvent(pkts) {
+				continue // 全是 pinned：不降不丢，让其它类型先挨刀
+			}
 			if hasType(pkts, typ) {
 				victim = typ
 				break
@@ -546,7 +563,7 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 		if victim == TypeEvent {
 			// 事件先降级（full→compact→summary→index），index 再降就丢弃
 			if !demoteLastEvent(pkts) {
-				pkts = dropLastOfType(pkts, victim)
+				pkts = dropLastNonPinnedEvent(pkts)
 			}
 		} else {
 			pkts = dropFirstOfType(pkts, victim)
@@ -584,7 +601,11 @@ func budgetPerType(pkts []retrieval.ContextPacket, budgets ZoneBudgets) []retrie
 				if demoteEvent(&list[len(list)-1]) {
 					continue
 				}
-				list = list[:len(list)-1]
+				next := dropLastNonPinnedEvent(list)
+				if len(next) == len(list) {
+					break // 全是 pinned：接受超预算，不降不丢
+				}
+				list = next
 				continue
 			}
 			list = list[1:] // 砍最旧
@@ -648,8 +669,8 @@ func dropLastOfType(pkts []retrieval.ContextPacket, typ string) []retrieval.Cont
 // index 已是最低形态，返回 false 表示调用方应丢弃。
 func demoteEvent(pkt *retrieval.ContextPacket) bool {
 	meta, ok := pkt.Meta.(retrieval.EventMeta)
-	if !ok {
-		return false
+	if !ok || meta.Pinned {
+		return false // pinned 不降级（设计 §6.5），预算兜底时也不动它
 	}
 	switch meta.Mode {
 	case retrieval.EventModeFull:
@@ -672,11 +693,38 @@ func demoteEvent(pkt *retrieval.ContextPacket) bool {
 	return true
 }
 
-// demoteLastEvent 降级最后一个（最低优先级）事件；没有可降级的事件返回 false。
+// demoteLastEvent 降级最后一个（最低优先级）非 pinned 事件；没有可降级的返回 false。
 func demoteLastEvent(pkts []retrieval.ContextPacket) bool {
 	for i := len(pkts) - 1; i >= 0; i-- {
-		if pkts[i].Type == TypeEvent {
+		if pkts[i].Type == TypeEvent && !isPinnedEvent(pkts[i]) {
 			return demoteEvent(&pkts[i])
+		}
+	}
+	return false
+}
+
+// dropLastNonPinnedEvent 丢掉最后一个非 pinned 事件；全是 pinned 时原样返回。
+func dropLastNonPinnedEvent(pkts []retrieval.ContextPacket) []retrieval.ContextPacket {
+	for i := len(pkts) - 1; i >= 0; i-- {
+		if pkts[i].Type == TypeEvent && !isPinnedEvent(pkts[i]) {
+			return append(pkts[:i], pkts[i+1:]...)
+		}
+	}
+	return pkts
+}
+
+func isPinnedEvent(pkt retrieval.ContextPacket) bool {
+	if pkt.Type != TypeEvent {
+		return false
+	}
+	meta, ok := pkt.Meta.(retrieval.EventMeta)
+	return ok && meta.Pinned
+}
+
+func hasNonPinnedEvent(pkts []retrieval.ContextPacket) bool {
+	for _, p := range pkts {
+		if p.Type == TypeEvent && !isPinnedEvent(p) {
+			return true
 		}
 	}
 	return false

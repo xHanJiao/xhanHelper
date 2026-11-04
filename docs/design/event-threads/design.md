@@ -281,6 +281,7 @@ prompt 规则靠模型自觉，再加一道代码闸：
 ### 4.4 summary 怎么维护
 
 - 拼装时对每个被改动的事件，输入旧 summary + 新记忆，输出新 summary（≤200 字）。
+- 200 字是硬上限：`EventRepo.UpdateSummary` 统一截断，拼装与 `event.update` 共用同一口径。
 - summary 是「当前状态」，不是完整历史；完整历史在记忆里。
 - **未定的事就写在 summary 里**（如「科三补考 11-14/11-17 待定」）。不设单独的 pending 字段：它只有拼装时能写、对话里的回答进不来，会过期变成反复追问；summary 每次有新记忆都会重写，已定的自然被覆盖。
 - 记忆被 record loop 更新（改 summary/facts）→ 事件的 summary 可能过期；EventWorker 看到 `updated_at` 变化的记忆时，把对应事件加入 `event_updates` 重算。
@@ -427,7 +428,7 @@ pinned（≤3，full）
 
 - 超上限/超预算时，从优先级最低的开始降：index 先于 summary，summary 先于 compact，compact 先于 full；同形态内按分数降序、`last_memory_at` 旧的先降。
 - `miss` 只驱动同窗口的 `full → compact`（连续 2 轮未命中），不参与跨形态的降级排序；`summary → index` 只由 summary 数量上限和预算触发。
-- pinned 不被降级，除非用户 `event.disable`。
+- pinned 不被降级，除非用户 `event.disable`；预算兜底（per-type 与总预算）同样不降不丢 pinned，全是 pinned 时接受超预算。
 - `full → compact → summary → index → 移出` 是降级顺序，不是按时间一刀切。
 
 ### 6.6 pinned：LLM 主动钉住
@@ -508,7 +509,7 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 - 跨 session（`IsNewSession`）：只注入 summary，标记 `mode="summary" carried="上一窗口"`；如果新 session 里 fresh 命中，立刻升回 full。
 - 长期没命中不按轮数硬丢；只有 summary 超过 12 个、或预算不足时，才降到 index。
 - `PrevEventRefs` 里的事件如果已被合并/删除，**加载不到就跳过**（不做别名解析、不做去重）。
-- **跳过检索（短输入「继续」「好的」等）或事件源报错时，原样携带上一轮事件**：同窗口保留原形态，跨窗口把 full/compact 降为 summary carried（index 保持 index，避免变成没有 summary 的空壳），并清掉 `pinned` 标签（权威来源是 `Conversation.Extra`，这条路径读不到）。不携带的话本轮 XML 写回 DB 后，下一轮就解析不到事件，粘滞链会断。这条路径不查 DB：删除/合并发生后如果紧接着一条短消息，该事件会多残留一轮，下一轮 EventSource 正常跑时自愈。
+- **跳过检索（短输入「继续」「好的」等）或事件源报错时，原样携带上一轮事件**：同窗口保留原形态；跨窗口时 pinned 事件保持 full + 原记忆（`PinnedEventIDs` 由 `RunRequest` 传入，这条路径也读得到），其余 full/compact 降为 summary carried（index 保持 index，避免变成没有 summary 的空壳）。不携带的话本轮 XML 写回 DB 后，下一轮就解析不到事件，粘滞链会断。这条路径不查 DB：删除/合并发生后如果紧接着一条短消息，该事件会多残留一轮，下一轮 EventSource 正常跑时自愈。
 - 字面命中用「事件名是当前消息的子串」判断（中文无空格，不做分词）；命中给 `threshold + 0.1` 的保底分。
 
 **资源区配合**：
@@ -527,11 +528,11 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 | 函数 | 作用 |
 |---|---|
 | `list` | 列出未删除的事件（id、name、last_memory_at、记忆数）；可选 `include_deleted` |
-| `get` | 返回 summary + 全部记忆（含 facts）；已删事件返回「已删除」 |
+| `get` | 返回 summary + 全部记忆（含 facts）；已删事件也返回详情，用 `is_deleted=true` 标注（记忆已回池，memories 为空） |
 | `search` | 语义/关键词搜事件和记忆 |
 | `enable` | 钉住事件；工具结果返回完整事件；写 `Conversation.Extra` |
 | `disable` | 取消钉住 |
-| `update` | 用户明确说「记一下」时手动追加/修正 |
+| `update` | 用户明确说「记一下」时手动追加/修正：改名、改 summary、把记忆 ID 追加到事件 |
 | `delete` | 软删事件，记忆退回普通池 |
 | `merge` | 合并重复事件：记忆搬到目标，源事件软删 |
 
@@ -540,8 +541,8 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 ### 7.2 `unified_search`
 
 - 原来的 `theme` 域换成 `event` 域。
-- 语义搜索：搜事件 summary + 聚合记忆。
-- 关键词搜索：事件名、summary、记忆文本。
+- 语义搜索：以**聚合记忆向量**为主 + 事件名字面命中（summary 没有自己的向量）。
+- 关键词搜索：事件名、summary、记忆文本；记忆侧只取最近 `top_k × 4`（上限 100）条命中记忆，属近似召回。
 
 > 人话：LLM 不用再翻聊天记录找某件事；`event.get` 一次给全，`event.enable` 让它在后续几轮一直留在上下文里。
 
@@ -549,7 +550,7 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 
 拼装 ReAct 用**独立注册表**（照「反思注册表」的做法，`mailbox` 就是这么只给反思用的），只放：
 
-- `unified_search`（memory + event 域）
+- `unified_search`（整个工具放行，实际可查 memory / note / summary / event / history；只读、无害）
 - `event.get`
 
 不注册 `event` 写函数。这样「循环只读」是**结构保证**，不是靠 prompt 自觉。注册表在 `appinit/agents.go` 里建，和主对话注册表互不影响。
@@ -724,7 +725,7 @@ event_assembly:
 | 1 数据模型 | `events` 表 + `user_memories.event_id` + repo | `model/event.go`、`model/user_memory.go`、`service/event_repo.go`、迁移 SQL |
 | 2 拼装 Worker | 握手 + ReAct 拼装 + 创建前校验 + 写库 | `agent/event_worker.go`、`agent/event_assembler.go`、`agent/post_chat_group.go`、`agent/memory_worker.go` |
 | 3 注入 | EventSource + 资源区 event 块 + 预算 | `agent/retrieval/event_source.go`、`agent/ctxflow/blocks.go`、`ctxflow/resource_zone.go`、`agent/orchestrator.go` |
-| 4 工具 | event 工具组 + enable/disable/merge/delete + 拼装只读注册表 + unified_search | `tool/event.go`、`tool/event_query.go`、`tool/unified_search.go`、`appinit/tools.go`、`appinit/agents.go` |
+| 4 工具 | event 工具组 + enable/disable/merge/delete + 拼装只读注册表 + unified_search | `tool/event.go`、`tool/event_query.go`、`tool/unified_search.go`、`appinit/agents.go` |
 | 5 删除旧主题 | 删代码、配置、接线 | `appinit/agents.go`、`appinit/tools.go`、`appinit/router.go`、`config/config.go` |
 | 6 Bootstrap | 一次性冷启动 + 指标 | `cmd/event-bootstrap/main.go` |
 | 7 前端/API | ThemeView → EventView、`/api/events` | `controller/event.go`、`frontend/src/views/ThemeView.vue`、router |

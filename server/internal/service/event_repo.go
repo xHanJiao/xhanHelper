@@ -34,7 +34,10 @@ func NewEventRepo(db *gorm.DB) *EventRepo {
 
 const (
 	eventNameMaxRunes = 100
-	eventListMaxLimit = 200
+	// MaxEventSummaryRunes — 事件 summary 硬上限（设计 §4.4：≤200 字）。
+	// 放在 service 里是为了让所有写入口（拼装、工具）共用同一口径。
+	MaxEventSummaryRunes = 200
+	eventListMaxLimit    = 200
 )
 
 // validateEventName 归一化并校验事件名（LLM 生成，MySQL 严格模式下超长会直接报错）。
@@ -160,7 +163,7 @@ func (r *EventRepo) UpdateSummary(ctx context.Context, userID, id, name, summary
 		updates["name"] = n
 	}
 	if summary != "" {
-		updates["summary"] = summary
+		updates["summary"] = truncateEventSummary(summary)
 	}
 	if len(updates) == 0 {
 		return nil
@@ -331,6 +334,14 @@ func (r *EventRepo) Delete(ctx context.Context, userID, id string) error {
 			Where("user_id = ?", userID).
 			Update("is_deleted", true).Error
 	})
+}
+
+// truncateEventSummary 截断到 MaxEventSummaryRunes，避免超长 summary 长期占注入预算。
+func truncateEventSummary(s string) string {
+	if utf8.RuneCountInString(s) <= MaxEventSummaryRunes {
+		return s
+	}
+	return string([]rune(s)[:MaxEventSummaryRunes])
 }
 
 func (r *EventRepo) existsActive(ctx context.Context, userID, id string) (bool, error) {

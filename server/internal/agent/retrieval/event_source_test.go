@@ -393,3 +393,45 @@ func TestEventSource_DanglingEventID(t *testing.T) {
 }
 
 func stringPtr(s string) *string { return &s }
+
+func TestEventSource_PinnedNotDegradedByFreshQuota(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{QuotaFull: 1, QuotaCompact: 1, QuotaSummary: 1, QuotaIndex: 1})
+	for _, id := range []string{"p1", "p2", "p3"} {
+		seedEventRow(t, f.db, id, "pinned-"+id, "")
+		seedEventMemory(t, f.db, "pm-"+id, id, "内容", time.Now())
+	}
+	var results []SearchResult
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("f%d", i)
+		seedEventRow(t, f.db, id, "fresh-"+id, "")
+		seedEventMemory(t, f.db, "fm-"+id, id, "内容", time.Now())
+		results = append(results, fullMemResult("fm-"+id, 0.9))
+	}
+	f.vs.results = results
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
+		Embedding: []float64{1}, UserID: "u1",
+		PinnedEventIDs: []string{"p1", "p2", "p3"},
+		Event:          SourceConfig{Threshold: 0.5, Limit: 20},
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	pinnedCount := 0
+	for _, p := range packets {
+		meta := p.Meta.(EventMeta)
+		if meta.Pinned {
+			pinnedCount++
+			if meta.Mode != EventModeFull {
+				t.Fatalf("pinned event degraded: %+v", meta)
+			}
+			continue
+		}
+		if meta.Mode == EventModeFull {
+			t.Fatalf("fresh event should be degraded before pinned, got %+v", meta)
+		}
+	}
+	if pinnedCount != 3 {
+		t.Fatalf("expected 3 pinned full events, got %d", pinnedCount)
+	}
+}

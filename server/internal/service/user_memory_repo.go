@@ -175,6 +175,30 @@ func (r *UserMemoryRepo) ListByEventIDs(ctx context.Context, userID string, even
 	return list, err
 }
 
+// CountByEventIDs 按事件聚合记忆数（只查 event_id + COUNT，不拉正文大字段）。
+func (r *UserMemoryRepo) CountByEventIDs(ctx context.Context, userID string, eventIDs []string) (map[string]int, error) {
+	if len(eventIDs) == 0 {
+		return map[string]int{}, nil
+	}
+	var rows []struct {
+		EventID string
+		Count   int
+	}
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Select("event_id, COUNT(*) AS count").
+		Where("user_id = ? AND event_id IN ?", userID, eventIDs).
+		Group("event_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.EventID] = row.Count
+	}
+	return counts, nil
+}
+
 // FindByContentHash 按 content_hash 查找记忆
 func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentHash string) (*model.UserMemory, error) {
 	var m model.UserMemory

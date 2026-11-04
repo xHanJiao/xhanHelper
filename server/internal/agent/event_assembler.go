@@ -474,7 +474,7 @@ func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newE
 			continue
 		}
 
-		e := &model.Event{UserID: userID, Name: name, Summary: truncateRunes(strings.TrimSpace(ne.Summary), eventSummaryMaxRunes)}
+		e := &model.Event{UserID: userID, Name: name, Summary: truncateRunes(strings.TrimSpace(ne.Summary), service.MaxEventSummaryRunes)}
 		if err := a.eventRepo.CreateWithMemories(ctx, e, ids); err != nil {
 			log.Printf("[event] create event %q error: %v", name, err)
 			stats.Failed++
@@ -542,7 +542,7 @@ func (a *EventAssembler) applyEventUpdates(ctx context.Context, userID string, u
 			log.Printf("[event] update %s: name over %d runes, drop name", eid, eventNameMaxRunes)
 			name = ""
 		}
-		if err := a.eventRepo.UpdateSummary(ctx, userID, eid, name, truncateRunes(up.Summary, eventSummaryMaxRunes)); err != nil {
+		if err := a.eventRepo.UpdateSummary(ctx, userID, eid, name, truncateRunes(up.Summary, service.MaxEventSummaryRunes)); err != nil {
 			log.Printf("[event] update summary %s error: %v", eid, err)
 			stats.Failed++
 			continue
@@ -551,7 +551,7 @@ func (a *EventAssembler) applyEventUpdates(ctx context.Context, userID string, u
 			e.Name = name
 		}
 		if strings.TrimSpace(up.Summary) != "" {
-			e.Summary = truncateRunes(up.Summary, eventSummaryMaxRunes)
+			e.Summary = truncateRunes(up.Summary, service.MaxEventSummaryRunes)
 		}
 		a.invalidateCachedVec(eid)
 		stats.Updated++
@@ -625,9 +625,6 @@ func normalizeEventName(name string) string {
 	}
 	return b.String()
 }
-
-// eventSummaryMaxRunes — summary 硬上限（设计 §4.4：≤200 字）。
-const eventSummaryMaxRunes = 200
 
 // eventNameMaxRunes — 事件名上限，与 model.Event 的 size:100 对齐。
 const eventNameMaxRunes = 100

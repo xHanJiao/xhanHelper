@@ -209,6 +209,10 @@ func (t *EventTool) ReadOnly() Tool { return &eventReadTool{EventTool: t} }
 
 type eventReadTool struct{ *EventTool }
 
+func (r *eventReadTool) Description() string {
+	return "读取事件全文（summary + 全部记忆），用于判断新记忆是否属于该事件或合并前确认内容。"
+}
+
 func (r *eventReadTool) Functions() []FuncSchema {
 	for _, f := range r.EventTool.Functions() {
 		if f.Name == "get" {
@@ -274,7 +278,7 @@ func (t *EventTool) get(ec *ExecuteContext, args json.RawMessage) *Result {
 	if err := decodeArgs(args, &a); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	e, err := t.resolveEvent(ec, a)
+	e, err := t.resolveEvent(ec, a, true)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
@@ -349,6 +353,8 @@ func (t *EventTool) search(ec *ExecuteContext, args json.RawMessage) *Result {
 			MemoryCount: meta.MemoryCount, Score: roundScore(p.Score),
 		})
 	}
+	// 搜索按相关度排，不沿用注入形态顺序（否则低分 full 会挤掉高分 summary）。
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if len(hits) > a.TopK {
 		hits = hits[:a.TopK]
 	}
@@ -363,7 +369,7 @@ func (t *EventTool) enable(ec *ExecuteContext, args json.RawMessage) *Result {
 	if err := decodeArgs(args, &a); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	e, err := t.resolveEvent(ec, a)
+	e, err := t.resolveEvent(ec, a, false)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
@@ -426,7 +432,7 @@ func (t *EventTool) disable(ec *ExecuteContext, args json.RawMessage) *Result {
 	if err := decodeArgs(args, &a); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	e, err := t.resolveEvent(ec, a)
+	e, err := t.resolveEvent(ec, a, false)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
@@ -464,7 +470,7 @@ func (t *EventTool) update(ec *ExecuteContext, args json.RawMessage) *Result {
 	if strings.TrimSpace(a.NewName) == "" && strings.TrimSpace(a.Summary) == "" && len(a.MemoryIDs) == 0 {
 		return &Result{Success: false, Error: "至少提供 new_name、summary 或 memory_ids 之一"}
 	}
-	e, err := t.resolveEvent(ec, a.eventRefArgs)
+	e, err := t.resolveEvent(ec, a.eventRefArgs, false)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
@@ -500,7 +506,7 @@ func (t *EventTool) delete(ec *ExecuteContext, args json.RawMessage) *Result {
 	if err := decodeArgs(args, &a); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	e, err := t.resolveEvent(ec, a)
+	e, err := t.resolveEvent(ec, a, false)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
@@ -534,7 +540,9 @@ func (t *EventTool) merge(ec *ExecuteContext, args json.RawMessage) *Result {
 // ==================== 内部 ====================
 
 // resolveEvent 按 event_id 优先、否则按事件名精确匹配（含已删除，供 get 区分「已删除」）。
-func (t *EventTool) resolveEvent(ec *ExecuteContext, a eventRefArgs) (*model.Event, error) {
+// resolveEvent 按 event_id 优先、否则按事件名精确匹配。
+// 按名字时优先匹配未删除事件；includeDeleted=true（get 用）才回落到已删除的。
+func (t *EventTool) resolveEvent(ec *ExecuteContext, a eventRefArgs, includeDeleted bool) (*model.Event, error) {
 	if id := strings.TrimSpace(a.EventID); id != "" {
 		e, err := t.eventRepo.GetByID(ec.Ctx, ec.UserID, id)
 		if err != nil {
@@ -549,13 +557,21 @@ func (t *EventTool) resolveEvent(ec *ExecuteContext, a eventRefArgs) (*model.Eve
 	if name == "" {
 		return nil, fmt.Errorf("需要提供 event_id 或 name")
 	}
-	events, err := listAllEvents(ec.Ctx, t.eventRepo, ec.UserID, true)
-	if err != nil {
-		return nil, fmt.Errorf("查询事件失败: %w", err)
-	}
-	for i := range events {
-		if strings.EqualFold(strings.TrimSpace(events[i].Name), name) {
-			return &events[i], nil
+	for _, deleted := range []bool{false, true} {
+		if deleted && !includeDeleted {
+			break
+		}
+		events, err := listAllEvents(ec.Ctx, t.eventRepo, ec.UserID, deleted)
+		if err != nil {
+			return nil, fmt.Errorf("查询事件失败: %w", err)
+		}
+		for i := range events {
+			if events[i].IsDeleted != deleted {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(events[i].Name), name) {
+				return &events[i], nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("事件不存在: %s", name)

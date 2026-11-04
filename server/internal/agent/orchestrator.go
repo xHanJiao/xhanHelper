@@ -456,6 +456,7 @@ func eventZonePackets(
 	retrieveResult *ctxflow.RetrieveResult,
 	prevPackets []retrieval.ContextPacket,
 	isNewSession bool,
+	pinnedIDs []string,
 ) []retrieval.ContextPacket {
 	if retrieveResult != nil && retrieveResult.Trace != nil {
 		for _, p := range retrieveResult.Trace.Providers {
@@ -468,7 +469,7 @@ func eventZonePackets(
 			break
 		}
 	}
-	return ctxflow.CarryEventPackets(prevPackets, isNewSession)
+	return ctxflow.CarryEventPackets(prevPackets, isNewSession, pinnedIDs)
 }
 
 func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent string) []float64 {
@@ -830,7 +831,7 @@ func (o *Orchestrator) buildUserMessage(
 		}
 		// 事件：检索正常用本轮结果；跳过检索/事件源失败时携带上一轮。
 		// 不携带的话本轮 XML 会写回 DB，下一轮粘滞链就断了（设计 §6.10）。
-		zoneFresh = append(zoneFresh, eventZonePackets(retrieveResult, req.PrevZonePackets, req.Window.IsNewSession)...)
+		zoneFresh = append(zoneFresh, eventZonePackets(retrieveResult, req.PrevZonePackets, req.Window.IsNewSession, req.PinnedEventIDs)...)
 		// 新窗口首条注入最近对话（用户 + AI 最终回复）到资源区，随后随增量携带、新窗口重置
 		if req.Window.IsNewSession {
 			zoneFresh = append(zoneFresh, buildRecentUserPackets(req.RecentUserMessages)...)

@@ -50,17 +50,11 @@ func listAllEvents(ctx context.Context, repo *service.EventRepo, userID string, 
 	}
 }
 
-// eventMemoryCounts 一次查询取回多个事件的记忆数（避免逐个 Count 的 N+1）。
+// eventMemoryCounts 一次聚合查询取回多个事件的记忆数（不拉记忆正文）。
 func eventMemoryCounts(ctx context.Context, memRepo *service.UserMemoryRepo, userID string, eventIDs []string) (map[string]int, error) {
-	mems, err := memRepo.ListByEventIDs(ctx, userID, eventIDs)
+	counts, err := memRepo.CountByEventIDs(ctx, userID, eventIDs)
 	if err != nil {
-		return nil, fmt.Errorf("list event memories: %w", err)
-	}
-	counts := make(map[string]int, len(eventIDs))
-	for _, m := range mems {
-		if m.EventID != nil {
-			counts[*m.EventID]++
-		}
+		return nil, fmt.Errorf("count event memories: %w", err)
 	}
 	return counts, nil
 }

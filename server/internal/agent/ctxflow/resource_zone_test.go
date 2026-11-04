@@ -451,12 +451,15 @@ func TestCarryEventPackets(t *testing.T) {
 		{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{
 			EventID: "e2", Title: "求职", Mode: retrieval.EventModeIndex, MemoryCount: 3,
 		}},
+		{ID: "e3", Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: "e3", Title: "装修", Summary: "选材中", Mode: retrieval.EventModeFull,
+		}},
 		{ID: "m1", Type: TypeMemory, Meta: retrieval.EntityMeta{Content: "普通记忆"}},
 	}
 
 	// 同窗口：保留形态与记忆，但清掉 pinned（权威来源是 Extra）
-	same := CarryEventPackets(pkts, false)
-	if len(same) != 2 || same[0].ID != "e1" || same[1].ID != "e2" {
+	same := CarryEventPackets(pkts, false, nil)
+	if len(same) != 3 || same[0].ID != "e1" || same[1].ID != "e2" || same[2].ID != "e3" {
 		t.Fatalf("expected only the two event packets, got %+v", same)
 	}
 	meta := same[0].Meta.(retrieval.EventMeta)
@@ -465,7 +468,7 @@ func TestCarryEventPackets(t *testing.T) {
 	}
 
 	// 跨窗口：full/compact 降为 summary carried；index 保持 index（没有 summary 可带）
-	carried := CarryEventPackets(pkts, true)
+	carried := CarryEventPackets(pkts, true, nil)
 	meta = carried[0].Meta.(retrieval.EventMeta)
 	if meta.Mode != retrieval.EventModeSummary || !meta.Carried || len(meta.Memories) != 0 || meta.Miss != 0 {
 		t.Fatalf("cross-session carry should be summary carried: %+v", meta)
@@ -473,6 +476,17 @@ func TestCarryEventPackets(t *testing.T) {
 	indexMeta := carried[1].Meta.(retrieval.EventMeta)
 	if indexMeta.Mode != retrieval.EventModeIndex || indexMeta.Carried {
 		t.Fatalf("index event must stay index across windows, got %+v", indexMeta)
+	}
+
+	// pinned 跨窗口保持 full + 记忆（「继续」那一轮不能丢上下文），其余事件照常降级
+	pinnedCarried := CarryEventPackets(pkts, true, []string{"e1"})
+	pinnedMeta := pinnedCarried[0].Meta.(retrieval.EventMeta)
+	if pinnedMeta.Mode != retrieval.EventModeFull || !pinnedMeta.Pinned || pinnedMeta.Carried || len(pinnedMeta.Memories) != 1 {
+		t.Fatalf("pinned event must stay full with memories across windows: %+v", pinnedMeta)
+	}
+	otherMeta := pinnedCarried[2].Meta.(retrieval.EventMeta)
+	if otherMeta.Mode != retrieval.EventModeSummary || !otherMeta.Carried {
+		t.Fatalf("non-pinned event should still degrade to summary carried: %+v", otherMeta)
 	}
 }
 
@@ -581,5 +595,44 @@ func TestSortPacketsByType_EventModeOrder(t *testing.T) {
 	sortPacketsByType(TypeEvent, pkts)
 	if pkts[0].ID != "e1" || pkts[1].ID != "e2" || pkts[2].ID != "e3" {
 		t.Fatalf("events must be ordered by mode, not score: %+v", pkts)
+	}
+}
+
+func TestBudgetResourceZone_PinnedNotDegraded(t *testing.T) {
+	long := strings.Repeat("状", 100)
+	mems := []model.UserMemory{{ID: "m1", MemoryValue: strings.Repeat("记", 50)}}
+	pinned := retrieval.ContextPacket{ID: "p1", Type: TypeEvent, Meta: retrieval.EventMeta{
+		EventID: "p1", Title: "p1", Summary: long, Mode: retrieval.EventModeFull,
+		Pinned: true, Memories: mems,
+	}}
+	other := retrieval.ContextPacket{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{
+		EventID: "e2", Title: "e2", Summary: long, Mode: retrieval.EventModeFull,
+	}}
+	pkts := []retrieval.ContextPacket{pinned, other}
+
+	// per-type 预算极小：只能砍非 pinned
+	out := BudgetResourceZone(pkts, ZoneBudgets{Event: 10}, 0)
+	var got *retrieval.ContextPacket
+	for i := range out {
+		if out[i].ID == "p1" {
+			got = &out[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("pinned event must survive budget trim")
+	}
+	meta := got.Meta.(retrieval.EventMeta)
+	if meta.Mode != retrieval.EventModeFull || len(meta.Memories) != 1 {
+		t.Fatalf("pinned event must not be demoted: %+v", meta)
+	}
+
+	// 全是 pinned：总预算再小也不动
+	onlyPinned := []retrieval.ContextPacket{pinned}
+	out = BudgetResourceZone(onlyPinned, ZoneBudgets{Event: 10}, 10)
+	if len(out) != 1 {
+		t.Fatalf("all-pinned zone must accept over-budget instead of dropping, got %+v", out)
+	}
+	if meta := out[0].Meta.(retrieval.EventMeta); meta.Mode != retrieval.EventModeFull {
+		t.Fatalf("all-pinned zone must not demote: %+v", meta)
 	}
 }

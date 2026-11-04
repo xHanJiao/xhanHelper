@@ -317,16 +317,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		}()
 
 		// 事件钉住：权威来源是 Conversation.Extra.EventFocus（event.enable 写入）。
-		// extra 损坏时降级为「没有钉住」并记录，不影响本轮对话。
-		var pinnedEventIDs []string
-		if conv.Extra != "" && conv.Extra != "{}" {
-			var extra model.ConversationExtra
-			if err := json.Unmarshal([]byte(conv.Extra), &extra); err != nil {
-				log.Printf("[chat] parse conversation extra error: %v", err)
-			} else if extra.EventFocus != nil {
-				pinnedEventIDs = extra.EventFocus.Enabled
-			}
-		}
+		pinnedEventIDs := pinnedEventIDsFromExtra(conv.Extra)
 
 		events, err := orch.Run(runCtx, &agent.RunRequest{
 			UserID:             userID,
@@ -619,6 +610,23 @@ func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMax
 		}
 	}
 	return resp
+}
+
+// pinnedEventIDsFromExtra 解析 Conversation.Extra 里的钉住事件。
+// extra 损坏时降级为「没有钉住」并记录，不影响本轮对话。
+func pinnedEventIDsFromExtra(extraJSON string) []string {
+	if extraJSON == "" || extraJSON == "{}" {
+		return nil
+	}
+	var extra model.ConversationExtra
+	if err := json.Unmarshal([]byte(extraJSON), &extra); err != nil {
+		log.Printf("[chat] parse conversation extra error: %v", err)
+		return nil
+	}
+	if extra.EventFocus == nil {
+		return nil
+	}
+	return extra.EventFocus.Enabled
 }
 
 // computeWindowSize 计算扩张窗口和 session 状态。

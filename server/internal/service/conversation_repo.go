@@ -4,20 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
+
 	"xhan-helper/internal/model"
 )
 
 // ConversationRepo — 会话数据访问
 type ConversationRepo struct {
 	db *gorm.DB
+	// extraMu 按会话 ID 串行化 Extra 的「读→改→写」。
+	// 行锁只在 MySQL 生效（SQLite 跳过），本地版跑 SQLite，需要进程内锁兜底。
+	extraMu sync.Map // convID -> *sync.Mutex
 }
 
 // NewConversationRepo 创建 ConversationRepo
 func NewConversationRepo(db *gorm.DB) *ConversationRepo {
 	return &ConversationRepo{db: db}
+}
+
+func (r *ConversationRepo) extraLock(convID string) func() {
+	v, _ := r.extraMu.LoadOrStore(convID, &sync.Mutex{})
+	m := v.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
 }
 
 // DB 暴露底层 gorm.DB
@@ -359,9 +371,11 @@ func (r *ConversationRepo) AddUsedTool(ctx context.Context, convID, toolID strin
 // 读-改-写在单事务内完成，避免并发写入覆盖其它字段（对齐 mergeMsgExtra 的单字段合并语义）。
 // fn 内只改自己关心的字段，其它字段原样保留。
 func (r *ConversationRepo) UpdateExtraField(ctx context.Context, convID string, fn func(extra *model.ConversationExtra)) error {
+	unlock := r.extraLock(convID)
+	defer unlock()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var c model.Conversation
-		if err := tx.Where("id = ?", convID).Select("extra").First(&c).Error; err != nil {
+		if err := lockRows(tx).Where("id = ?", convID).Select("extra").First(&c).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return gorm.ErrRecordNotFound
 			}

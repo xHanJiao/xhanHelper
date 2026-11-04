@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -484,5 +486,23 @@ func TestEventRepo_SetLastMemoryAtMonotonic(t *testing.T) {
 	}
 	if got.LastMemoryAt == nil || got.LastMemoryAt.Before(newer.Add(-time.Second)) {
 		t.Fatalf("expected last_memory_at not to regress, got %v", got.LastMemoryAt)
+	}
+}
+
+func TestEventRepo_UpdateSummaryTruncates(t *testing.T) {
+	repo, _ := setupEventRepo(t)
+	ctx := context.Background()
+	e := mustCreate(t, repo, "u1", "回西安准备")
+
+	long := strings.Repeat("字", MaxEventSummaryRunes+50)
+	if err := repo.UpdateSummary(ctx, "u1", e.ID, "", long); err != nil {
+		t.Fatalf("update summary: %v", err)
+	}
+	got, err := repo.GetByID(ctx, "u1", e.ID)
+	if err != nil || got == nil {
+		t.Fatalf("get event: %v", err)
+	}
+	if n := utf8.RuneCountInString(got.Summary); n != MaxEventSummaryRunes {
+		t.Fatalf("summary should be truncated to %d runes, got %d", MaxEventSummaryRunes, n)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -596,5 +597,43 @@ func TestRestore_ReappearsInActiveList(t *testing.T) {
 	archived, _, err = repo.ListArchivedByUser(ctx, "u1", 10, 0)
 	if err != nil || len(archived) != 0 {
 		t.Fatalf("archived list should be empty after restore, got %d err=%v", len(archived), err)
+	}
+}
+
+func TestUpdateExtraField_ConcurrentAppends(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-race", UserID: "u1", Extra: "{}"}); err != nil {
+		t.Fatalf("create conv: %v", err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- repo.UpdateExtraField(ctx, "conv-race", func(extra *model.ConversationExtra) {
+				extra.UsedToolIDs = append(extra.UsedToolIDs, fmt.Sprintf("tool-%d", i))
+			})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("UpdateExtraField error: %v", err)
+		}
+	}
+
+	got, err := repo.GetExtra(ctx, "conv-race")
+	if err != nil {
+		t.Fatalf("GetExtra: %v", err)
+	}
+	if len(got.UsedToolIDs) != n {
+		t.Fatalf("concurrent appends lost updates: got %d ids %v", len(got.UsedToolIDs), got.UsedToolIDs)
 	}
 }

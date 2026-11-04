@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"xhan-helper/internal/agent/retrieval"
 )
@@ -398,5 +399,107 @@ func TestRecentBlock_RoundtripAndCarry(t *testing.T) {
 	out := BudgetResourceZone(underPressure, DefaultZoneBudgets(), 100)
 	if !hasType(out, TypeRecent) {
 		t.Error("recent 不应被总预算优先砍掉")
+	}
+}
+
+// —— 事件块 ——
+
+func eventPacket(id, title, mode string) retrieval.ContextPacket {
+	return retrieval.ContextPacket{
+		ID: id, Type: TypeEvent,
+		Meta: retrieval.EventMeta{
+			EventID: id, Title: title, Summary: title + "的现状",
+			Mode: mode,
+		},
+	}
+}
+
+func TestParseEventRefs_RoundTrip(t *testing.T) {
+	pkts := []retrieval.ContextPacket{
+		eventPacket("e1", "驾照考取", retrieval.EventModeFull),
+		eventPacket("e2", "求职", retrieval.EventModeIndex),
+	}
+	pkts[0].Meta = retrieval.EventMeta{
+		EventID: "e1", Title: "驾照考取", Summary: "科三待补考",
+		Mode: retrieval.EventModeFull, Miss: 1, Pinned: true,
+	}
+	xmlText := FormatResourceZone(pkts)
+
+	refs := ParseEventRefs(xmlText)
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %+v", refs)
+	}
+	if refs[0].ID != "e1" || refs[0].Mode != retrieval.EventModeFull || refs[0].Miss != 1 || !refs[0].Pinned {
+		t.Fatalf("unexpected first ref: %+v", refs[0])
+	}
+	if refs[1].ID != "e2" || refs[1].Mode != retrieval.EventModeIndex {
+		t.Fatalf("unexpected second ref: %+v", refs[1])
+	}
+	if got := ParseEventRefs(""); got != nil {
+		t.Fatalf("empty xml should yield nil, got %+v", got)
+	}
+}
+
+func TestMergeResourceZone_DropsPrevEvents(t *testing.T) {
+	prev := []retrieval.ContextPacket{eventPacket("e1", "旧事件", retrieval.EventModeFull)}
+	out := MergeResourceZone(prev, nil, DefaultZoneQuotas())
+	if len(out) != 0 {
+		t.Fatalf("prev events must not be carried by the zone, got %+v", out)
+	}
+
+	fresh := []retrieval.ContextPacket{eventPacket("e2", "新事件", retrieval.EventModeFull)}
+	out = MergeResourceZone(prev, fresh, DefaultZoneQuotas())
+	if len(out) != 1 || out[0].ID != "e2" {
+		t.Fatalf("fresh events must be kept, got %+v", out)
+	}
+}
+
+func TestBudgetResourceZone_TrimsEventFromTail(t *testing.T) {
+	long := strings.Repeat("状", 100)
+	pkts := []retrieval.ContextPacket{
+		{ID: "e1", Type: TypeEvent, Meta: retrieval.EventMeta{EventID: "e1", Title: "第一", Summary: long, Mode: retrieval.EventModeFull}},
+		{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{EventID: "e2", Title: "第二", Summary: long, Mode: retrieval.EventModeCompact}},
+		{ID: "e3", Type: TypeEvent, Meta: retrieval.EventMeta{EventID: "e3", Title: "第三", Summary: long, Mode: retrieval.EventModeIndex}},
+	}
+	one := []retrieval.ContextPacket{pkts[0]}
+	budget := utf8.RuneCountInString(FormatResourceZone(one)) + 10
+
+	out := BudgetResourceZone(pkts, ZoneBudgets{Event: budget}, 0)
+	if len(out) == 0 || out[0].ID != "e1" {
+		t.Fatalf("highest priority event must survive, got %+v", out)
+	}
+	if len(out) == len(pkts) {
+		t.Fatalf("event block should be trimmed, got %d", len(out))
+	}
+}
+
+func TestBudgetResourceZone_EventDroppedLast(t *testing.T) {
+	eventPkts := []retrieval.ContextPacket{eventPacket("e1", "事件", retrieval.EventModeFull)}
+	memPkts := []retrieval.ContextPacket{
+		{ID: "m1", Type: TypeMemory, Meta: retrieval.EntityMeta{Content: "记忆一"}},
+		{ID: "m2", Type: TypeMemory, Meta: retrieval.EntityMeta{Content: "记忆二"}},
+	}
+	merged := MergeResourceZone(nil, append(memPkts, eventPkts...), DefaultZoneQuotas())
+	total := utf8.RuneCountInString(FormatResourceZone(eventPkts)) + 5
+
+	out := BudgetResourceZone(merged, ZoneBudgets{Memory: 1000, Event: 12000}, total)
+	for _, p := range out {
+		if p.Type == TypeMemory {
+			t.Fatalf("memory should be dropped before events, got %+v", out)
+		}
+	}
+	if len(out) == 0 || out[0].Type != TypeEvent {
+		t.Fatalf("event must survive the total budget, got %+v", out)
+	}
+}
+
+func TestMergeResourceZone_KeepsSameTitleEvents(t *testing.T) {
+	fresh := []retrieval.ContextPacket{
+		{ID: "e1", Type: TypeEvent, Meta: retrieval.EventMeta{EventID: "e1", Title: "同名事件", Mode: retrieval.EventModeFull}},
+		{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{EventID: "e2", Title: "同名事件", Mode: retrieval.EventModeFull}},
+	}
+	out := MergeResourceZone(nil, fresh, DefaultZoneQuotas())
+	if len(out) != 2 {
+		t.Fatalf("events with the same title must not be deduped by content, got %+v", out)
 	}
 }

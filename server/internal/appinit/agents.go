@@ -34,6 +34,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memDecayer)
 	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
+	eventSource := retrieval.NewEventSource(vs, repos.Mem, repos.Event, retrieval.EventSourceConfig{
+		QuotaFull:        cfg.Retrieval.ResourceZone.QuotaEventFull,
+		QuotaCompact:     cfg.Retrieval.ResourceZone.QuotaEventCompact,
+		QuotaSummary:     cfg.Retrieval.ResourceZone.QuotaEventSummary,
+		QuotaIndex:       cfg.Retrieval.ResourceZone.QuotaEventIndex,
+		PinnedMax:        cfg.Retrieval.ResourceZone.QuotaEventPinned,
+		MemoriesPerEvent: cfg.Retrieval.ResourceZone.EventMemories,
+	}, retrieval.NewTimeDecay(cfg.Retrieval.Event.FreshnessDecay))
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer, cfg.Vector.MessageRetentionDays)
 	simpleHistorySource := retrieval.NewSimpleHistorySource(vs, repos.Message)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
@@ -225,7 +233,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	retrieveCfg := ctxflow.DefaultRetrieveConfig()
 	applyRetrieveConfig(&retrieveCfg, cfg.Retrieval)
 	retriever := ctxflow.NewContextRetriever(
-		[]retrieval.ContextSource{themeSource, memSource, noteSource},
+		[]retrieval.ContextSource{themeSource, memSource, eventSource},
 		&retrieveCfg,
 	).WithModifier("theme", ctxflow.BoostFactor(1.3))
 
@@ -291,6 +299,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Memory:  cfg.Retrieval.ResourceZone.BudgetMemory,
 			Note:    cfg.Retrieval.ResourceZone.BudgetNote,
 			Topic:   cfg.Retrieval.ResourceZone.BudgetTopic,
+			Event:   cfg.Retrieval.ResourceZone.BudgetEvent,
 		},
 		ResourceZoneQuotas: ctxflow.ZoneQuotas{
 			Summary: cfg.Retrieval.ResourceZone.QuotaSummary,
@@ -405,6 +414,12 @@ func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig)
 	}
 	if rc.Summary.Limit > 0 {
 		cfg.Summary.Limit = rc.Summary.Limit
+	}
+	if rc.Event.Threshold > 0 {
+		cfg.Event.Threshold = rc.Event.Threshold
+	}
+	if rc.Event.Limit > 0 {
+		cfg.Event.Limit = rc.Event.Limit
 	}
 }
 

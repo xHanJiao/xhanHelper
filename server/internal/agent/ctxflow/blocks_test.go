@@ -362,3 +362,50 @@ func TestFormatUserMessage_ProfileItemsSorted(t *testing.T) {
 		t.Errorf("profile items should be sorted alphabetically (伴侣 before 籍贯): %s", out)
 	}
 }
+
+func TestBuildEventsBlock_FullAndIndex(t *testing.T) {
+	items := []retrieval.ContextPacket{
+		{ID: "e1", Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: "e1", Title: "驾照考取", Summary: "科三待补考", Mode: retrieval.EventModeFull,
+			Score: 0.83, UpdatedAt: makeTime(2026, 11, 3), Pinned: true, MemoryCount: 1,
+			Memories: []model.UserMemory{{
+				ID: "m1", Topic: "学习计划", MemoryValue: "科三挂了",
+				CreatedAt: makeTime(2026, 11, 3),
+			}},
+		}},
+		{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: "e2", Title: "求职", Mode: retrieval.EventModeIndex,
+		}},
+	}
+
+	got := marshalBlock(t, buildBlock(TypeEvent, items))
+	for _, want := range []string{
+		`<event id="e1" title="驾照考取" mode="full" score="0.83" updated="2026-11-03" memory_count="1" pinned="1">`,
+		`<summary>科三待补考</summary>`,
+		`<memory id="m1" topic="学习计划" date="2026年11月03日">科三挂了</memory>`,
+		`<event id="e2" title="求职" mode="index"></event>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `<summary></summary>`) {
+		t.Errorf("index event must not render an empty summary: %s", got)
+	}
+}
+
+func TestBuildEventsBlock_Carried(t *testing.T) {
+	items := []retrieval.ContextPacket{
+		{ID: "e1", Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: "e1", Title: "回西安准备", Summary: "打包中",
+			Mode: retrieval.EventModeSummary, Carried: true,
+		}},
+	}
+	got := marshalBlock(t, buildBlock(TypeEvent, items))
+	if !strings.Contains(got, `carried="上一窗口"`) {
+		t.Errorf("missing carried marker: %s", got)
+	}
+	if strings.Contains(got, `<memory`) {
+		t.Errorf("summary mode must not render memories: %s", got)
+	}
+}

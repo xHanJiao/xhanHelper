@@ -331,22 +331,31 @@ type RetrievalConfig struct {
 	History        SourceWeights      `yaml:"history"`
 	Theme          SourceWeights      `yaml:"theme"`
 	Summary        SourceWeights      `yaml:"summary"`
+	Event          SourceWeights      `yaml:"event"`
 	ResourceZone   ResourceZoneConfig `yaml:"resource_zone"` // 公共资源区（phase-10 任务 B）
 }
 
 // ResourceZoneConfig — 公共资源区配置
 type ResourceZoneConfig struct {
 	Enabled       bool `yaml:"enabled"`        // 是否启用资源区（历史消息不再重放 XML）
-	BudgetChars   int  `yaml:"budget_chars"`   // 总预算帽（UTF-8 字符数，中文 1 字=1；7000 字符 ≈ 5500-7000 tokens）
+	BudgetChars   int  `yaml:"budget_chars"`   // 总预算帽（UTF-8 字符数，中文 1 字=1）
 	BudgetProfile int  `yaml:"budget_profile"` // profile 每类型预算（chars），默认 1600
 	BudgetSummary int  `yaml:"budget_summary"` // summary 预算，默认 800
-	BudgetMemory  int  `yaml:"budget_memory"`  // memory 预算，默认 600
-	BudgetNote    int  `yaml:"budget_note"`    // note 预算，默认 3000
+	BudgetMemory  int  `yaml:"budget_memory"`  // memory 预算，默认 1000
+	BudgetNote    int  `yaml:"budget_note"`    // note 预算，默认 0（笔记不再注入）
 	BudgetTopic   int  `yaml:"budget_topic"`   // topic 预算，默认 200
+	BudgetEvent   int  `yaml:"budget_event"`   // 事件区预算，默认 12000
 	QuotaSummary  int  `yaml:"quota_summary"`  // 摘要配额，默认 1
 	QuotaMemory   int  `yaml:"quota_memory"`   // 记忆配额，默认 8
-	QuotaNote     int  `yaml:"quota_note"`     // 笔记配额，默认 10
+	QuotaNote     int  `yaml:"quota_note"`     // 笔记配额，默认 0（笔记不再注入）
 	QuotaTopic    int  `yaml:"quota_topic"`    // 主题配额（只收 matched），默认 5
+	// 事件注入配额（设计 §6.7）
+	QuotaEventFull    int `yaml:"quota_event_full"`    // full 上限（含 pinned），默认 4
+	QuotaEventCompact int `yaml:"quota_event_compact"` // compact 上限，默认 6
+	QuotaEventSummary int `yaml:"quota_event_summary"` // summary 上限，超出降 index，默认 12
+	QuotaEventIndex   int `yaml:"quota_event_index"`   // index 上限，超出移出资源区，默认 25
+	QuotaEventPinned  int `yaml:"quota_event_pinned"`  // pinned 上限，默认 3
+	EventMemories     int `yaml:"event_memories"`      // full 每事件附带记忆条数，默认 20
 }
 
 // EventAssemblyConfig — session 结束后的记忆 → 事件拼装配置（见 docs/design/event-threads）
@@ -926,7 +935,7 @@ func validate(cfg *Config) error {
 		cfg.Server.MemoryTopicReuseThreshold = 0.80
 	}
 	if cfg.Retrieval.ResourceZone.BudgetChars == 0 {
-		cfg.Retrieval.ResourceZone.BudgetChars = 7000
+		cfg.Retrieval.ResourceZone.BudgetChars = 15000
 	}
 	if cfg.Retrieval.ResourceZone.BudgetProfile == 0 {
 		cfg.Retrieval.ResourceZone.BudgetProfile = 1600
@@ -935,13 +944,14 @@ func validate(cfg *Config) error {
 		cfg.Retrieval.ResourceZone.BudgetSummary = 800
 	}
 	if cfg.Retrieval.ResourceZone.BudgetMemory == 0 {
-		cfg.Retrieval.ResourceZone.BudgetMemory = 600
+		cfg.Retrieval.ResourceZone.BudgetMemory = 1000
 	}
-	if cfg.Retrieval.ResourceZone.BudgetNote == 0 {
-		cfg.Retrieval.ResourceZone.BudgetNote = 3000
-	}
+	// BudgetNote 默认 0：笔记不再注入资源区（设计 §6.8）。
 	if cfg.Retrieval.ResourceZone.BudgetTopic == 0 {
 		cfg.Retrieval.ResourceZone.BudgetTopic = 200
+	}
+	if cfg.Retrieval.ResourceZone.BudgetEvent == 0 {
+		cfg.Retrieval.ResourceZone.BudgetEvent = 12000
 	}
 	if cfg.Retrieval.ResourceZone.QuotaSummary == 0 {
 		cfg.Retrieval.ResourceZone.QuotaSummary = 1
@@ -949,11 +959,27 @@ func validate(cfg *Config) error {
 	if cfg.Retrieval.ResourceZone.QuotaMemory == 0 {
 		cfg.Retrieval.ResourceZone.QuotaMemory = 8
 	}
-	if cfg.Retrieval.ResourceZone.QuotaNote == 0 {
-		cfg.Retrieval.ResourceZone.QuotaNote = 10
-	}
+	// QuotaNote 默认 0：笔记不再注入资源区（设计 §6.8）。
 	if cfg.Retrieval.ResourceZone.QuotaTopic == 0 {
 		cfg.Retrieval.ResourceZone.QuotaTopic = 5
+	}
+	if cfg.Retrieval.ResourceZone.QuotaEventFull == 0 {
+		cfg.Retrieval.ResourceZone.QuotaEventFull = 4
+	}
+	if cfg.Retrieval.ResourceZone.QuotaEventCompact == 0 {
+		cfg.Retrieval.ResourceZone.QuotaEventCompact = 6
+	}
+	if cfg.Retrieval.ResourceZone.QuotaEventSummary == 0 {
+		cfg.Retrieval.ResourceZone.QuotaEventSummary = 12
+	}
+	if cfg.Retrieval.ResourceZone.QuotaEventIndex == 0 {
+		cfg.Retrieval.ResourceZone.QuotaEventIndex = 25
+	}
+	if cfg.Retrieval.ResourceZone.QuotaEventPinned == 0 {
+		cfg.Retrieval.ResourceZone.QuotaEventPinned = 3
+	}
+	if cfg.Retrieval.ResourceZone.EventMemories == 0 {
+		cfg.Retrieval.ResourceZone.EventMemories = 20
 	}
 	if cfg.EventAssembly.CandidateTop == 0 {
 		cfg.EventAssembly.CandidateTop = 10

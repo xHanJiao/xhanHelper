@@ -28,6 +28,7 @@ type EntityConfig[T model.ChunkEntity] struct {
 	ConfigPicker func(SearchOptions) SourceConfig                        // opts.Memory / opts.Note
 	ListAll      func(context.Context, time.Time, int, int) ([]T, error) // for Warmup (since=zero 表示不过滤)
 	SinceDays    int                                                     // >0 时 warmup 只加载最近 N 天
+	Filter       func(T) bool                                            // 可选：注入前过滤实体（memory 用 event_id IS NULL）
 }
 
 // EntitySource is a generic chunk+full-embedding retrieval source.
@@ -46,6 +47,7 @@ type EntitySource[T model.ChunkEntity] struct {
 	configPicker  func(SearchOptions) SourceConfig
 	listAll       func(context.Context, time.Time, int, int) ([]T, error)
 	sinceDays     int
+	filter        func(T) bool
 }
 
 // NewEntitySource creates a generic chunk+full-embedding retrieval source.
@@ -76,6 +78,7 @@ func NewEntitySource[T model.ChunkEntity](
 		configPicker:  cfg.ConfigPicker,
 		listAll:       cfg.ListAll,
 		sinceDays:     cfg.SinceDays,
+		filter:        cfg.Filter,
 	}
 }
 
@@ -168,6 +171,9 @@ func (s *EntitySource[T]) Fetch(ctx context.Context, opts SearchOptions) ([]Cont
 	var chunkScored []scoredHit
 	var fullScored []scoredHit
 	for _, e := range entities {
+		if s.filter != nil && !s.filter(e) {
+			continue
+		}
 		vs := scoreMap[e.GetID()]
 		fresh := s.decayer.Freshness(e.GetCreatedAt())
 		if vs*fresh >= threshold {

@@ -10,6 +10,7 @@ import (
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/model"
 )
 
 // ==================== 公共资源区 ====================
@@ -42,11 +43,12 @@ type ZoneBudgets struct {
 	Memory  int
 	Note    int
 	Topic   int
+	Event   int
 }
 
-// DefaultZoneBudgets 默认预算：profile 1600 / note 3000 / summary 800 / memory 600 / topic 200。
+// DefaultZoneBudgets 默认预算：profile 1600 / note 3000 / summary 800 / memory 600 / topic 200 / event 12000。
 func DefaultZoneBudgets() ZoneBudgets {
-	return ZoneBudgets{Profile: 1600, Summary: 800, Memory: 600, Note: 3000, Topic: 200}
+	return ZoneBudgets{Profile: 1600, Summary: 800, Memory: 600, Note: 3000, Topic: 200, Event: 12000}
 }
 
 // zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/topics/recent），
@@ -57,6 +59,7 @@ type zoneContainer struct {
 	Notes     *notesBlock     `xml:"notes"`
 	Summaries *summariesBlock `xml:"summaries"`
 	Topics    *themesBlock    `xml:"topics"`
+	Events    *eventsBlock    `xml:"events"`
 	Recent    *recentBlock    `xml:"recent"`
 }
 
@@ -157,6 +160,41 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 			})
 		}
 	}
+	if c.Events != nil {
+		for i := range c.Events.Items {
+			it := &c.Events.Items[i]
+			meta := retrieval.EventMeta{
+				EventID:     it.ID,
+				Title:       it.Title,
+				Summary:     it.Summary,
+				Mode:        it.Mode,
+				Score:       it.Score,
+				UpdatedAt:   parseZoneDate(it.Updated),
+				Pinned:      it.Pinned == "1",
+				Carried:     it.Carried != "",
+				Miss:        it.Miss,
+				MemoryCount: it.MemoryCount,
+			}
+			if it.Memories != nil {
+				for j := range it.Memories.Items {
+					mi := &it.Memories.Items[j]
+					meta.Memories = append(meta.Memories, model.UserMemory{
+						ID:          mi.ID,
+						MemoryValue: mi.Content,
+						Topic:       mi.Topic,
+						CreatedAt:   parseZoneDate(mi.Date),
+					})
+				}
+			}
+			pkts = append(pkts, retrieval.ContextPacket{
+				ID:    it.ID,
+				Type:  TypeEvent,
+				Text:  it.Summary,
+				Score: it.Score,
+				Meta:  meta,
+			})
+		}
+	}
 	if c.Recent != nil {
 		for i := range c.Recent.Items {
 			it := &c.Recent.Items[i]
@@ -173,6 +211,36 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 		}
 	}
 	return pkts
+}
+
+// ParseEventRefs 从历史 XMLContext 解析上一轮注入过的事件（id/mode/miss/pinned）。
+// 粘滞/跨窗口状态不落库，全部从上一条 user 消息的 XML 还原（设计 §6.10）。
+func ParseEventRefs(xmlText string) []retrieval.EventRef {
+	if strings.TrimSpace(xmlText) == "" {
+		return nil
+	}
+	var c zoneContainer
+	if err := xml.Unmarshal([]byte("<zone>"+xmlText+"</zone>"), &c); err != nil {
+		log.Printf("[resource_zone] parse event refs error: %v", err)
+		return nil
+	}
+	if c.Events == nil {
+		return nil
+	}
+	out := make([]retrieval.EventRef, 0, len(c.Events.Items))
+	for i := range c.Events.Items {
+		it := &c.Events.Items[i]
+		if it.ID == "" {
+			continue
+		}
+		out = append(out, retrieval.EventRef{
+			ID:     it.ID,
+			Mode:   it.Mode,
+			Miss:   it.Miss,
+			Pinned: it.Pinned == "1",
+		})
+	}
+	return out
 }
 
 // parseZoneDate 解析日期属性（"2006年01月02日" 或 "2006-01-02"），失败返回零值。
@@ -210,7 +278,11 @@ func zoneKey(pkt retrieval.ContextPacket) string {
 }
 
 // zoneContentKey 内容级去重 key（ID 与内容双索引：旧 XML 无 id 的资源后续被带 id 的新版命中）。
+// 事件按 ID 去重：事件名可能重复，不能按标题合并（否则同名事件会被吞掉一个）。
 func zoneContentKey(pkt retrieval.ContextPacket) string {
+	if pkt.Type == TypeEvent {
+		return pkt.Type + ":id:" + pkt.ID
+	}
 	return pkt.Type + ":content:" + strings.TrimSpace(zoneContent(pkt))
 }
 
@@ -223,6 +295,8 @@ func zoneContent(pkt retrieval.ContextPacket) string {
 		return meta.SummaryText
 	case retrieval.ThemeMeta:
 		return meta.Description
+	case retrieval.EventMeta:
+		return meta.Title
 	case retrieval.ProfileMeta:
 		return meta.Value
 	}
@@ -240,6 +314,10 @@ func zoneQuota(pkt retrieval.ContextPacket, q ZoneQuotas) int {
 		return q.Note
 	case TypeTheme:
 		return q.Topic
+	case TypeEvent:
+		// 事件配额由 EventSource 按注入形态（full/compact/summary/index）自己控制，
+		// 资源区不再二次裁剪（设计 §6.10）。
+		return 1 << 30
 	case TypeProfile:
 		// 画像字段数天然少（8-9 个），不参与条数 quota
 		return 1 << 30
@@ -263,12 +341,14 @@ func zoneBudget(pkt retrieval.ContextPacket, b ZoneBudgets) int {
 		return b.Note
 	case TypeTheme:
 		return b.Topic
+	case TypeEvent:
+		return b.Event
 	}
 	return 0
 }
 
 // zoneTypeOrder 资源区类型展示顺序（profile 稳定层最先，时间线阅读）。
-var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeRecent, TypeMemory, TypeNote, TypeTheme}
+var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeRecent, TypeEvent, TypeMemory, TypeNote, TypeTheme}
 
 // MergeResourceZone 旧资源（prev，时间线序）+ 本轮检索（fresh）→ 去重 + quota + 时间线序。
 // 规则：
@@ -308,6 +388,11 @@ func MergeResourceZone(prev, fresh []retrieval.ContextPacket, q ZoneQuotas) []re
 	}
 
 	for _, pkt := range prev {
+		// 事件以本轮 EventSource 返回的集合为准（粘滞由 EventSource 解析 PrevEventRefs），
+		// 不从上一轮资源区捞旧事件（设计 §6.10）。
+		if pkt.Type == TypeEvent {
+			continue
+		}
 		if zoneQuota(pkt, q) <= 0 {
 			continue
 		}
@@ -391,9 +476,9 @@ func FormatResourceZone(pkts []retrieval.ContextPacket) string {
 	return buf.String()
 }
 
-// budgetTypePriority 总预算兜底砍序：memory > note > theme > summary > profile
-// （memory 数量多价值密度低先砍，profile 稳定画像最后砍）。
-var budgetTypePriority = []string{TypeMemory, TypeNote, TypeTheme, TypeSummary, TypeProfile}
+// budgetTypePriority 总预算兜底砍序：memory > note > theme > summary > profile > event
+// （memory 数量多价值密度低先砍，事件是最高价值资源最后砍）。
+var budgetTypePriority = []string{TypeMemory, TypeNote, TypeTheme, TypeSummary, TypeProfile, TypeEvent}
 
 // BudgetResourceZone 两阶段预算：
 //  1. per-type：每类型独立从最旧砍到该类预算内（防止跨类挤占，notes 满不伤 summary/profile）
@@ -427,7 +512,12 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 		if victim == "" {
 			return pkts // 无可砍，接受超限（理论不应发生）
 		}
-		pkts = dropFirstOfType(pkts, victim)
+		if victim == TypeEvent {
+			// 事件按优先级从高到低排，砍尾部（最低优先级）
+			pkts = dropLastOfType(pkts, victim)
+		} else {
+			pkts = dropFirstOfType(pkts, victim)
+		}
 	}
 }
 
@@ -455,6 +545,10 @@ func budgetPerType(pkts []retrieval.ContextPacket, budgets ZoneBudgets) []retrie
 			if utf8.RuneCountInString(FormatResourceZone(list)) <= budget {
 				break
 			}
+			if typ == TypeEvent {
+				list = list[:len(list)-1] // 事件已按优先级排序，砍最低优先级
+				continue
+			}
 			list = list[1:] // 砍最旧
 		}
 		groups[typ] = list
@@ -479,6 +573,8 @@ func zoneBudgetOf(typ string, b ZoneBudgets) int {
 		return b.Note
 	case TypeTheme:
 		return b.Topic
+	case TypeEvent:
+		return b.Event
 	}
 	return 0
 }
@@ -495,6 +591,15 @@ func hasType(pkts []retrieval.ContextPacket, typ string) bool {
 func dropFirstOfType(pkts []retrieval.ContextPacket, typ string) []retrieval.ContextPacket {
 	for i, p := range pkts {
 		if p.Type == typ {
+			return append(pkts[:i], pkts[i+1:]...)
+		}
+	}
+	return pkts
+}
+
+func dropLastOfType(pkts []retrieval.ContextPacket, typ string) []retrieval.ContextPacket {
+	for i := len(pkts) - 1; i >= 0; i-- {
+		if pkts[i].Type == typ {
 			return append(pkts[:i], pkts[i+1:]...)
 		}
 	}

@@ -46,6 +46,10 @@ type WindowResult struct {
 	SkipHistory       bool   // 新窗口首条不重放旧消息（Size 仍记录，供下一条窗口扩张）
 	SessionStartMsgID string // 当前 session 的起始消息 ID（新 session 为空，orchestrator 用本条 msgID 填充）
 	PrevUserXML       string // 上一条 user 消息的 XMLContext（资源区增量来源，空=无上一条）
+	// PrevEventXML 上一条 user 消息的 XMLContext（事件层专用）。
+	// 资源区在新 session 会重置（PrevUserXML 置空），但事件的粘滞/跨窗口延续要跨 session 读取，
+	// 所以单独保留一份（设计 §6.10）。
+	PrevEventXML string
 }
 
 // RunRequest — Orchestrator 输入
@@ -90,6 +94,7 @@ type RunRequest struct {
 	History retrieval.SourceConfig
 	Theme   retrieval.SourceConfig
 	Summary retrieval.SourceConfig
+	Event   retrieval.SourceConfig
 
 	// HiddenRound 隐藏轮：本轮所有消息（user/assistant/tool）落库为隐藏状态，
 	// 不进对话记录/LLM 上下文/检索/后处理。接力等控制轮用。
@@ -387,7 +392,8 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	// 2. 上下文检索
 	var retrieveResult *ctxflow.RetrieveResult
 	if !req.SkipRetrieval && len(queryVec) > 0 {
-		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(req, queryVec, historyEmbeddings))
+		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(
+			req, queryVec, historyEmbeddings, ctxflow.ParseEventRefs(req.Window.PrevEventXML)))
 		if err != nil {
 			log.Printf("[orch] retrieve error: %v", err)
 		}
@@ -398,7 +404,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	return events, nil
 }
 
-func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]float64) retrieval.SearchOptions {
+func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]float64, prevEventRefs []retrieval.EventRef) retrieval.SearchOptions {
 	// 从已有消息中采集 DB ID，供检索时去重
 	excludeMsgIDs := make(map[string]bool)
 	for _, m := range req.Messages {
@@ -417,6 +423,9 @@ func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]
 		History:           req.History,
 		Theme:             req.Theme,
 		Summary:           req.Summary,
+		Event:             req.Event,
+		PrevEventRefs:     prevEventRefs,
+		IsNewSession:      req.Window.IsNewSession,
 		ExcludeMsgIDs:     excludeMsgIDs,
 	}
 }
@@ -773,7 +782,7 @@ func (o *Orchestrator) buildUserMessage(
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
-				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme:
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeEvent:
 					zoneFresh = append(zoneFresh, pkts...)
 				}
 			}
@@ -808,7 +817,7 @@ func (o *Orchestrator) buildUserMessage(
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
-				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary:
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary, ctxflow.TypeEvent:
 					continue
 				}
 				packets[typ] = append(packets[typ], pkts...)

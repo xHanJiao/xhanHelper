@@ -141,6 +141,7 @@ func (r *ContextRetriever) fillDefaults(opts *retrieval.SearchOptions) {
 	opts.History.Resolve(r.config.History)
 	opts.Theme.Resolve(r.config.Theme)
 	opts.Summary.Resolve(r.config.Summary)
+	opts.Event.Resolve(r.config.Event)
 }
 
 func buildTraceItems(packets []retrieval.ContextPacket, nearMiss []retrieval.NearMissItem) []TraceItem {

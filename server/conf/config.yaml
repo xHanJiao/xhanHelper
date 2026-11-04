@@ -157,19 +157,31 @@ retrieval:
     freshness_decay: 0.008
     threshold: 0.6
     limit: 2
+  # 事件注入：复用记忆向量，按 event_id 聚合（docs/design/event-threads）
+  event:
+    freshness_decay: 0.01
+    threshold: 0.5
+    limit: 20
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true
-    budget_chars: 4500 # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
+    budget_chars: 15000 # 总预算帽（UTF-8 字符数，中文 1 字=1）
     budget_profile: 1600 # profile 预算（稳定画像层）
     budget_summary: 500 # summary 预算
-    budget_memory: 600 # memory 预算（记忆已是主资源，p75≈62 字，约容 6 条）
-    budget_note: 700 # note 预算（笔记基本停写，只留最相关的几条）
+    budget_memory: 1000 # memory 预算（只放未聚合的普通记忆）
+    budget_note: 0 # note 预算（笔记不再注入资源区）
     budget_topic: 200 # topic 预算
+    budget_event: 12000 # 事件区预算（所有事件形态合计）
     quota_summary: 1 # 摘要配额
     quota_memory: 6 # 记忆配额
-    quota_note: 3 # 笔记配额
+    quota_note: 0 # 笔记配额（0 = 不注入）
     quota_topic: 3 # 主题配额（只收 matched）
+    quota_event_full: 4 # 事件 full 上限（含 pinned）
+    quota_event_compact: 6 # 事件 compact 上限
+    quota_event_summary: 12 # 事件 summary 上限，超出降 index
+    quota_event_index: 25 # 事件 index 上限，超出移出资源区
+    quota_event_pinned: 3 # event.enable 钉住上限
+    event_memories: 20 # full 形态每个事件附带的记忆条数（updated_at DESC）
 
 # session 结束后的记忆 → 事件拼装（docs/design/event-threads）
 event_assembly:

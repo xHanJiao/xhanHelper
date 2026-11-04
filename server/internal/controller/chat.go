@@ -648,11 +648,17 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 		lastWindow = ws
 	}
 
+	prevXML := ""
+	if lastUserMsg.XMLContext != nil {
+		prevXML = *lastUserMsg.XMLContext
+	}
+
 	gap := time.Since(lastUserMsg.CreatedAt)
 	if gap > time.Duration(gapMinutes)*time.Minute {
 		// 新窗口：不重放旧轮（tool 调用 token 贵），改为最近用户消息注入 system prompt；
 		// Size 记 1 供下一条窗口扩张。
-		return agent.WindowResult{Size: 1, IsNewSession: true, SkipHistory: true}
+		// 事件层仍要看上一条 XML（跨窗口 carried），所以 PrevEventXML 照常带。
+		return agent.WindowResult{Size: 1, IsNewSession: true, SkipHistory: true, PrevEventXML: prevXML}
 	}
 
 	maxRounds := cfg.Chat.MaxWindowRounds
@@ -660,14 +666,11 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 	if newWindow >= maxRounds {
 		newWindow = maxRounds / 2
 	}
-	prevXML := ""
-	if lastUserMsg.XMLContext != nil {
-		prevXML = *lastUserMsg.XMLContext
-	}
 	return agent.WindowResult{
 		Size:              newWindow,
 		IsNewSession:      false,
 		SessionStartMsgID: agent.GetSessionStart(lastUserMsg),
 		PrevUserXML:       prevXML,
+		PrevEventXML:      prevXML,
 	}
 }

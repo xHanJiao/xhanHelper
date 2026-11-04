@@ -53,6 +53,23 @@ type ThemeMeta struct {
 
 func (ThemeMeta) isPacketMeta() {}
 
+// EventMeta 事件的元数据（事件 = 记忆聚合，正文是 Memories）。
+type EventMeta struct {
+	EventID     string
+	Title       string
+	Summary     string
+	Mode        string // full | compact | summary | index
+	Score       float64
+	UpdatedAt   time.Time // 最后一条记忆的时间
+	Pinned      bool
+	Carried     bool // 跨窗口延续（只注入 summary）
+	Miss        int  // 同窗口连续未命中轮数（供下一轮解析）
+	Memories    []model.UserMemory
+	MemoryCount int
+}
+
+func (EventMeta) isPacketMeta() {}
+
 // SummaryMeta 对话摘要的元数据。
 type SummaryMeta struct {
 	SummaryID       string    // 摘要自身的 ID

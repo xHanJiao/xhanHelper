@@ -496,16 +496,18 @@ sequenceDiagram
 **状态不落库**：carried/sticky 不写 DB，从上一条 user 消息的 XML 里解析。
 
 ```go
-// WindowResult / RunRequest / retrieval.SearchOptions 增加
+// WindowResult 增加 PrevEventXML（新 session 也保留，资源区用的 PrevUserXML 仍按旧行为置空）
+// retrieval.SearchOptions 增加 PrevEventRefs / PinnedEventIDs / IsNewSession
 PrevEventRefs []EventRef // {ID, Mode, Miss}
 ```
 
 - `computeWindowSize` 现在在 `IsNewSession` 时把 `PrevUserXML` 置空，资源区就断了。
-- 事件层不跟这个走：无论是不是新 session，都从**上一条 user 消息的 XML** 解析 `<event id mode miss>`，放进 `PrevEventRefs`。
+- 事件层不跟这个走：另存一份 `PrevEventXML`（新 session 也带），无论是不是新 session，都从**上一条 user 消息的 XML** 解析 `<event id mode miss>`，由 orchestrator 填进 `SearchOptions.PrevEventRefs`。
 - 同一 session 内：按上一轮的 `mode/miss` 继续 full/compact。
 - 跨 session（`IsNewSession`）：只注入 summary，标记 `mode="summary" carried="上一窗口"`；如果新 session 里 fresh 命中，立刻升回 full。
 - 长期没命中不按轮数硬丢；只有 summary 超过 12 个、或预算不足时，才降到 index。
 - `PrevEventRefs` 里的事件如果已被合并/删除，**加载不到就跳过**（不做别名解析、不做去重）。
+- 字面命中用「事件名是当前消息的子串」判断（中文无空格，不做分词）；命中给 `threshold + 0.1` 的保底分。
 
 **资源区配合**：
 

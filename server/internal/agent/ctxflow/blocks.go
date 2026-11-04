@@ -13,6 +13,7 @@ const (
 	TypeProfile         = "profile"
 	TypeSummary         = "summary"
 	TypeHistory         = "history"
+	TypeEvent           = "event"
 	TypeMemory          = "memory"
 	TypeNote            = "note"
 	TypeTheme           = "theme"
@@ -23,7 +24,7 @@ const (
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
 // profile 是最稳定的用户事实画像，放在最前面，便于 LLM 优先关注。
-var typeOrder = []string{TypeProfile, TypeSummary, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
+var typeOrder = []string{TypeProfile, TypeSummary, TypeHistory, TypeEvent, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -106,6 +107,39 @@ type themesBlock struct {
 }
 
 func (*themesBlock) TypeKey() string { return TypeTheme }
+
+// --- event ---
+// eventItem 事件块：标题 + 当前状态 summary + 最近记忆（按注入形态决定带不带）。
+// index 形态只有标题，用于告诉 LLM「这件事存在」，需要时用工具拉全文。
+type eventMemoryItem struct {
+	ID      string `xml:"id,attr,omitempty" json:"id,omitempty"`
+	Topic   string `xml:"topic,attr,omitempty" json:"topic,omitempty"`
+	Date    string `xml:"date,attr,omitempty" json:"date,omitempty"`
+	Content string `xml:",chardata" json:"content"`
+}
+type eventMemories struct {
+	Items []eventMemoryItem `xml:"memory" json:"items"`
+}
+type eventItem struct {
+	ID          string         `xml:"id,attr" json:"id"`
+	Title       string         `xml:"title,attr" json:"title"`
+	Mode        string         `xml:"mode,attr,omitempty" json:"mode,omitempty"`
+	Score       float64        `xml:"score,attr,omitempty" json:"score,omitempty"`
+	Updated     string         `xml:"updated,attr,omitempty" json:"updated,omitempty"`
+	MemoryCount int            `xml:"memory_count,attr,omitempty" json:"memory_count,omitempty"`
+	Pinned      string         `xml:"pinned,attr,omitempty" json:"pinned,omitempty"`
+	Miss        int            `xml:"miss,attr,omitempty" json:"miss,omitempty"`
+	Carried     string         `xml:"carried,attr,omitempty" json:"carried,omitempty"`
+	Summary     string         `xml:"summary,omitempty" json:"summary,omitempty"`
+	Memories    *eventMemories `xml:"memories" json:"memories,omitempty"`
+}
+type eventsBlock struct {
+	XMLName     struct{}    `xml:"events" json:"-"`
+	Description string      `xml:"description,attr,omitempty" json:"description,omitempty"`
+	Items       []eventItem `xml:"event" json:"items"`
+}
+
+func (*eventsBlock) TypeKey() string { return TypeEvent }
 
 // --- summary ---
 type summaryItem struct {
@@ -197,6 +231,7 @@ var blockBuilders = map[string]blockBuilder{
 	TypeNote:            buildNotesBlock,
 	TypeHistory:         buildHistoryBlock,
 	TypeTheme:           buildThemesBlock,
+	TypeEvent:           buildEventsBlock,
 	TypeSummary:         buildSummariesBlock,
 	TypeRecent:          buildRecentBlock,
 	TypeCurrentDatetime: buildCurrentDatetimeBlock,
@@ -296,6 +331,57 @@ func buildThemesBlock(items []retrieval.ContextPacket) Block {
 			}
 		}
 		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
+func buildEventsBlock(items []retrieval.ContextPacket) Block {
+	b := eventsBlock{Description: retrieval.DescEvents}
+	for _, pkt := range items {
+		meta, ok := pkt.Meta.(retrieval.EventMeta)
+		if !ok {
+			continue
+		}
+		it := eventItem{
+			ID:          meta.EventID,
+			Title:       meta.Title,
+			Mode:        meta.Mode,
+			Score:       roundScore(meta.Score),
+			MemoryCount: meta.MemoryCount,
+			Miss:        meta.Miss,
+		}
+		if it.ID == "" {
+			it.ID = pkt.ID
+		}
+		if !meta.UpdatedAt.IsZero() {
+			it.Updated = meta.UpdatedAt.In(config.BJ).Format("2006-01-02")
+		}
+		if meta.Pinned {
+			it.Pinned = "1"
+		}
+		if meta.Carried {
+			it.Carried = "上一窗口"
+		}
+		if meta.Mode != retrieval.EventModeIndex {
+			it.Summary = meta.Summary
+		}
+		if meta.Mode == retrieval.EventModeFull || meta.Mode == retrieval.EventModeCompact {
+			mems := &eventMemories{}
+			for _, m := range meta.Memories {
+				mi := eventMemoryItem{ID: m.ID, Topic: m.Topic, Content: m.MemoryValue}
+				if !m.CreatedAt.IsZero() {
+					mi.Date = m.CreatedAt.In(config.BJ).Format("2006年01月02日")
+				}
+				mems.Items = append(mems.Items, mi)
+			}
+			if len(mems.Items) > 0 {
+				it.Memories = mems
+			}
+		}
+		b.Items = append(b.Items, it)
+	}
+	if len(b.Items) == 0 {
+		return nil
 	}
 	return &b
 }

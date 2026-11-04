@@ -27,6 +27,8 @@ func NewMemorySource(
 			ListAll: func(ctx context.Context, _ time.Time, limit, offset int) ([]model.UserMemory, error) {
 				return memRepo.ListAllUsersMemoriesPaginated(ctx, limit, offset)
 			},
+			// 已归属事件的记忆只通过事件块注入，普通记忆块不再重复（设计 §6.2）。
+			Filter: func(m model.UserMemory) bool { return m.EventID == nil },
 		},
 	)
 }

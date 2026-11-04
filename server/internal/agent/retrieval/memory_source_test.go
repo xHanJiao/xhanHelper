@@ -14,6 +14,7 @@ import (
 
 type memoryFixture struct {
 	src       *EntitySource[model.UserMemory]
+	db        *gorm.DB
 	memRepo   *service.UserMemoryRepo
 	chunkRepo *service.EmbeddingChunkRepo
 	cleanup   func()
@@ -45,6 +46,7 @@ func setupMemorySource(t *testing.T) *memoryFixture {
 			configPicker:  func(o SearchOptions) SourceConfig { return o.Memory },
 		},
 		memRepo:   memRepo,
+		db:        db,
 		chunkRepo: chunkRepo,
 		cleanup:   func() {},
 	}
@@ -294,5 +296,33 @@ func TestMemorySource_LimitTruncation(t *testing.T) {
 	}
 	if len(packets) != 2 {
 		t.Errorf("limit=2 应返回 2 条，实际 %d 条", len(packets))
+	}
+}
+
+func TestMemorySource_ExcludesEventOwnedMemories(t *testing.T) {
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	// 把 m1 挂到事件上：普通记忆块必须跳过它（只经事件块注入）
+	eid := "e1"
+	if err := f.db.Model(&model.UserMemory{ID: "m1"}).Update("event_id", eid).Error; err != nil {
+		t.Fatalf("set event id: %v", err)
+	}
+	f.src.filter = func(m model.UserMemory) bool { return m.EventID == nil }
+
+	f.src.vs = &mockVectorStore{results: []SearchResult{
+		fullMemResult("m1", 0.9),
+		fullMemResult("m2", 0.8),
+	}}
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
+		Embedding: []float64{1}, UserID: "u1",
+		Memory: SourceConfig{Threshold: 0.5, Limit: 5},
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(packets) != 1 || packets[0].ID != "m2" {
+		t.Fatalf("event-owned memory must be filtered out, got %+v", packets)
 	}
 }

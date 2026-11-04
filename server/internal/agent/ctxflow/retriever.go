@@ -121,8 +121,12 @@ func (r *ContextRetriever) Retrieve(ctx context.Context, opts retrieval.SearchOp
 		}
 	}
 
-	// 组内按 Score 降序统一排序
-	for _, packets := range packetsByType {
+	// 组内按 Score 降序统一排序（event 除外：EventSource 已按 pinned/形态/分数排好，
+	// 再按裸 score 重排会让 score=0 的 sticky/carried 事件排到最后，被预算优先砍掉）
+	for typ, packets := range packetsByType {
+		if typ == TypeEvent {
+			continue
+		}
 		sort.Slice(packets, func(i, j int) bool {
 			return packets[i].Score > packets[j].Score
 		})

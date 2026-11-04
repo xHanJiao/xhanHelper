@@ -425,7 +425,8 @@ pinned（≤3，full）
   > 移出资源区
 ```
 
-- 超上限/超预算时，从优先级最低、最久没命中的开始降。
+- 超上限/超预算时，从优先级最低的开始降：index 先于 summary，summary 先于 compact，compact 先于 full；同形态内按分数降序、`last_memory_at` 旧的先降。
+- `miss` 只驱动同窗口的 `full → compact`（连续 2 轮未命中），不参与跨形态的降级排序；`summary → index` 只由 summary 数量上限和预算触发。
 - pinned 不被降级，除非用户 `event.disable`。
 - `full → compact → summary → index → 移出` 是降级顺序，不是按时间一刀切。
 
@@ -507,12 +508,13 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 - 跨 session（`IsNewSession`）：只注入 summary，标记 `mode="summary" carried="上一窗口"`；如果新 session 里 fresh 命中，立刻升回 full。
 - 长期没命中不按轮数硬丢；只有 summary 超过 12 个、或预算不足时，才降到 index。
 - `PrevEventRefs` 里的事件如果已被合并/删除，**加载不到就跳过**（不做别名解析、不做去重）。
+- **跳过检索（短输入「继续」「好的」等）或事件源报错时，原样携带上一轮事件**：同窗口保留原形态，跨窗口降为 summary carried，并清掉 `pinned` 标签（权威来源是 `Conversation.Extra`，这条路径读不到）。不携带的话本轮 XML 写回 DB 后，下一轮就解析不到事件，粘滞链会断。
 - 字面命中用「事件名是当前消息的子串」判断（中文无空格，不做分词）；命中给 `threshold + 0.1` 的保底分。
 
 **资源区配合**：
 
-- event 类型在 `MergeResourceZone` 里**以本轮 EventSource 返回的集合为准**，不再从 prev 里捞旧事件。粘滞由 EventSource 自己解析 `PrevEventRefs` 实现，控制权集中在一处。
-- event 的 per-type 裁剪改成从「分数最低」砍，不按时间顺序砍。
+- event 类型在 `MergeResourceZone` 里**以本轮 EventSource 返回的集合为准**，不再从 prev 里捞旧事件（跳过检索时由 orchestrator 显式携带，见上）。粘滞由 EventSource 自己解析 `PrevEventRefs` 实现，控制权集中在一处。
+- event 超预算时**先降级再丢弃**：从优先级最低的那条开始 `full→compact→summary→index`，index 再降就移出；不整条硬丢。
 - `budgetTypePriority` 把 event 放到最后（最不容易被总预算砍）。
 - 这样不会出现「prev 里旧事件占着 quota、EventSource 想换换不掉」的问题。
 
@@ -627,8 +629,9 @@ flowchart LR
 ```yaml
 retrieval:
   event:
+    freshness_decay: 0.01
     threshold: 0.5        # 事件得分阈值（复用记忆相似度）
-    limit: 10             # 候选事件数
+    limit: 20             # 记忆召回乘数（chunk=limit*8 / 全量=limit*2），不是事件条数上限
   resource_zone:
     budget_event: 12000   # 事件区字符预算
     budget_memory: 1000   # 普通未聚合记忆
@@ -638,7 +641,8 @@ retrieval:
     quota_event_compact: 6
     quota_event_summary: 12
     quota_event_index: 25
-    event_pinned_max: 3
+    quota_event_pinned: 3 # event.enable 钉住上限
+    event_memories: 20    # full 形态每个事件附带的记忆条数
 event_assembly:
   candidate_top: 10       # 注入给拼装的候选事件数
   dedupe_sim: 0.88        # 创建前同名/同义校验阈值
@@ -655,17 +659,18 @@ event_assembly:
 ### 10.1 每轮日志
 
 ```
-[event_zone] modes={pinned:1,full:2,compact:1,summary:5,index:12}
-             chars={pinned:1200,full:2400,compact:350,summary:750,index:96}
-             event_total=4796 zone_total=6200 fresh=3
-             demoted={full→compact:1, summary→index:2}
+[event] inject: user=u1 active=12 fresh=2 selected=7 (full/compact/summary/index=2/1/3/1)
+[resource_zone] budget trim: total 9300→7200 chars; per-zone map[event:5200 memory:800 ...]→...; selected=[event:e1 ...]; dropped=[...]
 ```
+
+- `[event] inject`：`active` 是未删除事件数，`fresh` 是本轮向量/字面命中的事件数，`selected` 是最终注入数；括号里是各形态数量。`fresh` 经常 0-1 说明匹配或聚合有问题。
+- `[resource_zone] budget trim`：`total` 是资源区总字符变化，`per-zone` 是各子区（event/memory/note/...）字符变化，`dropped` 是被降级/丢弃的条目。
 
 重点看：
 
-1. 每轮事件区实际字符 p50 / p90 / max；
+1. 每轮事件区实际字符 p50 / p90 / max（看 `per-zone` 里的 `event`）；
 2. 各形态数量分布；
-3. fresh 命中数（经常 0-1 说明匹配或聚合有问题）；
+3. fresh 命中数；
 4. 降级次数（频繁说明预算/上限太紧）。
 
 日志同时写进 `message.extra` 的检索 trace，方便 replay 对照。

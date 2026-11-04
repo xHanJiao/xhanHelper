@@ -78,6 +78,11 @@ type RunRequest struct {
 	// 历史消息不再重放完整 XML；注入资源收敛到当前消息的公共资源区。
 	PreviousUserXMLContext string
 
+	// PrevZonePackets / PrevEventRefs 在 Run 内从 Window.PrevEventXML 解析一次，
+	// 供资源区与事件层共用（避免同一条 XML 解析两遍）。
+	PrevZonePackets []retrieval.ContextPacket
+	PrevEventRefs   []retrieval.EventRef
+
 	// RecentUserMessages 新窗口（SkipHistory）时由 ReduceRecentRounds 压缩的最近对话，
 	// 时间正序的 user / assistant 交替序列（assistant 仅最终文本回复，不含 tool call）。
 	// 渲染后注入资源区 recent 段，供 LLM 知晓上个窗口用户说了什么、自己回了什么。
@@ -349,6 +354,12 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	// 资源区增量来源：上一条 user 消息的 XMLContext（computeWindowSize 已查，零额外 DB 读）
 	req.PreviousUserXMLContext = req.Window.PrevUserXML
+	// 事件层要跨 session 读取上一轮事件；PrevEventXML 在新 session 也保留。
+	// 同一条 XML 只解析一次，资源区在字符串相同时直接复用。
+	if req.Window.PrevEventXML != "" {
+		req.PrevZonePackets = ctxflow.ParseResourceZone(req.Window.PrevEventXML)
+		req.PrevEventRefs = ctxflow.EventRefsFromPackets(req.PrevZonePackets)
+	}
 
 	var queryVec []float64
 	var historyEmbeddings [][]float64
@@ -393,7 +404,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	var retrieveResult *ctxflow.RetrieveResult
 	if !req.SkipRetrieval && len(queryVec) > 0 {
 		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(
-			req, queryVec, historyEmbeddings, ctxflow.ParseEventRefs(req.Window.PrevEventXML)))
+			req, queryVec, historyEmbeddings, req.PrevEventRefs))
 		if err != nil {
 			log.Printf("[orch] retrieve error: %v", err)
 		}
@@ -428,6 +439,31 @@ func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]
 		IsNewSession:      req.Window.IsNewSession,
 		ExcludeMsgIDs:     excludeMsgIDs,
 	}
+}
+
+// eventZonePackets 决定本轮事件区来源：
+//   - 检索正常跑过且 EventSource 没报错 → 用本轮结果（EventSource 自己处理粘滞/降级）；
+//   - 跳过检索（短输入）、embedding 失败、EventSource 报错、或检索器没注册 event 源
+//     → 携带上一轮事件（跨窗口降为 summary carried）。
+//
+// 后一种情况必须携带：本轮 XML 会写回 DB，如果这里为空，下一轮解析就丢了粘滞链。
+func eventZonePackets(
+	retrieveResult *ctxflow.RetrieveResult,
+	prevPackets []retrieval.ContextPacket,
+	isNewSession bool,
+) []retrieval.ContextPacket {
+	if retrieveResult != nil && retrieveResult.Trace != nil {
+		for _, p := range retrieveResult.Trace.Providers {
+			if p.Name != "event" {
+				continue
+			}
+			if p.Error == "" {
+				return retrieveResult.Packets[ctxflow.TypeEvent]
+			}
+			break
+		}
+	}
+	return ctxflow.CarryEventPackets(prevPackets, isNewSession)
 }
 
 func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent string) []float64 {
@@ -782,17 +818,25 @@ func (o *Orchestrator) buildUserMessage(
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
-				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeEvent:
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme:
 					zoneFresh = append(zoneFresh, pkts...)
 				}
 			}
 		}
+		// 事件：检索正常用本轮结果；跳过检索/事件源失败时携带上一轮。
+		// 不携带的话本轮 XML 会写回 DB，下一轮粘滞链就断了（设计 §6.10）。
+		zoneFresh = append(zoneFresh, eventZonePackets(retrieveResult, req.PrevZonePackets, req.Window.IsNewSession)...)
 		// 新窗口首条注入最近对话（用户 + AI 最终回复）到资源区，随后随增量携带、新窗口重置
 		if req.Window.IsNewSession {
 			zoneFresh = append(zoneFresh, buildRecentUserPackets(req.RecentUserMessages)...)
 		}
+		// 上一条 XML 已在本轮 Run 里解析过（PrevZonePackets），字符串相同时直接复用。
+		prevZone := req.PrevZonePackets
+		if req.PreviousUserXMLContext != req.Window.PrevEventXML {
+			prevZone = ctxflow.ParseResourceZone(req.PreviousUserXMLContext)
+		}
 		zonePkts = ctxflow.MergeResourceZone(
-			ctxflow.ParseResourceZone(req.PreviousUserXMLContext),
+			prevZone,
 			zoneFresh,
 			o.resourceZoneQuotas,
 		)

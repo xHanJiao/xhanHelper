@@ -19,7 +19,7 @@ const (
 		"每个主题可通过 id 调用 theme_search.get_detail 获取完整状态页。"
 	DescEvents = "用户现实里持续在跟进的事件，由系统把相关记忆聚合而成（如「回西安准备」「驾照考取」）。" +
 		"每个事件带一句当前状态 summary；mode=full 附带最近的记忆，mode=compact 只附 2 条，" +
-		"mode=summary 只有状态，mode=index 只有标题（说明它存在，需要时可用工具拉取全文）。" +
+		"mode=summary 只有状态，mode=index 只有标题（说明它存在，需要时用检索工具 unified_search 查完整记忆）。" +
 		"本块通过记忆向量检索后按事件聚合召回，并按相关度与新近度决定注入形态。"
 	DescHistory = "之前的聊天记录，以 round 的方式组织，一个 round 代表了用户一次发送的消息和接收到的返回内容。" +
 		"本条通过单路向量检索召回后，扩展为完整对话轮次。"

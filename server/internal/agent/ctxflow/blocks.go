@@ -479,6 +479,21 @@ func roundScore(s float64) float64 {
 	return math.Round(s*10000) / 10000
 }
 
+// eventModeRank 事件注入形态优先级（越小越优先）。
+func eventModeRank(mode string) int {
+	switch mode {
+	case retrieval.EventModeFull:
+		return 0
+	case retrieval.EventModeCompact:
+		return 1
+	case retrieval.EventModeSummary:
+		return 2
+	case retrieval.EventModeIndex:
+		return 3
+	}
+	return 4
+}
+
 var weekdaysCN = [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
 
 // DateTimeText 返回当前时间的格式化中文字符串。
@@ -577,6 +592,29 @@ func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
 		})
 	case TypeRecent:
 		// recent 按时间正序注入，不重排
+	case TypeEvent:
+		// 事件按注入形态排序：pinned → full → compact → summary → index，
+		// 同形态内分数降序、新近度降序、ID（确定性）。
+		sort.SliceStable(packets, func(i, j int) bool {
+			mi, oki := packets[i].Meta.(retrieval.EventMeta)
+			mj, okj := packets[j].Meta.(retrieval.EventMeta)
+			if oki && okj {
+				if mi.Pinned != mj.Pinned {
+					return mi.Pinned
+				}
+				ri, rj := eventModeRank(mi.Mode), eventModeRank(mj.Mode)
+				if ri != rj {
+					return ri < rj
+				}
+				if mi.Score != mj.Score {
+					return mi.Score > mj.Score
+				}
+				if !mi.UpdatedAt.Equal(mj.UpdatedAt) {
+					return mi.UpdatedAt.After(mj.UpdatedAt)
+				}
+			}
+			return packets[i].ID < packets[j].ID
+		})
 	default:
 		sort.SliceStable(packets, func(i, j int) bool {
 			if packets[i].Score != packets[j].Score {

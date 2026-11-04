@@ -46,9 +46,10 @@ type ZoneBudgets struct {
 	Event   int
 }
 
-// DefaultZoneBudgets 默认预算：profile 1600 / note 3000 / summary 800 / memory 600 / topic 200 / event 12000。
+// DefaultZoneBudgets 默认预算（与 config/validate 对齐）：
+// profile 1600 / summary 500 / memory 1000 / note 0 / topic 200 / event 12000。
 func DefaultZoneBudgets() ZoneBudgets {
-	return ZoneBudgets{Profile: 1600, Summary: 800, Memory: 600, Note: 3000, Topic: 200, Event: 12000}
+	return ZoneBudgets{Profile: 1600, Summary: 500, Memory: 1000, Note: 0, Topic: 200, Event: 12000}
 }
 
 // zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/topics/recent），
@@ -213,32 +214,50 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 	return pkts
 }
 
-// ParseEventRefs 从历史 XMLContext 解析上一轮注入过的事件（id/mode/miss/pinned）。
+// EventRefsFromPackets 从资源区 packets 提取上一轮注入过的事件引用（id/mode/miss/pinned）。
 // 粘滞/跨窗口状态不落库，全部从上一条 user 消息的 XML 还原（设计 §6.10）。
-func ParseEventRefs(xmlText string) []retrieval.EventRef {
-	if strings.TrimSpace(xmlText) == "" {
-		return nil
-	}
-	var c zoneContainer
-	if err := xml.Unmarshal([]byte("<zone>"+xmlText+"</zone>"), &c); err != nil {
-		log.Printf("[resource_zone] parse event refs error: %v", err)
-		return nil
-	}
-	if c.Events == nil {
-		return nil
-	}
-	out := make([]retrieval.EventRef, 0, len(c.Events.Items))
-	for i := range c.Events.Items {
-		it := &c.Events.Items[i]
-		if it.ID == "" {
+// 入参通常是 ParseResourceZone 的结果；单独抽出来是为了同一条 XML 只解析一次。
+func EventRefsFromPackets(pkts []retrieval.ContextPacket) []retrieval.EventRef {
+	var out []retrieval.EventRef
+	for _, p := range pkts {
+		if p.Type != TypeEvent {
+			continue
+		}
+		meta, ok := p.Meta.(retrieval.EventMeta)
+		if !ok || meta.EventID == "" {
 			continue
 		}
 		out = append(out, retrieval.EventRef{
-			ID:     it.ID,
-			Mode:   it.Mode,
-			Miss:   it.Miss,
-			Pinned: it.Pinned == "1",
+			ID: meta.EventID, Mode: meta.Mode, Miss: meta.Miss, Pinned: meta.Pinned,
 		})
+	}
+	return out
+}
+
+// CarryEventPackets 取上一轮事件原样携带（跳过检索 / 事件源失败时用）。
+//
+// 这条路径拿不到 Conversation.Extra，所以清掉 pinned 标签：权威来源是 PinnedEventIDs，
+// 保留标签可能已经过期（用户刚 disable）；下一轮 EventSource 会从 Extra 重新派生。
+// 跨窗口（newSession）时按设计 §6.10 降为 summary + carried，不带记忆。
+func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool) []retrieval.ContextPacket {
+	var out []retrieval.ContextPacket
+	for _, p := range pkts {
+		if p.Type != TypeEvent {
+			continue
+		}
+		meta, ok := p.Meta.(retrieval.EventMeta)
+		if !ok || meta.EventID == "" {
+			continue
+		}
+		meta.Pinned = false
+		if newSession {
+			meta.Mode = retrieval.EventModeSummary
+			meta.Carried = true
+			meta.Miss = 0
+			meta.Memories = nil
+		}
+		p.Meta = meta
+		out = append(out, p)
 	}
 	return out
 }
@@ -513,8 +532,10 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 			return pkts // 无可砍，接受超限（理论不应发生）
 		}
 		if victim == TypeEvent {
-			// 事件按优先级从高到低排，砍尾部（最低优先级）
-			pkts = dropLastOfType(pkts, victim)
+			// 事件先降级（full→compact→summary→index），index 再降就丢弃
+			if !demoteLastEvent(pkts) {
+				pkts = dropLastOfType(pkts, victim)
+			}
 		} else {
 			pkts = dropFirstOfType(pkts, victim)
 		}
@@ -546,7 +567,12 @@ func budgetPerType(pkts []retrieval.ContextPacket, budgets ZoneBudgets) []retrie
 				break
 			}
 			if typ == TypeEvent {
-				list = list[:len(list)-1] // 事件已按优先级排序，砍最低优先级
+				// 事件超预算先降级最低优先级那条（full→compact→summary→index），
+				// index 再降就丢弃；符合设计 §6.4「预算不足时 summary → index」。
+				if demoteEvent(&list[len(list)-1]) {
+					continue
+				}
+				list = list[:len(list)-1]
 				continue
 			}
 			list = list[1:] // 砍最旧
@@ -604,6 +630,44 @@ func dropLastOfType(pkts []retrieval.ContextPacket, typ string) []retrieval.Cont
 		}
 	}
 	return pkts
+}
+
+// demoteEvent 把事件降一级：full→compact（留 2 条记忆）→summary（清记忆）→index（清 summary）。
+// index 已是最低形态，返回 false 表示调用方应丢弃。
+func demoteEvent(pkt *retrieval.ContextPacket) bool {
+	meta, ok := pkt.Meta.(retrieval.EventMeta)
+	if !ok {
+		return false
+	}
+	switch meta.Mode {
+	case retrieval.EventModeFull:
+		meta.Mode = retrieval.EventModeCompact
+		if len(meta.Memories) > 2 {
+			meta.Memories = meta.Memories[:2]
+		}
+	case retrieval.EventModeCompact:
+		meta.Mode = retrieval.EventModeSummary
+		meta.Memories = nil
+	case retrieval.EventModeSummary:
+		meta.Mode = retrieval.EventModeIndex
+		meta.Summary = ""
+	case retrieval.EventModeIndex:
+		return false
+	default:
+		return false
+	}
+	pkt.Meta = meta
+	return true
+}
+
+// demoteLastEvent 降级最后一个（最低优先级）事件；没有可降级的事件返回 false。
+func demoteLastEvent(pkts []retrieval.ContextPacket) bool {
+	for i := len(pkts) - 1; i >= 0; i-- {
+		if pkts[i].Type == TypeEvent {
+			return demoteEvent(&pkts[i])
+		}
+	}
+	return false
 }
 
 // flattenGroups 按 zoneTypeOrder 展平类型分组（MergeResourceZone 内部快照用）。

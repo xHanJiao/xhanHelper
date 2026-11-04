@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -307,3 +308,88 @@ func TestEventSource_BelowThresholdIsNearMiss(t *testing.T) {
 		t.Fatalf("expected one below_threshold near miss, got %+v", nearMiss)
 	}
 }
+
+func TestEventSource_ChunkVectorHit(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "e1", "回西安准备", "打包中")
+	seedEventMemory(t, f.db, "m1", "e1", "打包行李", time.Now())
+	f.vs.results = []SearchResult{
+		memChunkResult("chunk:memory:m1/0", "m1", 0.88),
+	}
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
+		Embedding: []float64{1}, UserID: "u1",
+		Event: SourceConfig{Threshold: 0.5, Limit: 20},
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if meta, ok := eventOf(packets); !ok || meta.EventID != "e1" {
+		t.Fatalf("chunk hit should resolve to its event, got %+v", packets)
+	}
+}
+
+func TestEventSource_LoadActiveEventsPagination(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	for i := 0; i < 205; i++ {
+		seedEventRow(t, f.db, fmt.Sprintf("e%03d", i), fmt.Sprintf("事件%d", i), "")
+	}
+	active, err := f.src.loadActiveEvents(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("load active events: %v", err)
+	}
+	if len(active) != 205 {
+		t.Fatalf("expected all 205 events (paged), got %d", len(active))
+	}
+}
+
+func TestEventSource_CrossUserIsolation(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "e1", "u1 的事件", "")
+	// u2 的记忆挂到了 u1 的事件 ID 上（脏数据）：不能注入给 u1
+	m := &model.UserMemory{
+		ID: "m1", UserID: "u2", MemoryKey: "k", ContentHash: "h1",
+		MemoryValue: "别人的记忆", EventID: stringPtr("e1"),
+	}
+	if err := f.db.Create(m).Error; err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	f.vs.results = []SearchResult{fullMemResult("m1", 0.9)}
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
+		Embedding: []float64{1}, UserID: "u1",
+		Event: SourceConfig{Threshold: 0.5, Limit: 20},
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(packets) != 0 {
+		t.Fatalf("cross-user memory must not inject, got %+v", packets)
+	}
+}
+
+func TestEventSource_DanglingEventID(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "e1", "活跃事件", "")
+	m := &model.UserMemory{
+		ID: "m1", UserID: "u1", MemoryKey: "k", ContentHash: "h1",
+		MemoryValue: "悬空记忆", EventID: stringPtr("missing"),
+	}
+	if err := f.db.Create(m).Error; err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	f.vs.results = []SearchResult{fullMemResult("m1", 0.9)}
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
+		Embedding: []float64{1}, UserID: "u1",
+		Event: SourceConfig{Threshold: 0.5, Limit: 20},
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(packets) != 0 {
+		t.Fatalf("dangling event_id must be skipped, got %+v", packets)
+	}
+}
+
+func stringPtr(s string) *string { return &s }

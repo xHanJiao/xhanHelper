@@ -325,14 +325,16 @@ type SourceWeights struct {
 
 // RetrievalConfig — 记忆检索配置
 type RetrievalConfig struct {
-	FreshnessDecay float64            `yaml:"freshness_decay"` // 时间衰减系数，保留作为默认值
-	Memory         SourceWeights      `yaml:"memory"`
-	Note           SourceWeights      `yaml:"note"`
-	History        SourceWeights      `yaml:"history"`
-	Theme          SourceWeights      `yaml:"theme"`
-	Summary        SourceWeights      `yaml:"summary"`
-	Event          SourceWeights      `yaml:"event"`
-	ResourceZone   ResourceZoneConfig `yaml:"resource_zone"` // 公共资源区（phase-10 任务 B）
+	FreshnessDecay float64       `yaml:"freshness_decay"` // 时间衰减系数，保留作为默认值
+	Memory         SourceWeights `yaml:"memory"`
+	Note           SourceWeights `yaml:"note"`
+	History        SourceWeights `yaml:"history"`
+	Theme          SourceWeights `yaml:"theme"`
+	Summary        SourceWeights `yaml:"summary"`
+	// Event 事件检索：Limit 是记忆召回乘数（chunk=limit*8 / 全量=limit*2），不是事件条数上限；
+	// 事件条数由 resource_zone.quota_event_* 控制。
+	Event        SourceWeights      `yaml:"event"`
+	ResourceZone ResourceZoneConfig `yaml:"resource_zone"` // 公共资源区（phase-10 任务 B）
 }
 
 // ResourceZoneConfig — 公共资源区配置

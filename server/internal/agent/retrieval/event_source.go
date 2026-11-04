@@ -22,6 +22,10 @@ const (
 )
 
 // EventRef — 上一轮注入过的事件引用（从 XML 解析，不落库）。
+//
+// Pinned 仅供 XML 展示/调试，不参与注入决策：权威来源是 SearchOptions.PinnedEventIDs
+// （Conversation.Extra.EventFocus.Enabled）。不能消费 prev 里的 pinned——用户 event.disable
+// 之后 Extra 已移除，但上一轮 XML 仍是 pinned="1"，消费会让 disable 永远不生效（自我续命）。
 type EventRef struct {
 	ID     string
 	Mode   string
@@ -182,10 +186,17 @@ func (s *EventSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 		return eventNewer(a, b)
 	})
 	for _, id := range freshIDs {
-		states[id] = &eventState{ev: active[id], mode: EventModeFull, score: fresh[id]}
+		e := active[id]
+		if e == nil {
+			// 记忆的 event_id 指向已删/不存在的事件（阶段 4 merge/delete 的防御性缺口）
+			log.Printf("[event] skip stale event_id: %s", id)
+			continue
+		}
+		states[id] = &eventState{ev: e, mode: EventModeFull, score: fresh[id]}
 	}
 
 	// 4. 上一轮注入过、本轮没命中：同窗口粘滞 / 跨窗口 carried
+	// 注意：ref.Pinned 不参与决策（见 EventRef 注释），pinned 只认 PinnedEventIDs。
 	for _, ref := range opts.PrevEventRefs {
 		if states[ref.ID] != nil {
 			continue
@@ -478,5 +489,5 @@ func modeRank(mode string) int {
 }
 
 func (s *EventSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
-	log.Printf("[vector] event warmup: skipped (reuses memory vectors)")
+	// 复用记忆向量，由 MemorySource 预热，这里无需额外动作。
 }

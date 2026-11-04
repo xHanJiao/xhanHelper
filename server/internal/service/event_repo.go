@@ -132,7 +132,7 @@ func (r *EventRepo) List(ctx context.Context, userID string, includeDeleted bool
 	if !includeDeleted {
 		q = q.Where("is_deleted = ?", false)
 	}
-	err := q.Order("last_memory_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	err := q.Order("last_memory_at DESC, id").Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
 }
 
@@ -141,7 +141,7 @@ func (r *EventRepo) ListUpdatedSince(ctx context.Context, userID string, since t
 	var list []model.Event
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND is_deleted = ? AND last_memory_at >= ?", userID, false, since).
-		Order("last_memory_at DESC").
+		Order("last_memory_at DESC, id").
 		Limit(normalizeLimit(limit)).
 		Find(&list).Error
 	return list, err

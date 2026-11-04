@@ -161,7 +161,7 @@ retrieval:
   event:
     freshness_decay: 0.01
     threshold: 0.5
-    limit: 20
+    limit: 20 # 记忆召回乘数（chunk=limit*8 / 全量=limit*2），不是事件条数上限；事件条数由 quota_event_* 控制
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true

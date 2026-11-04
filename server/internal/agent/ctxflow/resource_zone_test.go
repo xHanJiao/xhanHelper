@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/model"
 )
 
 // —— ParseResourceZone ——
@@ -414,7 +415,7 @@ func eventPacket(id, title, mode string) retrieval.ContextPacket {
 	}
 }
 
-func TestParseEventRefs_RoundTrip(t *testing.T) {
+func TestEventRefsFromPackets_RoundTrip(t *testing.T) {
 	pkts := []retrieval.ContextPacket{
 		eventPacket("e1", "驾照考取", retrieval.EventModeFull),
 		eventPacket("e2", "求职", retrieval.EventModeIndex),
@@ -425,7 +426,7 @@ func TestParseEventRefs_RoundTrip(t *testing.T) {
 	}
 	xmlText := FormatResourceZone(pkts)
 
-	refs := ParseEventRefs(xmlText)
+	refs := EventRefsFromPackets(ParseResourceZone(xmlText))
 	if len(refs) != 2 {
 		t.Fatalf("expected 2 refs, got %+v", refs)
 	}
@@ -435,8 +436,36 @@ func TestParseEventRefs_RoundTrip(t *testing.T) {
 	if refs[1].ID != "e2" || refs[1].Mode != retrieval.EventModeIndex {
 		t.Fatalf("unexpected second ref: %+v", refs[1])
 	}
-	if got := ParseEventRefs(""); got != nil {
+	if got := EventRefsFromPackets(ParseResourceZone("")); got != nil {
 		t.Fatalf("empty xml should yield nil, got %+v", got)
+	}
+}
+
+func TestCarryEventPackets(t *testing.T) {
+	mems := []model.UserMemory{{ID: "m1", MemoryValue: "科三挂了"}}
+	pkts := []retrieval.ContextPacket{
+		{ID: "e1", Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: "e1", Title: "驾照考取", Summary: "科三待补考",
+			Mode: retrieval.EventModeFull, Miss: 1, Pinned: true, Memories: mems,
+		}},
+		{ID: "m1", Type: TypeMemory, Meta: retrieval.EntityMeta{Content: "普通记忆"}},
+	}
+
+	// 同窗口：保留形态与记忆，但清掉 pinned（权威来源是 Extra）
+	same := CarryEventPackets(pkts, false)
+	if len(same) != 1 || same[0].ID != "e1" {
+		t.Fatalf("expected only the event packet, got %+v", same)
+	}
+	meta := same[0].Meta.(retrieval.EventMeta)
+	if meta.Mode != retrieval.EventModeFull || meta.Pinned || len(meta.Memories) != 1 {
+		t.Fatalf("same-session carry should keep mode/memories and drop pinned: %+v", meta)
+	}
+
+	// 跨窗口：降为 summary carried，不带记忆
+	carried := CarryEventPackets(pkts, true)
+	meta = carried[0].Meta.(retrieval.EventMeta)
+	if meta.Mode != retrieval.EventModeSummary || !meta.Carried || len(meta.Memories) != 0 || meta.Miss != 0 {
+		t.Fatalf("cross-session carry should be summary carried: %+v", meta)
 	}
 }
 
@@ -501,5 +530,49 @@ func TestMergeResourceZone_KeepsSameTitleEvents(t *testing.T) {
 	out := MergeResourceZone(nil, fresh, DefaultZoneQuotas())
 	if len(out) != 2 {
 		t.Fatalf("events with the same title must not be deduped by content, got %+v", out)
+	}
+}
+
+func TestBudgetResourceZone_DemotesBeforeDropping(t *testing.T) {
+	mems := make([]model.UserMemory, 20)
+	for i := range mems {
+		mems[i] = model.UserMemory{ID: "m" + string(rune('a'+i)), MemoryValue: strings.Repeat("记", 20)}
+	}
+	long := strings.Repeat("状", 100)
+	full := func(id string) retrieval.ContextPacket {
+		return retrieval.ContextPacket{ID: id, Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: id, Title: id, Summary: long, Mode: retrieval.EventModeFull, Memories: mems,
+		}}
+	}
+	pkts := []retrieval.ContextPacket{full("e1"), full("e2")}
+	summary := retrieval.ContextPacket{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{
+		EventID: "e2", Title: "e2", Summary: long, Mode: retrieval.EventModeSummary,
+	}}
+	fullSize := utf8.RuneCountInString(FormatResourceZone(pkts[:1]))
+	summarySize := utf8.RuneCountInString(FormatResourceZone([]retrieval.ContextPacket{summary}))
+	budget := fullSize + summarySize + 20
+
+	out := BudgetResourceZone(pkts, ZoneBudgets{Event: budget}, 0)
+	if len(out) != 2 {
+		t.Fatalf("second event should be demoted, not dropped: %+v", out)
+	}
+	meta := out[1].Meta.(retrieval.EventMeta)
+	if meta.Mode == retrieval.EventModeFull {
+		t.Fatalf("second event should be demoted below full: %+v", meta)
+	}
+	if len(meta.Memories) > 2 {
+		t.Fatalf("demoted event should keep at most 2 memories, got %d", len(meta.Memories))
+	}
+}
+
+func TestSortPacketsByType_EventModeOrder(t *testing.T) {
+	pkts := []retrieval.ContextPacket{
+		{ID: "e3", Type: TypeEvent, Score: 0.9, Meta: retrieval.EventMeta{EventID: "e3", Mode: retrieval.EventModeIndex}},
+		{ID: "e1", Type: TypeEvent, Score: 0, Meta: retrieval.EventMeta{EventID: "e1", Mode: retrieval.EventModeFull}},
+		{ID: "e2", Type: TypeEvent, Score: 0.5, Meta: retrieval.EventMeta{EventID: "e2", Mode: retrieval.EventModeCompact}},
+	}
+	sortPacketsByType(TypeEvent, pkts)
+	if pkts[0].ID != "e1" || pkts[1].ID != "e2" || pkts[2].ID != "e3" {
+		t.Fatalf("events must be ordered by mode, not score: %+v", pkts)
 	}
 }

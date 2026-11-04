@@ -75,7 +75,7 @@ func TestEventZonePackets(t *testing.T) {
 }
 
 func TestMkSearchOptions_PinnedEventIDs(t *testing.T) {
-	opts := mkSearchOptions(&RunRequest{PinnedEventIDs: []string{"e1", "e2"}}, nil, nil, nil)
+	opts := mkSearchOptions(&RunRequest{PinnedEventIDs: []string{"e1", "e2"}}, nil, nil)
 	if len(opts.PinnedEventIDs) != 2 || opts.PinnedEventIDs[0] != "e1" {
 		t.Fatalf("pinned event ids not wired into SearchOptions: %+v", opts.PinnedEventIDs)
 	}

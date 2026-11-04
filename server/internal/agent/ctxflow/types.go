@@ -12,7 +12,7 @@ import "xhan-helper/internal/agent/retrieval"
 
 // RetrieveResult — 上下文检索的完整结果。
 type RetrieveResult struct {
-	Packets map[string][]retrieval.ContextPacket // type → packets，key 为 "memory"/"note"/"history"/"theme"/"summary"
+	Packets map[string][]retrieval.ContextPacket // type → packets，key 为 "memory"/"note"/"history"/"summary"
 	Trace   *RetrieveTrace                       // 检索追溯
 }
 

@@ -95,7 +95,7 @@ func (t *ThemeTool) Functions() []FuncSchema {
 	}
 }
 
-// ReadOnlyFuncs — 主题状态全部为写操作（plan 模式全拦）；查看走 theme_search（全只读）
+// ReadOnlyFuncs — 主题状态全部为写操作（plan 模式全拦）；主对话不再暴露主题工具。
 func (t *ThemeTool) ReadOnlyFuncs() map[string]bool { return nil }
 
 func (t *ThemeTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {

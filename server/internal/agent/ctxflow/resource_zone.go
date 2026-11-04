@@ -26,40 +26,37 @@ type ZoneQuotas struct {
 	Summary int
 	Memory  int
 	Note    int
-	Topic   int
 }
 
-// DefaultZoneQuotas 默认配额：note 5 / memory 3 / summary 1 / topic 5。
+// DefaultZoneQuotas 默认配额：note 5 / memory 3 / summary 1。
 func DefaultZoneQuotas() ZoneQuotas {
-	return ZoneQuotas{Summary: 1, Memory: 3, Note: 5, Topic: 5}
+	return ZoneQuotas{Summary: 1, Memory: 3, Note: 5}
 }
 
 // ZoneBudgets 资源区每类型字符预算（chars，UTF-8 rune count）。
 // 数据依据（近30天实测）：note p75 272×10、memory p75 62×8、summary p75 265×2、
-// topic 16×5、profile 块 p90 1407。各类型独立封顶，防止跨类挤占。
+// profile 块 p90 1407。各类型独立封顶，防止跨类挤占。
 type ZoneBudgets struct {
 	Profile int
 	Summary int
 	Memory  int
 	Note    int
-	Topic   int
 	Event   int
 }
 
 // DefaultZoneBudgets 默认预算（与 config/validate 对齐）：
-// profile 1600 / summary 500 / memory 1000 / note 0 / topic 200 / event 12000。
+// profile 1600 / summary 500 / memory 1000 / note 0 / event 12000。
 func DefaultZoneBudgets() ZoneBudgets {
-	return ZoneBudgets{Profile: 1600, Summary: 500, Memory: 1000, Note: 0, Topic: 200, Event: 12000}
+	return ZoneBudgets{Profile: 1600, Summary: 500, Memory: 1000, Note: 0, Event: 12000}
 }
 
-// zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/topics/recent），
+// zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/events/recent），
 // history/datetime/notice/user_query 忽略（不进资源区）。
 type zoneContainer struct {
 	Profile   *profileBlock   `xml:"profile"`
 	Memories  *memoriesBlock  `xml:"memories"`
 	Notes     *notesBlock     `xml:"notes"`
 	Summaries *summariesBlock `xml:"summaries"`
-	Topics    *themesBlock    `xml:"topics"`
 	Events    *eventsBlock    `xml:"events"`
 	Recent    *recentBlock    `xml:"recent"`
 }
@@ -142,21 +139,6 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 					ParentSummaryID: it.ParentSummaryID,
 					Topics:          it.Topics,
 					CreatedAt:       parseZoneDateTime(it.CreatedAt),
-				},
-			})
-		}
-	}
-	if c.Topics != nil {
-		for i := range c.Topics.Items {
-			it := &c.Topics.Items[i]
-			pkts = append(pkts, retrieval.ContextPacket{
-				ID:    it.ID,
-				Type:  TypeTheme,
-				Text:  it.Content,
-				Score: it.Score,
-				Meta: retrieval.ThemeMeta{
-					Description: it.Content,     // XML: content = 主题描述
-					StateText:   it.Description, // XML: desc attr = 状态文本（matched 才有）
 				},
 			})
 		}
@@ -338,8 +320,6 @@ func zoneContent(pkt retrieval.ContextPacket) string {
 		return meta.Content
 	case retrieval.SummaryMeta:
 		return meta.SummaryText
-	case retrieval.ThemeMeta:
-		return meta.Description
 	case retrieval.EventMeta:
 		return meta.Title
 	case retrieval.ProfileMeta:
@@ -357,8 +337,6 @@ func zoneQuota(pkt retrieval.ContextPacket, q ZoneQuotas) int {
 		return q.Memory
 	case TypeNote:
 		return q.Note
-	case TypeTheme:
-		return q.Topic
 	case TypeEvent:
 		// 事件配额由 EventSource 按注入形态（full/compact/summary/index）自己控制，
 		// 资源区不再二次裁剪（设计 §6.10）。
@@ -384,8 +362,6 @@ func zoneBudget(pkt retrieval.ContextPacket, b ZoneBudgets) int {
 		return b.Memory
 	case TypeNote:
 		return b.Note
-	case TypeTheme:
-		return b.Topic
 	case TypeEvent:
 		return b.Event
 	}
@@ -393,7 +369,7 @@ func zoneBudget(pkt retrieval.ContextPacket, b ZoneBudgets) int {
 }
 
 // zoneTypeOrder 资源区类型展示顺序（profile 稳定层最先，时间线阅读）。
-var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeRecent, TypeEvent, TypeMemory, TypeNote, TypeTheme}
+var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeRecent, TypeEvent, TypeMemory, TypeNote}
 
 // MergeResourceZone 旧资源（prev，时间线序）+ 本轮检索（fresh）→ 去重 + quota + 时间线序。
 // 规则：
@@ -402,7 +378,7 @@ var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeRecent, TypeEvent, Ty
 //   - 每类型超过 quota 时从头部（最旧）丢弃（profile 不参与 quota）
 //   - 输出按类型分组（同类型连续，组内旧→新），类型顺序 zoneTypeOrder——LLM 阅读最自然
 func MergeResourceZone(prev, fresh []retrieval.ContextPacket, q ZoneQuotas) []retrieval.ContextPacket {
-	if q.Summary == 0 && q.Memory == 0 && q.Note == 0 && q.Topic == 0 {
+	if q.Summary == 0 && q.Memory == 0 && q.Note == 0 {
 		q = DefaultZoneQuotas()
 	}
 
@@ -476,8 +452,6 @@ func MergeResourceZone(prev, fresh []retrieval.ContextPacket, q ZoneQuotas) []re
 			quota = q.Memory
 		case TypeNote:
 			quota = q.Note
-		case TypeTheme:
-			quota = q.Topic
 		default:
 			continue // profile 不参与 quota
 		}
@@ -521,9 +495,9 @@ func FormatResourceZone(pkts []retrieval.ContextPacket) string {
 	return buf.String()
 }
 
-// budgetTypePriority 总预算兜底砍序：memory > note > theme > summary > profile > event
+// budgetTypePriority 总预算兜底砍序：memory > note > summary > profile > event
 // （memory 数量多价值密度低先砍，事件是最高价值资源最后砍）。
-var budgetTypePriority = []string{TypeMemory, TypeNote, TypeTheme, TypeSummary, TypeProfile, TypeEvent}
+var budgetTypePriority = []string{TypeMemory, TypeNote, TypeSummary, TypeProfile, TypeEvent}
 
 // BudgetResourceZone 两阶段预算：
 //  1. per-type：每类型独立从最旧砍到该类预算内（防止跨类挤占，notes 满不伤 summary/profile）
@@ -630,8 +604,6 @@ func zoneBudgetOf(typ string, b ZoneBudgets) int {
 		return b.Memory
 	case TypeNote:
 		return b.Note
-	case TypeTheme:
-		return b.Topic
 	case TypeEvent:
 		return b.Event
 	}

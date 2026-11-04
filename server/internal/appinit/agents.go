@@ -44,7 +44,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	}, retrieval.NewTimeDecay(cfg.Retrieval.Event.FreshnessDecay))
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer, cfg.Vector.MessageRetentionDays)
 	simpleHistorySource := retrieval.NewSimpleHistorySource(vs, repos.Message)
-	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
 	summarySource := retrieval.NewSummarySource(vs, repos.ConversationSummary, repos.Embedding, repos.Chunk, chunkBuilder, summaryDecayer, cfg.Vector.SummaryRetentionDays)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
@@ -249,9 +248,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	retrieveCfg := ctxflow.DefaultRetrieveConfig()
 	applyRetrieveConfig(&retrieveCfg, cfg.Retrieval)
 	retriever := ctxflow.NewContextRetriever(
-		[]retrieval.ContextSource{themeSource, memSource, eventSource},
+		[]retrieval.ContextSource{memSource, eventSource},
 		&retrieveCfg,
-	).WithModifier("theme", ctxflow.BoostFactor(1.3))
+	)
 
 	// ContextFormatter
 	formatter := ctxflow.NewXMLFormatter()
@@ -314,14 +313,12 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Summary: cfg.Retrieval.ResourceZone.BudgetSummary,
 			Memory:  cfg.Retrieval.ResourceZone.BudgetMemory,
 			Note:    cfg.Retrieval.ResourceZone.BudgetNote,
-			Topic:   cfg.Retrieval.ResourceZone.BudgetTopic,
 			Event:   cfg.Retrieval.ResourceZone.BudgetEvent,
 		},
 		ResourceZoneQuotas: ctxflow.ZoneQuotas{
 			Summary: cfg.Retrieval.ResourceZone.QuotaSummary,
 			Memory:  cfg.Retrieval.ResourceZone.QuotaMemory,
 			Note:    cfg.Retrieval.ResourceZone.QuotaNote,
-			Topic:   cfg.Retrieval.ResourceZone.QuotaTopic,
 		},
 		ProfileFactRepo: repos.UserProfileFact,
 		ImageStore:      infra.ImageStore,
@@ -418,12 +415,6 @@ func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig)
 	}
 	if rc.History.Limit > 0 {
 		cfg.History.Limit = rc.History.Limit
-	}
-	if rc.Theme.Threshold > 0 {
-		cfg.Theme.Threshold = rc.Theme.Threshold
-	}
-	if rc.Theme.Limit > 0 {
-		cfg.Theme.Limit = rc.Theme.Limit
 	}
 	if rc.Summary.Threshold > 0 {
 		cfg.Summary.Threshold = rc.Summary.Threshold

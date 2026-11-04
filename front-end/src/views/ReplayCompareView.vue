@@ -36,7 +36,6 @@ const defaultConfigB = {
   memory: { threshold: 0.5, limit: 8 },
   note: { threshold: 0.5, limit: 5 },
   history: { threshold: 0.8, limit: 5 },
-  theme: { threshold: 0.5, limit: 10 },
   deep_mode: false,
   override_system_prompt: null,
 }
@@ -78,7 +77,6 @@ async function previewBPrompt() {
       memory: { threshold: configB.value.memory.threshold, limit: configB.value.memory.limit },
       note: { threshold: configB.value.note.threshold, limit: configB.value.note.limit },
       history: { threshold: configB.value.history.threshold, limit: configB.value.history.limit },
-      theme: { threshold: configB.value.theme.threshold, limit: configB.value.theme.limit },
     })
     bPromptPreview.value = res.system_prompt || ''
     bTrace.value = res.trace || null

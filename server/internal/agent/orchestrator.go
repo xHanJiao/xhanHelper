@@ -101,7 +101,6 @@ type RunRequest struct {
 	Memory  retrieval.SourceConfig
 	Note    retrieval.SourceConfig
 	History retrieval.SourceConfig
-	Theme   retrieval.SourceConfig
 	Summary retrieval.SourceConfig
 	Event   retrieval.SourceConfig
 
@@ -366,7 +365,6 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	}
 
 	var queryVec []float64
-	var historyEmbeddings [][]float64
 	if o.embedder != nil && !req.SkipRetrieval {
 		// 使用原始消息（RawUserMessage）做 embedding 检索，而非归一化后的消息
 		// 原因：日期归一化会把 "今天" → "2026-06-11"，绝对日期在 embedding 空间里
@@ -376,8 +374,6 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			rawMsg = req.UserMessageContent
 		}
 		queryVec = o.tryEmbedContent(ctx, rawMsg)
-		// 从 VectorStore 按 ID 查最近 N 条历史用户消息 embedding
-		historyEmbeddings = o.embedHistoryUserMessages(req.Messages, 10)
 	}
 
 	log.Printf("[orch] run start: model=%s, msgs=%d, client_tools=%d", o.pickClient(req).ModelName(), len(req.Messages), len(req.ClientTools))
@@ -408,7 +404,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	var retrieveResult *ctxflow.RetrieveResult
 	if !req.SkipRetrieval && len(queryVec) > 0 {
 		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(
-			req, queryVec, historyEmbeddings, req.PrevEventRefs))
+			req, queryVec, req.PrevEventRefs))
 		if err != nil {
 			log.Printf("[orch] retrieve error: %v", err)
 		}
@@ -419,7 +415,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	return events, nil
 }
 
-func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]float64, prevEventRefs []retrieval.EventRef) retrieval.SearchOptions {
+func mkSearchOptions(req *RunRequest, queryVec []float64, prevEventRefs []retrieval.EventRef) retrieval.SearchOptions {
 	// 从已有消息中采集 DB ID，供检索时去重
 	excludeMsgIDs := make(map[string]bool)
 	for _, m := range req.Messages {
@@ -428,21 +424,19 @@ func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]
 		}
 	}
 	return retrieval.SearchOptions{
-		Query:             req.UserMessageContent,
-		UserID:            req.UserID,
-		ConversationID:    req.ConversationID,
-		Embedding:         queryVec,
-		HistoryEmbeddings: historyEmbeddings,
-		Memory:            req.Memory,
-		Note:              req.Note,
-		History:           req.History,
-		Theme:             req.Theme,
-		Summary:           req.Summary,
-		Event:             req.Event,
-		PrevEventRefs:     prevEventRefs,
-		PinnedEventIDs:    req.PinnedEventIDs,
-		IsNewSession:      req.Window.IsNewSession,
-		ExcludeMsgIDs:     excludeMsgIDs,
+		Query:          req.UserMessageContent,
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		Embedding:      queryVec,
+		Memory:         req.Memory,
+		Note:           req.Note,
+		History:        req.History,
+		Summary:        req.Summary,
+		Event:          req.Event,
+		PrevEventRefs:  prevEventRefs,
+		PinnedEventIDs: req.PinnedEventIDs,
+		IsNewSession:   req.Window.IsNewSession,
+		ExcludeMsgIDs:  excludeMsgIDs,
 	}
 }
 
@@ -813,7 +807,7 @@ func (o *Orchestrator) buildUserMessage(
 		extraPackets = append(extraPackets, ctxflow.NoticePacket(req.ModeNotice))
 	}
 
-	// —— 公共资源区：资源类检索结果（memory/note/theme）收敛到资源区 ——
+	// —— 公共资源区：资源类检索结果（memory/note/event）收敛到资源区 ——
 	// 增量式：只解析上一条消息的 XMLContext + 本轮检索 merge（去重 → quota → 预算帽），
 	// 历史消息重放不再携带注入资源（BuildMessagesForFlash 已简化）。
 	// profile/summary 已移入 system prompt 稳定上下文，不再进资源区。
@@ -824,7 +818,7 @@ func (o *Orchestrator) buildUserMessage(
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
-				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme:
+				case ctxflow.TypeMemory, ctxflow.TypeNote:
 					zoneFresh = append(zoneFresh, pkts...)
 				}
 			}
@@ -859,7 +853,7 @@ func (o *Orchestrator) buildUserMessage(
 		packets = make(map[string][]retrieval.ContextPacket)
 		for _, pkt := range extraPackets {
 			switch pkt.Type {
-			case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary, ctxflow.TypeProfile:
+			case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeSummary, ctxflow.TypeProfile:
 				continue
 			}
 			packets[pkt.Type] = append(packets[pkt.Type], pkt)
@@ -867,7 +861,7 @@ func (o *Orchestrator) buildUserMessage(
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
-				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary, ctxflow.TypeEvent:
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeSummary, ctxflow.TypeEvent:
 					continue
 				}
 				packets[typ] = append(packets[typ], pkts...)
@@ -1005,7 +999,7 @@ func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) [
 }
 
 // checkSummaryRelevance 用 embedding 窗口检查摘要与当前对话的相关性。
-// 参照 Theme 系统的相似度检查模式：取当前消息 + 最近 N 条历史用户消息的 embedding，
+// 取当前消息 + 最近 N 条历史用户消息的 embedding，
 // 分别与摘要 embedding 做余弦相似度，取最大值判断是否 >= 阈值。
 func (o *Orchestrator) checkSummaryRelevance(
 	ctx context.Context,

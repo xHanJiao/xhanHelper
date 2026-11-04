@@ -329,7 +329,6 @@ type RetrievalConfig struct {
 	Memory         SourceWeights `yaml:"memory"`
 	Note           SourceWeights `yaml:"note"`
 	History        SourceWeights `yaml:"history"`
-	Theme          SourceWeights `yaml:"theme"`
 	Summary        SourceWeights `yaml:"summary"`
 	// Event 事件检索：Limit 是记忆召回乘数（chunk=limit*8 / 全量=limit*2），不是事件条数上限；
 	// 事件条数由 resource_zone.quota_event_* 控制。
@@ -345,12 +344,10 @@ type ResourceZoneConfig struct {
 	BudgetSummary int  `yaml:"budget_summary"` // summary 预算，默认 800
 	BudgetMemory  int  `yaml:"budget_memory"`  // memory 预算，默认 1000
 	BudgetNote    int  `yaml:"budget_note"`    // note 预算，默认 0（笔记不再注入）
-	BudgetTopic   int  `yaml:"budget_topic"`   // topic 预算，默认 200
 	BudgetEvent   int  `yaml:"budget_event"`   // 事件区预算，默认 12000
 	QuotaSummary  int  `yaml:"quota_summary"`  // 摘要配额，默认 1
 	QuotaMemory   int  `yaml:"quota_memory"`   // 记忆配额，默认 8
 	QuotaNote     int  `yaml:"quota_note"`     // 笔记配额，默认 0（笔记不再注入）
-	QuotaTopic    int  `yaml:"quota_topic"`    // 主题配额（只收 matched），默认 5
 	// 事件注入配额（设计 §6.7）
 	QuotaEventFull    int `yaml:"quota_event_full"`    // full 上限（含 pinned），默认 4
 	QuotaEventCompact int `yaml:"quota_event_compact"` // compact 上限，默认 6
@@ -609,7 +606,6 @@ func merge(dst, src *Config) {
 	mergeSourceWeights(&dst.Retrieval.Memory, &src.Retrieval.Memory)
 	mergeSourceWeights(&dst.Retrieval.Note, &src.Retrieval.Note)
 	mergeSourceWeights(&dst.Retrieval.History, &src.Retrieval.History)
-	mergeSourceWeights(&dst.Retrieval.Theme, &src.Retrieval.Theme)
 	mergeSourceWeights(&dst.Retrieval.Summary, &src.Retrieval.Summary)
 	if src.Vector.MessageRetentionDays != 0 {
 		dst.Vector.MessageRetentionDays = src.Vector.MessageRetentionDays
@@ -897,7 +893,6 @@ func validate(cfg *Config) error {
 	setSourceWeightsDefault(&cfg.Retrieval.Memory, cfg.Retrieval.FreshnessDecay, 0.5, 8)
 	setSourceWeightsDefault(&cfg.Retrieval.Note, 0, 0.5, 5)
 	setSourceWeightsDefault(&cfg.Retrieval.History, 0.005, 0.5, 5)
-	setSourceWeightsDefault(&cfg.Retrieval.Theme, 0, 0.6, 10)
 	setSourceWeightsDefault(&cfg.Retrieval.Summary, 0.02, 1.0, 0)
 	// Vector 默认值
 	if cfg.Vector.MessageRetentionDays == 0 {
@@ -949,9 +944,6 @@ func validate(cfg *Config) error {
 		cfg.Retrieval.ResourceZone.BudgetMemory = 1000
 	}
 	// BudgetNote 默认 0：笔记不再注入资源区（设计 §6.8）。
-	if cfg.Retrieval.ResourceZone.BudgetTopic == 0 {
-		cfg.Retrieval.ResourceZone.BudgetTopic = 200
-	}
 	if cfg.Retrieval.ResourceZone.BudgetEvent == 0 {
 		cfg.Retrieval.ResourceZone.BudgetEvent = 12000
 	}
@@ -962,9 +954,6 @@ func validate(cfg *Config) error {
 		cfg.Retrieval.ResourceZone.QuotaMemory = 8
 	}
 	// QuotaNote 默认 0：笔记不再注入资源区（设计 §6.8）。
-	if cfg.Retrieval.ResourceZone.QuotaTopic == 0 {
-		cfg.Retrieval.ResourceZone.QuotaTopic = 5
-	}
 	if cfg.Retrieval.ResourceZone.QuotaEventFull == 0 {
 		cfg.Retrieval.ResourceZone.QuotaEventFull = 4
 	}

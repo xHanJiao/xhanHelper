@@ -247,7 +247,6 @@ func (t *UnifiedSearchTool) buildSearchOptions(userID, query string, emb []float
 		Memory:    retrieval.SourceConfig{Threshold: 0.5, Limit: topK},
 		Note:      retrieval.SourceConfig{Threshold: 0.5, Limit: topK},
 		Summary:   retrieval.SourceConfig{Threshold: 0.55, Limit: topK},
-		Theme:     retrieval.SourceConfig{Threshold: 0.6, Limit: topK},
 		Event:     retrieval.SourceConfig{Threshold: 0.5, Limit: topK},
 		History:   retrieval.SourceConfig{Threshold: 0.55, Limit: topK},
 	}

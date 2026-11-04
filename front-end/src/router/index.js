@@ -67,12 +67,6 @@ const routes = [
     meta: { hideTabs: true }
   },
   {
-    path: '/themes',
-    name: 'Themes',
-    component: () => import('@/views/ThemeView.vue'),
-    meta: { backToChat: true, hideTabs: true, contentHeader: true }
-  },
-  {
     path: '/documents',
     name: 'Documents',
     component: () => import('@/views/DocumentsView.vue'),

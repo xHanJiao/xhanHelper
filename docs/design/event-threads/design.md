@@ -587,13 +587,20 @@ flowchart LR
 
 ### 8.3 删除
 
-- `agent/theme_discover.go`、`theme_analyst.go`、`theme_verifier.go`、`theme_embedder.go`、`theme_chunker.go`、`theme_store.go`
-- `agent/state_updater.go`、`state_worker.go`
+阶段 5 已删除（旧主题不再进入主对话）：
+
 - `agent/retrieval/theme_source.go`
-- `tool/theme.go`、`tool/theme_search.go`
-- `model/theme_state.go`、`service/theme_state_repo.go`、`controller/theme.go`
-- `get_topic_stats` / `get_topic_detail`（如果确认只服务旧主题）
-- 配置 `retrieval.theme`、`reflection.analyst_max_iterations` / `discover_max_iterations`
+- `tool/theme_search.go`
+- `controller/theme.go` + `/api/themes` 路由
+- 前端 `ThemeView.vue` + `/themes` 路由 + 功能菜单入口
+- 主检索源里的 `themeSource` 与 `theme` 加权 modifier
+- `ctxflow` 的 `TypeTheme` 块 / topic 配额与预算 / 旧 XML 的 `<topics>` 解析
+- 配置 `retrieval.theme`、`resource_zone.budget_topic` / `quota_topic`
+- 重放配置里的 `theme` 检索参数
+
+**保留（反思子系统仍在使用）**：`theme_discover.go`、`theme_analyst.go`、`theme_verifier.go`、`theme_embedder.go`、`theme_chunker.go`、`theme_store.go`、`state_updater.go`、`state_worker.go`、`tool/theme.go`、`model/theme_state.go`、`service/theme_state_repo.go`、`get_topic_stats` / `get_topic_detail`。
+
+> 人话：旧主题从「主对话可见」退成「反思内部的状态机」。等反思侧也切到事件后，这批代码再一起删；现在删会把每日回顾和状态页更新一起打断。
 
 ### 8.4 旧数据
 
@@ -726,7 +733,7 @@ event_assembly:
 | 2 拼装 Worker | 握手 + ReAct 拼装 + 创建前校验 + 写库 | `agent/event_worker.go`、`agent/event_assembler.go`、`agent/post_chat_group.go`、`agent/memory_worker.go` |
 | 3 注入 | EventSource + 资源区 event 块 + 预算 | `agent/retrieval/event_source.go`、`agent/ctxflow/blocks.go`、`ctxflow/resource_zone.go`、`agent/orchestrator.go` |
 | 4 工具 | event 工具组 + enable/disable/merge/delete + 拼装只读注册表 + unified_search | `tool/event.go`、`tool/event_query.go`、`tool/unified_search.go`、`appinit/agents.go` |
-| 5 删除旧主题 | 删代码、配置、接线 | `appinit/agents.go`、`appinit/tools.go`、`appinit/router.go`、`config/config.go` |
+| 5 删除旧主题 | 停注入、摘主对话工具/API/UI；反思侧主题状态机暂留 | `appinit/agents.go`、`appinit/tools.go`、`appinit/router.go`、`config/config.go`、`ctxflow/`、`front-end/` |
 | 6 Bootstrap | 一次性冷启动 + 指标 | `cmd/event-bootstrap/main.go` |
 | 7 前端/API | ThemeView → EventView、`/api/events` | `controller/event.go`、`frontend/src/views/ThemeView.vue`、router |
 | 8 验收 | 单测 + 冷启动 + 真机 | `*_test.go`、dump 回放 |
@@ -767,3 +774,10 @@ event_assembly:
 | 冷启动跑全量 1189 条 | 777 条是重构前的低质量碎片（66 字 vs 85 字），事件边界会变差；只跑 `source IN ('post_chat','inline')` 的 412 条 |
 | 用 `last_confirmed_at` 判断记忆该不该重新拼 | 冷启动要的是「重构后的记忆」，`source` 才是精确边界；`last_confirmed_at` 会把存量一起捞进来，且它没有读取方（与 `updated_at` 重复）。运行时恢复直接看 `updated_at` |
 | 最近对话块只注入首轮 | 用户明确不改这部分；保持现状并计入预算 |
+
+
+---
+
+## 后续变更
+
+- 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。反思侧的 `ThemeAnalyst` / `ThemeDiscoverer` / `StateUpdater` / `ThemeState` 保留，等反思切到事件后再删。影响文件见 §8.3。

@@ -16,7 +16,6 @@ const (
 	TypeEvent           = "event"
 	TypeMemory          = "memory"
 	TypeNote            = "note"
-	TypeTheme           = "theme"
 	TypeRecent          = "recent"
 	TypeCurrentDatetime = "current_datetime"
 	TypeNotice          = "notice"
@@ -24,7 +23,7 @@ const (
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
 // profile 是最稳定的用户事实画像，放在最前面，便于 LLM 优先关注。
-var typeOrder = []string{TypeProfile, TypeSummary, TypeHistory, TypeEvent, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
+var typeOrder = []string{TypeProfile, TypeSummary, TypeHistory, TypeEvent, TypeMemory, TypeNote, TypeCurrentDatetime, TypeNotice}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -92,21 +91,6 @@ type historyBlock struct {
 }
 
 func (*historyBlock) TypeKey() string { return TypeHistory }
-
-// --- theme ---
-type themeItem struct {
-	ID          string  `xml:"id,attr" json:"id"`
-	Description string  `xml:"desc,attr,omitempty" json:"description,omitempty"`
-	Score       float64 `xml:"score,attr,omitempty" json:"score,omitempty"`
-	Content     string  `xml:",chardata" json:"content"`
-}
-type themesBlock struct {
-	XMLName     struct{}    `xml:"topics" json:"-"`
-	Description string      `xml:"description,attr,omitempty" json:"description,omitempty"`
-	Items       []themeItem `xml:"topic" json:"items"`
-}
-
-func (*themesBlock) TypeKey() string { return TypeTheme }
 
 // --- event ---
 // eventItem 事件块：标题 + 当前状态 summary + 最近记忆（按注入形态决定带不带）。
@@ -230,7 +214,6 @@ var blockBuilders = map[string]blockBuilder{
 	TypeMemory:          buildMemoriesBlock,
 	TypeNote:            buildNotesBlock,
 	TypeHistory:         buildHistoryBlock,
-	TypeTheme:           buildThemesBlock,
 	TypeEvent:           buildEventsBlock,
 	TypeSummary:         buildSummariesBlock,
 	TypeRecent:          buildRecentBlock,
@@ -314,23 +297,6 @@ func buildHistoryBlock(items []retrieval.ContextPacket) Block {
 	}
 	if len(b.Rounds) == 0 {
 		return nil
-	}
-	return &b
-}
-
-func buildThemesBlock(items []retrieval.ContextPacket) Block {
-	b := themesBlock{
-		Description: retrieval.DescThemes,
-	}
-	for _, pkt := range items {
-		it := themeItem{ID: pkt.ID, Content: pkt.Text, Score: roundScore(pkt.Score)}
-		if meta, ok := pkt.Meta.(retrieval.ThemeMeta); ok {
-			it.Content = meta.Description
-			if meta.StateText != "" {
-				it.Description = meta.StateText
-			}
-		}
-		b.Items = append(b.Items, it)
 	}
 	return &b
 }

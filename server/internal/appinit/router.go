@@ -159,7 +159,6 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, repos.Conversation)
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
 	reminderHandler := controller.NewReminderHandler(repos.Reminder, repos.Conversation, repos.Message)
-	themeHandler := controller.NewThemeHandler(repos.ThemeState)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(repos.Trace)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
 	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note, repos.ThemeState)
@@ -210,7 +209,6 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{
 		R:                      router,
 		UserRepo:               repos.User,
-		ThemeHandler:           themeHandler,
 		ReflectionAdminHandler: reflectionAdminHandler,
 		MessageTraceHandler:    messageTraceHandler,
 		MessageDebugHandler:    messageDebugHandler,

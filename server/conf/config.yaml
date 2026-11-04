@@ -170,12 +170,10 @@ retrieval:
     budget_summary: 500 # summary 预算
     budget_memory: 1000 # memory 预算（只放未聚合的普通记忆）
     budget_note: 0 # note 预算（笔记不再注入资源区）
-    budget_topic: 200 # topic 预算
     budget_event: 12000 # 事件区预算（所有事件形态合计）
     quota_summary: 1 # 摘要配额
     quota_memory: 6 # 记忆配额
     quota_note: 0 # 笔记配额（0 = 不注入）
-    quota_topic: 3 # 主题配额（只收 matched）
     quota_event_full: 4 # 事件 full 上限（含 pinned）
     quota_event_compact: 6 # 事件 compact 上限
     quota_event_summary: 12 # 事件 summary 上限，超出降 index

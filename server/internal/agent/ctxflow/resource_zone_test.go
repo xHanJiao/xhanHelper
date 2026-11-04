@@ -22,16 +22,13 @@ const samplePrevXML = `<memories description="记忆">
 <summaries description="摘要">
   <summary id="s1" created_at="2026-07-24 17:27" cover_from="a1" cover_to="a2" parent="p0" topics="t1,t2" score="1">用户去了大理</summary>
 </summaries>
-<topics description="主题">
-  <topic id="th1" desc="状态文本" score="0.7">求职进行中</topic>
-</topics>
 <current_datetime>2026年8月15日</current_datetime>
 <user_query>原文</user_query>`
 
 func TestParseResourceZone_ExtractsResourceBlocks(t *testing.T) {
 	pkts := ParseResourceZone(samplePrevXML)
-	if len(pkts) != 5 {
-		t.Fatalf("expected 5 packets (2 mem + 1 note + 1 summary + 1 theme), got %d", len(pkts))
+	if len(pkts) != 4 {
+		t.Fatalf("expected 4 packets (2 mem + 1 note + 1 summary), got %d", len(pkts))
 	}
 	// memory
 	if pkts[0].ID != "m1" || pkts[0].Type != TypeMemory {
@@ -47,11 +44,6 @@ func TestParseResourceZone_ExtractsResourceBlocks(t *testing.T) {
 	}
 	if !sm.CreatedAt.Equal(time.Date(2026, 7, 24, 17, 27, 0, 0, time.UTC)) && sm.CreatedAt.IsZero() {
 		t.Errorf("summary created_at parse failed: %v", sm.CreatedAt)
-	}
-	// theme meta: StateText=desc attr, Description=content
-	tm, ok := pkts[4].Meta.(retrieval.ThemeMeta)
-	if !ok || tm.StateText != "状态文本" || tm.Description != "求职进行中" {
-		t.Errorf("theme meta wrong: %+v", pkts[4].Meta)
 	}
 }
 
@@ -193,7 +185,7 @@ func TestBudgetResourceZone_TrimsOldestByPriority(t *testing.T) {
 		{ID: "n3", Type: TypeNote, Text: strings.Repeat("c", 800)},
 		{ID: "s1", Type: TypeSummary, Text: strings.Repeat("d", 800)},
 	}
-	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Topic: 200, Profile: 1600}, 2500)
+	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Profile: 1600}, 2500)
 	if len(out) > 2 {
 		t.Fatalf("budget 2500 should trim to <=2 items, got %d", len(out))
 	}
@@ -213,7 +205,7 @@ func TestBudgetResourceZone_UnderBudgetUntouched(t *testing.T) {
 	pkts := []retrieval.ContextPacket{
 		{ID: "n1", Type: TypeNote, Text: "short"},
 	}
-	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Topic: 200, Profile: 1600}, 100000)
+	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Profile: 1600}, 100000)
 	if len(out) != 1 {
 		t.Errorf("should keep all when under budget: %d", len(out))
 	}
@@ -274,7 +266,7 @@ func TestBudgetResourceZone_PerTypeIndependent(t *testing.T) {
 		{ID: "n4", Type: TypeNote, Text: long, Meta: retrieval.EntityMeta{Content: long}},
 		{ID: "s1", Type: TypeSummary, Text: strings.Repeat("y", 200), Meta: retrieval.SummaryMeta{SummaryID: "s1", SummaryText: strings.Repeat("y", 200)}},
 	}
-	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Topic: 200, Profile: 1600}, 100000)
+	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Profile: 1600}, 100000)
 	// note 砍到 3 条（3×800+开销 ≈ 2.6k ≤ 3000；4 条 ≈ 3.4k > 3000），summary 保留
 	nNotes, nSummary := 0, 0
 	for _, p := range out {
@@ -348,7 +340,7 @@ func TestBudgetResourceZone_ProfileTrimmedLast(t *testing.T) {
 		{ID: "m1", Type: TypeMemory, Text: big, Meta: retrieval.EntityMeta{Content: big}},
 		{ID: "p1", Type: TypeProfile, Text: big, Meta: retrieval.ProfileMeta{Key: "p1", Value: big}},
 	}
-	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Topic: 200, Profile: 1600}, 400)
+	out := BudgetResourceZone(pkts, ZoneBudgets{Note: 3000, Summary: 800, Memory: 600, Profile: 1600}, 400)
 	// 总预算 400：先砍 memory（400 字>预算），再砍 profile → 全空或仅 profile 被砍
 	for _, p := range out {
 		if p.Type == TypeMemory {

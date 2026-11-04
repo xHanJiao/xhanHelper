@@ -45,14 +45,6 @@ type HistoryMeta struct {
 
 func (HistoryMeta) isPacketMeta() {}
 
-// ThemeMeta 主题的元数据。
-type ThemeMeta struct {
-	Description string
-	StateText   string
-}
-
-func (ThemeMeta) isPacketMeta() {}
-
 // EventMeta 事件的元数据（事件 = 记忆聚合，正文是 Memories）。
 type EventMeta struct {
 	EventID     string

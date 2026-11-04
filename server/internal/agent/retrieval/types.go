@@ -13,10 +13,6 @@ const (
 		"用户偏好或价值观的变化。本条通过双路向量检索（分块级+全文级）按实体去重后拼接，并经过时间衰减过滤。"
 	DescNotes = "大模型在对话过程中记录的值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等。" +
 		"本条通过双路向量检索（分块级+全文级）按实体去重后拼接。"
-	DescThemes = "用户身上正在发生的事件主题，由系统自动发现和维护。所有活跃主题均会列出：" +
-		"高相关主题（score >= 阈值）附带 desc 属性（当前状态简述），" +
-		"低相关主题仅罗列描述文本。通过多查询向量（当前消息+近10轮用户消息）双路加权融合召回。" +
-		"每个主题可通过 id 调用 theme_search.get_detail 获取完整状态页。"
 	DescEvents = "用户现实里持续在跟进的事件，由系统把相关记忆聚合而成（如「回西安准备」「驾照考取」）。" +
 		"每个事件带一句当前状态 summary；mode=full 附带最近的记忆，mode=compact 只附 2 条，" +
 		"mode=summary 只有状态，mode=index 只有标题（说明它存在，需要时用检索工具 unified_search 查完整记忆）。" +
@@ -41,10 +37,10 @@ type PacketMeta interface {
 // ContextPacket — 上下文片段，来自任意数据源（也是 SearchProvider 的返回类型）。
 type ContextPacket struct {
 	ID    string     // 唯一标识
-	Type  string     // memory | note | history | theme | mission | summary
-	Text  string     // 格式化文本（mission 仍依赖此字段；memory/note/history/theme 的 XML 生成已切到 Meta，Text 保留用于 trace 兼容）
+	Type  string     // memory | note | history | event | mission | summary
+	Text  string     // 格式化文本（mission 仍依赖此字段；memory/note/history 的 XML 生成已切到 Meta，Text 保留用于 trace 兼容）
 	Score float64    // 向量检索原始分数
-	Meta  PacketMeta `json:"-"` // source 自定义元数据（entityMeta / historyMeta / themeMeta）
+	Meta  PacketMeta `json:"-"` // source 自定义元数据（entityMeta / historyMeta / eventMeta）
 }
 
 // NearMissItem — 被阈值或规则过滤掉的候选项，用于 trace 调试
@@ -73,16 +69,14 @@ func (s *SourceConfig) Resolve(cfg SourceConfig) {
 
 // SearchOptions — 检索参数，供 ContextSource.Fetch 和 SearchProvider.Search 共用。
 type SearchOptions struct {
-	Query             string // 用户原始文本（ranker 关键词打分用）
-	UserID            string
-	ConversationID    string
-	Embedding         []float64   // 当前用户消息的 embedding（向量检索用）
-	HistoryEmbeddings [][]float64 // 最近 N 条用户消息的 embedding，仅 ThemeSource 用于多历史消息搜索，解决单句模糊消息匹配不到主题的问题
+	Query          string // 用户原始文本（ranker 关键词打分用）
+	UserID         string
+	ConversationID string
+	Embedding      []float64 // 当前用户消息的 embedding（向量检索用）
 
 	Memory  SourceConfig // 记忆检索
 	Note    SourceConfig // 笔记检索
 	History SourceConfig // 历史对话检索
-	Theme   SourceConfig // 主题检索
 	Summary SourceConfig // 摘要检索
 	Event   SourceConfig // 事件检索（复用记忆向量，按 event_id 聚合）
 

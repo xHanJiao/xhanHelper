@@ -32,7 +32,6 @@ type Config struct {
 	Memory  retrieval.SourceConfig `json:"memory"`
 	Note    retrieval.SourceConfig `json:"note"`
 	History retrieval.SourceConfig `json:"history"`
-	Theme   retrieval.SourceConfig `json:"theme"`
 	Summary retrieval.SourceConfig `json:"summary"`
 
 	OverrideSystemPrompt *string `json:"override_system_prompt,omitempty"`
@@ -137,7 +136,6 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 				Memory:         cfg.Memory,
 				Note:           cfg.Note,
 				History:        cfg.History,
-				Theme:          cfg.Theme,
 				Summary:        cfg.Summary,
 			})
 			if err != nil {
@@ -209,7 +207,6 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 			Memory:         cfg.Memory,
 			Note:           cfg.Note,
 			History:        cfg.History,
-			Theme:          cfg.Theme,
 			Summary:        cfg.Summary,
 		})
 		if err != nil {
@@ -270,7 +267,6 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		Memory:             cfg.Memory,
 		Note:               cfg.Note,
 		History:            cfg.History,
-		Theme:              cfg.Theme,
 	})
 	if err != nil {
 		log.Printf("[replay] orch run error: %v", err)

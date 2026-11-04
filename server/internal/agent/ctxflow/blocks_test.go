@@ -93,16 +93,6 @@ func TestBuildHistoryBlockEmptyMessages(t *testing.T) {
 	}
 }
 
-func TestBuildThemeBlock(t *testing.T) {
-	items := []retrieval.ContextPacket{
-		{ID: "theme-1", Type: "theme", Meta: retrieval.ThemeMeta{Description: "健身计划", StateText: "活跃中"}},
-	}
-	got := marshalBlock(t, buildBlock("theme", items))
-	if !strings.Contains(got, `topic id="theme-1" desc="活跃中"`) {
-		t.Errorf("unexpected: %s", got)
-	}
-}
-
 func TestBuildHistoryBlockFallbackDate(t *testing.T) {
 	items := []retrieval.ContextPacket{
 		{Type: "history", Meta: retrieval.HistoryMeta{
@@ -132,16 +122,6 @@ func TestBuildHistoryBlockHitDatePrecedence(t *testing.T) {
 	}
 	if !strings.Contains(got, "2026年03月15日") {
 		t.Errorf("missing HitDate: %s", got)
-	}
-}
-
-func TestBuildThemeBlockNoState(t *testing.T) {
-	items := []retrieval.ContextPacket{
-		{ID: "theme-2", Type: "theme", Meta: retrieval.ThemeMeta{Description: "阅读计划"}},
-	}
-	got := marshalBlock(t, buildBlock("theme", items))
-	if !strings.Contains(got, `topic id="theme-2">阅读计划</topic>`) {
-		t.Errorf("unexpected: %s", got)
 	}
 }
 

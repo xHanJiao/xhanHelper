@@ -88,7 +88,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 图床公开读：仅服务 Visibility=public 的图（文档配图/分享页/PDF 导出；<img> 带不了请求头）
 	r.GET("/images/:file", rc.ImageHandler.ServePublic)
-	// 健康分级（无认证）：starting = HTTP 已就绪、后台向量预热中；ready = 预热完成
+	// 健康分级（无认证）：starting = HTTP 已就绪、后台向量预热中；ready = 预热完成。
+	// 有意不探数据库：探针只回答「进程/HTTP 是否活着」，库连接状态不该由这个公开接口承担。
 	r.GET("/api/health", func(c *gin.Context) {
 		status := "ready"
 		if rc.Ready != nil && !rc.Ready.Load() {

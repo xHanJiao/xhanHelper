@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMobile } from '@/composables/useMobile'
 import { useKeyboardInset } from '@/composables/useKeyboardInset'
+import { isMacEmbedded } from '@/utils/embed'
 import BottomTabs from '@/components/BottomTabs.vue'
 
 const route = useRoute()
 const { isMobile } = useMobile()
-const adminBlocked = computed(() => route.meta.adminOnly === true && isMobile.value)
+// 内嵌 WebView 的宽度受 sheet / 右栏限制（消息调试 900pt、看板右栏），但仍是真的桌面端，不能按手机拦
+const adminBlocked = computed(() => route.meta.adminOnly === true && isMobile.value && !isMacEmbedded())
 const { inset: keyboardInset } = useKeyboardInset(isMobile)
 const keyboardOpen = computed(() => keyboardInset.value > 0)
 </script>

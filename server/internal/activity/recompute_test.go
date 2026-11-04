@@ -75,3 +75,50 @@ func TestRecomputePausesIngestThenFlushes(t *testing.T) {
 		t.Errorf("events after recompute = %d, want 1", n)
 	}
 }
+
+// TestRecomputeDue 启动补算的门槛：没算过 / 时间戳坏掉 / 超过 maxAge 都算过期，
+// 刚算完的算新鲜（回归：每次进程启动都全量重建，部署后必有一次读 IO 尖峰）。
+func TestRecomputeDue(t *testing.T) {
+	s := openTest(t)
+
+	// 从没算过 → 过期。
+	if due, err := s.RecomputeDue(24 * time.Hour); err != nil || !due {
+		t.Fatalf("首次 RecomputeDue = %v/%v，want true/nil", due, err)
+	}
+
+	// 刚算完 → 新鲜。
+	if err := s.Recompute(); err != nil {
+		t.Fatalf("recompute: %v", err)
+	}
+	if due, err := s.RecomputeDue(24 * time.Hour); err != nil || due {
+		t.Fatalf("刚算完 RecomputeDue = %v/%v，want false/nil", due, err)
+	}
+
+	// 规则版本变了 → 即便刚算完也算过期（派生层不能带着旧规则的产物继续服务）。
+	if err := s.SetMeta(recomputeMetaKey, "r0/t0/n0/f0"); err != nil {
+		t.Fatalf("SetMeta stamp: %v", err)
+	}
+	if due, err := s.RecomputeDue(24 * time.Hour); err != nil || !due {
+		t.Fatalf("规则版本变化 RecomputeDue = %v/%v，want true/nil", due, err)
+	}
+	if err := s.Recompute(); err != nil {
+		t.Fatalf("recompute: %v", err)
+	}
+
+	// 时间戳退到 25 小时前 → 过期。
+	old := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)
+	if err := s.SetMeta("last_recompute_at", old); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	if due, err := s.RecomputeDue(24 * time.Hour); err != nil || !due {
+		t.Fatalf("25h 前 RecomputeDue = %v/%v，want true/nil", due, err)
+	}
+
+	// 时间戳坏掉 → 按过期处理（重算会覆盖成合法值）。
+	if err := s.SetMeta("last_recompute_at", "not-a-time"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	if due, err := s.RecomputeDue(24 * time.Hour); err != nil || !due {
+		t.Fatalf("坏时间戳 RecomputeDue = %v/%v，want true/nil", due, err)
+	}
+}

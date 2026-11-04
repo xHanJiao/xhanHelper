@@ -167,6 +167,8 @@ html, body, #app {
 
 html {
   background: var(--color-bg);
+  /* 禁双击放大；不能写 none —— 会连单指滚动一起禁掉，捏合交给 main.js */
+  touch-action: manipulation;
 }
 
 body {

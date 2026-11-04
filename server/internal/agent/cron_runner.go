@@ -82,6 +82,8 @@ type CronRunner struct {
 // ActivityRecomputer 是 activity.Store 暴露给调度器的重算口子（避免直接依赖，便于测试替身）。
 type ActivityRecomputer interface {
 	Recompute() error
+	// RecomputeDue 报告派生数据是否已过期（规则版本变了 / 距上次重算超过 maxAge / 从未算过）。启动补算前先问它。
+	RecomputeDue(maxAge time.Duration) (bool, error)
 	// CleanupExpired 按保留期硬删明细（附表 B §6，90 天）；返回删除的事件数。
 	CleanupExpired(retentionDays int) (int64, error)
 }
@@ -202,8 +204,42 @@ func (cr *CronRunner) setActivityNext(t time.Time) {
 	cr.mu.Unlock()
 }
 
+// startActivityCatchUp 启动时只在派生数据过期时补算一次。
+// 全量重建要读整个 events.db（云端已 200MB+），每次进程启动都无条件跑会在部署后制造一次读 IO 尖峰；
+// 而重算 ticker 从进程启动起算 24h，重启频繁时永远等不到——所以保留启动补算，但改成按需。
+func (cr *CronRunner) startActivityCatchUp(ctx context.Context) {
+	if cr.activity == nil {
+		return
+	}
+	cr.mu.Lock()
+	cr.activityRunning = true
+	cr.mu.Unlock()
+	go func() {
+		defer func() {
+			cr.mu.Lock()
+			cr.activityRunning = false
+			cr.mu.Unlock()
+		}()
+		due, err := cr.activity.RecomputeDue(activityRecomputeEvery)
+		if err != nil {
+			// 判不出来就不重建：宁可派生数据晚一轮，也不在库可能异常时再压一次全表重建。
+			log.Printf("[cron] activity 跳过启动补算（RecomputeDue 失败: %v）", err)
+			return
+		}
+		if !due {
+			// 重算有新鲜度闸门，保留期清理没有：清理必须每次启动都跑，否则重启节奏 < 24h 时
+			// ticker 永远等不到，90 天硬删会一直不执行。
+			log.Printf("[cron] activity 派生数据未过期，跳过启动补算")
+			cr.cleanupActivity()
+			return
+		}
+		cr.recomputeActivity(ctx)
+	}()
+}
+
 // recomputeActivity 触发活动埋点派生重算与保留期清理。
-// 每个节拍（启动一次 + 每晚一次）都全量重算：派生层「清空 + 重建」，幂等、有界（events 90 天保留）。
+// 每晚节拍无条件全量重算，启动时只在派生数据过期时补算（见 startActivityCatchUp）。
+// 全量重建：派生层「清空 + 重建」，幂等、有界（events 90 天保留）。
 // 旧实现用「规则版本变了才跑」的闸门，导致版本稳定后派生层永远不产出（详见施工进度「补 · 重算触发修正」）。
 // 失败仅记日志不打断调度。
 func (cr *CronRunner) recomputeActivity(ctx context.Context) {
@@ -213,7 +249,15 @@ func (cr *CronRunner) recomputeActivity(ctx context.Context) {
 	if err := cr.activity.Recompute(); err != nil {
 		log.Printf("[cron] activity Recompute error: %v", err)
 	}
-	// 清理与重算同节拍都跑（附表 B §6：90 天硬删）。两者都是全表级、共用写锁。
+	cr.cleanupActivity()
+}
+
+// cleanupActivity 按保留期硬删明细（附表 B §6：90 天）。
+// 与重算解耦：重算受新鲜度闸门约束，清理每次节拍/启动都跑（两者都是全表级、共用写锁）。
+func (cr *CronRunner) cleanupActivity() {
+	if cr.activity == nil {
+		return
+	}
 	n, err := cr.activity.CleanupExpired(activity.EventRetentionDays)
 	if err != nil {
 		log.Printf("[cron] activity CleanupExpired error: %v", err)
@@ -413,23 +457,14 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setDocCleanupNext(time.Time{})
 	}
 
-	// 活动埋点重算：每晚一次；启用即先跑一次（版本变更/首启都能立刻出派生结果）。
+	// 活动埋点重算：每晚一次；启动时按需补算（仅当派生数据已过期）。
 	var activityChan <-chan time.Time
 	if cr.activity != nil {
 		activityTicker := time.NewTicker(activityRecomputeEvery)
 		defer activityTicker.Stop()
 		activityChan = activityTicker.C
 		cr.setActivityNext(time.Now().Add(activityRecomputeEvery))
-		// 启动即跑一次：版本变更/首启都能立刻出派生结果。
-		cr.mu.Lock()
-		cr.activityRunning = true
-		cr.mu.Unlock()
-		go func() {
-			cr.recomputeActivity(ctx)
-			cr.mu.Lock()
-			cr.activityRunning = false
-			cr.mu.Unlock()
-		}()
+		cr.startActivityCatchUp(ctx)
 	} else {
 		cr.setActivityNext(time.Time{})
 	}

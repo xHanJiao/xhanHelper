@@ -238,7 +238,11 @@ func EventRefsFromPackets(pkts []retrieval.ContextPacket) []retrieval.EventRef {
 //
 // 这条路径拿不到 Conversation.Extra，所以清掉 pinned 标签：权威来源是 PinnedEventIDs，
 // 保留标签可能已经过期（用户刚 disable）；下一轮 EventSource 会从 Extra 重新派生。
-// 跨窗口（newSession）时按设计 §6.10 降为 summary + carried，不带记忆。
+// 跨窗口（newSession）时只把 full/compact 降为 summary + carried；index 没有 summary，
+// 保持 index（升级成 summary 会得到只有标题、没有状态的空壳，还会挤爆 summary 配额）。
+//
+// 注意：这里不做 DB 校验。删除/合并在第 N 轮发生、第 N+1 轮是短消息时，
+// 该事件会从 XML 多残留一轮；下一轮 EventSource 正常跑时会跳过（自愈延迟一轮）。
 func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool) []retrieval.ContextPacket {
 	var out []retrieval.ContextPacket
 	for _, p := range pkts {
@@ -251,10 +255,18 @@ func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool) []retrie
 		}
 		meta.Pinned = false
 		if newSession {
-			meta.Mode = retrieval.EventModeSummary
-			meta.Carried = true
 			meta.Miss = 0
 			meta.Memories = nil
+			switch meta.Mode {
+			case retrieval.EventModeFull, retrieval.EventModeCompact:
+				meta.Mode = retrieval.EventModeSummary
+				meta.Carried = true
+			case retrieval.EventModeSummary:
+				meta.Carried = true
+			default:
+				// index：没有 summary 可带，跨窗口保持 index。
+				meta.Carried = false
+			}
 		}
 		p.Meta = meta
 		out = append(out, p)

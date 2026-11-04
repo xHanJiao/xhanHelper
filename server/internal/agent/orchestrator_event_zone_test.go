@@ -40,7 +40,7 @@ func TestEventZonePackets(t *testing.T) {
 
 	// EventSource 报错：携带上一轮（不能整块消失）
 	failed := &ctxflow.RetrieveResult{Trace: &ctxflow.RetrieveTrace{Providers: []ctxflow.ProviderTrace{
-		{Name: "event", Error: "db down"},
+		{Name: retrieval.EventSourceName, Error: "db down"},
 	}}}
 	if got := eventZonePackets(failed, prev, false); len(got) != 1 {
 		t.Fatalf("event source failure should carry prev events, got %+v", got)
@@ -49,7 +49,7 @@ func TestEventZonePackets(t *testing.T) {
 	// 检索正常但没有命中：不携带（真实 miss，由 EventSource 的粘滞逻辑降级）
 	empty := &ctxflow.RetrieveResult{
 		Packets: map[string][]retrieval.ContextPacket{},
-		Trace:   &ctxflow.RetrieveTrace{Providers: []ctxflow.ProviderTrace{{Name: "event"}}},
+		Trace:   &ctxflow.RetrieveTrace{Providers: []ctxflow.ProviderTrace{{Name: retrieval.EventSourceName}}},
 	}
 	if got := eventZonePackets(empty, prev, false); len(got) != 0 {
 		t.Fatalf("normal miss must not carry prev events, got %+v", got)

@@ -448,24 +448,31 @@ func TestCarryEventPackets(t *testing.T) {
 			EventID: "e1", Title: "驾照考取", Summary: "科三待补考",
 			Mode: retrieval.EventModeFull, Miss: 1, Pinned: true, Memories: mems,
 		}},
+		{ID: "e2", Type: TypeEvent, Meta: retrieval.EventMeta{
+			EventID: "e2", Title: "求职", Mode: retrieval.EventModeIndex, MemoryCount: 3,
+		}},
 		{ID: "m1", Type: TypeMemory, Meta: retrieval.EntityMeta{Content: "普通记忆"}},
 	}
 
 	// 同窗口：保留形态与记忆，但清掉 pinned（权威来源是 Extra）
 	same := CarryEventPackets(pkts, false)
-	if len(same) != 1 || same[0].ID != "e1" {
-		t.Fatalf("expected only the event packet, got %+v", same)
+	if len(same) != 2 || same[0].ID != "e1" || same[1].ID != "e2" {
+		t.Fatalf("expected only the two event packets, got %+v", same)
 	}
 	meta := same[0].Meta.(retrieval.EventMeta)
 	if meta.Mode != retrieval.EventModeFull || meta.Pinned || len(meta.Memories) != 1 {
 		t.Fatalf("same-session carry should keep mode/memories and drop pinned: %+v", meta)
 	}
 
-	// 跨窗口：降为 summary carried，不带记忆
+	// 跨窗口：full/compact 降为 summary carried；index 保持 index（没有 summary 可带）
 	carried := CarryEventPackets(pkts, true)
 	meta = carried[0].Meta.(retrieval.EventMeta)
 	if meta.Mode != retrieval.EventModeSummary || !meta.Carried || len(meta.Memories) != 0 || meta.Miss != 0 {
 		t.Fatalf("cross-session carry should be summary carried: %+v", meta)
+	}
+	indexMeta := carried[1].Meta.(retrieval.EventMeta)
+	if indexMeta.Mode != retrieval.EventModeIndex || indexMeta.Carried {
+		t.Fatalf("index event must stay index across windows, got %+v", indexMeta)
 	}
 }
 

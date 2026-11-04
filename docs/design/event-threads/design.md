@@ -508,7 +508,7 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 - 跨 session（`IsNewSession`）：只注入 summary，标记 `mode="summary" carried="上一窗口"`；如果新 session 里 fresh 命中，立刻升回 full。
 - 长期没命中不按轮数硬丢；只有 summary 超过 12 个、或预算不足时，才降到 index。
 - `PrevEventRefs` 里的事件如果已被合并/删除，**加载不到就跳过**（不做别名解析、不做去重）。
-- **跳过检索（短输入「继续」「好的」等）或事件源报错时，原样携带上一轮事件**：同窗口保留原形态，跨窗口降为 summary carried，并清掉 `pinned` 标签（权威来源是 `Conversation.Extra`，这条路径读不到）。不携带的话本轮 XML 写回 DB 后，下一轮就解析不到事件，粘滞链会断。
+- **跳过检索（短输入「继续」「好的」等）或事件源报错时，原样携带上一轮事件**：同窗口保留原形态，跨窗口把 full/compact 降为 summary carried（index 保持 index，避免变成没有 summary 的空壳），并清掉 `pinned` 标签（权威来源是 `Conversation.Extra`，这条路径读不到）。不携带的话本轮 XML 写回 DB 后，下一轮就解析不到事件，粘滞链会断。这条路径不查 DB：删除/合并发生后如果紧接着一条短消息，该事件会多残留一轮，下一轮 EventSource 正常跑时自愈。
 - 字面命中用「事件名是当前消息的子串」判断（中文无空格，不做分词）；命中给 `threshold + 0.1` 的保底分。
 
 **资源区配合**：

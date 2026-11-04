@@ -454,7 +454,7 @@ func eventZonePackets(
 ) []retrieval.ContextPacket {
 	if retrieveResult != nil && retrieveResult.Trace != nil {
 		for _, p := range retrieveResult.Trace.Providers {
-			if p.Name != "event" {
+			if p.Name != retrieval.EventSourceName {
 				continue
 			}
 			if p.Error == "" {

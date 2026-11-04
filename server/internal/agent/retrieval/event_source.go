@@ -21,6 +21,11 @@ const (
 	EventModeIndex   = "index"
 )
 
+// EventSourceName — EventSource 的名字，同时用作检索 trace 的 provider 名。
+// 必须与 ctxflow.TypeEvent（资源区块类型）保持一致，否则 orchestrator 匹配不到
+// trace、会误走「携带上一轮」路径。
+const EventSourceName = "event"
+
 // EventRef — 上一轮注入过的事件引用（从 XML 解析，不落库）。
 //
 // Pinned 仅供 XML 展示/调试，不参与注入决策：权威来源是 SearchOptions.PinnedEventIDs
@@ -86,7 +91,7 @@ func NewEventSource(
 	return &EventSource{vs: vs, memRepo: memRepo, eventRepo: eventRepo, decayer: decayer, cfg: cfg}
 }
 
-func (s *EventSource) Name() string { return "event" }
+func (s *EventSource) Name() string { return EventSourceName }
 
 // eventState — 单个事件在本轮的注入决策。
 type eventState struct {
@@ -294,7 +299,7 @@ func (s *EventSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 		}
 		packets = append(packets, ContextPacket{
 			ID:    st.ev.ID,
-			Type:  "event",
+			Type:  EventSourceName,
 			Text:  st.ev.Summary,
 			Score: math.Round(st.score*10000) / 10000,
 			Meta: EventMeta{

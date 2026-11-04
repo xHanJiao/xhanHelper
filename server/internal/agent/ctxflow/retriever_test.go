@@ -21,8 +21,14 @@ func (s *stubContextSource) Fetch(context.Context, retrieval.SearchOptions) ([]r
 
 func (s *stubContextSource) Warmup(context.Context, *llm.Embedder) {}
 
+func TestEventSourceNameMatchesTypeEvent(t *testing.T) {
+	if TypeEvent != retrieval.EventSourceName {
+		t.Fatalf("ctxflow.TypeEvent(%q) must equal retrieval.EventSourceName(%q)", TypeEvent, retrieval.EventSourceName)
+	}
+}
+
 func TestRetrieve_PreservesEventOrder(t *testing.T) {
-	src := &stubContextSource{name: "event", packets: []retrieval.ContextPacket{
+	src := &stubContextSource{name: retrieval.EventSourceName, packets: []retrieval.ContextPacket{
 		{ID: "sticky", Type: TypeEvent, Score: 0, Meta: retrieval.EventMeta{
 			EventID: "sticky", Mode: retrieval.EventModeFull,
 		}},

@@ -220,3 +220,113 @@ func TestUserActionLogEventDetailTooMany(t *testing.T) {
 		t.Error("超过 MaxDetailIDs 应失败")
 	}
 }
+
+// TestDaySkeletonViewCapsSize 骨架必须压到可进上下文的体积：资源留前 30、区间只留 L0/L1，
+// 并回带原始条数（回归：2026-10-01 整天全量返回 302KB，一次调用就把上下文塞满）。
+func TestDaySkeletonViewCapsSize(t *testing.T) {
+	sk := &activity.DaySkeleton{Day: "2026-10-01"}
+	for i := 0; i < 493; i++ {
+		sk.Resources = append(sk.Resources, activity.ResourceSummary{
+			Kind: "url", ResourceID: "r", Canonical: strings.Repeat("x", 300), EventCnt: int64(493 - i),
+		})
+	}
+	for i := 0; i < 293; i++ {
+		lvl := 0
+		switch {
+		case i >= 9 && i < 150:
+			lvl = 2
+		case i >= 150:
+			lvl = 3
+		}
+		sk.Sessions = append(sk.Sessions, activity.SessionSummary{SessionID: "s", Level: lvl})
+	}
+
+	out := daySkeletonView(sk)
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if len(b) > 30*1024 {
+		t.Errorf("骨架输出 %d 字节，超过 30KB 预算", len(b))
+	}
+	if got := out["resources_total"]; got != 493 {
+		t.Errorf("resources_total=%v, want 493", got)
+	}
+	if got := out["sessions_total"]; got != 293 {
+		t.Errorf("sessions_total=%v, want 293", got)
+	}
+	if out["truncated"] != true {
+		t.Error("裁剪后 truncated 应为 true")
+	}
+	if _, ok := out["hint"]; !ok {
+		t.Error("truncated=true 时必须给下钻提示")
+	}
+
+	// 只留 L0/L1：9 条（前 9 个 i 的 lvl=0），L2/L3 一律不进骨架。
+	if n := len(out["sessions"].([]activity.SessionSummary)); n != 9 {
+		t.Errorf("骨架 sessions=%d 条，want 9（仅 L0/L1）", n)
+	}
+	// 资源按 event_cnt 降序截前 30（store 已排序，裁剪不能打乱含义）。
+	res := out["resources"].([]activity.ResourceSummary)
+	if len(res) != maxDayResources {
+		t.Fatalf("resources=%d 条，want %d", len(res), maxDayResources)
+	}
+	if res[0].EventCnt != 493 {
+		t.Errorf("首个资源 event_cnt=%d，want 493（保持降序）", res[0].EventCnt)
+	}
+}
+
+// TestDaySkeletonViewNoTrim 数据小时不标 truncated、也不带 hint。
+func TestDaySkeletonViewNoTrim(t *testing.T) {
+	out := daySkeletonView(&activity.DaySkeleton{Day: "2026-11-03"})
+	if out["truncated"] != false {
+		t.Error("小数据不应标 truncated")
+	}
+	if _, ok := out["hint"]; ok {
+		t.Error("未截断时不该给 hint")
+	}
+}
+
+// TestNormalizeLimit limit 收敛：缺省/非正走默认值，超过硬上限钳到 500。
+func TestNormalizeLimit(t *testing.T) {
+	n := func(v int) *int { return &v }
+	cases := []struct {
+		in   *int
+		want int
+	}{
+		{nil, defaultListLimit},
+		{n(0), defaultListLimit},
+		{n(-5), defaultListLimit},
+		{n(50), 50},
+		{n(1000), 500},
+	}
+	for _, c := range cases {
+		if got := normalizeLimit(c.in); got != c.want {
+			t.Errorf("normalizeLimit(%v)=%d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// TestCappedListTruncated 满 limit 时标 truncated 并给提示，未满则否。
+func TestCappedListTruncated(t *testing.T) {
+	full := cappedList(map[string]any{"events": make([]int, 100)}, 100, true)
+	if !full.Success {
+		t.Fatalf("cappedList 失败: %s", full.Error)
+	}
+	var hi map[string]any
+	if err := json.Unmarshal(full.Data, &hi); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if hi["truncated"] != true || hi["hint"] == nil {
+		t.Errorf("满额应 truncated+hint，got %+v", hi)
+	}
+
+	res := cappedList(map[string]any{"events": make([]int, 3)}, 3, false)
+	var out map[string]any
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["truncated"] != false || out["hint"] != nil {
+		t.Errorf("未满额不该 truncated，got %+v", out)
+	}
+}

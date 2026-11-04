@@ -415,8 +415,10 @@ func (s *Store) attachResources(ids []string, out []EventSummary, byID map[strin
 // TimeRangesByResource 取某资源在 [from, to) 内被碰过的时段：按 occurred_at 排序后，
 // 相邻间隔 ≤ timeRangeGapMs 的并成一段。limit 为段数上限（硬上限 maxEventRows）。
 // 输入行数另设上限 maxRangeEventRows：limit 只截"段数"，不截读取的行数，热点资源 + 大窗口
-// 可能把上百万条时刻载进内存，故 SQL 端先卡一道；触顶时打一条日志说明结果可能被截断。
-func (s *Store) TimeRangesByResource(kind, id string, from, to time.Time, limit int) ([]TimeRange, error) {
+// 可能把上百万条时刻载进内存，故 SQL 端先卡一道。
+// 返回值 readCapped 表示读取行数触顶（后面的时刻根本没读，段数可能还在 limit 以内）——
+// 调用方必须把它和「段数触顶」一起当成截断暴露出去，否则读取截断会变成静默丢数据。
+func (s *Store) TimeRangesByResource(kind, id string, from, to time.Time, limit int) (ranges []TimeRange, readCapped bool, err error) {
 	if limit <= 0 || limit > maxEventRows {
 		limit = maxEventRows
 	}
@@ -426,14 +428,15 @@ func (s *Store) TimeRangesByResource(kind, id string, from, to time.Time, limit 
 		FROM event_resources er JOIN events e ON e.event_id = er.event_id
 		WHERE er.resource_kind = ? AND er.resource_id = ? AND e.occurred_at >= ? AND e.occurred_at < ?
 		ORDER BY e.occurred_at LIMIT ?`, kind, id, lo, hi, maxRangeEventRows+1).Scan(&times).Error; err != nil {
-		return nil, fmt.Errorf("query resource events: %w", err)
+		return nil, false, fmt.Errorf("query resource events: %w", err)
 	}
 	if len(times) > maxRangeEventRows {
 		log.Printf("[activity] resource %s/%s 在 [%s,%s) 内事件数超过 %d，只取前 %d 条，结果可能截断",
 			kind, id, lo, hi, maxRangeEventRows, maxRangeEventRows)
 		times = times[:maxRangeEventRows]
+		readCapped = true
 	}
-	return mergeTimeRanges(id, times, limit), nil
+	return mergeTimeRanges(id, times, limit), readCapped, nil
 }
 
 // mergeTimeRanges 把排好序的 ISO 时刻并成时段；坏时刻跳过并记日志（不因单行坏数据整段失败）。

@@ -233,9 +233,12 @@ func TestTimeRangesByResourceMerges(t *testing.T) {
 		t.Fatalf("RebuildResources: %v", err)
 	}
 
-	ranges, err := s.TimeRangesByResource(ResourceKindURL, url, at(-time.Hour), at(time.Hour), 0)
+	ranges, readCapped, err := s.TimeRangesByResource(ResourceKindURL, url, at(-time.Hour), at(time.Hour), 0)
 	if err != nil {
 		t.Fatalf("TimeRangesByResource: %v", err)
+	}
+	if readCapped {
+		t.Error("数据量远小于读取上限，不该标 readCapped")
 	}
 	if len(ranges) != 2 {
 		t.Fatalf("期望并成 2 段，得到 %d: %+v", len(ranges), ranges)
@@ -288,7 +291,7 @@ func TestTimeRangesLimitKeepsDuration(t *testing.T) {
 		t.Fatalf("RebuildResources: %v", err)
 	}
 
-	ranges, err := s.TimeRangesByResource(ResourceKindURL, url, at(-time.Hour), at(3*time.Hour), 3)
+	ranges, _, err := s.TimeRangesByResource(ResourceKindURL, url, at(-time.Hour), at(3*time.Hour), 3)
 	if err != nil {
 		t.Fatalf("TimeRangesByResource: %v", err)
 	}

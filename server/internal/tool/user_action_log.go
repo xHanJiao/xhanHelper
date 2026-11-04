@@ -54,9 +54,10 @@ func (t *UserActionLogTool) ReadOnlyFuncs() map[string]bool {
 func (t *UserActionLogTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
-			Name:        "day_skeleton",
-			Display:     "当日总览",
-			Description: "取某一天（本地日）的用户行为总览：每小时×来源的活动计数、当天在场/使用区间列表、当天碰过的资源去重清单、数据体检摘要。回答「那天大概干了什么、忙了多久」首选。",
+			Name:    "day_skeleton",
+			Display: "当日总览",
+			Description: "取某一天（本地日）的用户行为总览：每小时×来源的活动计数、当天在场/使用区间列表（只含 L0 系统唤醒 / L1 应用启停）、当天碰过的资源去重清单（按事件数降序前 30）、数据体检摘要。回答「那天大概干了什么、忙了多久」首选。" +
+				"结果为控制体积做了裁剪：带 sessions_total / resources_total / sessions_level_count 给出原始条数，truncated=true 时说明还有更多；要细节用 list_events 或 list_sessions 缩小范围。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -68,14 +69,14 @@ func (t *UserActionLogTool) Functions() []FuncSchema {
 		{
 			Name:        "list_sessions",
 			Display:     "区间列表",
-			Description: "取某时间范围内的在场/使用区间列表（起止、时长、闭合方式、父区间、锚）。可指定层级 level（0=系统唤醒，1=应用，2=焦点，4=组件）；不填则全部层级。from/to 为本地时间，格式 2006-01-02T15:04:05。limit 为返回条数上限（默认 500，硬上限 500）。",
+			Description: "取某时间范围内的在场/使用区间列表（起止、时长、闭合方式、父区间、锚）。可指定层级 level（0=系统唤醒，1=应用启停，2=焦点，3=焦点去抖，4=组件）；不填则全部层级。from/to 为本地时间，格式 2006-01-02T15:04:05。limit 默认 100，硬上限 500；返回 truncated=true 表示还有更多，应缩短时间范围而不是加大 limit。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"from":  map[string]interface{}{"type": "string", "description": "起始时间（本地），格式 2006-01-02T15:04:05"},
 					"to":    map[string]interface{}{"type": "string", "description": "结束时间（本地，不含），同上格式"},
-					"level": map[string]interface{}{"type": "integer", "description": "层级过滤，-1 或省略=全部；可选 0/1/2/4"},
-					"limit": map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 500，最大 500"},
+					"level": map[string]interface{}{"type": "integer", "description": "层级过滤，-1 或省略=全部；可选 0/1/2/3/4"},
+					"limit": map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 100，最大 500"},
 				},
 				"required": []string{"from", "to"},
 			},
@@ -83,7 +84,7 @@ func (t *UserActionLogTool) Functions() []FuncSchema {
 		{
 			Name:        "list_events",
 			Display:     "事件清单",
-			Description: "按条件取某时间范围内的事件清单（只读）。过滤维度可任意组合：type（精确事件类型）、source（域前缀，如 browser/tool/chat）、actor（user/assistant/system）、session_id（所属区间）、resource_kind+resource_id（同一资源，两者必须同给）。返回每条事件的类型、来源、时间、actor、工具名与碰过的资源。from/to 为本地时间。limit 默认 500，硬上限 500。",
+			Description: "按条件取某时间范围内的事件清单（只读）。过滤维度可任意组合：type（精确事件类型）、source（域前缀，如 browser/tool/chat）、actor（user/assistant/system）、session_id（所属区间）、resource_kind+resource_id（同一资源，两者必须同给）。返回每条事件的类型、来源、时间、actor、工具名与碰过的资源。from/to 为本地时间。limit 默认 100，硬上限 500；truncated=true 表示还有更多。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -95,7 +96,7 @@ func (t *UserActionLogTool) Functions() []FuncSchema {
 					"session_id":    map[string]interface{}{"type": "string", "description": "所属区间 id（level=1）"},
 					"resource_kind": map[string]interface{}{"type": "string", "description": "资源类别：url/repo/file/doc/memory/bill/reminder；须与 resource_id 同给"},
 					"resource_id":   map[string]interface{}{"type": "string", "description": "资源 id（与 resource_kind 同给）"},
-					"limit":         map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 500，最大 500"},
+					"limit":         map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 100，最大 500"},
 				},
 				"required": []string{"from", "to"},
 			},
@@ -103,7 +104,7 @@ func (t *UserActionLogTool) Functions() []FuncSchema {
 		{
 			Name:        "time_ranges_by_resource",
 			Display:     "资源时段",
-			Description: "取某资源在某时间范围内被碰过的时段（相邻事件间隔 ≤5 分钟并成一段）。返回每段的起止、时长与事件数。用于回答「这个网页/仓库/文档什么时候看的、看了几段」。from/to 为本地时间。limit 为段数上限，默认 500，最大 500。",
+			Description: "取某资源在某时间范围内被碰过的时段（相邻事件间隔 ≤5 分钟并成一段）。返回每段的起止、时长与事件数。用于回答「这个网页/仓库/文档什么时候看的、看了几段」。from/to 为本地时间。limit 为段数上限，默认 100，最大 500；truncated=true 表示还有更多。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -111,7 +112,7 @@ func (t *UserActionLogTool) Functions() []FuncSchema {
 					"resource_id":   map[string]interface{}{"type": "string", "description": "资源 id"},
 					"from":          map[string]interface{}{"type": "string", "description": "起始时间（本地），格式 2006-01-02T15:04:05"},
 					"to":            map[string]interface{}{"type": "string", "description": "结束时间（本地，不含），同上格式"},
-					"limit":         map[string]interface{}{"type": "integer", "description": "返回段数上限，默认 500，最大 500"},
+					"limit":         map[string]interface{}{"type": "integer", "description": "返回段数上限，默认 100，最大 500"},
 				},
 				"required": []string{"resource_kind", "resource_id", "from", "to"},
 			},
@@ -148,13 +149,13 @@ func (t *UserActionLogTool) Functions() []FuncSchema {
 		{
 			Name:        "read_log",
 			Display:     "读取留痕",
-			Description: "取某时间范围内的读取自记清单（read.query 事件：谁在什么时候取了什么级别的数据）。用于回答「今天问了几次我干了什么」「哪些接口从没人用」。actor 恒为 assistant，默认不参与行为统计。from/to 为本地时间，limit 默认 500，最大 500。",
+			Description: "取某时间范围内的读取自记清单（read.query 事件：谁在什么时候取了什么级别的数据）。用于回答「今天问了几次我干了什么」「哪些接口从没人用」。actor 恒为 assistant，默认不参与行为统计。from/to 为本地时间，limit 默认 100，最大 500；truncated=true 表示还有更多。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"from":  map[string]interface{}{"type": "string", "description": "起始时间（本地），格式 2006-01-02T15:04:05"},
 					"to":    map[string]interface{}{"type": "string", "description": "结束时间（本地，不含），同上格式"},
-					"limit": map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 500，最大 500"},
+					"limit": map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 100，最大 500"},
 				},
 				"required": []string{"from", "to"},
 			},
@@ -183,6 +184,77 @@ func (t *UserActionLogTool) Execute(ec *ExecuteContext, funcName string, args js
 	}
 }
 
+// 输出体积契约：day_skeleton 是「那天大概干了什么」的首选入口，整天全量返回时
+// 活跃的一天能到 300KB（实测 2026-10-01：resources 192KB / sessions 93KB），
+// 一次调用就会把上下文塞满。故骨架只给「日程级」切片，细节交给 list_* 下钻。
+const (
+	maxDayResources  = 30  // 资源是最大头，按 event_cnt 降序留前 30（store 已排序）
+	maxDaySessions   = 30  // L0/L1 通常个位数，30 只是兜底
+	skeletonMaxLevel = 1   // 骨架只留 L0 系统唤醒 / L1 应用启停；L2 焦点 / L3 去抖 / L4 组件走 list_sessions
+	defaultListLimit = 100 // list_* 未指定 limit 时的默认条数（store 硬上限仍是 500）
+	maxFactLimit     = 100 // facts_by_memory 的条数上限，与 activity.maxFactRows 对齐
+)
+
+// normalizeLimit 把调用方的 limit 收敛到 [1, 500]；缺省用 defaultListLimit。
+// 收敛后调用方才能用「返回条数 >= limit」判定是否被截断。
+func normalizeLimit(in *int) int {
+	if in == nil || *in <= 0 {
+		return defaultListLimit
+	}
+	if *in > 500 {
+		return 500
+	}
+	return *in
+}
+
+// daySkeletonView 把整天骨架压到可进上下文的体积，并回带原始条数供模型决定是否下钻。
+func daySkeletonView(sk *activity.DaySkeleton) map[string]any {
+	sessions := make([]activity.SessionSummary, 0, maxDaySessions)
+	levelCount := map[int]int{}
+	for _, s := range sk.Sessions {
+		levelCount[s.Level]++
+		if s.Level <= skeletonMaxLevel && len(sessions) < maxDaySessions {
+			sessions = append(sessions, s)
+		}
+	}
+	resources := sk.Resources
+	if len(resources) > maxDayResources {
+		resources = resources[:maxDayResources]
+	}
+	truncated := len(sk.Sessions) > len(sessions) || len(sk.Resources) > len(resources)
+	out := map[string]any{
+		"day":                  sk.Day,
+		"hours":                sk.Hours,
+		"health":               sk.Health,
+		"sessions":             sessions,
+		"sessions_total":       len(sk.Sessions),
+		"sessions_level_count": levelCount,
+		"resources":            resources,
+		"resources_total":      len(sk.Resources),
+		"truncated":            truncated,
+	}
+	if truncated {
+		out["hint"] = "只返回当天最靠前的资源与 L0/L1 区间。要细节用 list_events（可带 resource_kind+resource_id 或 type/source）或 list_sessions（可带 level）缩小时间范围，不要靠加大 limit 硬拉。"
+	}
+	return out
+}
+
+// cappedList 统一 list_* 的返回形状：truncated 为 true 时附下钻提示，
+// 让调用方知道「还有更多」，而不是以为这就是全部。
+// truncated 由调用方判定：返回条数命中 limit，或底层读取本身触顶（都算不完整）。
+func cappedList(payload map[string]any, n int, truncated bool) *Result {
+	payload["count"] = n
+	payload["truncated"] = truncated
+	if truncated {
+		payload["hint"] = "结果可能不完整。缩短时间范围或加过滤条件再取，不要靠加大 limit 硬拉。"
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("marshal error: %v", err)}
+	}
+	return &Result{Success: true, Data: data}
+}
+
 func (t *UserActionLogTool) daySkeleton(store *activity.Store, args json.RawMessage) *Result {
 	var in struct {
 		Date string `json:"date"`
@@ -198,7 +270,7 @@ func (t *UserActionLogTool) daySkeleton(store *activity.Store, args json.RawMess
 		log.Printf("[user_action_log] day_skeleton(%s) error: %v", in.Date, err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
 	}
-	data, err := json.Marshal(sk)
+	data, err := json.Marshal(daySkeletonView(sk))
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("marshal error: %v", err)}
 	}
@@ -230,20 +302,13 @@ func (t *UserActionLogTool) listSessions(store *activity.Store, args json.RawMes
 	if in.Level != nil {
 		level = *in.Level
 	}
-	limit := 0
-	if in.Limit != nil {
-		limit = *in.Limit
-	}
+	limit := normalizeLimit(in.Limit)
 	sessions, err := store.ListSessions(from, to, level, limit)
 	if err != nil {
 		log.Printf("[user_action_log] list_sessions(%s, %s, %d) error: %v", in.From, in.To, level, err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
 	}
-	data, err := json.Marshal(map[string]any{"sessions": sessions, "count": len(sessions)})
-	if err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("marshal error: %v", err)}
-	}
-	return &Result{Success: true, Data: data}
+	return cappedList(map[string]any{"sessions": sessions}, len(sessions), len(sessions) >= limit)
 }
 
 // parseRange 解析 from/to 本地时间并校验先后。
@@ -284,10 +349,7 @@ func (t *UserActionLogTool) listEvents(ec *ExecuteContext, store *activity.Store
 	if (in.ResourceKind == "") != (in.ResourceID == "") {
 		return &Result{Success: false, Error: "resource_kind 与 resource_id 必须同时提供"}
 	}
-	limit := 0
-	if in.Limit != nil {
-		limit = *in.Limit
-	}
+	limit := normalizeLimit(in.Limit)
 	events, err := store.ListEvents(from, to, activity.EventFilter{
 		Type: in.Type, Source: in.Source, Actor: in.Actor, SessionID: in.SessionID,
 		ResourceKind: in.ResourceKind, ResourceID: in.ResourceID,
@@ -300,7 +362,7 @@ func (t *UserActionLogTool) listEvents(ec *ExecuteContext, store *activity.Store
 	if t.docTitles != nil {
 		t.attachDocTitles(ec.Ctx, ec.UserID, events)
 	}
-	return marshalEvents(events)
+	return marshalEvents(events, limit)
 }
 
 func (t *UserActionLogTool) timeRangesByResource(store *activity.Store, args json.RawMessage) *Result {
@@ -321,20 +383,14 @@ func (t *UserActionLogTool) timeRangesByResource(store *activity.Store, args jso
 	if msg != "" {
 		return &Result{Success: false, Error: msg}
 	}
-	limit := 0
-	if in.Limit != nil {
-		limit = *in.Limit
-	}
-	ranges, err := store.TimeRangesByResource(in.ResourceKind, in.ResourceID, from, to, limit)
+	limit := normalizeLimit(in.Limit)
+	ranges, readCapped, err := store.TimeRangesByResource(in.ResourceKind, in.ResourceID, from, to, limit)
 	if err != nil {
 		log.Printf("[user_action_log] time_ranges_by_resource(%s/%s) error: %v", in.ResourceKind, in.ResourceID, err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
 	}
-	data, err := json.Marshal(map[string]any{"ranges": ranges, "count": len(ranges)})
-	if err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("marshal error: %v", err)}
-	}
-	return &Result{Success: true, Data: data}
+	// 段数触顶与「读取行数触顶」都算截断：后者会让后面的时段根本不出现。
+	return cappedList(map[string]any{"ranges": ranges}, len(ranges), len(ranges) >= limit || readCapped)
 }
 
 func (t *UserActionLogTool) factsByMemory(store *activity.Store, args json.RawMessage) *Result {
@@ -348,16 +404,16 @@ func (t *UserActionLogTool) factsByMemory(store *activity.Store, args json.RawMe
 	if in.MemoryID == "" {
 		return &Result{Success: false, Error: "memory_id 不能为空"}
 	}
-	limit := 0
-	if in.Limit != nil {
-		limit = *in.Limit
+	limit := normalizeLimit(in.Limit)
+	if limit > maxFactLimit {
+		limit = maxFactLimit
 	}
 	events, err := store.FactsByMemory(in.MemoryID, limit)
 	if err != nil {
 		log.Printf("[user_action_log] facts_by_memory(%s) error: %v", in.MemoryID, err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
 	}
-	return marshalEvents(events)
+	return marshalEvents(events, limit)
 }
 
 // eventDetail 取指定事件的内容文本摘要，并记一条 read.query 留痕（谁取的、取了哪几条）。
@@ -440,10 +496,7 @@ func (t *UserActionLogTool) readLog(store *activity.Store, args json.RawMessage)
 	if msg != "" {
 		return &Result{Success: false, Error: msg}
 	}
-	limit := 0
-	if in.Limit != nil {
-		limit = *in.Limit
-	}
+	limit := normalizeLimit(in.Limit)
 	events, err := store.ListEvents(from, to, activity.EventFilter{
 		Type:  activity.TypeReadQuery,
 		Actor: activity.ActorAssistant, // 硬约束：read.query 恒由助手发出（附表 A），防将来别的 actor 也发时漏出。
@@ -452,7 +505,7 @@ func (t *UserActionLogTool) readLog(store *activity.Store, args json.RawMessage)
 		log.Printf("[user_action_log] read_log(%s, %s) error: %v", in.From, in.To, err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
 	}
-	return marshalEvents(events)
+	return marshalEvents(events, limit)
 }
 
 // attachDocTitles 把事件里 doc 资源的 canonical（=doc id）批量换成标题；查不到保留 id。
@@ -488,10 +541,6 @@ func (t *UserActionLogTool) attachDocTitles(ctx context.Context, userID string, 
 	}
 }
 
-func marshalEvents(events []activity.EventSummary) *Result {
-	data, err := json.Marshal(map[string]any{"events": events, "count": len(events)})
-	if err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("marshal error: %v", err)}
-	}
-	return &Result{Success: true, Data: data}
+func marshalEvents(events []activity.EventSummary, limit int) *Result {
+	return cappedList(map[string]any{"events": events}, len(events), len(events) >= limit)
 }

@@ -470,8 +470,18 @@ func truncateJSONArrays(v interface{}, maxLen int) []byte {
 		dropped++
 	}
 	// 骨架单独就超预算（maxLen 极小的极端情况）：返回合法的最小标记，不吐断裂 JSON。
-	marker, _ := json.Marshal(map[string]string{"truncated": "…[结果过大，已截断]…"})
-	return marker
+	// 带原 success/error，避免下游把「截断」误读成「工具失败」（或反之）。
+	marker := map[string]interface{}{"truncated": "…[结果过大，已截断]…"}
+	if m, ok := v.(map[string]interface{}); ok {
+		if s, ok := m["success"].(bool); ok {
+			marker["success"] = s
+		}
+		if e, ok := m["error"].(string); ok && e != "" {
+			marker["error"] = e
+		}
+	}
+	out, _ := json.Marshal(marker)
+	return out
 }
 
 const (

@@ -1043,7 +1043,7 @@ func TestTruncateToolResultJSON_KeepsValidJSON(t *testing.T) {
 }
 
 // 大事件（event.get 返回几十条记忆）光条目骨架就超过 2000，字符串截断救不回来。
-// 必须丢数组尾部条目，而不是回退字节切片吐断裂 JSON——拼装循环靠这个 JSON 判断归属。
+// 必须丢数组尾部条目，而不是回退字节切片吐断裂 JSON——拼装循环的模型要靠这份 JSON 判断归属。
 func TestTruncateToolResultJSON_DropsArrayItemsWhenSkeletonTooBig(t *testing.T) {
 	memories := make([]map[string]interface{}, 0, 40)
 	for i := 0; i < 40; i++ {
@@ -1092,6 +1092,19 @@ func TestTruncateToolResultJSON_DropsArrayItemsWhenSkeletonTooBig(t *testing.T) 
 		if !ok || mem["id"] == "" || mem["content"] == "" {
 			t.Fatalf("保留条目结构破损: %+v", item)
 		}
+	}
+}
+
+// 没有数组可丢、骨架本身超预算 → 最小标记 JSON，但仍保留原 success/error（不误读成失败）。
+func TestTruncateToolResultJSON_MarkerKeepsSuccess(t *testing.T) {
+	data := []byte(`{"success":true,"error":"boom","data":{"a":"1","b":"2","c":"3"}}`)
+	out := truncateToolResultJSON(data, 20)
+	var m map[string]interface{}
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("兜底必须是合法 JSON: %v\n%s", err, out)
+	}
+	if m["success"] != true || m["error"] != "boom" || m["truncated"] == nil {
+		t.Fatalf("兜底标记应保留 success/error: %v", m)
 	}
 }
 

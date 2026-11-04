@@ -608,12 +608,12 @@ flowchart LR
 - 反思注册表不再注册 `theme_analyst` / `theme_discoverer` / `theme` 管理工具；
 - 每日回顾不再 `expire` 活跃主题、不再跑主题发现，只写一条 trace 记录节拍。
 
-> 人话：旧主题从「主对话可见」退成「只读历史」。状态页只剩监控/调试读取，没有任何写入路径；等确认不需要回看后再删这批代码。
+> 人话：旧主题从「主对话可见」退成「只读历史」。状态页仅剩调试读取（Admin message-debug），没有任何写入路径；等确认不需要回看后再删这批代码。
 
 ### 8.4 旧数据
 
 - 旧主题数据**不迁移**；`theme_states` 停读写，用 dump 回放验证后删除。
-- 旧 theme 向量/chunk 一次性清理：`entity-gc --purge-legacy-themes`（dry-run 默认，`--write` 落库，清 `theme_states` / 全文向量 / chunk 向量 / chunk 行 / concept 行；prod 需 `CONFIRM_PROD=yes`）。
+- 旧 theme 向量/chunk 一次性清理：`entity-gc --purge-legacy-themes`（dry-run 默认，`--write` 落库，清 `theme_states` / 全文向量（`entity_type=theme`，含旧 `ThemeEmbedder` 写入的 concept 向量）/ chunk 向量 / chunk 行 / concept 行；prod 需 `CONFIRM_PROD=yes`）。建议先停服务再跑：进程内向量库会持有旧向量直到重启，且统计与删除之间可能有增量。
 - 用户已确认支持破坏性更新。
 
 ### 8.5 Bootstrap 冷启动
@@ -796,9 +796,9 @@ event_assembly:
 
 ## 后续变更
 
-- 2026-11-05 阶段 8：补两类单测——`event.get` 大事件被 `MaxToolResult: 2000` 截断后仍是合法 JSON（骨架超预算时从最长数组尾部丢条目并标注 `_truncated_entries`，不再回退字节切片吐断裂 JSON）、`buildUserMessage` 事件接线端到端（本轮事件进资源区且不重复、新窗口 carried summary）；旧主题收尾：`entity-gc --purge-legacy-themes` 清理 `theme_states` / theme 全文与 chunk 向量 / chunk 行 / concept 行（dry-run 默认），摘掉监控 `themes` 快照，管理页「主题发现剩余」改为「每日回顾剩余」（`discover_remaining` 是反思节拍，不是主题发现）。
+- 2026-11-05 阶段 8：补两类单测——拼装循环（MiniReAct）里 `event.get` 大事件被 `MaxToolResult: 2000` 截断后仍是合法 JSON（骨架超预算时从最长数组尾部丢条目并标注 `_truncated_entries`，不再回退字节切片吐断裂 JSON；主对话的实时工具结果不走这条截断，属既有行为）、`buildUserMessage` 事件接线端到端（本轮事件进资源区且不重复、新窗口 carried summary）；旧主题收尾：`entity-gc --purge-legacy-themes` 清理 `theme_states` / theme 全文与 chunk 向量 / chunk 行 / concept 行（dry-run 默认，建议先停服务），摘掉监控 `themes` 快照，管理页「主题发现剩余」改为「每日回顾剩余」（`discover_remaining` 是反思节拍，不是主题发现）。
 - 2026-11-05 阶段 6 复核：修复游标与 `--reset`/`--dry-run` 的先后顺序；整批没有产出可用 JSON（空内容/坏 JSON/无 `{`）或写库失败时记 `Unparsed/Failed`，冷启动保留游标并非零退出重试该批；`--review` 有未应用项也非零退出；`--user` 校验存在性；报告补「事件名两两相似 >0.9 对数」；帮助与 §8.5 注明先停服务、`--reset` 不清 `EventFocus` 残留。
 - 2026-11-05 阶段 7：新增只读 `GET /api/event-threads`（列表）与 `GET /api/event-threads/:id`（summary + 记忆，`updated_at DESC`）；Vue 新增 `EventView`（`/event-threads`，列表 + 详情弹窗）并挂到功能菜单/我的；Swift 客户端主题页换成事件页（`EventViewModel` / `EventListView` / `EventDetailOverlay`）；删除 `controller/theme.go` 与只读 `GET /api/themes`。
 - 2026-11-05 阶段 6：`cmd/event-bootstrap` 冷启动工具（`--limit` 试跑、`--reset` 重跑、`--review` 结构复盘、游标断点续跑）；拼装器构建抽到 `appinit.BuildEventAssembler`，与生产共用同一套只读工具与阈值；dev 库实测指标见 §10.2。
 - 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
-- 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩监控/调试读取，代码保留待统一删除。
+- 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩调试读取（Admin message-debug），代码保留待统一删除。

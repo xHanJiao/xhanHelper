@@ -7,6 +7,8 @@
 //
 //	APP_ENV=prod ./entity-gc            # dry-run，只统计
 //	APP_ENV=prod ./entity-gc --write    # 落库
+//
+// 建议先停服务再跑：进程内向量库会持有旧向量直到重启，统计与删除之间也可能有增量。
 package main
 
 import (

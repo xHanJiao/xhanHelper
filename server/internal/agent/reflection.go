@@ -121,15 +121,11 @@ func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, trigge
 	}
 	o.traceRepo.CreateTrace(ctx, tr)
 
-	o.expireActiveThemes(ctx, userID)
-
-	// Phase 15: 状态更新已收敛至 StateUpdater（post-chat 触发），
-	// dailyReview 只做 expire + discover，不再做全量分析
-	discovered := o.discoverNewThemes(ctx, userID, traceID)
-
+	// 旧主题状态页已停写（事件系统接管）：不再 expire active 主题、不再跑主题发现。
+	// 保留 trace 记录，方便确认每日节拍仍在运行。
 	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, 0, nil)
-	log.Printf("[reflection] trace=%s DONE %s discovered=%d", traceID[:8], triggerType, discovered)
-	return discovered, nil
+	log.Printf("[reflection] trace=%s DONE %s (theme maintenance disabled)", traceID[:8], triggerType)
+	return 0, nil
 }
 
 // durationDays 返回 duration 对应的衰减天数（从配置读取）

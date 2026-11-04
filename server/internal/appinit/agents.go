@@ -112,15 +112,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxIterations:      cfg.Reflection.LaunchMaxIterations,
 		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
 	})
-	// StateUpdater 检索工具集（与 ThemeAnalyst 共用同一套）
-	retrievalTools := map[string]tool.Tool{
-		"get_topic_detail": tool.NewGetTopicDetailTool(repos.Note, repos.Mem),
-		"get_bill_stats":   tool.NewGetBillStatsTool(repos.Bill),
-		"unified_search":   unifiedSearch,
-	}
-	stateUpdater := agent.NewStateUpdater(llmClients.BgFlash, repos.Message, repos.Conversation,
-		agent.NewThemeStore(repos.ThemeState), infra.VectorStore, tools.ConceptEmbedService, chunkBuilder,
-		retrievalTools, repos.Trace)
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
 		FlashClient:   llmClients.BgFlash,
@@ -202,9 +193,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		agent.NewEventWorker(&agent.EventWorkerConfig{
 			MemRepo:   repos.Mem,
 			Assembler: eventAssembler,
-		}),
-		agent.NewStateWorker(&agent.StateWorkerConfig{
-			Updater: stateUpdater,
 		}),
 		profileWorker,
 	}, repos.Message, ephemeralDestroyer)

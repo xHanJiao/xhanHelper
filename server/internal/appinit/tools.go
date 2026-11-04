@@ -75,31 +75,10 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	recordMemoryTool := tool.NewRecordMemoryTool(nil)
 	reg.Register(tool.NewLoggingWrapper(recordMemoryTool, log.Default()))
 
-	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(repos.ConceptEmbed, repos.Note, repos.Mem, infra.Embedder, repos.Embedding, cfg.Reflection.ClusterThreshold), log.Default())
-	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(repos.Note, repos.Mem), log.Default())
-	billStatsTool := tool.NewLoggingWrapper(tool.NewGetBillStatsTool(repos.Bill), log.Default())
-
-	retrievalTools := map[string]tool.Tool{
-		"get_topic_stats":  topicStatsTool,
-		"get_topic_detail": topicDetailTool,
-		"get_bill_stats":   billStatsTool,
-		"search_messages":  tool.NewMessageSearchTool(repos.Message, repos.Conversation, infra.Embedder, infra.VectorStore, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
-	}
-
-	// --- Phase 6: 反思系统工具 ---
-	themeStore := agent.NewThemeStore(repos.ThemeState)
+	// --- 反思注册表 ---
+	// 旧主题状态页已停写：事件系统接管后不再注册 theme_analyst / theme_discoverer /
+	// theme 管理工具。注册表留空，ReflectionOrchestrator 的每日回顾只做记录。
 	reflectionReg := tool.NewRegistry()
-	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewThemeAnalyst(llmClients.BgFlash, retrievalTools, themeStore, repos.Trace, cfg.Reflection.AnalystMaxIterations, chunkBuilder), log.Default()))
-
-	themeEmbedder := agent.NewThemeEmbedder(infra, repos.ConceptEmbed, repos.Embedding)
-	bgClients := &app.LLMClients{Flash: llmClients.BgFlash, Strong: llmClients.BgFlash}
-	themeDiscoverer := agent.NewThemeDiscoverer(bgClients, infra, retrievalTools, themeStore, themeEmbedder, conceptEmbedService, repos.Trace,
-		cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
-	reflectionReg.Register(tool.NewLoggingWrapper(themeDiscoverer, log.Default()))
-
-	themeMgmtTool := tool.NewThemeTool(repos.ThemeState, themeEmbedder)
-	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
 	// --- 内存提取器 ---
 	// 抽取段的采样温度单独设：抽取的产物是「用户原话」，越贪心越少改写（见

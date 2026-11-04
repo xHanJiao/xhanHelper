@@ -598,9 +598,15 @@ flowchart LR
 - 配置 `retrieval.theme`、`resource_zone.budget_topic` / `quota_topic`
 - 重放配置里的 `theme` 检索参数
 
-**保留（反思子系统仍在使用）**：`theme_discover.go`、`theme_analyst.go`、`theme_verifier.go`、`theme_embedder.go`、`theme_chunker.go`、`theme_store.go`、`state_updater.go`、`state_worker.go`、`tool/theme.go`、`model/theme_state.go`、`service/theme_state_repo.go`、`get_topic_stats` / `get_topic_detail`。
+**保留代码但已停写**：`theme_discover.go`、`theme_analyst.go`、`theme_verifier.go`、`theme_embedder.go`、`theme_chunker.go`、`theme_store.go`、`state_updater.go`、`state_worker.go`、`tool/theme.go`、`model/theme_state.go`、`service/theme_state_repo.go`、`get_topic_stats` / `get_topic_detail`。
 
-> 人话：旧主题从「主对话可见」退成「反思内部的状态机」。等反思侧也切到事件后，这批代码再一起删；现在删会把每日回顾和状态页更新一起打断。
+停写方式（运行时不接线，代码留待统一删除）：
+
+- post-chat 组摘掉 `StateWorker`（不再按 session 更新状态页）；
+- 反思注册表不再注册 `theme_analyst` / `theme_discoverer` / `theme` 管理工具；
+- 每日回顾不再 `expire` 活跃主题、不再跑主题发现，只写一条 trace 记录节拍。
+
+> 人话：旧主题从「主对话可见」退成「只读历史」。状态页只剩监控/调试读取，没有任何写入路径；等确认不需要回看后再删这批代码。
 
 ### 8.4 旧数据
 
@@ -780,4 +786,5 @@ event_assembly:
 
 ## 后续变更
 
-- 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。反思侧的 `ThemeAnalyst` / `ThemeDiscoverer` / `StateUpdater` / `ThemeState` 保留，等反思切到事件后再删。影响文件见 §8.3。
+- 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
+- 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩监控/调试读取，代码保留待统一删除。

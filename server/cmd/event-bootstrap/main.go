@@ -3,6 +3,8 @@
 // 只处理重构后的记忆（source IN post_chat/inline），按 created_at 正序分批喂给
 // 与生产同一个 EventAssembler；游标落盘，断点可续。
 //
+// 冷启动期间必须停掉服务：session_end 的 EventWorker 会并发拼装同一批记忆。
+//
 // 用法:
 //
 //	APP_ENV=dev go run ./cmd/event-bootstrap --dry-run   # 只统计输入与现状
@@ -52,7 +54,7 @@ func main() {
 
 	limit := flag.Int("limit", 0, "本次最多处理多少条记忆（0 = 全部）")
 	reset := flag.Bool("reset", false, "清空该用户全部事件、记忆退回普通池，并删除游标后重跑")
-	dryRun := flag.Bool("dry-run", false, "只统计输入与事件现状，不调用 LLM、不写库")
+	dryRun := flag.Bool("dry-run", false, "只统计输入与事件现状；不调 LLM、不改事件/记忆数据（AutoMigrate 仍会跑）")
 	review := flag.Bool("review", false, "跑完后做一次结构复盘：Flash 看全部事件，输出 merge + 改名")
 	userFlag := flag.String("user", "", "user_id（默认：本地单用户 / 库里唯一用户）")
 	cursorPath := flag.String("cursor", filepath.Join("data", "event-bootstrap.cursor"), "游标文件路径")
@@ -103,11 +105,7 @@ Flags:
 		config.GuardProdWrite(cfg.DB.Database)
 	}
 
-	cur, err := loadCursor(*cursorPath, cfg.DB.Database, userID)
-	if err != nil {
-		log.Fatalf("load cursor: %v", err)
-	}
-
+	var cur *cursorFile
 	if *reset {
 		events, memories, err := repos.Event.ResetUser(ctx, userID)
 		if err != nil {
@@ -116,8 +114,13 @@ Flags:
 		if err := os.Remove(*cursorPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Fatalf("remove cursor: %v", err)
 		}
-		cur = nil
 		log.Printf("[bootstrap] reset done: events=%d memories=%d cursor removed", events, memories)
+	} else if !*dryRun {
+		// dry-run 只看现状，不依赖（也不校验）历史游标。
+		cur, err = loadCursor(*cursorPath, cfg.DB.Database, userID)
+		if err != nil {
+			log.Fatalf("load cursor: %v", err)
+		}
 	}
 
 	total, err := repos.Mem.CountBySources(ctx, userID, bootstrapSources)
@@ -162,6 +165,11 @@ Flags:
 			log.Fatalf("assemble (processed=%d): %v", processed, err)
 		}
 		last := batch[len(batch)-1]
+		if stats.Unparsed > 0 || stats.Failed > 0 {
+			// 游标停在上一批：这批没产出可用计划或写库失败，重跑会重新处理它。
+			log.Fatalf("[bootstrap] batch ending %s produced no usable plan (unparsed=%d failed=%d); cursor kept, rerun to retry",
+				last.CreatedAt.Format("2006-01-02 15:04:05"), stats.Unparsed, stats.Failed)
+		}
 		cur = &cursorFile{DB: cfg.DB.Database, UserID: userID, CreatedAt: last.CreatedAt, MemoryID: last.ID}
 		if err := saveCursor(*cursorPath, cur); err != nil {
 			log.Fatalf("save cursor: %v", err)
@@ -186,7 +194,16 @@ Flags:
 // resolveUser 依次尝试 --user、本地单用户、库里唯一用户。
 func resolveUser(ctx context.Context, cfg *config.Config, repos *app.Repos, userFlag string) (string, error) {
 	if userFlag != "" {
-		return userFlag, nil
+		users, err := repos.User.ListAll(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, u := range users {
+			if u.ID == userFlag {
+				return userFlag, nil
+			}
+		}
+		return "", fmt.Errorf("user %q 不存在", userFlag)
 	}
 	id, err := appinit.EnsureLocalUser(cfg, repos.User)
 	if err != nil {
@@ -278,6 +295,37 @@ func printReport(ctx context.Context, repos *app.Repos, userID string, total int
 		log.Printf("[bootstrap] 每事件记忆数 p50=%d p90=%d max=%d；超 20 条 %d 个；时间跨度 >3 个月 %d 个",
 			counts[len(counts)/2], counts[(len(counts)*9)/10], counts[len(counts)-1], over20, over3Months)
 	}
+	simPairs := 0
+	for i := 0; i < len(stats); i++ {
+		for j := i + 1; j < len(stats); j++ {
+			if diceSimilarity(stats[i].Event.Name, stats[j].Event.Name) > 0.9 {
+				simPairs++
+				log.Printf("[bootstrap]   名称相似 >0.9: %q / %q", stats[i].Event.Name, stats[j].Event.Name)
+			}
+		}
+	}
+	log.Printf("[bootstrap] 事件名两两相似 >0.9 的对数：%d", simPairs)
+}
+
+// diceSimilarity 字符二元组 Dice 系数；中文事件名用字符级即可，无需额外 embedding。
+func diceSimilarity(a, b string) float64 {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) < 2 || len(rb) < 2 {
+		return 0
+	}
+	counts := make(map[string]int, len(ra)-1)
+	for i := 0; i < len(ra)-1; i++ {
+		counts[string(ra[i:i+2])]++
+	}
+	inter := 0
+	for i := 0; i < len(rb)-1; i++ {
+		k := string(rb[i : i+2])
+		if counts[k] > 0 {
+			counts[k]--
+			inter++
+		}
+	}
+	return float64(2*inter) / float64((len(ra)-1)+(len(rb)-1))
 }
 
 func loadEventStats(ctx context.Context, repos *app.Repos, userID string) ([]eventStat, error) {
@@ -425,6 +473,9 @@ func runReview(ctx context.Context, repos *app.Repos, client llm.LLMClient, user
 		renamed++
 	}
 	log.Printf("[review] done: merged=%d renamed=%d skipped=%d", merged, renamed, skipped)
+	if skipped > 0 {
+		return fmt.Errorf("%d 项复盘操作未应用，见上方日志", skipped)
+	}
 	return nil
 }
 

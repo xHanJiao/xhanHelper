@@ -105,6 +105,7 @@ type AssemblyStats struct {
 	Merged   int
 	Rejected int // 被创建校验拒绝的新事件数
 	Failed   int // 写库失败次数（与「LLM 输出空」区分）
+	Unparsed int // 整批没有产出可用计划（终止早 / 空内容 / JSON 解析失败）
 }
 
 // Assemble 处理一批记忆（内部按 batchSize 分批，全部处理）。
@@ -124,6 +125,7 @@ func (a *EventAssembler) Assemble(ctx context.Context, userID string, memories [
 		stats.Merged += st.Merged
 		stats.Rejected += st.Rejected
 		stats.Failed += st.Failed
+		stats.Unparsed += st.Unparsed
 		if err != nil {
 			return stats, fmt.Errorf("event assemble batch %d/%d: %w", stats.Batches, (len(memories)+a.batchSize-1)/a.batchSize, err)
 		}
@@ -165,12 +167,13 @@ func (a *EventAssembler) assembleBatch(ctx context.Context, userID string, batch
 	}
 	if result.TerminatedEarly || strings.TrimSpace(result.FinalContent) == "" {
 		log.Printf("[event] assemble: no final JSON (iterations=%d), skip batch", result.Iterations)
-		return AssemblyStats{}, nil
+		return AssemblyStats{Unparsed: 1}, nil
 	}
 	var plan assemblyPlan
-	if _, err := ParseFlashJSON(result.FinalContent, &plan); err != nil {
-		log.Printf("[event] assemble: final JSON parse error: %v, raw=%s", err, truncateStr(result.FinalContent, 200))
-		return AssemblyStats{}, nil // 不写库，记忆留在普通池
+	// ParseFlashJSON 找不到 "{" 时返回 nil（历史行为），这里显式当成没产出计划。
+	if _, err := ParseFlashJSON(result.FinalContent, &plan); err != nil || !strings.Contains(result.FinalContent, "{") {
+		log.Printf("[event] assemble: final JSON missing/parse error: %v, raw=%s", err, truncateStr(result.FinalContent, 200))
+		return AssemblyStats{Unparsed: 1}, nil // 不写库，记忆留在普通池
 	}
 
 	batchByID := make(map[string]model.UserMemory, len(batch))

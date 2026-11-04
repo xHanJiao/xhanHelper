@@ -21,7 +21,7 @@
 xhanHelper/
 ├── AGENTS.md
 ├── server/                             # Go 后端
-│   ├── cmd/                            # 4 个入口：xhan-helper（主服务）/ analyze-cache / eval-export / eval-label
+│   ├── cmd/                            # xhan-helper（主服务）+ 维护/一次性脚本（entity-gc、topic-clean、event-bootstrap 等，见各自 -h）
 │   ├── conf/                           # config.yaml（base）+ config.{dev,prod,test}.yaml
 │   ├── scripts/                        # api-test.sh、client-tool-e2e.sh、control/dump 脚本
 │   ├── Makefile

@@ -483,3 +483,25 @@ func TestBuildAssemblyUserMessage_KeepsChineseSummary(t *testing.T) {
 		t.Fatal("summary must not be byte-truncated")
 	}
 }
+
+// TestEventAssemblerUnparsedBatch 整批没有可用 JSON 时要记 Unparsed，冷启动据此保留游标重试。
+func TestEventAssemblerUnparsedBatch(t *testing.T) {
+	a, db := setupEventAssembler(t, &fakeEmbedder{}, 0.88)
+	a.flashClient = &syncMockLLM{responses: []llm.Message{{Role: "assistant", Content: "这不是 JSON"}}}
+	m := seedMemory(t, db, "u1", "m1", "回西安准备")
+
+	stats, err := a.Assemble(context.Background(), "u1", []model.UserMemory{*m})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if stats.Unparsed != 1 {
+		t.Fatalf("unparsed = %d, want 1", stats.Unparsed)
+	}
+	var events []model.Event
+	if err := db.Find(&events).Error; err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("bad JSON must not create events, got %d", len(events))
+	}
+}

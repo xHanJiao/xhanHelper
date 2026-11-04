@@ -338,6 +338,9 @@ func (r *EventRepo) Delete(ctx context.Context, userID, id string) error {
 
 // ResetUser 清空一个用户的全部事件数据：记忆退回普通池（UpdateColumn，不刷 updated_at），
 // 事件硬删。仅供一次性冷启动 --reset 使用；生产删除走 Delete（软删）。
+//
+// 不清理 Conversation.Extra.EventFocus：残留的旧 ID 在注入时被跳过，下一次 event.enable
+// 会重新写整个列表，属于可自愈的残留。
 func (r *EventRepo) ResetUser(ctx context.Context, userID string) (events int64, memories int64, err error) {
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&model.UserMemory{}).

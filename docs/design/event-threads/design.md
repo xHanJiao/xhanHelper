@@ -628,9 +628,10 @@ flowchart LR
 - 输入：412 条（`memory_value` + topic + tags + facts + 时间），按 `created_at` 正序分批；
 - 每批 40 条 → **11 批**，全 Flash（不再有 Pro 分支），约 5 分钟；
 - 游标文件 `server/data/event-bootstrap.cursor`，断点可续；**不能靠 `event_id IS NULL` 判断进度**（模型故意不分配的记忆永远是 NULL，会无限重跑）；
+- 跑之前停掉服务：`session_end` 的 EventWorker 会并发拼装同一批记忆；某批没产出可用计划（空内容/坏 JSON/写库失败）时工具会保留游标并非零退出，重跑即重试该批；
 - 每批走**同一个 `EventAssembler`**，不写第二套 prompt / 逻辑——冷启动跑通即生产路径跑通；
 - 全部跑完后做一次**结构复盘**：输入全部事件（id / name / summary / 记忆数 / 首末日期），输出 `merge` + `rename`，专门修「切太细」（如 `科一报名` / `科三考试` / `科四` 该并成 `驾照考取`）；实现为 `event-bootstrap --review`，复用 Flash，改库前做链式合并与重名检查；
-- `--limit N` 试跑、`--reset` 清空重跑（清 `event_id` + 删 events）。
+- `--limit N` 试跑、`--reset` 清空重跑（清 `event_id` + 删 events；不清会话里残留的钉住 ID，注入时会被跳过、下次 `event.enable` 自动重写）。
 
 **为什么必须有结构复盘**：按时间正序，事件名是用最早那条记忆命名的，之后只会越来越不像；所以 `event_updates` 要支持 `name`，复盘阶段靠它改名。
 
@@ -705,7 +706,7 @@ event_assembly:
 
 **实测（2026-11-05，dev 库 `xhan_helper_test`，412 条 / 11 批）**：
 
-- 23 个事件，p50/p90/max = 9/20/87 条；超 20 条 2 个（日本行程 87、求职 21），时间跨度 >3 个月 0 个；
+- 23 个事件，p50/p90/max = 9/20/87 条；超 20 条 2 个（日本行程 87、求职 21），时间跨度 >3 个月 0 个；事件名两两相似 >0.9 的对数 0；
 - 已分配 287 条（70%），未分配 125 条（30%）——比预期的 40–70% 未分配更激进，抽查未分配样本全是习惯/人物关系/偏好/一次性任务，暂按「dev 数据项目密度高」解释，prod 冷启动再看；
 - 结构复盘改名 2 个、合并 0 个（「回西安准备 / 回西安安家 / 11月退租离京」保留为三条，是同一件事的不同跟进线）；
 - 抽查 summary 均只含本事件内容；未发现跨事件污染。
@@ -793,6 +794,7 @@ event_assembly:
 
 ## 后续变更
 
+- 2026-11-05 阶段 6 复核：修复游标与 `--reset`/`--dry-run` 的先后顺序；整批没有产出可用 JSON（空内容/坏 JSON/无 `{`）或写库失败时记 `Unparsed/Failed`，冷启动保留游标并非零退出重试该批；`--review` 有未应用项也非零退出；`--user` 校验存在性；报告补「事件名两两相似 >0.9 对数」；帮助与 §8.5 注明先停服务、`--reset` 不清 `EventFocus` 残留。
 - 2026-11-05 阶段 6：`cmd/event-bootstrap` 冷启动工具（`--limit` 试跑、`--reset` 重跑、`--review` 结构复盘、游标断点续跑）；拼装器构建抽到 `appinit.BuildEventAssembler`，与生产共用同一套只读工具与阈值；dev 库实测指标见 §10.2。
 - 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
 - 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩监控/调试读取，代码保留待统一删除。

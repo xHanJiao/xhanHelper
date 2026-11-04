@@ -151,6 +151,30 @@ func (r *UserMemoryRepo) ListAllUsersMemoriesPaginated(ctx context.Context, limi
 	return list, err
 }
 
+// ListUpdatedSince 返回 since 之后创建或改写的记忆（事件拼装输入）。
+// updated_at 是「记忆内容变了」的唯一时间信号：创建、Update、BatchUpdateConfirm 都会刷新它；
+// 事件归组本身用 UpdateColumn，不会刷新（否则同一 session 重试会重复进入拼装）。
+func (r *UserMemoryRepo) ListUpdatedSince(ctx context.Context, userID string, since time.Time) ([]model.UserMemory, error) {
+	var list []model.UserMemory
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND updated_at >= ?", userID, since).
+		Order("updated_at ASC").
+		Find(&list).Error
+	return list, err
+}
+
+// ListByEventIDs 返回挂在指定事件下的记忆（拼装候选打分用，按事件分组由调用方做）。
+func (r *UserMemoryRepo) ListByEventIDs(ctx context.Context, userID string, eventIDs []string) ([]model.UserMemory, error) {
+	if len(eventIDs) == 0 {
+		return nil, nil
+	}
+	var list []model.UserMemory
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND event_id IN ?", userID, eventIDs).
+		Find(&list).Error
+	return list, err
+}
+
 // FindByContentHash 按 content_hash 查找记忆
 func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentHash string) (*model.UserMemory, error) {
 	var m model.UserMemory

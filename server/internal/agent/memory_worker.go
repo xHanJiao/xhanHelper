@@ -38,6 +38,7 @@ func (w *MemoryWorker) Name() string { return "memory" }
 // Process 抽取候选并逐条决策写入。关闭时跳过。
 func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error {
 	if !w.memoryAutoExtract || w.extractor == nil {
+		sess.MemoryPhaseDone = true
 		return nil
 	}
 	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
@@ -62,5 +63,6 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 			return fmt.Errorf("record loop decide for candidate %.40s: %w", c.Summary, err)
 		}
 	}
+	sess.MemoryPhaseDone = true
 	return nil
 }

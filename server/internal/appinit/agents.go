@@ -154,6 +154,19 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		NoteSource:    noteSource,
 	}, agent.RecordLoopConfigFromServer(cfg), model.MemorySourceInline)
 	tools.RecordMemoryTool.SetRunner(inlineLoop)
+	// 事件拼装：session 结束后把本 session 新增/变更的记忆归到事件（等记忆写完才跑）。
+	eventAssembler := agent.NewEventAssembler(&agent.EventAssemblerConfig{
+		FlashClient:   llmClients.BgFlash,
+		Registry:      tools.Registry,
+		EventRepo:     repos.Event,
+		MemRepo:       repos.Mem,
+		EmbeddingRepo: repos.Embedding,
+		Embedder:      infra.Embedder,
+		CandidateTop:  cfg.EventAssembly.CandidateTop,
+		DedupeSim:     cfg.EventAssembly.DedupeSim,
+		MaxIterations: cfg.EventAssembly.MaxIterations,
+		BatchSize:     cfg.EventAssembly.BatchSize,
+	})
 	// 无痕会话销毁器：Stage A 由后处理/在线删除触发，Stage B 由 cron 轮询执行
 	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, vs, repos.DelayedTask)
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
@@ -162,6 +175,10 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Extractor:         tools.MemExtractor,
 			Loop:              recordLoop,
 			MemoryAutoExtract: cfg.Server.AutoExtractMemory(),
+		}),
+		agent.NewEventWorker(&agent.EventWorkerConfig{
+			MemRepo:   repos.Mem,
+			Assembler: eventAssembler,
 		}),
 		agent.NewStateWorker(&agent.StateWorkerConfig{
 			Updater: stateUpdater,

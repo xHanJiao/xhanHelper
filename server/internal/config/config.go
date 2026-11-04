@@ -32,6 +32,7 @@ type Config struct {
 	Embedding         EmbeddingConfig         `yaml:"embedding"`
 	Reflection        ReflectionConfig        `yaml:"reflection"`
 	Retrieval         RetrievalConfig         `yaml:"retrieval"`
+	EventAssembly     EventAssemblyConfig     `yaml:"event_assembly"`
 	WebTools          WebToolsConfig          `yaml:"web_tools"`
 	SubAgent          SubAgentConfig          `yaml:"subagent"`
 	Chat              ChatConfig              `yaml:"chat"`
@@ -346,6 +347,14 @@ type ResourceZoneConfig struct {
 	QuotaMemory   int  `yaml:"quota_memory"`   // 记忆配额，默认 8
 	QuotaNote     int  `yaml:"quota_note"`     // 笔记配额，默认 10
 	QuotaTopic    int  `yaml:"quota_topic"`    // 主题配额（只收 matched），默认 5
+}
+
+// EventAssemblyConfig — session 结束后的记忆 → 事件拼装配置（见 docs/design/event-threads）
+type EventAssemblyConfig struct {
+	CandidateTop  int     `yaml:"candidate_top"`  // 注入给拼装的候选事件数
+	DedupeSim     float64 `yaml:"dedupe_sim"`     // 新建事件前与现有 summary 的余弦上限
+	MaxIterations int     `yaml:"max_iterations"` // ReAct 总轮数（含强制收敛轮）
+	BatchSize     int     `yaml:"batch_size"`     // 单批新记忆条数；超出分批但仍全部处理
 }
 
 // ReflectionConfig — 反思系统配置
@@ -945,6 +954,18 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Retrieval.ResourceZone.QuotaTopic == 0 {
 		cfg.Retrieval.ResourceZone.QuotaTopic = 5
+	}
+	if cfg.EventAssembly.CandidateTop == 0 {
+		cfg.EventAssembly.CandidateTop = 10
+	}
+	if cfg.EventAssembly.DedupeSim == 0 {
+		cfg.EventAssembly.DedupeSim = 0.88
+	}
+	if cfg.EventAssembly.MaxIterations == 0 {
+		cfg.EventAssembly.MaxIterations = 6
+	}
+	if cfg.EventAssembly.BatchSize == 0 {
+		cfg.EventAssembly.BatchSize = 40
 	}
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8

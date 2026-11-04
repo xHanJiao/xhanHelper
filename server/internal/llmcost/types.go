@@ -27,6 +27,7 @@ const (
 
 	// post_chat
 	SubMemoryExtract    = "memory_extract"
+	SubEventAssemble    = "event_assemble"
 	SubProfileExtract   = "profile_extract"
 	SubProfileColdStart = "profile_cold_start"
 	SubSummary          = "summary"

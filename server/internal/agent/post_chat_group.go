@@ -16,6 +16,8 @@ type SessionSnapshot struct {
 	ConvID string
 	UserID string
 	msgs   []model.Message // user + assistant（不含 tool / internal），时间升序
+	// MemoryPhaseDone — MemoryWorker 跑完（含跳过）才置 true；EventWorker 据此严格等记忆写完。
+	MemoryPhaseDone bool
 }
 
 // GetUserMessages 返回快照中的 user 消息（画像 / 状态 / 记忆抽取 worker 用——它们只看用户发言）。

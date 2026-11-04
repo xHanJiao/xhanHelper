@@ -171,6 +171,13 @@ retrieval:
     quota_note: 3 # 笔记配额
     quota_topic: 3 # 主题配额（只收 matched）
 
+# session 结束后的记忆 → 事件拼装（docs/design/event-threads）
+event_assembly:
+  candidate_top: 10 # 注入给拼装的候选事件数
+  dedupe_sim: 0.88 # 新建事件前与现有 summary 的余弦上限（防重复建）
+  max_iterations: 6 # ReAct 总轮数（含强制收敛轮）
+  batch_size: 40 # 单批新记忆条数；超出分批但仍全部处理
+
 global_default_role:
   system_prompt: |
     你是闲谈伙伴，一个直接真诚、注重事实的聊天对象。

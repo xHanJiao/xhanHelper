@@ -11,7 +11,7 @@ struct RightSidebarView: View {
     @ObservedObject var memoryVM: MemoryViewModel
     @ObservedObject var artifactVM: ArtifactViewModel
     @ObservedObject var documentVM: DocumentViewModel
-    @ObservedObject var themeVM: ThemeViewModel
+    @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
     let baseURL: String
@@ -496,7 +496,7 @@ struct RightSidebarView: View {
                     memoryVM: memoryVM,
                     artifactVM: artifactVM,
                     documentVM: documentVM,
-                    themeVM: themeVM,
+                    eventVM: eventVM,
                     agentVM: agentVM,
                     imageVM: imageVM,
                     baseURL: baseURL,

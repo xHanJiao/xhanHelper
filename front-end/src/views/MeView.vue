@@ -14,6 +14,7 @@ const name = computed(() => auth.user?.username || 'xhanHelper')
 const items = [
   { label: '账单', sub: '记录', path: '/bills', icon: '¥' },
   { label: '记忆', sub: '长期', path: '/memories', icon: '◎' },
+  { label: '事件', sub: '记忆聚合', path: '/event-threads', icon: '✳' },
   { label: '智能体', sub: '自定义', path: '/agents', icon: '◇' },
   { label: '设置', sub: '外观与账号', path: '/settings', icon: '⚙' }
 ]

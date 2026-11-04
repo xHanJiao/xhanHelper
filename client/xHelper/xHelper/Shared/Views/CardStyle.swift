@@ -150,9 +150,9 @@ struct CardStyle {
         subtitleLineLimit: 3
     )
 
-    static let theme = CardStyle(
-        accentColor: .mint,
-        backgroundColor: Color.mint.opacity(0.08),
+    static let event = CardStyle(
+        accentColor: Color("appAccent"),
+        backgroundColor: Color("appAccent").opacity(0.08),
         titleColor: .primary,
         subtitleColor: .secondary,
         cornerRadius: 12,

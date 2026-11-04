@@ -209,9 +209,10 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 | 认证 | `controller/router.go` | `/api/auth/*`（register/login/refresh/logout/change-password） |
 | 对话 | `controller/chat.go` `conversations.go` `chat_stop.go` | `/api/chat`（SSE）、`/api/chat/stop`、`/api/chat/tool-result`、会话 CRUD / messages / messages-v2 / mode / plans / usage / restore / share-messages |
 | 账单 / 笔记 / 记忆 / 摘要 | `bills.go` `notes.go` `memory.go` `summary.go` | 列表/统计/导出导入、批量增删、摘要按 id 取消息 |
+| 事件（只读） | `event.go` | `/api/event-threads` 列表与详情（写操作走聊天里的 `event` 工具） |
 | 智能体 / 工具 / Prompt | `agents.go` `tools.go` `prompts.go` | CRUD + `agents-for-input-bar` + prompt 版本回滚 |
 | 文档 / 图片 / 提醒 | `documents.go` `images.go` `reminders.go` | 文档 CRUD + tags + 分享；图片上传/读取；提醒 ack/cancel |
-| 信箱 / 主题（只读）/ Mission | `reflection_routes.go` | mailbox 读/归档/发起对话、themes（只读）、missions |
+| 信箱 / Mission | `reflection_routes.go` | mailbox 读/归档/发起对话、missions |
 | 公开（无认证） | `router.go` | `/api/share/:token`、`/api/share/messages/:token`、`/images/:file`（仅 public） |
 | Admin | `reflection_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、reflection traces、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
 

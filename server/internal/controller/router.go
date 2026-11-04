@@ -42,6 +42,7 @@ type RouterConfig struct {
 	MessageShareHandler  *MessageShareHandler
 	SummaryHandler       *SummaryHandler
 	ReminderHandler      *ReminderHandler
+	EventHandler         *EventHandler
 	ImageHandler         *ImageHandler
 	ArtifactHandler      *ArtifactHandler
 	ClientBridge         *agent.ClientToolBridge
@@ -144,6 +145,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/memories/batch", rc.MemHandler.BatchGetMemories)
 		auth.POST("/memories/batch-delete", rc.MemHandler.BatchDeleteMemories)
 		auth.PATCH("/memories/:id/rating", rc.MemHandler.SetMemoryRating)
+		auth.GET("/event-threads", rc.EventHandler.ListEvents)
+		auth.GET("/event-threads/:id", rc.EventHandler.GetEvent)
 		auth.POST("/agents", rc.AgentHandler.CreateAgent)
 		auth.GET("/agents", rc.AgentHandler.ListAgents)
 		auth.GET("/agents/:id", rc.AgentHandler.GetAgent)

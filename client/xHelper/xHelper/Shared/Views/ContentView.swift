@@ -41,7 +41,7 @@ struct ContentView: View {
     @StateObject private var memoryVM: MemoryViewModel
     @StateObject private var artifactVM: ArtifactViewModel
     @StateObject private var documentVM: DocumentViewModel
-    @StateObject private var themeVM: ThemeViewModel
+    @StateObject private var eventVM: EventViewModel
     @StateObject private var imageVM: ImageViewModel
     @StateObject private var chatTabManager: ChatTabManager
     @StateObject private var conversationListVM: ConversationListViewModel
@@ -307,7 +307,7 @@ struct ContentView: View {
         _memoryVM = StateObject(wrappedValue: MemoryViewModel(apiClient: api))
         _artifactVM = StateObject(wrappedValue: ArtifactViewModel(apiClient: api))
         _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
-        _themeVM = StateObject(wrappedValue: ThemeViewModel(apiClient: api))
+        _eventVM = StateObject(wrappedValue: EventViewModel(apiClient: api))
         _imageVM = StateObject(wrappedValue: ImageViewModel(apiClient: api))
         _chatTabManager = StateObject(wrappedValue: ChatTabManager {
             ChatViewModel(apiClient: APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? ""))
@@ -400,7 +400,7 @@ struct ContentView: View {
                                     memoryVM: memoryVM,
                                     artifactVM: artifactVM,
                                     documentVM: documentVM,
-                                    themeVM: themeVM,
+                                    eventVM: eventVM,
                                     agentVM: agentVM,
                                     imageVM: imageVM,
                                     baseURL: deviceManager.baseURL,

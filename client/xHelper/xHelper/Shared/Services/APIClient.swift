@@ -1116,38 +1116,72 @@ extension APIClient {
 		return try await post("/api/reminders/\(id)/cancel", body: [:])
 	}
 
-	// MARK: Themes
+	// MARK: Event Threads
 
-	func listThemes(limit: Int = 50, offset: Int = 0) async throws -> AppThemeListResponse {
-		return try await get("/api/themes?limit=\(limit)&offset=\(offset)")
+	func listEventThreads(limit: Int = 50, offset: Int = 0) async throws -> AppEventThreadListResponse {
+		return try await get("/api/event-threads?limit=\(limit)&offset=\(offset)")
+	}
+
+	func getEventThread(id: String) async throws -> AppEventThreadDetail {
+		return try await get("/api/event-threads/\(id)")
 	}
 }
 
-// MARK: AppTheme model
+// MARK: Event Thread models
 
-struct AppTheme: Identifiable, Codable {
+struct AppEventThread: Identifiable, Codable {
     let id: String
-    let userId: String
     let name: String
-    let description: String
-    let status: String
-    let stateText: String
+    let summary: String
+    let memoryCount: Int
+    let lastMemoryAt: String?
     let createdAt: String
     let updatedAt: String
-    let lastRunAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case id
-        case userId = "user_id"
-        case name, description, status
-        case stateText = "state_text"
+        case id, name, summary
+        case memoryCount = "memory_count"
+        case lastMemoryAt = "last_memory_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
-        case lastRunAt = "last_run_at"
     }
 }
 
-struct AppThemeListResponse: Codable {
-    let items: [AppTheme]
+struct AppEventThreadListResponse: Codable {
+    let items: [AppEventThread]
     let total: Int
+}
+
+struct AppEventMemory: Identifiable, Codable {
+    let id: String
+    let content: String
+    let topic: String
+    let facts: [String]?
+    let createdAt: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, content, topic, facts
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct AppEventThreadDetail: Codable {
+    let id: String
+    let name: String
+    let summary: String
+    let memoryCount: Int
+    let memories: [AppEventMemory]
+    let lastMemoryAt: String?
+    let createdAt: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, summary, memories
+        case memoryCount = "memory_count"
+        case lastMemoryAt = "last_memory_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
 }

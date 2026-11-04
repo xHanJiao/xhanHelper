@@ -25,6 +25,12 @@ const routes = [
     meta: { backToChat: true, hideTabs: true, contentHeader: true }
   },
   {
+    path: '/event-threads',
+    name: 'EventThreads',
+    component: () => import('@/views/EventView.vue'),
+    meta: { backToChat: true, hideTabs: true, contentHeader: true }
+  },
+  {
     path: '/notes',
     name: 'Notes',
     component: () => import('@/views/NotesView.vue'),

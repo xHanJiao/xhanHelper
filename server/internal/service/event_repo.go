@@ -139,6 +139,17 @@ func (r *EventRepo) List(ctx context.Context, userID string, includeDeleted bool
 	return list, err
 }
 
+// Count 统计事件总数（列表分页用），口径与 List 一致。
+func (r *EventRepo) Count(ctx context.Context, userID string, includeDeleted bool) (int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.Event{}).Where("user_id = ?", userID)
+	if !includeDeleted {
+		q = q.Where("is_deleted = ?", false)
+	}
+	var n int64
+	err := q.Count(&n).Error
+	return n, err
+}
+
 // ListUpdatedSince 最近 since 之后有记忆写入的未删除事件（拼装候选、注入候选用）。
 func (r *EventRepo) ListUpdatedSince(ctx context.Context, userID string, since time.Time, limit int) ([]model.Event, error) {
 	var list []model.Event

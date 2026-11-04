@@ -12,7 +12,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     case artifacts = "灵阅"
     case documents = "文档"
     case images = "图片"
-    case themes = "主题"
+    case events = "事件"
     case dashboard = "监控看版"
     case agents = "智能体"
 
@@ -25,7 +25,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .artifacts: return "doc.richtext"
         case .documents: return "doc.text"
         case .images:    return "photo.on.rectangle.angled"
-        case .themes:    return "tag"
+        case .events:    return "square.stack.3d.up"
         case .dashboard: return "chart.bar.xaxis"
         case .agents:    return "cpu"
         }
@@ -38,7 +38,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .artifacts: return "浏览对话中生成的页面、报告与对比图"
         case .documents: return "Markdown 文档与版本"
         case .images:    return "图片库：预览与清理已上传的图"
-        case .themes:    return "主题状态追踪"
+        case .events:    return "记忆聚合出的事件"
         case .dashboard: return "前端监控看板（成本统计等）"
         case .agents:    return "自定义智能体管理"
         }
@@ -98,7 +98,7 @@ struct BrowsePanelView: View {
     @ObservedObject var memoryVM: MemoryViewModel
     @ObservedObject var artifactVM: ArtifactViewModel
     @ObservedObject var documentVM: DocumentViewModel
-    @ObservedObject var themeVM: ThemeViewModel
+    @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
     let baseURL: String
@@ -1018,7 +1018,7 @@ struct BrowsePanelView: View {
             if documentVM.openDocument != nil { return documentVM.isDetailLoading }
             return documentVM.mode == .trash ? documentVM.isTrashLoading : documentVM.isLoading
         case .images:    return imageVM.isLoading
-        case .themes:    return themeVM.isLoading
+        case .events:    return eventVM.isLoading
         case .agents:    return agentVM.isLoading
         case .dashboard: return false
         }
@@ -1040,7 +1040,7 @@ struct BrowsePanelView: View {
         case .artifacts: await artifactVM.load()
         case .documents: await documentVM.loadCurrentMode()
         case .images:    await imageVM.load()
-        case .themes:    await themeVM.load()
+        case .events:    await eventVM.load()
         case .agents:    await agentVM.load()
         case .dashboard: break
         }
@@ -1085,8 +1085,8 @@ struct BrowsePanelView: View {
                 } message: {
                     Text(imageBatchDeleteMessage)
                 }
-        case .themes:
-            ThemePage(viewModel: themeVM)
+        case .events:
+            EventPage(viewModel: eventVM)
         case .agents:
             AgentPage(viewModel: agentVM)
         case .dashboard:

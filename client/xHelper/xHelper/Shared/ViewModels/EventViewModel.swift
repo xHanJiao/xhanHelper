@@ -3,11 +3,14 @@ import Foundation
 import SwiftUI
 
 @MainActor
-class ThemeViewModel: ObservableObject {
-    @Published var themes: [AppTheme] = []
+class EventViewModel: ObservableObject {
+    @Published var events: [AppEventThread] = []
     @Published var isLoading = false
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
+
+    @Published var detail: AppEventThreadDetail?
+    @Published var isLoadingDetail = false
 
     private let apiClient: APIClient
     private var offset = 0
@@ -22,11 +25,11 @@ class ThemeViewModel: ObservableObject {
         offset = 0
         hasMore = true
         do {
-            let resp = try await apiClient.listThemes()
-            themes = resp.items
+            let resp = try await apiClient.listEventThreads()
+            events = resp.items
             hasMore = resp.items.count >= 50
         } catch {
-            LogBuffer.shared.error("ThemeViewModel.load: \(error)")
+            LogBuffer.shared.error("EventViewModel.load: \(error)")
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -37,13 +40,25 @@ class ThemeViewModel: ObservableObject {
         isLoadingMore = true
         offset += 50
         do {
-            let resp = try await apiClient.listThemes(offset: offset)
-            themes.append(contentsOf: resp.items)
+            let resp = try await apiClient.listEventThreads(offset: offset)
+            events.append(contentsOf: resp.items)
             hasMore = resp.items.count >= 50
         } catch {
-            LogBuffer.shared.error("ThemeViewModel.loadMore: \(error)")
+            LogBuffer.shared.error("EventViewModel.loadMore: \(error)")
             errorMessage = error.localizedDescription
         }
         isLoadingMore = false
+    }
+
+    func loadDetail(id: String) async {
+        detail = nil
+        isLoadingDetail = true
+        do {
+            detail = try await apiClient.getEventThread(id: id)
+        } catch {
+            LogBuffer.shared.error("EventViewModel.loadDetail: \(error)")
+            errorMessage = error.localizedDescription
+        }
+        isLoadingDetail = false
     }
 }

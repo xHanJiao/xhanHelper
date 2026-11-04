@@ -164,6 +164,21 @@ func TestEventRepo_ListExcludesDeletedAndPaginates(t *testing.T) {
 	if len(all2) != 3 {
 		t.Fatalf("expected 3 including deleted, got %d", len(all2))
 	}
+
+	active, err := repo.Count(ctx, "u1", false)
+	if err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if active != 2 {
+		t.Fatalf("active count = %d, want 2", active)
+	}
+	withDeleted, err := repo.Count(ctx, "u1", true)
+	if err != nil {
+		t.Fatalf("count all: %v", err)
+	}
+	if withDeleted != 3 {
+		t.Fatalf("all count = %d, want 3", withDeleted)
+	}
 }
 
 func TestEventRepo_ListUpdatedSince(t *testing.T) {

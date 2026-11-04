@@ -536,7 +536,9 @@ PrevEventRefs []EventRef // {ID, Mode, Miss}
 | `delete` | 软删事件，记忆退回普通池 |
 | `merge` | 合并重复事件：记忆搬到目标，源事件软删 |
 
-> 路由命名待定：**不要用 `/api/events`**——活动埋点已有 `POST /api/events/batch`，主库新表 `events` 也和埋点库 `events.db` 的 `events` 表同名。阶段 7 再定（如 `/api/event-threads`）。
+> 只读 API：`GET /api/event-threads`（列表：name/summary/memory_count/last_memory_at，分页）与 `GET /api/event-threads/:id`（详情：summary + 全部记忆，`updated_at DESC`，含 facts）。
+> **不用 `/api/events`**——活动埋点已有 `POST /api/events/batch`，主库新表 `events` 也和埋点库 `events.db` 的 `events` 表同名。
+> 事件的写操作全部走聊天里的 `event` 工具，HTTP 层只读。
 
 ### 7.2 `unified_search`
 
@@ -749,7 +751,7 @@ event_assembly:
 | 4 工具 | event 工具组 + enable/disable/merge/delete + 拼装只读注册表 + unified_search | `tool/event.go`、`tool/event_query.go`、`tool/unified_search.go`、`appinit/agents.go` |
 | 5 删除旧主题 | 停注入、摘主对话工具/API/UI；反思侧主题状态机暂留 | `appinit/agents.go`、`appinit/tools.go`、`appinit/router.go`、`config/config.go`、`ctxflow/`、`front-end/` |
 | 6 Bootstrap | 一次性冷启动 + 指标 | `cmd/event-bootstrap/main.go` |
-| 7 前端/API | ThemeView → EventView、`/api/events` | `controller/event.go`、`frontend/src/views/ThemeView.vue`、router |
+| 7 前端/API | ThemeView → EventView、`/api/event-threads` | `controller/event.go`、`frontend/src/views/EventView.vue`、router、Swift `EventViewModel` / `EventListView` / `EventDetailOverlay` |
 | 8 验收 | 单测 + 冷启动 + 真机 | `*_test.go`、dump 回放 |
 
 ---
@@ -795,6 +797,7 @@ event_assembly:
 ## 后续变更
 
 - 2026-11-05 阶段 6 复核：修复游标与 `--reset`/`--dry-run` 的先后顺序；整批没有产出可用 JSON（空内容/坏 JSON/无 `{`）或写库失败时记 `Unparsed/Failed`，冷启动保留游标并非零退出重试该批；`--review` 有未应用项也非零退出；`--user` 校验存在性；报告补「事件名两两相似 >0.9 对数」；帮助与 §8.5 注明先停服务、`--reset` 不清 `EventFocus` 残留。
+- 2026-11-05 阶段 7：新增只读 `GET /api/event-threads`（列表）与 `GET /api/event-threads/:id`（summary + 记忆，`updated_at DESC`）；Vue 新增 `EventView`（`/event-threads`，列表 + 详情弹窗）并挂到功能菜单/我的；Swift 客户端主题页换成事件页（`EventViewModel` / `EventListView` / `EventDetailOverlay`）；删除 `controller/theme.go` 与只读 `GET /api/themes`。
 - 2026-11-05 阶段 6：`cmd/event-bootstrap` 冷启动工具（`--limit` 试跑、`--reset` 重跑、`--review` 结构复盘、游标断点续跑）；拼装器构建抽到 `appinit.BuildEventAssembler`，与生产共用同一套只读工具与阈值；dev 库实测指标见 §10.2。
 - 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
 - 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩监控/调试读取，代码保留待统一删除。

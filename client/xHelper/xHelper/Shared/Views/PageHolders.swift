@@ -70,11 +70,11 @@ struct BillPage: View {
     }
 }
 
-struct ThemePage: View {
-    @ObservedObject var viewModel: ThemeViewModel
+struct EventPage: View {
+    @ObservedObject var viewModel: EventViewModel
 
     var body: some View {
-        ThemeListView(viewModel: viewModel)
+        EventListView(viewModel: viewModel)
             .task { await viewModel.load() }
     }
 }

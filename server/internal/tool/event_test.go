@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -267,5 +268,35 @@ func TestEventTool_EnablePrunesStalePinnedIDs(t *testing.T) {
 		if id == "gone" {
 			t.Fatalf("stale id not pruned: %+v", extra.EventFocus.Enabled)
 		}
+	}
+}
+
+func TestEventTool_NameLookupDeletedEvent(t *testing.T) {
+	env := setupEventToolDB(t)
+	env.seedEvent(t, "e1", "回西安准备", "")
+
+	if res := env.tool.Execute(env.ec(), "delete", mustMarshal(t, map[string]string{"event_id": "e1"})); !res.Success {
+		t.Fatalf("delete: %s", res.Error)
+	}
+
+	// 按名字：与按 ID 同一句文案
+	res := env.tool.Execute(env.ec(), "enable", mustMarshal(t, map[string]string{"name": "回西安准备"}))
+	if res.Success || !strings.Contains(res.Error, "已删除") {
+		t.Fatalf("expected deleted-event error, got %+v", res)
+	}
+
+	// get 仍能看到已删事件
+	res = env.tool.Execute(env.ec(), "get", mustMarshal(t, map[string]string{"name": "回西安准备"}))
+	if !res.Success {
+		t.Fatalf("get deleted: %s", res.Error)
+	}
+	var detail struct {
+		IsDeleted bool `json:"is_deleted"`
+	}
+	if err := json.Unmarshal(res.Data, &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !detail.IsDeleted {
+		t.Fatal("get should return is_deleted=true")
 	}
 }

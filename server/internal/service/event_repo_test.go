@@ -494,7 +494,7 @@ func TestEventRepo_UpdateSummaryTruncates(t *testing.T) {
 	ctx := context.Background()
 	e := mustCreate(t, repo, "u1", "回西安准备")
 
-	long := strings.Repeat("字", MaxEventSummaryRunes+50)
+	long := "\n  " + strings.Repeat("字", MaxEventSummaryRunes+50) + "  "
 	if err := repo.UpdateSummary(ctx, "u1", e.ID, "", long); err != nil {
 		t.Fatalf("update summary: %v", err)
 	}
@@ -504,5 +504,8 @@ func TestEventRepo_UpdateSummaryTruncates(t *testing.T) {
 	}
 	if n := utf8.RuneCountInString(got.Summary); n != MaxEventSummaryRunes {
 		t.Fatalf("summary should be truncated to %d runes, got %d", MaxEventSummaryRunes, n)
+	}
+	if strings.TrimSpace(got.Summary) != got.Summary {
+		t.Fatalf("summary should be trimmed, got %q", got.Summary[:10])
 	}
 }

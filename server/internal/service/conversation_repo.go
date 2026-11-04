@@ -26,6 +26,8 @@ func NewConversationRepo(db *gorm.DB) *ConversationRepo {
 }
 
 func (r *ConversationRepo) extraLock(convID string) func() {
+	// shortcut: convID 锁条目永不回收，个人尺度（几千会话）可忽略；
+	// 会话量级上去后换引用计数的 keyed mutex。
 	v, _ := r.extraMu.LoadOrStore(convID, &sync.Mutex{})
 	m := v.(*sync.Mutex)
 	m.Lock()

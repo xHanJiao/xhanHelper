@@ -557,21 +557,28 @@ func (t *EventTool) resolveEvent(ec *ExecuteContext, a eventRefArgs, includeDele
 	if name == "" {
 		return nil, fmt.Errorf("需要提供 event_id 或 name")
 	}
-	for _, deleted := range []bool{false, true} {
-		if deleted && !includeDeleted {
-			break
+	all, err := listAllEvents(ec.Ctx, t.eventRepo, ec.UserID, true)
+	if err != nil {
+		return nil, fmt.Errorf("查询事件失败: %w", err)
+	}
+	for i := range all {
+		if all[i].IsDeleted {
+			continue
 		}
-		events, err := listAllEvents(ec.Ctx, t.eventRepo, ec.UserID, deleted)
-		if err != nil {
-			return nil, fmt.Errorf("查询事件失败: %w", err)
+		if strings.EqualFold(strings.TrimSpace(all[i].Name), name) {
+			return &all[i], nil
 		}
-		for i := range events {
-			if events[i].IsDeleted != deleted {
-				continue
+	}
+	for i := range all {
+		if !all[i].IsDeleted {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(all[i].Name), name) {
+			if includeDeleted {
+				return &all[i], nil
 			}
-			if strings.EqualFold(strings.TrimSpace(events[i].Name), name) {
-				return &events[i], nil
-			}
+			// 与按 ID 的路径保持同一句文案，避免模型换个入参就误判。
+			return nil, fmt.Errorf("事件已删除: %s", name)
 		}
 	}
 	return nil, fmt.Errorf("事件不存在: %s", name)

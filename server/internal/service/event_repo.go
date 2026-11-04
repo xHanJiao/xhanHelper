@@ -162,7 +162,7 @@ func (r *EventRepo) UpdateSummary(ctx context.Context, userID, id, name, summary
 		}
 		updates["name"] = n
 	}
-	if summary != "" {
+	if summary = strings.TrimSpace(summary); summary != "" {
 		updates["summary"] = truncateEventSummary(summary)
 	}
 	if len(updates) == 0 {
@@ -338,6 +338,7 @@ func (r *EventRepo) Delete(ctx context.Context, userID, id string) error {
 
 // truncateEventSummary 截断到 MaxEventSummaryRunes，避免超长 summary 长期占注入预算。
 func truncateEventSummary(s string) string {
+	s = strings.TrimSpace(s)
 	if utf8.RuneCountInString(s) <= MaxEventSummaryRunes {
 		return s
 	}

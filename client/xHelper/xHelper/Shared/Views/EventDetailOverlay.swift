@@ -45,6 +45,16 @@ struct EventDetailOverlay: View {
                         }
                     } else if viewModel.isLoadingDetail {
                         ProgressView()
+                    } else if let error = viewModel.detailErrorMessage {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("详情加载失败：\(error)")
+                                .font(.system(size: FontSizeManager.shared.scaledSize * 0.94))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("重试") {
+                                Task { await viewModel.loadDetail(id: event.id) }
+                            }
+                        }
                     }
                 }
             }

@@ -27,6 +27,7 @@ const loading = ref(false)
 const detailVisible = ref(false)
 const detail = ref(null)
 const detailLoading = ref(false)
+let detailSeq = 0
 
 async function fetchEvents() {
   loading.value = true
@@ -43,16 +44,20 @@ async function fetchEvents() {
 }
 
 async function openDetail(item) {
+  const seq = ++detailSeq
   detailVisible.value = true
   detail.value = null
   detailLoading.value = true
   try {
-    detail.value = await api.get(`/api/event-threads/${item.id}`)
+    const res = await api.get(`/api/event-threads/${item.id}`)
+    if (seq !== detailSeq) return
+    detail.value = res
   } catch (e) {
+    if (seq !== detailSeq) return
     message.error('加载事件详情失败')
     detailVisible.value = false
   } finally {
-    detailLoading.value = false
+    if (seq === detailSeq) detailLoading.value = false
   }
 }
 

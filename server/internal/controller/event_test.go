@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -32,6 +33,10 @@ func TestEventHandler_ListAndGet(t *testing.T) {
 
 	mustCreateEvent(t, eventRepo, "e1", "回西安准备", "打包中")
 	mustCreateEvent(t, eventRepo, "e2", "驾照考取", "科三待补考")
+	mustCreateEvent(t, eventRepo, "e3", "已合并事件", "")
+	if err := eventRepo.Delete(ctx, "u1", "e3"); err != nil {
+		t.Fatalf("delete e3: %v", err)
+	}
 	facts := `["原话一","原话二"]`
 	for _, m := range []*model.UserMemory{
 		{ID: "m1", UserID: "u1", MemoryKey: "k", ContentHash: "h1", MemoryValue: "买了火车票", Topic: "行程", EventID: ptr("e1"), Facts: &facts},
@@ -41,6 +46,14 @@ func TestEventHandler_ListAndGet(t *testing.T) {
 		if err := memRepo.Create(ctx, m); err != nil {
 			t.Fatalf("seed memory %s: %v", m.ID, err)
 		}
+	}
+	// UpdateColumn 跳过 AutoUpdateTime，构造确定的 updated_at 顺序：m2 比 m1 新。
+	now := time.Now()
+	if err := db.Model(&model.UserMemory{}).Where("id = ?", "m1").UpdateColumn("updated_at", now.Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("set m1 updated_at: %v", err)
+	}
+	if err := db.Model(&model.UserMemory{}).Where("id = ?", "m2").UpdateColumn("updated_at", now).Error; err != nil {
+		t.Fatalf("set m2 updated_at: %v", err)
 	}
 
 	r := gin.New()
@@ -95,6 +108,10 @@ func TestEventHandler_ListAndGet(t *testing.T) {
 	if gotEnv.Data.Name != "回西安准备" || len(gotEnv.Data.Memories) != 2 {
 		t.Fatalf("detail = %+v", gotEnv.Data)
 	}
+	if gotEnv.Data.Memories[0].ID != "m2" {
+		t.Fatalf("memories must be updated_at DESC, got order %s,%s",
+			gotEnv.Data.Memories[0].ID, gotEnv.Data.Memories[1].ID)
+	}
 	var factsSeen bool
 	for _, m := range gotEnv.Data.Memories {
 		if m.ID == "m1" {
@@ -106,6 +123,32 @@ func TestEventHandler_ListAndGet(t *testing.T) {
 	}
 	if !factsSeen {
 		t.Errorf("facts not parsed: %+v", gotEnv.Data.Memories)
+	}
+
+	// 分页：limit=1&offset=1 仍返回总数 2，只给第二页一条
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/event-threads?limit=1&offset=1", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("paged status=%d body=%s", w.Code, w.Body.String())
+	}
+	var pagedEnv struct {
+		Data struct {
+			Items []eventListItem `json:"items"`
+			Total int             `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &pagedEnv); err != nil {
+		t.Fatalf("unmarshal paged: %v", err)
+	}
+	if pagedEnv.Data.Total != 2 || len(pagedEnv.Data.Items) != 1 {
+		t.Fatalf("paged = %+v, want total=2 items=1", pagedEnv.Data)
+	}
+
+	// 已软删事件：详情 404，与列表口径一致
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/event-threads/e3?as=u1", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("deleted detail status=%d, want 404", w.Code)
 	}
 
 	// 别人的事件：404，不泄露存在性

@@ -593,7 +593,7 @@ flowchart LR
 
 - `agent/retrieval/theme_source.go`
 - `tool/theme_search.go`
-- `controller/theme.go` + `/api/themes` 路由
+- `controller/theme.go` + `/api/themes` 路由（阶段 5 先保留只读版给未升级客户端，**实际在阶段 7 随事件页一起删除**，见后续变更）
 - 前端 `ThemeView.vue` + `/themes` 路由 + 功能菜单入口
 - 主检索源里的 `themeSource` 与 `theme` 加权 modifier
 - `ctxflow` 的 `TypeTheme` 块 / topic 配额与预算 / 旧 XML 的 `<topics>` 解析

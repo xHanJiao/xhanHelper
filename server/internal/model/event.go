@@ -9,8 +9,8 @@ import "time"
 //   - 「结束」靠 last_memory_at 不再更新、注入时自然沉底表达；
 //   - 「合并」的实现是把记忆搬走 + 源事件软删，不留别名。
 //
-// 注意：本表在主库（xhan_helper），与活动埋点库 events.db 里的 events 表**无关**，
-// 也不要用 /api/events 这类和埋点接口撞名的路由（阶段 7 再定名）。
+// 注意：本表在主库（xhan_helper），与活动埋点库 events.db 里的 events 表**无关**。
+// 只读 API 路由是 /api/event-threads（不要用 /api/events，会和埋点接口撞名）。
 type Event struct {
 	ID     string `gorm:"primaryKey;size:36" json:"id"`
 	UserID string `gorm:"size:36;not null;index:idx_events_user_deleted,priority:1" json:"user_id"`

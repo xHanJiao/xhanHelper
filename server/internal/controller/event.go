@@ -106,6 +106,11 @@ func (h *EventHandler) GetEvent(c *gin.Context) {
 		view.JSONError(c, 404, "事件不存在")
 		return
 	}
+	// HTTP 层与列表口径一致：已软删/已合并不再对外可见（event.get 工具另有 LLM 视角）。
+	if e.IsDeleted {
+		view.JSONError(c, 404, "事件不存在")
+		return
+	}
 
 	memories, err := h.memRepo.ListByEventIDs(ctx, userID, []string{e.ID})
 	if err != nil {
@@ -129,8 +134,8 @@ func (h *EventHandler) GetEvent(c *gin.Context) {
 	view.JSONOK(c, gin.H{
 		"id": e.ID, "name": e.Name, "summary": e.Summary,
 		"memory_count": len(items), "memories": items,
-		"is_deleted": e.IsDeleted, "last_memory_at": e.LastMemoryAt,
-		"created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
+		"last_memory_at": e.LastMemoryAt,
+		"created_at":     e.CreatedAt, "updated_at": e.UpdatedAt,
 	})
 }
 

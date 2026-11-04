@@ -74,8 +74,8 @@ struct EventPage: View {
     @ObservedObject var viewModel: EventViewModel
 
     var body: some View {
+        // 加载由 EventListView 自己的 .task 负责，避免进入面板时并发打两次列表请求。
         EventListView(viewModel: viewModel)
-            .task { await viewModel.load() }
     }
 }
 

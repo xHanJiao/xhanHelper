@@ -33,6 +33,7 @@ func AllModels() []any {
 		&model.Embedding{},
 		&model.MCPServerRecord{},
 		&model.ThemeState{},
+		&model.Event{},
 		&model.ReflectionTrace{},
 		&model.Reminder{},
 		&model.ReflectionLLMCall{},

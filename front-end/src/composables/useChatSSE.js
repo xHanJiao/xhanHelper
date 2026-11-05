@@ -290,6 +290,10 @@ export function useChatSSE() {
       chat.needsRefetch = true
     }
     abortController?.abort()
+    // 断流后不会再有任何事件到达，半截气泡留着就永远停在「流式中」。
+    // 调用方（handleStop）在 cancel() 之前已经捕获 partial，不会丢已展示的内容。
+    chat.streamingMessage = null
+    chat.statusMessage = null
   }
 
   return { sendMessage, cancel }

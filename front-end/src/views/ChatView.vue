@@ -635,7 +635,6 @@ watch(() => route.params.id, async (newId) => {
     isInitialScrollDone.value = false
     // 上一条分支可能停在 skip=true 就被新路由顶掉了，这里兜底恢复，别让输入框动画一直关着
     skipInputTransition.value = false
-    if (chat.isStreaming) cancel()
 
     if (coldStart) {
       // 顺带把列表换成最新的，顶栏会话切换器直接可用
@@ -733,8 +732,6 @@ function handleStop() {
   if (partial && (partial.content || partial.reasoning)) {
     chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
   }
-  chat.streamingMessage = null
-  chat.statusMessage = null
   if (!convId) return
   api.post('/api/chat/stop', { conversation_id: convId }).catch(err => {
     console.error('Stop chat failed', err)

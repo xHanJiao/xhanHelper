@@ -31,7 +31,8 @@ async function fetchTraces() {
     const res = await api.get('/api/admin/reflection/traces?limit=20')
     traces.value = res.items || []
     tracesTotal.value = res.total || 0
-  } catch (_) {
+  } catch (e) {
+    console.error('[admin] fetchTraces:', e)
   } finally {
     tracesLoading.value = false
   }
@@ -41,7 +42,8 @@ async function fetchTraceDetail(trace) {
   selectedTrace.value = trace
   try {
     traceDetail.value = await api.get(`/api/admin/reflection/traces/${trace.id}`)
-  } catch (_) {
+  } catch (e) {
+    console.error('[admin] fetchTraceDetail:', e)
     traceDetail.value = null
   }
 }
@@ -71,7 +73,8 @@ async function fetchMsgTraces() {
     const res = await api.get(`/api/admin/message-traces?limit=${pageSize}&offset=${offset}`)
     msgTraces.value = res.items || []
     msgTracesTotal.value = res.total || 0
-  } catch (_) {
+  } catch (e) {
+    console.error('[admin] fetchMsgTraces:', e)
   } finally {
     msgTracesLoading.value = false
   }
@@ -127,7 +130,7 @@ async function fetchHealth() {
 }
 
 async function fetchHooks() {
-  try { hooks.value = await api.get('/api/admin/hooks') } catch (_) {}
+  try { hooks.value = await api.get('/api/admin/hooks') } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
@@ -370,21 +373,21 @@ async function fetchCostCategories() {
     const list = await api.get('/api/admin/cost/categories') || []
     const labelMap = { main_chat: '主聊天', post_chat: '对话后处理', reflection: '反思', tool: '工具', admin: '管理与评估' }
     costCategoryOptions.value = list.map(c => ({ label: labelMap[c] || c, value: c }))
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 async function fetchCostUsers() {
   try {
     const users = await api.get('/api/admin/cost/users') || []
     costUserOptions.value = users.map(u => ({ label: u.user_id.slice(0, 8) + '...', value: u.user_id }))
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 async function fetchCostModels() {
   try {
     const models = await api.get('/api/admin/cost/models') || []
     costModelOptions.value = models.map(m => ({ label: m, value: m }))
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 async function fetchCostSummary() {
@@ -396,7 +399,7 @@ async function fetchCostSummary() {
     if (costModel.value.length) params.push(...costModel.value.map(m => `model=${m}`))
     const qs = params.length ? '?' + params.join('&') : ''
     costSummary.value = await api.get('/api/admin/cost/summary' + qs)
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 // 消费卡片：固定取近 7 天花销，前端按日累加出今日/近3日/近7日
@@ -410,7 +413,7 @@ async function fetchCostSpend() {
   if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
   try {
     costSpend.value = await api.get('/api/admin/cost/expense?' + params.join('&'))
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 // 近 n 日消费合计（含今日）
@@ -488,7 +491,7 @@ async function renderCostCharts() {
     const sub = await fetchCostStats('sub_category')
     makePieChart('cost-sub-chart', sub.groups.map(g => g.key || '未分类'), sub.groups.map(g => selectedTotal(g)))
     attachDrillDown('cost-sub-chart', sub.groups)
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 // 分时 token 柱状图（00-23 时，堆叠 hit/miss/output，跟随勾选）
@@ -630,11 +633,11 @@ function renderExpenseChart() {
 }
 
 async function fetchCostPrices() {
-  try { priceRows.value = await api.get('/api/admin/cost/prices') || [] } catch (_) {}
+  try { priceRows.value = await api.get('/api/admin/cost/prices') || [] } catch (e) { console.error('[admin] request failed:', e) }
   try {
     const models = await api.get('/api/admin/cost/models') || []
     priceModelOptions.value = models.map(m => ({ label: m, value: m }))
-  } catch (_) {}
+  } catch (e) { console.error('[admin] request failed:', e) }
 }
 
 async function savePrice() {

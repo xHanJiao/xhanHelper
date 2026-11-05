@@ -3,6 +3,7 @@ import { inject, ref, computed } from 'vue'
 import { NButton, NModal, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import { useChatStore } from '@/stores/chat'
+import { writeClipboard } from '@/utils/document'
 
 const chat = useChatStore()
 const nMessage = useMessage()
@@ -49,10 +50,14 @@ async function handleShare() {
 }
 
 function copyFromModal() {
-  navigator.clipboard.writeText(shareUrl.value).then(() => {
+  writeClipboard(shareUrl.value).then(() => {
     nMessage.success('已复制分享链接')
     showManualModal.value = false
-  }).catch(() => {})
+  }).catch((e) => {
+    // 兜底也失败：保持 Modal 打开，让用户手动选中复制
+    console.error('Copy share link failed', e)
+    nMessage.error('复制失败，请手动选中链接')
+  })
 }
 </script>
 

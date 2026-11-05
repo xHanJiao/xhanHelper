@@ -28,7 +28,8 @@ async function fetchList() {
     const res = await api.get(`/api/admin/subagents?limit=${pageSize}&offset=${offset}`)
     rows.value.push(...(res.items || []))
     hasMore.value = !!res.has_more
-  } catch (_) {
+  } catch (e) {
+    console.error('[subagents] fetchList:', e)
   } finally {
     loading.value = false
   }
@@ -45,7 +46,8 @@ async function toggleExpand(row) {
     try {
       const res = await api.get(`/api/admin/subagents/${row.conv_id}/messages`)
       expandedMsgs.value[row.conv_id] = res
-    } catch (_) {
+    } catch (e) {
+      console.error('[subagents] load messages:', e)
       expandedMsgs.value[row.conv_id] = { messages: [], first_user_msg_id: '' }
     } finally {
       msgLoading.value = false

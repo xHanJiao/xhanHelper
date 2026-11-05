@@ -8,6 +8,7 @@ import AuthImage from '@/components/media/AuthImage.vue'
 import ImageLightbox from '@/components/media/ImageLightbox.vue'
 import ArtifactCards from '@/components/chat/ArtifactCards.vue'
 import md from '@/utils/markdown'
+import { writeClipboard } from '@/utils/document'
 import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
 
@@ -148,7 +149,13 @@ function onTouchMove() {
 function handleDropdownSelect(key) {
   showDropdown.value = false
   if (key === 'copy') {
-    navigator.clipboard.writeText(props.message.content || '').catch(() => {})
+    // 局域网 http 或权限被拒时 clipboard API 不可用，utils/document 里有 execCommand 兜底
+    writeClipboard(props.message.content || '')
+      .then(() => nMessage.success('已复制'))
+      .catch((e) => {
+        console.error('Copy message failed', e)
+        nMessage.error('复制失败')
+      })
   } else if (key === 'share') {
     // enter selection mode, auto-select current round
     enterSelection(props.roundKey)

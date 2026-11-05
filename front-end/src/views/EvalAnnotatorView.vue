@@ -1,8 +1,10 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NInputNumber, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NModal } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NInputNumber, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NModal, useMessage } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
+
+const message = useMessage()
 
 const activeTab = ref('overview')
 
@@ -214,7 +216,9 @@ function startPolling(sessionId) {
         labelLoading.value = false
         loadQueries(); loadStats()
       }
-    } catch (_) { }
+    } catch (e) {
+      console.error('[eval] label poll:', e)
+    }
   }, 20000)
 }
 
@@ -270,8 +274,8 @@ async function loadRuns(append) {
     const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs?limit=20&offset=${(page - 1) * 20}`)
     const list = (res.runs || []).map(r => {
       let config = r.config, report = r.report
-      try { config = JSON.parse(r.config) } catch (_) { }
-      try { report = JSON.parse(r.report) } catch (_) { }
+      try { config = JSON.parse(r.config) } catch (e) { console.warn('[eval] bad config json', e) }
+      try { report = JSON.parse(r.report) } catch (e) { console.warn('[eval] bad report json', e) }
       return { ...r, config, report }
     })
     if (append) {
@@ -321,16 +325,26 @@ async function executeRun(runId) {
 }
 
 let runPollTimer = null
+let runPollFails = 0
 function pollRun(runId) {
   if (runPollTimer) clearInterval(runPollTimer)
+  runPollFails = 0
   runPollTimer = setInterval(async () => {
     try {
       const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs/${runId}`)
+      runPollFails = 0
       if (res.status === 'done' || res.status === 'error') {
         clearInterval(runPollTimer); runPollTimer = null
         loadRuns()
       }
-    } catch (_) { }
+    } catch (e) {
+      console.error('[eval] run poll:', e)
+      // 连续失败就别无限重试了，免得离开/后端挂掉后一直打接口
+      if (++runPollFails >= 5) {
+        clearInterval(runPollTimer); runPollTimer = null
+        message.error('运行状态查询失败，已停止轮询，请手动刷新')
+      }
+    }
   }, 5000)
 }
 
@@ -434,6 +448,10 @@ watch([corpusPage, corpusType], () => loadCorpus())
 watch([recordsPage, recordsRelevance, recordsSource], () => loadRecords())
 
 onMounted(() => loadProjects())
+onUnmounted(() => {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (runPollTimer) { clearInterval(runPollTimer); runPollTimer = null }
+})
 </script>
 
 <template>

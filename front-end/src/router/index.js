@@ -179,6 +179,11 @@ router.beforeEach((to, from, next) => {
     }
   } else if (to.path === '/login' && auth.token) {
     next('/chat')
+  } else if (to.meta.adminOnly && auth.user?.isAdmin === false) {
+    // 数据仍由后端 AdminMiddleware 兜底，这里只是别让非管理员点进空的管理页。
+    // 只在明确知道「不是管理员」时拦：macOS WebView 只注入 token 不注入用户信息，
+    // 旧版 localStorage 也可能没有 isAdmin 字段，两者都放行（拦了会把内嵌调试页一起挡掉）。
+    next('/chat')
   } else {
     next()
   }

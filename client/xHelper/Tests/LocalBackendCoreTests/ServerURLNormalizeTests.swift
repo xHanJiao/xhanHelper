@@ -46,10 +46,12 @@ final class ServerURLNormalizeTests: XCTestCase {
 
     func testPrivateHostClassification() {
         for host in ["127.0.0.1", "localhost", "10.1.2.3", "172.16.0.1", "172.31.255.254",
-                     "192.168.0.1", "169.254.1.1", "::1", "fd00::1", "fe80::1", "nas.local"] {
+                     "192.168.0.1", "169.254.1.1", "100.64.0.1", "100.127.255.254",
+                     "198.18.0.1", "198.19.255.254", "::1", "fd00::1", "fe80::1", "febf::1", "nas.local"] {
             XCTAssertTrue(LocalPaths.isLocalOrPrivateHost(host), "应判为私网：\(host)")
         }
-        for host in ["helper.xhanx.cn", "8.8.8.8", "172.32.0.1", "192.169.0.1", "fckeditor.example.com"] {
+        for host in ["helper.xhanx.cn", "8.8.8.8", "172.32.0.1", "192.169.0.1", "100.128.0.1",
+                     "198.20.0.1", "fec0::1", "fckeditor.example.com"] {
             XCTAssertFalse(LocalPaths.isLocalOrPrivateHost(host), "应判为公网：\(host)")
         }
     }

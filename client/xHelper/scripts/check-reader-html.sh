@@ -149,6 +149,12 @@ ok('控制符混淆的 javascript: 已剥离', !!obf && !obf.hasAttribute('href'
 ok('iframe 已移除', c.querySelectorAll('iframe').length === 0);
 ok('外链图片换成占位（不裂图）',
    c.querySelectorAll('a.blocked-img').length === 1 && !c.querySelector('#content img[src^="https://example.com"]'));
+// 占位文字不能进拍平文本：否则跨图选区把「外链图片已阻止」写进 quote，服务端投影里没有 → 批注孤儿
+reader.find('外链图片已阻止');
+ok('占位文字不进查找/批注锚点', last('findResult').count === 0, JSON.stringify(last('findResult')));
+reader.clearFind();
+ok('占位不可选中', getComputedStyle(c.querySelector('a.blocked-img')).userSelect === 'none',
+   getComputedStyle(c.querySelector('a.blocked-img')).userSelect);
 
 // 查找：正文 3 处「记忆系统」（含代码块里的那一处）
 reader.find('记忆系统');

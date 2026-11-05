@@ -136,8 +136,9 @@ enum LocalPaths {
         guard !host.isEmpty else { return false }
         if host == "localhost" || host == "::1" || host.hasSuffix(".local") { return true }
         if host.contains(":") {
-            // IPv6：ULA fc00::/7 与 link-local fe80::/10
-            return host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80")
+            // IPv6：ULA fc00::/7 与 link-local fe80::/10（fe80–febf，不只是 fe80）
+            if host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+            return ["fe8", "fe9", "fea", "feb"].contains { host.hasPrefix($0) }
         }
         let parts = host.split(separator: ".").compactMap { Int($0) }
         guard parts.count == 4, host.split(separator: ".").count == 4,
@@ -147,6 +148,8 @@ enum LocalPaths {
             || (a == 172 && (16...31).contains(b))
             || (a == 192 && b == 168)
             || (a == 169 && b == 254)
+            || (a == 100 && (64...127).contains(b))   // CGNAT / Tailscale 100.64/10
+            || (a == 198 && (18...19).contains(b))    // 基准测试网段 198.18/15（也常用于内网）
     }
 }
 

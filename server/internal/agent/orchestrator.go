@@ -1771,13 +1771,23 @@ func compactArtifactRefs(refs []model.ArtifactRef) []model.ArtifactRef {
 // collectToolResultsNative 原生 FC 路径：工具结果以 role=tool 保存，关联真实 tool_call_id。
 func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs []tool.ToolCall, nativeTCs []llm.ToolCall, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message, hidden bool) []llm.Message {
 	for i := range internalTCs {
+		// res 由 executeConcurrently 保证每个下标都有值；这里不解引用兜底：缺了就该炸在明处。
 		res := toolCallResults[i].result
 		resJSON, err := json.Marshal(res)
+		eventJSON := resJSON
 		if err != nil {
+			// 只记一次：事件里同样塞不进 id（同一根因），客户端退回 FIFO 配对。
 			log.Printf("[orch] tool result marshal error: %v", err)
 			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, res.Error))
+			eventJSON = resJSON
+		} else if b, eventErr := json.Marshal(toolResultEvent{Result: *res, ToolCallID: nativeTCs[i].ID}); eventErr != nil {
+			log.Printf("[orch] tool result event marshal error: %v", eventErr)
+		} else {
+			eventJSON = b
 		}
-		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
+		// 事件层带上 LLM tool_call id：客户端按 id 配对（tool_call 的到达顺序 ≠ 结果顺序）。
+		// 落库/回灌 LLM 的仍是纯 tool.Result（resJSON），不能把展示字段写进上下文。
+		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(eventJSON)})
 		o.saveToolMsg(ctx, convID, userID, nativeTCs[i].ID, string(resJSON), hidden)
 		msgs = append(msgs, llm.Message{
 			Role:       "tool",
@@ -1786,6 +1796,13 @@ func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs
 		})
 	}
 	return msgs
+}
+
+// toolResultEvent — tool_result SSE 事件的外壳：原样展开 tool.Result，额外带 tool_call_id。
+// 只用于事件，不进 DB / 不进 LLM 上下文（见 collectToolResultsNative）。
+type toolResultEvent struct {
+	tool.Result
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // —— 并发执行 ——

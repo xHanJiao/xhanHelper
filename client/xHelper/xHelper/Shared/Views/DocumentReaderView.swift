@@ -852,7 +852,7 @@ html, body {
 .blocked-img {
   display: inline-block; max-width: 100%; padding: 8px 12px; border: 1px dashed var(--border);
   border-radius: 8px; color: var(--muted); font-size: calc(var(--fs) * 0.72);
-  text-decoration: none; overflow-wrap: anywhere;
+  text-decoration: none; overflow-wrap: anywhere; user-select: none;
 }
 .blocked-img:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -1129,7 +1129,15 @@ var reader = (function () {
      而跨段选区的 quote 在服务端是 "a b"（空白折叠成单空格）—— 不补分隔符，
      跨段划线在 DOM 里根本搜不到。补上后两边投影到同一空间。 */
   function flatten() {
-    var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null);
+    /* 被挡的外链图片会换成带文字的占位（.blocked-img），那段提示不属于正文：
+       计入 flat 会让跨图的选区把「外链图片已阻止」写进 quote，而服务端正文投影里没有这段，
+       批注 relocate 必然失败。图片本来就不参与 flat，跳过占位保持一致。 */
+    var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        return n.parentNode && n.parentNode.closest && n.parentNode.closest('.blocked-img')
+          ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      }
+    });
     var nodes = [];
     var text = '';
     var lastBlock = null;
@@ -1821,12 +1829,19 @@ var reader = (function () {
 
   /* 外链图片被 CSP 挡住（img-src 只放行本站 + data/blob）：换成一句人话 + 可点链接，
      点开交给系统浏览器。不静默留裂图，也不把第三方请求带进 WebView。 */
+  /* 同源判定用 URL.origin 比较，别用字符串前缀：http://host:8080.evil.com/x.png
+     的前缀也是 http://host:8080（CSP 仍会挡加载，但会误留一张裂图）。 */
+  function isSameOrigin(src) {
+    try { return new URL(src, location.href).origin === location.origin; }
+    catch (e) { return false; }
+  }
+
   function markBlockedImages(root) {
     var origin = location.origin;
     [].forEach.call(root.querySelectorAll('img'), function (img) {
       var src = img.src || '';
       if (!/^https?:/i.test(src)) return;              // data: / blob: / 相对路径不拦
-      if (origin && src.indexOf(origin) === 0) return;  // 本站图床（/images/...）
+      if (origin && isSameOrigin(src)) return;          // 本站图床（/images/...）
       var a = document.createElement('a');
       a.className = 'blocked-img';
       a.href = src;

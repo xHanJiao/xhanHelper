@@ -181,8 +181,10 @@ class ChatViewModel: ObservableObject {
     var onOpenDocument: ((String) -> Void)?
     /// 点开 HTML 产物卡片（拉正文 + 右栏打开）
     var onOpenArtifact: ((String, String) -> Void)?
-    /// 待展示工具调用 FIFO：tool_call 暂存，tool_result 到后取出构造完结 pill（不展示 running）
+    /// 待展示工具调用：tool_call 暂存，tool_result 到后按 `tool_call_id` 取出构造完结 pill（不展示 running）
     private struct PendingToolCall {
+        /// LLM 原生 FC 的调用 id（服务端 tool_result 回传同一 id；旧服务端可能没有）
+        let id: String?
         let display: String
         let tool: String
         let function: String
@@ -1178,13 +1180,23 @@ class ChatViewModel: ObservableObject {
                 let display = tc.tool == "browser"
                     ? LocalToolRegistry.shared.displayName(for: "\(tc.tool)__\(tc.function)")
                     : tc.display
-                pendingToolCalls.append(PendingToolCall(display: display, tool: tc.tool, function: tc.function, args: tc.args))
+                pendingToolCalls.append(PendingToolCall(
+                    id: tc.id, display: display, tool: tc.tool, function: tc.function, args: tc.args))
             }
 
         case .toolResult:
             if let tr = parseToolResult(event.data), !pendingToolCalls.isEmpty {
                 // 只在成功/失败时展示 pill（不展示 running）
-                let pending = pendingToolCalls.removeFirst()
+                // 按 tool_call_id 精确配对：服务端 tool_call 的到达顺序 ≠ 结果顺序（客户端工具后发），
+                // FIFO 只在旧服务端没有 id 时兜底。无匹配 = 对应 tool_call 被丢，不能吞掉别人的条目。
+                guard let idx = ToolCallPairing.index(
+                    ofResultID: tr.toolCallId,
+                    in: pendingToolCalls.map(\.id)
+                ) else {
+                    LogBuffer.shared.warning("tool_result 无匹配 tool_call：id=\(tr.toolCallId ?? "nil")")
+                    break
+                }
+                let pending = pendingToolCalls.remove(at: idx)
                 let display = pending.display
                 // 会话接力：捕获本轮生成的接力文档（document.create_document 结果里的 id/title）
                 if handoffActive, pending.tool == "document", pending.function == "create_document",
@@ -1523,6 +1535,7 @@ class ChatViewModel: ObservableObject {
     // MARK: Tool call / result / verify 解析
 
     private struct ParsedToolCall {
+        let id: String?
         let display: String
         let tool: String
         let function: String
@@ -1537,6 +1550,7 @@ class ChatViewModel: ObservableObject {
         // 入参原样留存：工具返回值常只有 id，标题/tags/正文得从入参捞（如 update_document）。
         let args = obj["args"] as? [String: Any] ?? [:]
         return ParsedToolCall(
+            id: ToolCallPairing.callID(fromEventJSON: data),
             display: display,
             tool: obj["tool"] as? String ?? "",
             function: obj["function"] as? String ?? "",
@@ -1548,6 +1562,8 @@ class ChatViewModel: ObservableObject {
         let success: Bool
         let error: String?
         let data: [String: Any]?
+        /// LLM tool_call id（服务端新事件带上；旧服务端为 nil）
+        let toolCallId: String?
     }
 
     private func parseToolResult(_ data: String) -> ParsedToolResult? {
@@ -1555,7 +1571,12 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
               let success = obj["success"] as? Bool
         else { return nil }
-        return ParsedToolResult(success: success, error: obj["error"] as? String, data: obj["data"] as? [String: Any])
+        return ParsedToolResult(
+            success: success,
+            error: obj["error"] as? String,
+            data: obj["data"] as? [String: Any],
+            toolCallId: ToolCallPairing.resultID(fromEventJSON: data)
+        )
     }
 
     private struct ParsedVerify {

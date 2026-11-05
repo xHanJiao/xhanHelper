@@ -167,7 +167,12 @@ export function useChatSSE() {
       }
       case 'tool_result': {
         const tr = JSON.parse(rawData)
-        const last = chat.streamingMessage.toolCalls.findLast(tc => tc.status === 'running')
+        // 新服务端带 tool_call_id：按 id 配对，别赌事件顺序（客户端工具后发会错位）。
+        // 旧服务端没有该字段 → 回退「最后一条 running」。
+        const matchByID = tr.tool_call_id
+          ? chat.streamingMessage.toolCalls.find(tc => tc.id === tr.tool_call_id && tc.status === 'running')
+          : null
+        const last = matchByID || chat.streamingMessage.toolCalls.findLast(tc => tc.status === 'running')
         if (last) {
           last.status = tr.success ? 'done' : 'failed'
           last.result = tr

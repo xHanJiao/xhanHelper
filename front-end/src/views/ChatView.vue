@@ -19,7 +19,7 @@ let coldStartPending = true
  *
  * ── 二、路由变化（核心入口，immediate: true） ─────────────────────────────────
  *   watch(route.params.id) (L339):
- *     三个分支，都会先 cancel() 旧 SSE 流
+ *     进入分支前统一 cancel() 旧 SSE 流（判据：目标会话 != 当前会话）
  *     【分支 A】切换到新会话 (newId !== convId)
  *       → loadHistory(newId)          GET messages-v2        拉取最近 7 条消息
  *       → fetchAssociatedMemories()   POST /memories/batch   批量获取关联记忆详情
@@ -524,7 +524,7 @@ function normalizeMessage(msg) {
 // 1. 用户点击侧边栏切换到另一个会话 → newId 改变，且不等于当前 chat.conversationId
 // 2. 外部事件要求重新加载当前会话（如信箱跳转）→ newId 不变，但 chat.needsRefetch 被设为 true
 // 3. 用户直接访问 /chat 无 id 或 id 被清空 → newId 为 undefined/null
-watch(() => route.params.id, async (newId, oldId) => {
+watch(() => route.params.id, async (newId) => {
   // 整页加载后的第一次路由解析才算「冷启动」，无论落在 /chat 还是 /chat/:id。
   // 放在这里消费而不是在分支 C 里，避免「深链打开 /chat/A → 点新对话」又弹回最新会话。
   const coldStart = coldStartPending
@@ -533,8 +533,12 @@ watch(() => route.params.id, async (newId, oldId) => {
 
   exitSelectionMode()
   // --- 离开旧会话时，取消正在进行的 SSE 流 ---
-  // 避免旧会话的流式响应继续污染新会话的消息列表
-  if (oldId && chat.isStreaming) {
+  // 避免旧会话的流式响应继续污染新会话的消息列表。
+  // 判据是「目标会话 != 当前会话」，不能看 isStreaming：
+  // 顶栏会话切换器是「先 chat.reset() 再 router.push」，reset 会把 isStreaming 置 false，
+  // 那时旧流还在跑却已经没人拦它了。cancel() 对已结束的流是空操作，无条件调即可。
+  // 懒创建场景不受影响：done 先写 chat.conversationId 再 router.replace，那时 newId === 当前会话。
+  if (newId !== chat.conversationId) {
     cancel()
   }
 
@@ -553,6 +557,8 @@ watch(() => route.params.id, async (newId, oldId) => {
 
     // ① 切换 chat store 中的当前会话 ID，并拉取最近 20 条消息
     chat.setConversation(newId)
+    // 上面可能刚 cancel 过旧流（cancel 会置 needsRefetch），本分支已经重新拉过历史，别留到下次
+    chat.needsRefetch = false
     await loadHistory(newId)
     if (seq !== routeSeq) return
 

@@ -147,7 +147,13 @@ func refreshToken(userRepo *service.UserRepo) gin.HandlerFunc {
 		}
 		token := c.GetString("bearer_token")
 		if err := userRepo.RefreshToken(c.Request.Context(), token); err != nil {
-			view.JSONError(c, 401, "token expired or invalid")
+			if errors.Is(err, service.ErrTokenExpired) || errors.Is(err, service.ErrInvalidToken) {
+				view.JSONError(c, 401, "token expired or invalid")
+				return
+			}
+			// 心跳遇到 DB 故障也不能回 401，否则所有客户端会同时登出。
+			log.Printf("[auth] refresh token error: %v", err)
+			view.JSONError(c, 500, "refresh failed")
 			return
 		}
 		view.JSONOK(c, gin.H{"ok": true})

@@ -107,3 +107,27 @@ func TestResetPasswordDBErrorIs500(t *testing.T) {
 		t.Fatalf("DB 故障应 500, got %d", code)
 	}
 }
+
+func doRefresh(t *testing.T, repo *service.UserRepo, token string) int {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil)
+	c.Set("bearer_token", token)
+	refreshToken(repo)(c)
+	return w.Code
+}
+
+// 心跳续期：token 无效 → 401（客户端该登出）；DB 故障 → 500（不能连带踢所有人下线）。
+func TestRefreshTokenErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo, _, closeDB := newAuthTestRepo(t)
+	if code := doRefresh(t, repo, "no-such-token"); code != http.StatusUnauthorized {
+		t.Fatalf("无效 token 应 401, got %d", code)
+	}
+	closeDB()
+	if code := doRefresh(t, repo, "any-token"); code != http.StatusInternalServerError {
+		t.Fatalf("DB 故障应 500, got %d", code)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -14,7 +15,7 @@ import (
 	"xhan-helper/internal/service"
 )
 
-func newAuthTestRepo(t *testing.T) *service.UserRepo {
+func newAuthTestRepo(t *testing.T) (*service.UserRepo, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -23,13 +24,14 @@ func newAuthTestRepo(t *testing.T) *service.UserRepo {
 	if err := db.AutoMigrate(&model.User{}, &model.UserToken{}); err != nil {
 		t.Fatal(err)
 	}
-	return service.NewUserRepo(db, 60, 4)
+	return service.NewUserRepo(db, 60, 4), db
 }
 
 // runAuth 跑一次 Auth 中间件，返回响应与 handler 读到的 ctx 标记
 func runAuth(t *testing.T, local LocalAuth, bearer string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	return runAuthOn(t, newAuthTestRepo(t), local, bearer)
+	repo, _ := newAuthTestRepo(t)
+	return runAuthOn(t, repo, local, bearer)
 }
 
 func runAuthOn(t *testing.T, repo *service.UserRepo, local LocalAuth, bearer string) (*httptest.ResponseRecorder, map[string]any) {
@@ -63,7 +65,7 @@ func TestAuth_LocalTokenPassthrough(t *testing.T) {
 
 // 本地模式不再回落 user_tokens 表：库里存在有效 token 也不认（只会给越界留口子）。
 func TestAuth_LocalEnabledDoesNotFallBackToDB(t *testing.T) {
-	repo := newAuthTestRepo(t)
+	repo, _ := newAuthTestRepo(t)
 	_, dbToken, err := repo.Create(context.Background(), "xhan", "pw")
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +73,45 @@ func TestAuth_LocalEnabledDoesNotFallBackToDB(t *testing.T) {
 	w, _ := runAuthOn(t, repo, LocalAuth{Enabled: true, UserID: "u1", Token: "secret"}, dbToken)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("本地模式下库 token 也应被拒（401），got %d", w.Code)
+	}
+}
+
+// 查不到 token 是「凭证无效」→ 401，客户端据此登出。
+func TestAuth_UnknownToken401(t *testing.T) {
+	w, _ := runAuth(t, LocalAuth{}, "no-such-token")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", w.Code)
+	}
+}
+
+func TestAuth_ExpiredToken401(t *testing.T) {
+	repo, db := newAuthTestRepo(t)
+	_, token, err := repo.Create(context.Background(), "xhan", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("UPDATE user_tokens SET expires_at = ?", time.Now().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w, _ := runAuthOn(t, repo, LocalAuth{}, token)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("过期 token want 401, got %d", w.Code)
+	}
+}
+
+// DB 故障不能折叠成 401：前端/Swift 收到 401 会清 token 登出，一次抖动就全踢。
+func TestAuth_DBErrorIs500(t *testing.T) {
+	repo, db := newAuthTestRepo(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.Close()
+
+	w, _ := runAuthOn(t, repo, LocalAuth{}, "any-token")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("DB 故障 want 500, got %d", w.Code)
 	}
 }
 

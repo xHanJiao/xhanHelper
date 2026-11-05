@@ -67,7 +67,13 @@ func Auth(userRepo *service.UserRepo, local LocalAuth) gin.HandlerFunc {
 				view.JSONError(c, 401, "token expired")
 				return
 			}
-			view.JSONError(c, 401, "invalid token")
+			if errors.Is(err, service.ErrInvalidToken) {
+				view.JSONError(c, 401, "invalid token")
+				return
+			}
+			// DB 故障不能折叠成 401：客户端收到 401 会主动清 token 登出，一次抖动就全踢下线。
+			log.Printf("[auth] find token error: path=%s err=%v", c.Request.URL.Path, err)
+			view.JSONError(c, 500, "authentication failed")
 			return
 		}
 		c.Set("user_id", user.ID)

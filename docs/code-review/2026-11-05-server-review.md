@@ -237,6 +237,19 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - **文档/基线脚本**：审查报告改为 `LENGTH(token) = 36`；`server/migrations/001_init.sql` 的
   `user_tokens.token` 改为 `VARCHAR(64)` 并注明存哈希。
 
+### 5.5 认证错误不再折叠成 401（2026-11-05）
+
+`middleware.Auth` 与 `POST /api/auth/refresh` 原先把 `FindByToken` / `RefreshToken` 的所有错误
+都当「token 无效」回 401；而前端与 Swift 客户端都是「401 即清 token 登出」，一次数据库抖动会把
+所有在线客户端同时踢下线，且服务端没有日志。
+
+- `UserRepo.FindByToken` / `RefreshToken`：`gorm.ErrRecordNotFound` → `ErrInvalidToken`（token 不存在
+  或用户已删除）；过期 → `ErrTokenExpired`；其余错误原样上抛。
+- `middleware.Auth`：`ErrExpired` / `ErrInvalidToken` → 401；其它 → `log.Printf` + 500。
+- `refreshToken` handler：同上，DB 故障回 500，不再触发客户端登出。
+- 新增测试：`TestAuth_UnknownToken401`、`TestAuth_ExpiredToken401`、`TestAuth_DBErrorIs500`、
+  `TestRefreshTokenErrors`。
+
 ## 六、后续变更
 
 - 2026-11-05：建立本报告；批次 A 开始实施（分支 `fix/server-security-a`）。
@@ -255,3 +268,5 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
   登录/注册/重置区分业务错误与 DB 故障（后者 5xx + 日志）、文档与基线 SQL 同步。
 - 2026-11-05：认证复审补正（三）——`Create` 的预检注释说明并发同名仍可能 500（注册默认关闭，接受）；
   设计文档补 IP 维度限流与错误码拆分。`Reset(ipKey)` 保留：成功登录清零整个 IP 计数，对个人应用更友好。
+- 2026-11-05：认证错误不再折叠成 401——`FindByToken`/`RefreshToken` 的「查不到」返回 `ErrInvalidToken`，
+  中间件与心跳只对过期/无效回 401，DB 故障记日志后回 500（避免一次数据库抖动把所有客户端登出）。

@@ -16,6 +16,7 @@ import (
 
 var (
 	ErrTokenExpired       = errors.New("token expired")
+	ErrInvalidToken       = errors.New("invalid token")
 	ErrInvalidPassword    = errors.New("invalid old password")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUsernameTaken      = errors.New("username already exists")
@@ -241,6 +242,10 @@ func (r *UserRepo) List(ctx context.Context, offset, limit int) (*ListResult, er
 func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, error) {
 	var ut model.UserToken
 	if err := r.db.WithContext(ctx).Where("token = ?", hashToken(token)).First(&ut).Error; err != nil {
+		// 查不到 = token 无效（401）；其它错误是 DB 故障，原样上抛，不能折叠成 401。
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidToken
+		}
 		return nil, err
 	}
 	if time.Now().After(ut.ExpiresAt) {
@@ -248,6 +253,10 @@ func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, 
 	}
 	var u model.User
 	if err := r.db.WithContext(ctx).Where("id = ?", ut.UserID).First(&u).Error; err != nil {
+		// 用户已被删除 = token 不再可用；DB 故障照旧上抛。
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidToken
+		}
 		return nil, err
 	}
 	return &u, nil
@@ -383,6 +392,9 @@ func (r *UserRepo) GetUserStats(ctx context.Context, userIDs []string, since tim
 func (r *UserRepo) RefreshToken(ctx context.Context, token string) error {
 	var ut model.UserToken
 	if err := r.db.WithContext(ctx).Where("token = ?", hashToken(token)).First(&ut).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrInvalidToken
+		}
 		return err
 	}
 	if time.Now().After(ut.ExpiresAt) {

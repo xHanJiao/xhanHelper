@@ -100,4 +100,5 @@ Authorization: Bearer <token>
   - 登录时用户不存在也跑一次 dummy bcrypt，拉平用户名枚举的时序差。
   - 登录/注册限流：同一 IP+用户名 15 分钟 10 次失败，同一 IP 15 分钟 50 次失败，超限 429（IP 维度防换用户名绕过 dummy bcrypt 的成本放大）；登录成功/注册成功清零对应计数。
   - 错误码拆分：登录未知用户或密码错 401、注册重名 409、管理员重置未知用户 404；其余数据库故障记日志后回 500，不再伪装成 401/409/404。
+  - 认证中间件与心跳续期只对「token 过期/无效」回 401；数据库故障回 500 并记日志，避免一次抖动把所有客户端踢下线。
   - 影响文件：`server/internal/model/user.go`、`server/internal/service/user_repo.go`、`server/internal/controller/auth.go`、`server/internal/controller/password.go`、`server/internal/controller/admin_user.go`、`server/internal/app/init_db.go`。

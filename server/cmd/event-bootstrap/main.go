@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/retrieval"
@@ -57,6 +58,7 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "只统计输入与事件现状；不调 LLM、不改事件/记忆数据（AutoMigrate 仍会跑）")
 	review := flag.Bool("review", false, "跑完后做一次结构复盘：Flash 看全部事件，输出 merge + 改名")
 	pruneSingles := flag.Bool("prune-singles", false, "删除只含 0/1 条记忆的事件（记忆退回普通池）；可配 --dry-run 先看清单；建议先停服务")
+	resummarize := flag.Bool("resummarize-truncated", false, "按事件记忆重写被旧 200 字上限切断的 summary；--dry-run 只打印新旧对照（仍会调 LLM）")
 	userFlag := flag.String("user", "", "user_id（默认：本地单用户 / 库里唯一用户）")
 	cursorPath := flag.String("cursor", filepath.Join("data", "event-bootstrap.cursor"), "游标文件路径")
 
@@ -78,6 +80,8 @@ Flags:
   APP_ENV=dev event-bootstrap --review
   APP_ENV=dev event-bootstrap --prune-singles --dry-run
   APP_ENV=dev event-bootstrap --prune-singles
+  APP_ENV=dev event-bootstrap --resummarize-truncated --dry-run
+  APP_ENV=dev event-bootstrap --resummarize-truncated
 `)
 	}
 	flag.Parse()
@@ -113,6 +117,16 @@ Flags:
 		}
 		if err := pruneSingleMemoryEvents(ctx, repos, userID, *dryRun); err != nil {
 			log.Fatalf("prune singles: %v", err)
+		}
+		return
+	}
+	if *resummarize {
+		if *reset || *review || *limit > 0 || *pruneSingles {
+			log.Fatal("--resummarize-truncated 只能单独使用（不能与 --reset / --review / --limit / --prune-singles 同时）")
+		}
+		llmClients := app.InitLLM(cfg, llm.NewClient, llm.NewStrongClient, llmcost.NewDBRecorder(repos.LlmCost))
+		if err := resummarizeTruncatedEvents(ctx, cfg.DB.Database, repos, llmClients.BgFlash, userID, *dryRun); err != nil {
+			log.Fatalf("resummarize truncated summaries: %v", err)
 		}
 		return
 	}
@@ -229,6 +243,196 @@ func pruneSingleMemoryEvents(ctx context.Context, repos *app.Repos, userID strin
 	}
 	log.Printf("[prune] done: pruned=%d kept=%d dry_run=%v", pruned, kept, dryRun)
 	return nil
+}
+
+// legacySummaryRunes — 旧版事件 summary 硬上限。值恰好等于它的事件视为被切断
+// （2026-11-05 已放宽到 service.MaxEventSummaryRunes=600，存量需一次性重写）。
+const legacySummaryRunes = 200
+
+// resummarizeMemoryBudget — 单个事件喂给模型的记忆正文上限（字符）。
+const resummarizeMemoryBudget = 20000
+
+const resummarizePrompt = `你是「事件状态」编辑。给你一个事件的名称、旧 summary 和它名下的全部记忆，请重写出该事件的「当前状态」summary。
+
+规则：
+- 只用记忆里明确出现的事实、数字、日期；没有依据的一律不补，信息不足就写短。
+- 写当前状态：已完成的、进行中的、尚未定下来的（待定项写清楚），不写流水账。
+- 旧 summary 可能被截断，只作参考，不要照抄它的断句。
+- 200–600 个汉字，纯文本；不要 markdown、标题、引号或任何解释。
+- 只输出 summary 正文。`
+
+// summaryBackup — 重写前的旧值备份（写 data/ 下的 JSON，用于回滚）。
+type summaryBackup struct {
+	DB        string              `json:"db"`
+	UserID    string              `json:"user_id"`
+	CreatedAt time.Time           `json:"created_at"`
+	Items     []summaryBackupItem `json:"items"`
+}
+
+type summaryBackupItem struct {
+	EventID string `json:"event_id"`
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
+}
+
+// resummarizeTruncatedEvents 重写被旧 200 字上限切断的事件 summary。
+// dryRun 只打印新旧对照，不调 LLM 之外的任何写入。旧值先备份再改。
+func resummarizeTruncatedEvents(ctx context.Context, dbName string, repos *app.Repos, client llm.LLMClient, userID string, dryRun bool) error {
+	events, err := listAllEvents(ctx, repos.Event, userID)
+	if err != nil {
+		return fmt.Errorf("list events: %w", err)
+	}
+	targets := pickTruncatedEvents(events)
+	if len(targets) == 0 {
+		log.Printf("[resummarize] no active event with legacy %d-rune summary", legacySummaryRunes)
+		return nil
+	}
+
+	ids := make([]string, 0, len(targets))
+	for _, e := range targets {
+		ids = append(ids, e.ID)
+	}
+	memories, err := repos.Mem.ListByEventIDs(ctx, userID, ids)
+	if err != nil {
+		return fmt.Errorf("load memories: %w", err)
+	}
+	byEvent := make(map[string][]model.UserMemory, len(targets))
+	for _, m := range memories {
+		if m.EventID == nil {
+			continue
+		}
+		byEvent[*m.EventID] = append(byEvent[*m.EventID], m)
+	}
+	for _, list := range byEvent {
+		sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt.After(list[j].CreatedAt) })
+	}
+
+	backupPath := filepath.Join("data", fmt.Sprintf("event-summary-backup-%s.json", time.Now().Format("20060102-150405")))
+	if !dryRun {
+		if err := saveSummaryBackup(backupPath, dbName, userID, targets); err != nil {
+			return fmt.Errorf("save backup: %w", err)
+		}
+		log.Printf("[resummarize] backup: %s", backupPath)
+	}
+
+	rewritten, skipped, failed := 0, 0, 0
+	for i := range targets {
+		e := &targets[i]
+		mems := byEvent[e.ID]
+		if len(mems) == 0 {
+			log.Printf("[resummarize] skip %q (%s): no memories", e.Name, e.ID)
+			skipped++
+			continue
+		}
+		msg, err := client.ChatSync(ctx, &llm.ChatRequest{
+			SystemPrompt: resummarizePrompt,
+			Messages:     []llm.Message{{Role: "user", Content: buildResummarizeInput(e, mems)}},
+		})
+		if err != nil {
+			log.Printf("[resummarize] %q (%s) llm error: %v", e.Name, e.ID, err)
+			failed++
+			continue
+		}
+		next := truncateRunes(cleanResummarizedSummary(msg.Content), service.MaxEventSummaryRunes)
+		if next == "" {
+			log.Printf("[resummarize] %q (%s) empty output, skipped", e.Name, e.ID)
+			failed++
+			continue
+		}
+		if next == strings.TrimSpace(e.Summary) {
+			skipped++
+			continue
+		}
+		if dryRun {
+			log.Printf("[resummarize] would rewrite %q (%s): %d → %d 字\n  old: %s\n  new: %s",
+				e.Name, e.ID, utf8.RuneCountInString(e.Summary), utf8.RuneCountInString(next), e.Summary, next)
+			rewritten++
+			continue
+		}
+		if err := repos.Event.UpdateSummary(ctx, userID, e.ID, "", next); err != nil {
+			log.Printf("[resummarize] update %q (%s) error: %v", e.Name, e.ID, err)
+			failed++
+			continue
+		}
+		log.Printf("[resummarize] rewrote %q (%s): %d → %d 字", e.Name, e.ID,
+			utf8.RuneCountInString(e.Summary), utf8.RuneCountInString(next))
+		rewritten++
+	}
+
+	log.Printf("[resummarize] done: targets=%d rewritten=%d skipped=%d failed=%d dry_run=%v",
+		len(targets), rewritten, skipped, failed, dryRun)
+	if failed > 0 {
+		return fmt.Errorf("%d 个事件重写失败，见上方日志", failed)
+	}
+	return nil
+}
+
+// pickTruncatedEvents 只挑活跃事件里 summary 恰好等于旧上限的那批。
+func pickTruncatedEvents(events []model.Event) []model.Event {
+	out := make([]model.Event, 0, len(events))
+	for _, e := range events {
+		if e.IsDeleted {
+			continue
+		}
+		if utf8.RuneCountInString(strings.TrimSpace(e.Summary)) == legacySummaryRunes {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// buildResummarizeInput 拼事件名 + 旧 summary + 记忆正文（按 created_at 倒序，超预算截断并说明）。
+func buildResummarizeInput(e *model.Event, mems []model.UserMemory) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<event name=%q>\n<old_summary>%s</old_summary>\n<memories>\n", e.Name, e.Summary)
+	used, listed := 0, 0
+	for _, m := range mems {
+		line := fmt.Sprintf("- [%s] %s：%s\n", m.CreatedAt.Format("2006-01-02"), m.Topic, m.MemoryValue)
+		n := utf8.RuneCountInString(line)
+		if used+n > resummarizeMemoryBudget {
+			break
+		}
+		used += n
+		b.WriteString(line)
+		listed++
+	}
+	b.WriteString("</memories>\n")
+	if rest := len(mems) - listed; rest > 0 {
+		fmt.Fprintf(&b, "（另有 %d 条更早的记忆未列出）\n", rest)
+	}
+	return b.String()
+}
+
+// cleanResummarizedSummary 去掉模型常见的围栏/引号/换行残留。
+func cleanResummarizedSummary(raw string) string {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(s, "```") {
+		if i := strings.Index(s, "\n"); i >= 0 {
+			s = s[i+1:]
+		} else {
+			return ""
+		}
+		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+	}
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "\"'“”‘’")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// saveSummaryBackup 写旧值备份；目录不存在时创建。
+func saveSummaryBackup(path, dbName, userID string, events []model.Event) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	bk := summaryBackup{DB: dbName, UserID: userID, CreatedAt: time.Now(), Items: make([]summaryBackupItem, 0, len(events))}
+	for _, e := range events {
+		bk.Items = append(bk.Items, summaryBackupItem{EventID: e.ID, Name: e.Name, Summary: e.Summary})
+	}
+	b, err := json.MarshalIndent(bk, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
 }
 
 // resolveUser 依次尝试 --user、本地单用户、库里唯一用户。

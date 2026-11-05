@@ -287,6 +287,7 @@ prompt 规则靠模型自觉，再加一道代码闸：
 - 拼装时对每个被改动的事件，输入旧 summary + 新记忆，输出新 summary（≤600 字）。
 - 600 字是硬上限：`EventRepo.UpdateSummary` 统一截断，拼装与 `event.update` 共用同一口径。
 - summary 是「当前状态」，不是完整历史；完整历史在记忆里。
+- 存量被旧 200 字上限切断的 summary 可用 `event-bootstrap --resummarize-truncated` 按记忆重写（先 `--dry-run` 看新旧对照；旧值备份到 `data/event-summary-backup-*.json`）。
 - **未定的事就写在 summary 里**（如「科三补考 11-14/11-17 待定」）。不设单独的 pending 字段：它只有拼装时能写、对话里的回答进不来，会过期变成反复追问；summary 每次有新记忆都会重写，已定的自然被覆盖。
 - 记忆被 record loop 更新（改 summary/facts）→ 事件的 summary 可能过期；EventWorker 看到 `updated_at` 变化的记忆时，把对应事件加入 `event_updates` 重算。
 - 记忆被删 → 事件少一条；下次该事件被触及时重算 summary。

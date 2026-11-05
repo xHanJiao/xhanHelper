@@ -34,9 +34,9 @@ func NewEventRepo(db *gorm.DB) *EventRepo {
 
 const (
 	eventNameMaxRunes = 100
-	// MaxEventSummaryRunes — 事件 summary 硬上限（设计 §4.4：≤600 字）。
+	// MaxEventSummaryRunes — 事件 summary 硬上限（提示词目标是 ≤200 字；这里只兜底，避免超长占注入预算）。
 	// 放在 service 里是为了让所有写入口（拼装、工具）共用同一口径。
-	MaxEventSummaryRunes = 600
+	MaxEventSummaryRunes = 1000
 	eventListMaxLimit    = 200
 )
 
@@ -165,6 +165,16 @@ func (r *EventRepo) ListUpdatedSince(ctx context.Context, userID string, since t
 // （即无法用空串清空 summary）。事件不存在或已删时返回包装后的 gorm.ErrRecordNotFound，
 // 避免拼装拿到过期 event_id 时静默丢更新。
 func (r *EventRepo) UpdateSummary(ctx context.Context, userID, id, name, summary string) error {
+	return r.updateSummary(ctx, userID, id, name, summary, MaxEventSummaryRunes)
+}
+
+// UpdateSummaryUncapped 原样写入 summary，不做长度截断。仅供 event-bootstrap 存量重写
+// 保留模型全文；生产增量重写仍走 UpdateSummary 的硬上限。
+func (r *EventRepo) UpdateSummaryUncapped(ctx context.Context, userID, id, name, summary string) error {
+	return r.updateSummary(ctx, userID, id, name, summary, 0)
+}
+
+func (r *EventRepo) updateSummary(ctx context.Context, userID, id, name, summary string, maxRunes int) error {
 	updates := map[string]any{}
 	if strings.TrimSpace(name) != "" {
 		n, err := validateEventName(name)
@@ -174,7 +184,10 @@ func (r *EventRepo) UpdateSummary(ctx context.Context, userID, id, name, summary
 		updates["name"] = n
 	}
 	if summary = strings.TrimSpace(summary); summary != "" {
-		updates["summary"] = truncateEventSummary(summary)
+		if maxRunes > 0 {
+			summary = truncateEventSummary(summary)
+		}
+		updates["summary"] = summary
 	}
 	if len(updates) == 0 {
 		return nil

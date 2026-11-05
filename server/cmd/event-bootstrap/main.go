@@ -259,7 +259,7 @@ const resummarizePrompt = `你是「事件状态」编辑。给你一个事件�
 - 只用记忆里明确出现的事实、数字、日期；没有依据的一律不补，信息不足就写短。
 - 写当前状态：已完成的、进行中的、尚未定下来的（待定项写清楚），不写流水账。
 - 旧 summary 可能被截断，只作参考，不要照抄它的断句。
-- 最高不超过 600 个汉字，纯文本；不要 markdown、标题、引号或任何解释。
+- 不超过 200 个汉字，纯文本；不要 markdown、标题、引号或任何解释。
 - 只输出 summary 正文。`
 
 // summaryBackup — 重写前的旧值备份（写 data/ 下的 JSON，用于回滚）。
@@ -316,6 +316,7 @@ func resummarizeTruncatedEvents(ctx context.Context, dbName string, repos *app.R
 		log.Printf("[resummarize] backup: %s", backupPath)
 	}
 
+	temp := 0.3 // summary 要贴着记忆写：低温度减少加戏和跑偏
 	rewritten, skipped, failed := 0, 0, 0
 	for i := range targets {
 		e := &targets[i]
@@ -328,13 +329,14 @@ func resummarizeTruncatedEvents(ctx context.Context, dbName string, repos *app.R
 		msg, err := client.ChatSync(ctx, &llm.ChatRequest{
 			SystemPrompt: resummarizePrompt,
 			Messages:     []llm.Message{{Role: "user", Content: buildResummarizeInput(e, mems)}},
+			Temperature:  &temp,
 		})
 		if err != nil {
 			log.Printf("[resummarize] %q (%s) llm error: %v", e.Name, e.ID, err)
 			failed++
 			continue
 		}
-		next := truncateSummary(cleanResummarizedSummary(msg.Content), service.MaxEventSummaryRunes)
+		next := cleanResummarizedSummary(msg.Content)
 		if next == "" {
 			log.Printf("[resummarize] %q (%s) empty output, skipped", e.Name, e.ID)
 			failed++
@@ -350,7 +352,7 @@ func resummarizeTruncatedEvents(ctx context.Context, dbName string, repos *app.R
 			rewritten++
 			continue
 		}
-		if err := repos.Event.UpdateSummary(ctx, userID, e.ID, "", next); err != nil {
+		if err := repos.Event.UpdateSummaryUncapped(ctx, userID, e.ID, "", next); err != nil {
 			log.Printf("[resummarize] update %q (%s) error: %v", e.Name, e.ID, err)
 			failed++
 			continue
@@ -410,7 +412,7 @@ func buildResummarizeInput(e *model.Event, mems []model.UserMemory) string {
 	return b.String()
 }
 
-// truncateSummary 按字符截断且不补省略号，落库口径与 service.MaxEventSummaryRunes 一致。
+// truncateSummary 按字符截断且不补省略号（输入预算用，落库输出不走它）。
 func truncateSummary(s string, max int) string {
 	r := []rune(s)
 	if len(r) <= max {

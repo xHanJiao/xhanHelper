@@ -31,17 +31,19 @@ func (r *DocumentShareRepo) Create(ctx context.Context, docID, userID string) (*
 		return nil, err
 	}
 
-	if err := r.db.WithContext(ctx).Where("document_id = ?", docID).Delete(&model.DocumentShare{}).Error; err != nil {
-		log.Printf("[share] delete old share failed: %v", err)
-	}
-
 	share := &model.DocumentShare{
 		ID:         uuid.New().String(),
 		DocumentID: docID,
 		Token:      uuid.New().String(),
 	}
 
-	if err := r.db.WithContext(ctx).Create(share).Error; err != nil {
+	// 删旧建新必须同事务：建新的失败时不能把用户原来的分享链接弄丢。
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("document_id = ?", docID).Delete(&model.DocumentShare{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(share).Error
+	}); err != nil {
 		return nil, err
 	}
 

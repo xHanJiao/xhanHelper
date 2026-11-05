@@ -250,6 +250,16 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - 新增测试：`TestAuth_UnknownToken401`、`TestAuth_ExpiredToken401`、`TestAuth_DBErrorIs500`、
   `TestRefreshTokenErrors`。
 
+### 5.6 小修一批（2026-11-05）
+
+- **分享创建事务**（P3）：`DocumentShareRepo.Create` 的「删旧 + 建新」包进同一事务，建新失败时
+  回滚，不再丢掉用户原来的分享链接；删旧失败也照实返回而不是只打日志。新增
+  `TestDocumentShareRepo_CreateRollsBackOnFailure`。
+- **`/api/chat` 请求体上限**：`http.MaxBytesReader` 4 MiB，超限返回 **413**（不再让超大 body 占内存），
+  绑定失败与空消息的错误响应拆开。新增 `TestChatRejectsOversizeBody`。
+- **`http.Server` 超时**：补 `ReadHeaderTimeout: 10s` 与 `IdleTimeout: 120s` 挡慢连接；
+  **有意不设 `ReadTimeout` / `WriteTimeout`**——`/api/chat` 是 SSE 长连接，写超时会掐断流。
+
 ## 六、后续变更
 
 - 2026-11-05：建立本报告；批次 A 开始实施（分支 `fix/server-security-a`）。
@@ -270,3 +280,5 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
   设计文档补 IP 维度限流与错误码拆分。`Reset(ipKey)` 保留：成功登录清零整个 IP 计数，对个人应用更友好。
 - 2026-11-05：认证错误不再折叠成 401——`FindByToken`/`RefreshToken` 的「查不到」返回 `ErrInvalidToken`，
   中间件与心跳只对过期/无效回 401，DB 故障记日志后回 500（避免一次数据库抖动把所有客户端登出）。
+- 2026-11-05：小修一批——分享创建加事务、`/api/chat` body 上限 4 MiB（413）、HTTP 服务补
+  `ReadHeaderTimeout`/`IdleTimeout`（有意不设写超时，避免掐断 SSE）。

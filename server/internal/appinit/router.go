@@ -262,6 +262,10 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: router,
+		// 只设读头与空闲超时，挡慢连接；不设 ReadTimeout/WriteTimeout——
+		// /api/chat 是 SSE 长连接，写超时会直接把流掐断。
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {

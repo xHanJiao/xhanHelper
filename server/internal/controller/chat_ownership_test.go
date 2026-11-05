@@ -105,3 +105,21 @@ func TestChatConversationLookupDBErrorIsNot404(t *testing.T) {
 		t.Fatalf("默认会话查询 DB 故障应 500，got status=%d body=%s", w.Code, w.Body.String())
 	}
 }
+
+// /api/chat 请求体上限：超限直接 413，且不会走到会话/编排层（依赖可传 nil）。
+func TestChatRejectsOversizeBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := chat(nil, nil, nil, nil, nil, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"message":"` + strings.Repeat("a", maxChatBodyBytes) + `"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", "user-1")
+
+	h(c)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超大 body 应 413, got status=%d body=%s", w.Code, w.Body.String())
+	}
+}

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -101,9 +102,13 @@ const (
 	planExitNoticeMarker = "用户已退出计划模式（只读讨论结束）"
 )
 
+// maxChatBodyBytes — /api/chat 请求体上限。正常消息 + 客户端工具定义远小于此，只挡超大 body。
+const maxChatBodyBytes = 4 << 20
+
 func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo, imageStore *service.ImageStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxChatBodyBytes)
 		var req struct {
 			ConversationID *string                `json:"conversation_id"`
 			Message        string                 `json:"message"`
@@ -130,7 +135,16 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			BriefAnswer bool `json:"brief_answer"`
 		}
 		// 允许只发图不写字：文字与附件至少要有一个
-		if err := c.ShouldBindJSON(&req); err != nil || (req.Message == "" && len(req.Attachments) == 0) {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				view.JSONError(c, 413, "request body too large")
+				return
+			}
+			view.JSONError(c, 400, "invalid request")
+			return
+		}
+		if req.Message == "" && len(req.Attachments) == 0 {
 			view.JSONError(c, 400, "invalid request")
 			return
 		}

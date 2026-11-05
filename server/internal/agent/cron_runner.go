@@ -698,13 +698,17 @@ func (cr *CronRunner) processSessionEndTasks(ctx context.Context) {
 		meta, err := t.ParseMeta()
 		if err != nil || meta.ConvID == "" {
 			log.Printf("[cron] bad session_end task meta for %s, marking done", t.ID[:8])
-			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
+				log.Printf("[cron] MarkDone session_end error: %v", err)
+			}
 			continue
 		}
 		key := t.UserID + "|" + meta.ConvID
 		if seen[key] {
 			log.Printf("[cron] session_end duplicate skipped: user=%s conv=%s task=%s", t.UserID[:8], meta.ConvID[:8], t.ID[:8])
-			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
+				log.Printf("[cron] MarkDone session_end error: %v", err)
+			}
 			continue
 		}
 		seen[key] = true
@@ -713,9 +717,11 @@ func (cr *CronRunner) processSessionEndTasks(ctx context.Context) {
 		if err := cr.sessionEndGroup.Process(ctx, meta.ConvID, t.UserID, meta.LastMsgID); err != nil {
 			log.Printf("[cron] session_end group error: conv=%s err=%v", meta.ConvID[:8], err)
 			if t.RetryCount < 3 {
-				cr.delayedTaskRepo.ScheduleRetry(ctx, t.ID, t.RetryCount, 2*time.Minute)
-			} else {
-				cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount)
+				if err := cr.delayedTaskRepo.ScheduleRetry(ctx, t.ID, t.RetryCount, 2*time.Minute); err != nil {
+					log.Printf("[cron] ScheduleRetry task %s error: %v", t.ID[:8], err)
+				}
+			} else if err := cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount); err != nil {
+				log.Printf("[cron] MarkFailed task %s error: %v", t.ID[:8], err)
 			}
 			continue
 		}
@@ -751,13 +757,17 @@ func (cr *CronRunner) processPurgeTasks(ctx context.Context) {
 		meta, err := t.ParseMeta()
 		if err != nil || meta.ConvID == "" {
 			log.Printf("[cron] bad ephemeral_purge task meta for %s, marking done", t.ID[:8])
-			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
+				log.Printf("[cron] MarkDone ephemeral_purge error: %v", err)
+			}
 			continue
 		}
 		key := t.UserID + "|" + meta.ConvID
 		if seen[key] {
 			log.Printf("[cron] ephemeral_purge duplicate skipped: conv=%s task=%s", meta.ConvID[:8], t.ID[:8])
-			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
+				log.Printf("[cron] MarkDone ephemeral_purge error: %v", err)
+			}
 			continue
 		}
 		seen[key] = true
@@ -768,9 +778,11 @@ func (cr *CronRunner) processPurgeTasks(ctx context.Context) {
 		if err != nil {
 			log.Printf("[cron] ephemeral_purge error: conv=%s err=%v", meta.ConvID[:8], err)
 			if t.RetryCount < 3 {
-				cr.delayedTaskRepo.ScheduleRetry(ctx, t.ID, t.RetryCount, 2*time.Minute)
-			} else {
-				cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount)
+				if err := cr.delayedTaskRepo.ScheduleRetry(ctx, t.ID, t.RetryCount, 2*time.Minute); err != nil {
+					log.Printf("[cron] ScheduleRetry task %s error: %v", t.ID[:8], err)
+				}
+			} else if err := cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount); err != nil {
+				log.Printf("[cron] MarkFailed task %s error: %v", t.ID[:8], err)
 			}
 			continue
 		}

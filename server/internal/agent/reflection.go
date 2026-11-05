@@ -119,7 +119,9 @@ func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, trigge
 		ID: traceID, UserID: userID, TriggerType: triggerType,
 		StartedAt: time.Now(), Status: "running",
 	}
-	o.traceRepo.CreateTrace(ctx, tr)
+	if err := o.traceRepo.CreateTrace(ctx, tr); err != nil {
+		log.Printf("[reflection] trace=%s create error: %v", traceID[:8], err)
+	}
 
 	// 旧主题状态页已停写（事件系统接管）：不再 expire active 主题、不再跑主题发现。
 	// 保留 trace 记录，方便确认每日节拍仍在运行。
@@ -277,6 +279,9 @@ func endTraceSafe(repo *service.ReflectionTraceRepo, ctx context.Context, traceI
 }
 
 func createDecisionSafe(repo *service.ReflectionTraceRepo, ctx context.Context, decision *model.ReflectionDecision) {
+	if repo == nil { // NewReactLoop 约定 traceRepo 可为 nil（不写 trace）
+		return
+	}
 	if err := repo.CreateDecision(ctx, decision); err != nil {
 		log.Printf("[reflection] CreateDecision error: %v", err)
 	}

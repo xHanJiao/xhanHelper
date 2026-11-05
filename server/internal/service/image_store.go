@@ -120,7 +120,11 @@ func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility stri
 
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
-	if existing, err := s.repo.FindBySHA(ctx, userID, digest); err == nil && existing != nil {
+	existing, err := s.repo.FindBySHA(ctx, userID, digest)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("lookup image by sha: %w", err)
+	}
+	if existing != nil {
 		// 记录在、文件没了（导库不带 images / 换机 / 外部删除）：用这次上传的字节补回去。
 		// 不补的话 DataURI 会一直报「图片文件已丢失」，而且每次重传都命中这条坏记录。
 		path := s.FilePath(existing)

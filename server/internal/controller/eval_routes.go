@@ -1,6 +1,26 @@
 package controller
 
-import "github.com/gin-gonic/gin"
+import (
+	"net/http"
+	"regexp"
+
+	"github.com/gin-gonic/gin"
+
+	"xhan-helper/internal/view"
+)
+
+// evalProjectName — 评测项目名会拼进文件路径（<evalDir>/<project>/eval.db），
+// 只允许安全字符，挡住 ../ 之类的路径穿越。
+var evalProjectName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// validateEvalProject 校验 :project 参数；没有该参数的路由（如 /projects 列表）直接放行。
+func validateEvalProject(c *gin.Context) {
+	if p := c.Param("project"); p != "" && !evalProjectName.MatchString(p) {
+		view.JSONError(c, http.StatusBadRequest, "invalid project name")
+		return
+	}
+	c.Next()
+}
 
 // EvalRoutesConfig 评测标注 API 路由依赖
 type EvalRoutesConfig struct {
@@ -16,7 +36,7 @@ func RegisterEvalRoutes(rc EvalRoutesConfig) {
 	admin := rc.R.Group("/api/admin")
 	admin.Use(rc.AuthMiddleware, rc.AdminMiddleware)
 	{
-		eval := admin.Group("/eval")
+		eval := admin.Group("/eval", validateEvalProject)
 		{
 			eval.GET("/projects", rc.Handler.ListProjects)
 			eval.GET("/projects/:project/stats", rc.Handler.GetStats)

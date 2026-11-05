@@ -24,12 +24,9 @@ func (m *mockFormatter) FormatUserMessage(packets map[string][]retrieval.Context
 
 // —— mock 实现 ——
 
-type mockMsgRepo struct {
-	createCalls int
-}
+type mockMsgRepo struct{}
 
 func (m *mockMsgRepo) Create(ctx context.Context, msg *model.Message) error {
-	m.createCalls++
 	return nil
 }
 
@@ -48,12 +45,10 @@ func (m *mockUserProfileFactRepo) GetActiveByUser(ctx context.Context, userID st
 }
 
 type mockConvRepo struct {
-	touchCalls int
-	extra      *model.ConversationExtra // 模拟会话 Extra（GetExtra 返回，UpdateExtraField 更新）
+	extra *model.ConversationExtra // 模拟会话 Extra（GetExtra 返回，UpdateExtraField 更新）
 }
 
 func (m *mockConvRepo) Touch(ctx context.Context, id string) error {
-	m.touchCalls++
 	return nil
 }
 

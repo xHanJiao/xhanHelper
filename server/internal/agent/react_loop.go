@@ -223,7 +223,17 @@ func (rl *ReactLoop) executeConcurrently(ctx context.Context, toolCalls []tool.T
 		go func(idx int, tc tool.ToolCall) {
 			defer wg.Done()
 			ec := &tool.ExecuteContext{Ctx: ctx, UserID: rl.userID}
-			res := rl.toolReg.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
+			// 工具 panic 不能掀翻整个进程（gin.Recovery 只覆盖 HTTP handler）。
+			var res *tool.Result
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						log.Printf("[react_loop] tool exec panic: %s.%s panic=%v", tc.Tool, tc.Function, p)
+						res = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
+					}
+				}()
+				res = rl.toolReg.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
+			}()
 			results[idx] = ToolCallLog{
 				Tool:     tc.Tool,
 				Function: tc.Function,

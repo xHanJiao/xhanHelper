@@ -68,7 +68,9 @@ func (h *SubAgentAdminHandler) List(c *gin.Context) {
 		row := &rows[i]
 		var extra model.ConversationExtra
 		if row.Extra != "" {
-			json.Unmarshal([]byte(row.Extra), &extra)
+			if err := json.Unmarshal([]byte(row.Extra), &extra); err != nil {
+				log.Printf("[subagent_admin] unmarshal extra: conv=%s err=%v", row.ID, err)
+			}
 		}
 		item := gin.H{
 			"conv_id":        row.ID,

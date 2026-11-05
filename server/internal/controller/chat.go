@@ -150,7 +150,14 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		} else if req.ConversationID == nil {
 			// 新入口：查找默认会话，不存在则创建
-			conv, _ = convRepo.FindDefaultByUser(c.Request.Context(), userID)
+			var err error
+			conv, err = convRepo.FindDefaultByUser(c.Request.Context(), userID)
+			if err != nil {
+				// DB 故障不能当成"没有默认会话"：否则会新建会话，用户以为历史丢了。
+				log.Printf("[chat] FindDefaultByUser error: user=%s err=%v", userID, err)
+				view.JSONError(c, 500, "query conversation failed")
+				return
+			}
 		}
 		// 空字符串 conversation_id 走这里：直接创建非默认新会话
 		if conv == nil {
@@ -453,7 +460,10 @@ func mergeTitle(ctx context.Context, orch *agent.Orchestrator, convRepo *service
 	if t == "" {
 		return doneContent
 	}
-	convRepo.Rename(ctx, conv.ID, t)
+	if err := convRepo.Rename(ctx, conv.ID, t); err != nil {
+		log.Printf("[chat] rename conversation error: conv=%s err=%v", conv.ID, err)
+		return doneContent // 改名没落库就不回新标题，免得客户端显示一个库里没有的标题
+	}
 	conv.Title = t
 
 	var m map[string]interface{}

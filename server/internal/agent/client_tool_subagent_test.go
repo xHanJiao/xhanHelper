@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,15 +20,20 @@ import (
 // 均验证不会因等待被服务端提前杀死（预算内）。
 
 type captureSink struct {
+	mu     sync.Mutex
 	events []*llm.StreamEvent
 }
 
 func (s *captureSink) onEvent(evt *llm.StreamEvent) bool {
+	s.mu.Lock()
 	s.events = append(s.events, evt)
+	s.mu.Unlock()
 	return true
 }
 
 func (s *captureSink) clientToolCallID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, evt := range s.events {
 		if evt.Type != "client_tool_call" {
 			continue

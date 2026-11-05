@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -820,10 +821,21 @@ func TestLoadSubAgentHistory_BudgetAndUserPrefix(t *testing.T) {
 // ---- 成本中心接入测试 ----
 
 type costRecorder struct {
+	mu      sync.Mutex
 	records []llmcost.UsageRecord
 }
 
-func (r *costRecorder) Record(rec llmcost.UsageRecord) { r.records = append(r.records, rec) }
+func (r *costRecorder) Record(rec llmcost.UsageRecord) {
+	r.mu.Lock()
+	r.records = append(r.records, rec)
+	r.mu.Unlock()
+}
+
+func (r *costRecorder) snapshot() []llmcost.UsageRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]llmcost.UsageRecord(nil), r.records...)
+}
 
 // TestRunSubAgent_CostScenario — 子循环 LLM 调用记入成本中心（main_chat/sub_agent_run，ConvID=子会话）
 func TestRunSubAgent_CostScenario(t *testing.T) {
@@ -848,13 +860,14 @@ func TestRunSubAgent_CostScenario(t *testing.T) {
 	}
 	// CostTracker record 是异步的（go t.record），轮询等待
 	deadline := time.Now().Add(2 * time.Second)
-	for len(rec.records) == 0 && time.Now().Before(deadline) {
+	for len(rec.snapshot()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(rec.records) != 1 {
-		t.Fatalf("应记录 1 条成本, got %d", len(rec.records))
+	records := rec.snapshot()
+	if len(records) != 1 {
+		t.Fatalf("应记录 1 条成本, got %d", len(records))
 	}
-	r := rec.records[0]
+	r := records[0]
 	if r.Category != llmcost.CategoryMainChat || r.SubCategory != llmcost.SubSubAgentRun {
 		t.Errorf("场景应为 main_chat/sub_agent_run, got %s/%s", r.Category, r.SubCategory)
 	}

@@ -139,8 +139,28 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - A3：`app/init_db.go` 改打 `driver / address / name / user`（sqlite 打路径），不再拼接密码。
 - 验证：`go build ./...`、`go vet ./...`、`gofmt -l`、`go test ./...` 全部通过。
 
+### 5.2 批次 B（2026-11-05）
+
+已修：
+
+- **3.1** 默认会话查询错误：记日志 + 500，不再把 DB 故障当成"没有默认会话"去新建。
+- **3.2** `ReactLoop.executeConcurrently` 每个工具 goroutine 加 recover（panic → 失败结果，进程不退出）；
+  顺带修 `createDecisionSafe` 对 `traceRepo == nil` 的解引用（`NewReactLoop` 注释约定允许 nil），
+  新增 `agent/react_loop_test.go` 覆盖 panic + nil trace。
+- **3.3** 测试替身竞态：`captureSink` / `costRecorder` 加锁，删除 mock repo 里未使用的计数器；
+  **`go test -race ./...` 全绿**（此前 36 处告警、5 个用例失败）。
+- **3.4** 评测项目名白名单 `^[A-Za-z0-9_-]+$`，挂在 `/api/admin/eval` 分组中间件上统一校验；
+  新增 `controller/eval_routes_test.go`。
+- **3.5** 业务路径静默吞错：reminder 参数解析 ×2、subagent admin extra、logout、聊天标题落库、
+  会话 Touch、cron 的 MarkDone/ScheduleRetry/MarkFailed、图片指纹查询、反思 trace 创建。
+- 额外：`reflection.dailyReview` 的 `CreateTrace` 错误不再丢弃。
+
+仍留批次 C：3.6 登录限流（需要决定实现位置：服务端窗口 / nginx）、3.7 账单导入批量插入、
+`tool/theme.go` 与 `eval/repo.go` 的静默错误（随死代码决策一起处理）。
+
 ## 六、后续变更
 
 - 2026-11-05：建立本报告；批次 A 开始实施（分支 `fix/server-security-a`）。
 - 2026-11-05：批次 A 完成（A1/A2/A3），全量 build/vet/test 通过；B/C 批次待排期。
 - 2026-11-05：复审补正——`requireConversationOwner` 的 DB 错误不再折叠为 404，改为记日志 + 500，并补回归测试。
+- 2026-11-05：批次 B 完成（3.1–3.5），`go test -race ./...` 全绿；剩 C 批次（限流、账单批量、死代码）。

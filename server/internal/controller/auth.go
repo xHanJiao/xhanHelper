@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"log"
+
 	"github.com/gin-gonic/gin"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -109,7 +111,9 @@ func refreshToken(userRepo *service.UserRepo) gin.HandlerFunc {
 func logoutUser(userRepo *service.UserRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetString("bearer_token")
-		userRepo.Logout(c.Request.Context(), token)
+		if err := userRepo.Logout(c.Request.Context(), token); err != nil {
+			log.Printf("[auth] logout error: %v", err)
+		}
 		view.JSONOK(c, gin.H{"ok": true})
 	}
 }

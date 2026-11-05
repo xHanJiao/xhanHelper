@@ -544,7 +544,11 @@ func (o *Orchestrator) runReActLoop(
 		turn.Finish(outcome)
 	}()
 
-	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
+	util.SafeGo(func() {
+		if err := o.convRepo.Touch(ctx, req.ConversationID); err != nil {
+			log.Printf("[orch] touch conversation error: conv=%s err=%v", req.ConversationID, err)
+		}
+	})
 	// 隐藏轮不落用户消息向量：避免接力提示词污染历史检索/记忆
 	if !req.HiddenRound {
 		util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })

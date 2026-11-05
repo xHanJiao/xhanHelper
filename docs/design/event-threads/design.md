@@ -284,7 +284,8 @@ prompt 规则靠模型自觉，再加一道代码闸：
 
 ### 4.4 summary 怎么维护
 
-- 拼装时对每个被改动的事件，输入旧 summary + 新记忆，输出新 summary（提示词目标 ≤200 字）。
+- 拼装时对每个被改动的事件，输入旧 summary + 新记忆，输出新 summary（提示词目标 ≤300 字）。
+- 写法固定为「倒金字塔 + 电报体」：先一句结论/现状（含最关键数字或日期），再按重要性写关键事实，背景最后；短语 + 分号，去虚词与过渡句，每条保留明确主体。
 - 1000 字是硬上限：`EventRepo.UpdateSummary` 统一截断，拼装与 `event.update` 共用同一口径。上限只做兜底，正常写不到。
 - summary 是「当前状态」，不是完整历史；完整历史在记忆里。
 - 存量被旧 200 字上限切断的 summary 可用 `event-bootstrap --resummarize-truncated` 按记忆重写（先 `--dry-run` 看新旧对照；旧值备份到 `data/event-summary-backup-*.json`）。
@@ -818,4 +819,4 @@ event_assembly:
 - 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
 - 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩调试读取（Admin message-debug），代码保留待统一删除。
 - 2026-11-05：每日回顾（MorningReview / EveningReview）彻底停用——`CronRunner` 移除 discover 定时器与相关配置，不再产生新的 `ReflectionTrace`；`HookStatus.discover_remaining` 与前端「每日回顾剩余」一并删除。影响文件：`server/internal/agent/cron_runner.go`、`server/internal/agent/reflection.go`、`server/internal/appinit/agents.go`、`server/internal/config/config.go`、`front-end/src/views/AdminView.vue`。
-- 2026-11-05 summary 口径回退 + 上限调整：prompt 回到线上 `ec7c9993` 的「≤200 字，写当前状态，未定的事写在里面」；`MaxEventSummaryRunes` 由 600 提到 **1000**（只兜底，不参与目标长度）。`event-bootstrap --resummarize-truncated` 不截断模型输出（`EventRepo.UpdateSummaryUncapped`）并设 `temperature=0.3`。本地测试库实测 11 条存量重写为 172–297 字、结尾完整，无一条触顶。影响文件：`server/internal/agent/event_assembler.go`、`server/internal/service/event_repo.go`、`server/internal/tool/event.go`、`server/internal/model/event.go`、`server/cmd/event-bootstrap/main.go`。
+- 2026-11-05 summary 口径回退 + 上限调整：summary 口径定为「≤300 字 + 电报体 + 倒金字塔」：先结论/现状、按重要性降序、背景最后；`MaxEventSummaryRunes` 由 600 提到 **1000**（只兜底，不参与目标长度）。`event-bootstrap --resummarize-truncated` 不截断模型输出（`EventRepo.UpdateSummaryUncapped`）并设 `temperature=0.3`。本地测试库实测 11 条存量重写为 168–521 字、结尾完整，无一条触顶。影响文件：`server/internal/agent/event_assembler.go`、`server/internal/service/event_repo.go`、`server/internal/tool/event.go`、`server/internal/model/event.go`、`server/cmd/event-bootstrap/main.go`。

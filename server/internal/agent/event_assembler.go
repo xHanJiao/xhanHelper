@@ -653,7 +653,8 @@ event.get（只读）：拿到事件 ID 后读完整事件（summary + 全部记
 规则：
 - 一条记忆最多归一个事件；归不进且不是事件性质的，不要分配，留在普通记忆池。
 - new_events 只放真实事件，memory_ids 必须来自本批新记忆；**至少 2 条**，单条记忆即使像事件也不要建，留在普通记忆池。
-- event_updates 用来重写被改动事件的 summary（≤200 字，写当前状态，未定的事写在里面）；只改名时 name 必填、summary 留空。
+- event_updates 用来重写被改动事件的 summary（≤300 字，写当前状态，未定的事写在里面）；只改名时 name 必填、summary 留空。
+- summary 用倒金字塔 + 电报体：先一句结论/现状（含最关键数字或日期），再按重要性写关键事实，背景最后；短语 + 分号，去虚词和过渡句，每条保留明确主体。
 - 记忆的 current_event_id 非空表示它已属于该事件；内容有变化时把该事件放进 event_updates。
 - merge 只在两个事件确实重复时用；同一批里不要写链式合并（A→B 又 B→C）。
 - 没有需要做的操作就输出 {"assignments":[],"new_events":[],"event_updates":[],"merge":[]}。`, maxIterations)

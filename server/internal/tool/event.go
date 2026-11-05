@@ -139,7 +139,7 @@ func (t *EventTool) Functions() []FuncSchema {
 					"event_id": map[string]interface{}{"type": "string", "description": "事件 ID"},
 					"name":     map[string]interface{}{"type": "string", "description": "事件名（没有 ID 时用，精确匹配）"},
 					"new_name": map[string]interface{}{"type": "string", "description": "新事件名（可选）"},
-					"summary":  map[string]interface{}{"type": "string", "description": "新的当前状态 summary，≤200 字（可选）"},
+					"summary":  map[string]interface{}{"type": "string", "description": "新的当前状态 summary，≤300 字，倒金字塔 + 电报体（可选）"},
 					"memory_ids": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},

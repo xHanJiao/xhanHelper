@@ -15,7 +15,7 @@ type Event struct {
 	ID     string `gorm:"primaryKey;size:36" json:"id"`
 	UserID string `gorm:"size:36;not null;index:idx_events_user_deleted,priority:1" json:"user_id"`
 	Name   string `gorm:"size:100;not null" json:"name"`
-	// Summary 是「当前状态」的派生视图；提示词目标 ≤200 字，硬上限见 service.MaxEventSummaryRunes。
+	// Summary 是「当前状态」的派生视图；提示词目标 ≤300 字，硬上限见 service.MaxEventSummaryRunes。
 	Summary string `gorm:"type:text" json:"summary"`
 	// IsDeleted 软删除标记。与注入无关（注入走记忆分组，删掉的事件没有记忆），
 	// 只影响列表与工具查询。用显式 bool 而非 gorm.DeletedAt：后者会自动过滤所有查询。

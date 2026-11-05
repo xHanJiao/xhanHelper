@@ -247,7 +247,7 @@ func pruneSingleMemoryEvents(ctx context.Context, repos *app.Repos, userID strin
 }
 
 // legacySummaryRunes — 旧版事件 summary 硬上限。值恰好等于它的事件视为被切断
-// （2026-11-05 已放宽到 service.MaxEventSummaryRunes=600，存量需一次性重写）。
+// （2026-11-05 已放宽到 service.MaxEventSummaryRunes=1000，存量需一次性重写）。
 const legacySummaryRunes = 200
 
 // resummarizeMemoryBudget — 单个事件喂给模型的记忆正文上限（字符）。
@@ -258,8 +258,13 @@ const resummarizePrompt = `你是「事件状态」编辑。给你一个事件�
 规则：
 - 只用记忆里明确出现的事实、数字、日期；没有依据的一律不补，信息不足就写短。
 - 写当前状态：已完成的、进行中的、尚未定下来的（待定项写清楚），不写流水账。
+- 倒金字塔：先一句结论/现状（含最关键数字或日期），再按重要性写关键事实，背景最后；不按时间平铺。
+- 每条短语保留明确主体（谁/什么），不要只剩日期和动作。
 - 旧 summary 可能被截断，只作参考，不要照抄它的断句。
-- 不超过 200 个汉字，纯文本；不要 markdown、标题、引号或任何解释。
+- 不超过 300 个汉字。
+- 电报体：短语拼接、分号断句，去掉「已经/然后/目前/需要/我们」这类虚词和过渡句，不写完整句子。
+- 日期、数字、专名按原文，不改写、不合并。
+- 纯文本；不要 markdown、标题、列表、引号或任何解释。
 - 只输出 summary 正文。`
 
 // summaryBackup — 重写前的旧值备份（写 data/ 下的 JSON，用于回滚）。

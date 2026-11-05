@@ -67,7 +67,11 @@ func TestBuildResummarizeInputTruncatesByBudget(t *testing.T) {
 	if strings.Contains(out, "这条不该出现") {
 		t.Fatalf("over-budget memory should be dropped, got:\n%s", out)
 	}
-	if !strings.Contains(out, "另有 2 条更早的记忆未列出") {
+	// 最新一条即使超预算也会被截断带入，所以只有剩下的 1 条算「未列出」。
+	if !strings.Contains(out, "另有 1 条记忆未列出") {
 		t.Fatalf("should report omitted memories, got:\n%s", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("newest memory should be included truncated, got:\n%s", out)
 	}
 }

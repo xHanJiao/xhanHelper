@@ -55,7 +55,7 @@ func main() {
 
 	limit := flag.Int("limit", 0, "本次最多处理多少条记忆（0 = 全部）")
 	reset := flag.Bool("reset", false, "清空该用户全部事件、记忆退回普通池，并删除游标后重跑")
-	dryRun := flag.Bool("dry-run", false, "只统计输入与事件现状；不调 LLM、不改事件/记忆数据（AutoMigrate 仍会跑）")
+	dryRun := flag.Bool("dry-run", false, "不做 DB 写入（AutoMigrate 仍会跑）；个别子命令（如 --resummarize-truncated）仍会调 LLM")
 	review := flag.Bool("review", false, "跑完后做一次结构复盘：Flash 看全部事件，输出 merge + 改名")
 	pruneSingles := flag.Bool("prune-singles", false, "删除只含 0/1 条记忆的事件（记忆退回普通池）；可配 --dry-run 先看清单；建议先停服务")
 	resummarize := flag.Bool("resummarize-truncated", false, "按事件记忆重写被旧 200 字上限切断的 summary；--dry-run 只打印新旧对照（仍会调 LLM）")
@@ -108,22 +108,23 @@ Flags:
 	if *review && *dryRun {
 		log.Fatal("--review 与 --dry-run 不能同时使用")
 	}
+	// 互斥校验放在最前：早期 return 的分支若先执行，会静默忽略同时传入的另一个 flag。
+	if *pruneSingles && (*reset || *review || *limit > 0 || *resummarize) {
+		log.Fatal("--prune-singles 只能单独使用（不能与 --reset / --review / --limit / --resummarize-truncated 同时）")
+	}
+	if *resummarize && (*reset || *review || *limit > 0 || *pruneSingles) {
+		log.Fatal("--resummarize-truncated 只能单独使用（不能与 --reset / --review / --limit / --prune-singles 同时）")
+	}
 	if !*dryRun {
 		config.GuardProdWrite(cfg.DB.Database)
 	}
 	if *pruneSingles {
-		if *reset || *review || *limit > 0 {
-			log.Fatal("--prune-singles 只能单独使用（不能与 --reset / --review / --limit 同时）")
-		}
 		if err := pruneSingleMemoryEvents(ctx, repos, userID, *dryRun); err != nil {
 			log.Fatalf("prune singles: %v", err)
 		}
 		return
 	}
 	if *resummarize {
-		if *reset || *review || *limit > 0 || *pruneSingles {
-			log.Fatal("--resummarize-truncated 只能单独使用（不能与 --reset / --review / --limit / --prune-singles 同时）")
-		}
 		llmClients := app.InitLLM(cfg, llm.NewClient, llm.NewStrongClient, llmcost.NewDBRecorder(repos.LlmCost))
 		if err := resummarizeTruncatedEvents(ctx, cfg.DB.Database, repos, llmClients.BgFlash, userID, *dryRun); err != nil {
 			log.Fatalf("resummarize truncated summaries: %v", err)
@@ -307,7 +308,7 @@ func resummarizeTruncatedEvents(ctx context.Context, dbName string, repos *app.R
 		sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt.After(list[j].CreatedAt) })
 	}
 
-	backupPath := filepath.Join("data", fmt.Sprintf("event-summary-backup-%s.json", time.Now().Format("20060102-150405")))
+	backupPath := filepath.Join("data", fmt.Sprintf("event-summary-backup-%s.json", time.Now().Format("20060102-150405.000")))
 	if !dryRun {
 		if err := saveSummaryBackup(backupPath, dbName, userID, targets); err != nil {
 			return fmt.Errorf("save backup: %w", err)
@@ -333,7 +334,7 @@ func resummarizeTruncatedEvents(ctx context.Context, dbName string, repos *app.R
 			failed++
 			continue
 		}
-		next := truncateRunes(cleanResummarizedSummary(msg.Content), service.MaxEventSummaryRunes)
+		next := truncateSummary(cleanResummarizedSummary(msg.Content), service.MaxEventSummaryRunes)
 		if next == "" {
 			log.Printf("[resummarize] %q (%s) empty output, skipped", e.Name, e.ID)
 			failed++
@@ -389,7 +390,13 @@ func buildResummarizeInput(e *model.Event, mems []model.UserMemory) string {
 	for _, m := range mems {
 		line := fmt.Sprintf("- [%s] %s：%s\n", m.CreatedAt.Format("2006-01-02"), m.Topic, m.MemoryValue)
 		n := utf8.RuneCountInString(line)
-		if used+n > resummarizeMemoryBudget {
+		remaining := resummarizeMemoryBudget - used
+		if n > remaining {
+			// 至少把最新一条带进去（截到剩余预算），否则模型可能只看到旧 summary。
+			if remaining >= 3 {
+				b.WriteString(truncateSummary(line, remaining-2) + "…\n")
+				listed++
+			}
 			break
 		}
 		used += n
@@ -398,9 +405,18 @@ func buildResummarizeInput(e *model.Event, mems []model.UserMemory) string {
 	}
 	b.WriteString("</memories>\n")
 	if rest := len(mems) - listed; rest > 0 {
-		fmt.Fprintf(&b, "（另有 %d 条更早的记忆未列出）\n", rest)
+		fmt.Fprintf(&b, "（另有 %d 条记忆未列出）\n", rest)
 	}
 	return b.String()
+}
+
+// truncateSummary 按字符截断且不补省略号，落库口径与 service.MaxEventSummaryRunes 一致。
+func truncateSummary(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 // cleanResummarizedSummary 去掉模型常见的围栏/引号/换行残留。
@@ -432,7 +448,7 @@ func saveSummaryBackup(path, dbName, userID string, events []model.Event) error 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	return os.WriteFile(path, b, 0o600)
 }
 
 // resolveUser 依次尝试 --user、本地单用户、库里唯一用户。

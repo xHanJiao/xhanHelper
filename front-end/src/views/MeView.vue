@@ -12,10 +12,10 @@ const isAdmin = computed(() => auth.user?.isAdmin === true)
 const name = computed(() => auth.user?.username || 'xhanHelper')
 
 const items = [
-  { label: '账单', sub: '记录', path: '/bills', icon: '¥' },
-  { label: '记忆', sub: '长期', path: '/memories', icon: '◎' },
-  { label: '事件', sub: '记忆聚合', path: '/event-threads', icon: '✳' },
-  { label: '智能体', sub: '自定义', path: '/agents', icon: '◇' }
+  { label: '账单', path: '/bills', icon: '¥' },
+  { label: '记忆', path: '/memories', icon: '◎' },
+  { label: '事件', path: '/event-threads', icon: '✳' },
+  { label: '智能体', path: '/agents', icon: '◇' }
 ]
 
 function go(path) {
@@ -46,10 +46,7 @@ function go(path) {
       <div class="grid">
         <button v-for="item in items" :key="item.path" class="item card" type="button" @click="go(item.path)">
           <span class="item-ico">{{ item.icon }}</span>
-          <span class="item-text">
-            <span class="item-name">{{ item.label }}</span>
-            <span class="item-sub">{{ item.sub }}</span>
-          </span>
+          <span class="item-name">{{ item.label }}</span>
         </button>
       </div>
 
@@ -148,9 +145,7 @@ function go(path) {
   color: var(--color-primary);
   flex: 0 0 auto;
 }
-.item-text { display: flex; flex-direction: column; min-width: 0; }
-.item-name { font-size: 13px; font-weight: 600; }
-.item-sub { font-size: 10px; color: var(--color-text-muted); margin-top: 1px; }
+.item-name { font-size: 13.5px; font-weight: 600; }
 .section { margin-top: 6px; }
 .section-title { font-size: 11px; color: var(--color-text-muted); padding: 0 4px 7px; letter-spacing: 0.04em; }
 .row {

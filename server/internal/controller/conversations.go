@@ -194,11 +194,18 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 	}
 }
 
-// requireConversationOwner 校验会话归属，非 owner 返回 403，未找到返回 404。
+// requireConversationOwner 校验会话归属：DB 故障 500（记日志），未找到 404，非 owner 403。
 // 返回会话对象供调用方复用（避免同一请求二次查询）。
 func requireConversationOwner(c *gin.Context, convRepo *service.ConversationRepo, convID string) (*model.Conversation, bool) {
 	conv, err := convRepo.FindByID(c.Request.Context(), convID)
-	if err != nil || conv == nil {
+	if err != nil {
+		// FindByID 查不到返回 (nil, nil)，所以 err != nil 一定是真故障——
+		// 不能折叠成 404，否则用户看到"会话不存在"、日志里什么都没有。
+		log.Printf("[conv] FindByID error: conv=%s err=%v", convID, err)
+		view.JSONError(c, 500, "query conversation failed")
+		return nil, false
+	}
+	if conv == nil {
 		view.JSONError(c, 404, "conversation not found")
 		return nil, false
 	}

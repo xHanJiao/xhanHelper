@@ -141,14 +141,11 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		var conv *model.Conversation
 		explicitID := req.ConversationID != nil && *req.ConversationID != ""
 		if explicitID {
-			var err error
-			conv, err = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
-			if err != nil {
-				log.Printf("[chat] FindByID error: %v", err)
-			}
-			// 指定的会话不存在（如无痕会话已被销毁）→ 直接报错，不静默新建
-			if conv == nil {
-				view.JSONError(c, 404, "conversation not found")
+			// 会话 id 由客户端提供，必须校验归属：否则会按他人 conv.ID 读历史、
+			// 往他人会话写消息。其余会话端点统一走 requireConversationOwner。
+			var ok bool
+			conv, ok = requireConversationOwner(c, convRepo, *req.ConversationID)
+			if !ok {
 				return
 			}
 		} else if req.ConversationID == nil {

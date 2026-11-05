@@ -35,10 +35,20 @@ func RequestLogger(toolLogger *log.Logger) gin.HandlerFunc {
 	}
 }
 
+// redactedBodyPaths — 请求体含凭据的路径，日志一律不记内容（别把明文密码写进日志文件）。
+var redactedBodyPaths = map[string]bool{
+	"/api/auth/login":           true,
+	"/api/auth/register":        true,
+	"/api/auth/change-password": true,
+}
+
 // peekBody 取请求体开头用于日志，并把已读部分放回请求体（handler 照常读到完整内容）。
 // 只有文本请求才记内容：图片上传这类二进制体会把整行日志刷成几 KB 乱码，
 // 把紧随其后的真实错误日志顶出视野（曾经因此误判"没有日志"）。
 func peekBody(c *gin.Context) string {
+	if redactedBodyPaths[c.Request.URL.Path] {
+		return "<redacted:auth>" // 不读 body，handler 仍收到完整内容
+	}
 	ct := c.Request.Header.Get("Content-Type")
 	if ct == "" {
 		return ""

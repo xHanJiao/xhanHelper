@@ -63,7 +63,13 @@ func AllModels() []any {
 func InitDB(cfg *config.Config) *gorm.DB {
 	log.Printf("[config] env=%s server.port=%d server.mode=%s",
 		os.Getenv("APP_ENV"), cfg.Server.Port, cfg.Server.Mode)
-	log.Printf("[config] db.driver=%s db.dsn=%s", cfg.DB.Driver, cfg.DB.DSN())
+	// 不打完整 DSN：mysql 的 DSN 里带数据库密码，日志会流向文件/部署日志。
+	if cfg.DB.Driver == "sqlite" {
+		log.Printf("[config] db.driver=sqlite db.database=%s", cfg.DB.Database)
+	} else {
+		log.Printf("[config] db.driver=%s db.address=%s:%d db.name=%s db.user=%s",
+			cfg.DB.Driver, cfg.DB.Host, cfg.DB.Port, cfg.DB.Database, cfg.DB.User)
+	}
 	log.Printf("[config] llm.provider=%s llm.model=%s llm.strong_model=%s llm.key=%s...",
 		cfg.LLM.Provider, cfg.LLM.Model, cfg.LLM.StrongModel, cfg.LLM.APIKey[:min(8, len(cfg.LLM.APIKey))])
 	log.Printf("[config] embedding.model=%s embedding.key=%s... embedding.base_url=%s",

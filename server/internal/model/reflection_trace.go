@@ -19,8 +19,8 @@ type ReflectionTrace struct {
 type ReflectionLLMCall struct {
 	ID               string    `gorm:"primaryKey;size:36" json:"id"`
 	TraceID          string    `gorm:"size:36;not null;index" json:"trace_id"`
-	Caller           string    `gorm:"size:50;not null" json:"caller"`          // ThemeAnalyst | ThemeDiscoverer | StateUpdater | LaunchAgent
-	CallerDetail     string    `gorm:"size:100" json:"caller_detail,omitempty"` // 如 "ThemeAnalyst:职业规划"
+	Caller           string    `gorm:"size:50;not null" json:"caller"`          // 调用方（如 MissionRunner）
+	CallerDetail     string    `gorm:"size:100" json:"caller_detail,omitempty"` // 如 "MissionRunner:职业规划"
 	RequestJSON      *string   `gorm:"type:longtext" json:"request_json,omitempty"`
 	ResponseJSON     *string   `gorm:"type:longtext" json:"response_json,omitempty"`
 	PromptTokens     int       `json:"prompt_tokens"`
@@ -34,7 +34,7 @@ type ReflectionLLMCall struct {
 type ReflectionDecision struct {
 	ID         string    `gorm:"primaryKey;size:36" json:"id"`
 	TraceID    string    `gorm:"size:36;not null;index" json:"trace_id"`
-	Stage      string    `gorm:"size:30;not null" json:"stage"`    // theme_selection | theme_analysis | scoring | discovery
+	Stage      string    `gorm:"size:30;not null" json:"stage"`    // tool_execution | finding | discovery
 	Subject    string    `gorm:"size:100;not null" json:"subject"` // 如 "职业规划" | "finding f-003"
 	Verdict    string    `gorm:"size:20;not null" json:"verdict"`  // selected | skipped | topn | dropped | rejected | nominated
 	Reason     string    `gorm:"type:text;not null" json:"reason"`

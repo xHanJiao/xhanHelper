@@ -30,7 +30,6 @@ type Config struct {
 	LLM               LLMConfig               `yaml:"llm"`
 	LLMBg             LLMConfig               `yaml:"llm_bg"` // 后台任务专用 LLM（可选；model 为空则回退主 LLM）
 	Embedding         EmbeddingConfig         `yaml:"embedding"`
-	Reflection        ReflectionConfig        `yaml:"reflection"`
 	Retrieval         RetrievalConfig         `yaml:"retrieval"`
 	EventAssembly     EventAssemblyConfig     `yaml:"event_assembly"`
 	WebTools          WebToolsConfig          `yaml:"web_tools"`
@@ -220,7 +219,7 @@ type ServerConfig struct {
 	// 温度越低越少改写；nil = 不干预，走厂商默认（见 docs/design/memory-facts-verbatim）。
 	// 指针类型：0 是合法取值（贪心），不能用零值表示「未配置」。
 	MemoryExtractTemperature *float64 `yaml:"memory_extract_temperature"`
-	DisableBackgroundTasks   *bool    `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）；nil=未显式配置，沿用 base
+	DisableBackgroundTasks   *bool    `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/反思等）；nil=未显式配置，沿用 base
 	SidecarURL               string   `yaml:"sidecar_url"`              // Python sidecar MCP HTTP 地址
 	TokenTTLMinutes          int      `yaml:"token_ttl_minutes"`        // token 过期时间（分钟），默认 5
 	MaxTokensPerUser         int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 4
@@ -363,15 +362,6 @@ type EventAssemblyConfig struct {
 	DedupeSim     float64 `yaml:"dedupe_sim"`     // 新建事件前与现有 summary 的余弦上限
 	MaxIterations int     `yaml:"max_iterations"` // ReAct 总轮数（含强制收敛轮）
 	BatchSize     int     `yaml:"batch_size"`     // 单批新记忆条数；超出分批但仍全部处理
-}
-
-// ReflectionConfig — 反思系统配置
-type ReflectionConfig struct {
-	LaunchMaxIterations   int            `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
-	AnalystMaxIterations  int            `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
-	DiscoverMaxIterations int            `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
-	ClusterThreshold      float64        `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
-	ActiveDurationDays    map[string]int `yaml:"active_duration_days"`    // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -632,21 +622,6 @@ func merge(dst, src *Config) {
 	if src.Activity.WatermarkMode != "" {
 		dst.Activity.WatermarkMode = src.Activity.WatermarkMode
 	}
-	if src.Reflection.LaunchMaxIterations != 0 {
-		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
-	}
-	if src.Reflection.AnalystMaxIterations != 0 {
-		dst.Reflection.AnalystMaxIterations = src.Reflection.AnalystMaxIterations
-	}
-	if src.Reflection.DiscoverMaxIterations != 0 {
-		dst.Reflection.DiscoverMaxIterations = src.Reflection.DiscoverMaxIterations
-	}
-	if src.Reflection.ClusterThreshold != 0 {
-		dst.Reflection.ClusterThreshold = src.Reflection.ClusterThreshold
-	}
-	if len(src.Reflection.ActiveDurationDays) > 0 {
-		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
-	}
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
 	}
@@ -877,7 +852,6 @@ func validate(cfg *Config) error {
 	if cfg.Snowflake.NodeID == 0 {
 		cfg.Snowflake.NodeID = 1
 	}
-	// Reflection 默认值
 	// Retrieval 默认值
 	if cfg.Retrieval.FreshnessDecay == 0 {
 		cfg.Retrieval.FreshnessDecay = 0.02
@@ -975,23 +949,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.EventAssembly.BatchSize == 0 {
 		cfg.EventAssembly.BatchSize = 40
-	}
-	if cfg.Reflection.LaunchMaxIterations == 0 {
-		cfg.Reflection.LaunchMaxIterations = 8
-	}
-	if cfg.Reflection.AnalystMaxIterations == 0 {
-		cfg.Reflection.AnalystMaxIterations = 3
-	}
-	if cfg.Reflection.DiscoverMaxIterations == 0 {
-		cfg.Reflection.DiscoverMaxIterations = 3
-	}
-	if cfg.Reflection.ClusterThreshold == 0 {
-		cfg.Reflection.ClusterThreshold = 0.70
-	}
-	if len(cfg.Reflection.ActiveDurationDays) == 0 {
-		cfg.Reflection.ActiveDurationDays = map[string]int{
-			"long": 90, "medium": 30, "short": 14, "ephemeral": 7,
-		}
 	}
 	if cfg.LLM.MaxToolResultChars == 0 {
 		cfg.LLM.MaxToolResultChars = 2000

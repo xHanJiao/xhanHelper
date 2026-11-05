@@ -77,6 +77,7 @@ var skipTables = map[string]bool{
 // orphanTables 旧云端 dump 里存在、但已不在 AllModels 的残留表（仅 -recreate 时一并清掉）。
 var orphanTables = []string{
 	"facts", "fact_changelogs", "missions", "mailbox_items", "pending_findings", "commitments",
+	"theme_states",
 }
 
 var (
@@ -670,7 +671,7 @@ func summarize(dst *gorm.DB, conceptDropped int64, took time.Duration) {
 	}
 	key := []string{
 		"conversations", "messages", "conversation_summaries", "user_memories",
-		"notes", "bills", "documents", "reminders", "theme_states",
+		"notes", "bills", "documents", "reminders",
 		"embeddings", "embedding_chunks", "concept_embeddings",
 	}
 	for _, t := range key {

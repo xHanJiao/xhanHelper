@@ -260,6 +260,35 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - **`http.Server` 超时**：补 `ReadHeaderTimeout: 10s` 与 `IdleTimeout: 120s` 挡慢连接；
   **有意不设 `ReadTimeout` / `WriteTimeout`**——`/api/chat` 是 SSE 长连接，写超时会掐断流。
 
+### 5.7 列表 `limit` 上限补齐（2026-11-05）
+
+批次 C 只覆盖了账单 / 笔记 / 记忆等 8 个接口；其余十余个列表接口仍把 `?limit=` 直传 repo。
+本次全部改走 `parseListLimit`（默认值 + 上限 `listLimitMax=200`）：
+
+- 用户面：agents、prompts、文档批注（保留 `limit=0` 只取 total 的语义，走 `parseListLimitAllowZero`）、
+  批注回复；
+- 管理面：eval（5 个）、eval run、llm-io、message-trace、reflection（2 个）、subagent、tools。
+
+原本已自带上限、未改动的：admin users（100）、会话消息 cursor（repo 内 50 轮）、artifacts（0–100 校验）、
+image（`clampLimit`）、message-debug（1000）。新增 `TestListAgentsClampsLimit`：
+`?limit=100000` 时单页只返回 200 条，`total` 仍为全量。
+
+### 5.8 主题/状态子系统整体删除（2026-11-05）
+
+用户拍板「彻底删」。删除范围（均为停写且无生产调用方的代码）：
+
+- `agent/theme_analyst.go`、`theme_chunker.go`、`theme_discover.go(+_test)`、`theme_embedder.go`、
+  `theme_store.go`、`theme_verifier.go`；`agent/state_updater.go`、`state_worker.go`；
+  `agent/reflection.go`（`ReflectionOrchestrator` 从未被构造）。
+- `service/theme_state_repo.go`、`model/theme_state.go`；`app.ThemeVectorWriter` 接口。
+- `Repos.ThemeState`、`AllModels` 里的 `ThemeState`、admin message-debug 的 `type=theme` 分支。
+- `config.ReflectionConfig` 与 5 份 `conf/config*.yaml` 的 `reflection:` 段（字段已全部无消费方）。
+- `react_loop.go` 里 `theme_analyst` 的 skip_reason 决策分支与 `shortThemeName`；
+  `createDecisionSafe` / `strPtr` 移到 `react_loop.go` 保留（仍被使用）。
+- `cmd/mysql2sqlite`、`cmd/sqlite2mysql` 的 summary 不再统计 `theme_states`（新库没有该表）。
+- `cmd/entity-gc --purge-legacy-themes` 保留：改为按表名裸 SQL + `HasTable` 判断，用于清理存量库
+  （表不存在时跳过），测试同步改为裸建旧表。
+
 ## 六、后续变更
 
 - 2026-11-05：建立本报告；批次 A 开始实施（分支 `fix/server-security-a`）。
@@ -282,3 +311,7 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
   中间件与心跳只对过期/无效回 401，DB 故障记日志后回 500（避免一次数据库抖动把所有客户端登出）。
 - 2026-11-05：小修一批——分享创建加事务、`/api/chat` body 上限 4 MiB（413）、HTTP 服务补
   `ReadHeaderTimeout`/`IdleTimeout`（有意不设写超时，避免掐断 SSE）。
+- 2026-11-05：列表 `limit` 上限补齐——其余用户面与管理面列表接口统一走 `parseListLimit`（≤200），
+  批注列表保留 `limit=0` 只取 total 的语义。
+- 2026-11-05：主题/状态子系统整体删除（agent 9 个文件、repo/model、`reflection` 配置段、admin 调试分支），
+  `entity-gc --purge-legacy-themes` 保留用于清理存量库。

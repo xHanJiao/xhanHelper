@@ -65,7 +65,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	}()
 
 	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）。
-	// 检索统一入口：主对话 + 内部子系统（StateUpdater/ThemeAnalyst）共用。
+	// 检索统一入口：主对话与后台子系统共用。
 	unifiedSearch := tool.NewUnifiedSearchTool(
 		map[string]retrieval.ContextSource{
 			"memory":  memSource,

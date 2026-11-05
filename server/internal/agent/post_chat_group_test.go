@@ -276,14 +276,6 @@ func TestMemoryWorker_SkipsWhenDisabled(t *testing.T) {
 	}
 }
 
-// ---- StateWorker tests ----
-
-func TestStateWorker_Name(t *testing.T) {
-	if got := (&StateWorker{}).Name(); got != "state" {
-		t.Errorf("expected 'state', got '%s'", got)
-	}
-}
-
 func TestMemoryWorker_Name(t *testing.T) {
 	if got := (&MemoryWorker{}).Name(); got != "memory" {
 		t.Errorf("expected 'memory', got '%s'", got)

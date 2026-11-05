@@ -31,7 +31,6 @@ func AllModels() []any {
 		&model.UserPrompt{},
 		&model.Embedding{},
 		&model.MCPServerRecord{},
-		&model.ThemeState{},
 		&model.Event{},
 		&model.ReflectionTrace{},
 		&model.Reminder{},

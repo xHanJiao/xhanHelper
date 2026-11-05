@@ -45,7 +45,4 @@ func TestReactLoopRunWithNilTraceRepo(t *testing.T) {
 	if res == nil || !strings.Contains(res.FinalResponse, "ok") {
 		t.Fatalf("unexpected result: %+v", res)
 	}
-
-	// endTraceSafe 是另一条 nil 入口（反思编排器/状态更新器共用），也不能解引用
-	endTraceSafe(nil, context.Background(), "trace-1", "completed", 0, 0, nil)
 }

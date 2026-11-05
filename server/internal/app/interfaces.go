@@ -19,8 +19,3 @@ type ConceptEmbedder interface {
 	EnsureTopicEmbedded(ctx context.Context, userID, topic, parentType, parentID string)
 	EnsureTagsEmbedded(ctx context.Context, userID, tags, parentType, parentID string)
 }
-
-// ThemeVectorWriter 主题向量写入接口，由 agent.ThemeEmbedder 实现。
-type ThemeVectorWriter interface {
-	EnsureEmbedded(ctx context.Context, userID, themeID, name, description string)
-}

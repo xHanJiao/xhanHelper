@@ -160,7 +160,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	eventHandler := controller.NewEventHandler(repos.Event, repos.Mem)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(repos.Trace)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
-	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note, repos.ThemeState)
+	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note)
 	replayHandler := controller.NewReplayHandler(repos.Message, agents.ReplayRunner, infra.Embedder)
 	imageHandler := controller.NewImageHandler(infra.ImageStore)
 	artifactHandler := controller.NewArtifactHandler(repos.Artifact)

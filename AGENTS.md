@@ -81,7 +81,7 @@ POST /api/chat
 | 循环 | 文件 | 调用方式 | 用在哪 |
 |------|------|----------|--------|
 | 主编排循环 | `agent/orchestrator.go` | 流式 `Chat`，原生 FC 优先，最终轮强制收敛 | `POST /api/chat` 用户主对话 |
-| `ReactLoop` | `agent/react_loop.go` | `ChatSync` + prompt engineering，工具结果以 `role=user` 回填 | 反思子系统（ThemeAnalyst / ThemeDiscoverer / StateUpdater / MissionRunner），写 `ReflectionTrace` |
+| `ReactLoop` | `agent/react_loop.go` | `ChatSync` + prompt engineering，工具结果以 `role=user` 回填 | 反思子系统（MissionRunner），写 `ReflectionTrace` |
 | `MiniReAct` | `agent/mini_react.go` | `ChatSync` + 原生 FC，结果以 `role=tool` 回填，主循环耗尽后强制收敛轮 | 后台 worker 与 subagent（`task` 工具），事件前缀 `mini_react:*` |
 
 ## 数据模型（`server/internal/model/`，按域分组）
@@ -155,8 +155,6 @@ type Tool interface {
 | `memory_worker.go` / `extractor.go` | `UserMemory` 提取 + 向量去重（阈值 `server.memory_dupe_threshold`，默认 0.85）；`server.memory_auto_extract: false` 时跳过，只留主循环 inline `record_memory`（事件拼装照常消费 inline 记忆） |
 | `summary_worker.go` | `ConversationSummary` 增量合并 + embedding + chunk |
 | `profile_worker.go` | `UserProfileFact`（冷启动 / 增量 / 迁移，配额校验重试） |
-| ~~`state_worker.go` / `state_updater.go`~~ | 已停写（事件系统接管；代码保留未接线） |
-| ~~`theme_*.go`~~ | 已停写（主题发现/分析/检验；代码保留未接线） |
 | `mission_*.go` | Mission 发现与定期检查，报告投递信箱 |
 | `secretary.go` | 把分析发现转成人性化提醒文案 |
 | `ephemeral_destroyer.go` | 无痕会话销毁（同步软删 + 后台分批物理清理） |
@@ -197,7 +195,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 **`make test` 已停用**（`Makefile` 里整段注释，help 文本是旧的）。改动验收按影响面选：
 
 - 影响主链路（聊天 / 工具调用 / SSE / DB 写入）：`go build ./... && go test ./...` 全绿 + 新增针对性单测 + 真机跑一次聊天
-- 只影响后台低危任务（记忆 / 摘要 / 主题 / 反思等）：`go build ./... && go test ./...` + 改前端则 `vite build` + 真机跑一次聊天并检查日志无 `[post_chat_group]` 等报错
+- 只影响后台低危任务（记忆 / 摘要 / 反思等）：`go build ./... && go test ./...` + 改前端则 `vite build` + 真机跑一次聊天并检查日志无 `[post_chat_group]` 等报错
 - 所有改动：若触及 `docs/design/<feature>/` 描述的行为，同步该文档（含在文档尾部追加「后续变更」）
 
 ## API（按模块，实现见对应文件）
@@ -352,4 +350,5 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 - `server/Makefile` 的 `build-topic-fix` / `build-backfill` / `build-rebuild` 指向的 `cmd/` 子目录已不存在
 - `tool.DynamicToolLoader` 接口是死代码（无实现无调用）；"每 30s 从 DB 加载动态工具 + sidecar 转发"不成立。MCP proxy 工具已下掉，`mcp.Manager` 仅剩监控统计用途
 - `docs/agents/*.md`、`docs/backend-reference.md` 是历史脚手架（引用的 `CONTEXT-MAP.md`、`docs/adr/`、`/api/devices/register` 都不存在）
+- **主题/状态子系统已于 2026-11-05 整体删除**（`agent/theme_*.go`、`agent/state_*.go`、`service/theme_state_repo.go`、`model/theme_state.go`、`reflection` 配置段）。历史设计文档（`docs/design/phase-6/`、`phase-13/`、`phase-15/`）只作考古，别再照着接线。存量库的 `theme_states` / theme 向量可用 `cmd/entity-gc --purge-legacy-themes --write` 清理
 - 根 `scripts/*.sh` 是 device-token 时代脚本，已不适用；服务端脚本在 `server/scripts/`。**例外**：根 `scripts/dev-stats.py` 是仓库级统计工具（见「常用命令」），不是遗留脚本

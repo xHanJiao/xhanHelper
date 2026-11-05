@@ -53,7 +53,7 @@ type EphemeralPurger interface {
 }
 
 // PostChatWorkerGroup — 对话后处理协调器。
-// 取代原 post_chat（记忆+主题）与 summary_generation（摘要）两条独立定时任务路径：
+// 取代原 post_chat（记忆）与 summary_generation（摘要）两条独立定时任务路径：
 // 统一读取 session 窗口内 user 消息，构建共享文本，然后分发给各 worker。
 // 由 CronRunner 的 session_end 延迟任务驱动。
 type PostChatWorkerGroup struct {

@@ -716,7 +716,7 @@ func (r *MessageRepo) ListChatMessagesBetween(ctx context.Context, convID string
 // buildMessageFilterQuery — 构造共享的 WHERE 过滤条件（user_id, status, role, keywords, convID, time range）。
 // subConversationExclusion — 排除子会话（subAgent）消息的 SQL 条件。
 // 子会话消息（MsgSink 落库时置 IsSubAgent=true）只服务于其任务本身，
-// 不参与任何"按用户扫描"的后台统计/检索聚合（反射主题发现的活动统计、
+// 不参与任何"按用户扫描"的后台统计/检索聚合（后台反思的活动统计、
 // message_search 等），避免污染用户活动数据。
 const subConversationExclusion = "is_sub_agent = 0"
 

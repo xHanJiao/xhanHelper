@@ -175,7 +175,7 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 
 		results := rl.executeConcurrently(ctx, parsed.ToolCalls, result)
 
-		// 将工具结果反馈到消息中 + 记录 skip_reason 决策
+		// 将工具结果反馈到消息中
 		for i := range parsed.ToolCalls {
 			resJSON, err := json.Marshal(results[i].Result)
 			if err != nil {
@@ -186,25 +186,6 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 				Role:    "user",
 				Content: string(resJSON),
 			})
-
-			// ThemeAnalyst 返回 skip_reason 时记录业务层决策
-			tcLog := results[i]
-			if tcLog.Tool == "theme_analyst" && tcLog.Result != nil && tcLog.Result.Success && tcLog.Result.Data != nil {
-				var taData struct {
-					SkipReason string `json:"skip_reason"`
-					SkipDetail string `json:"skip_detail"`
-				}
-				if json.Unmarshal(tcLog.Result.Data, &taData) == nil && taData.SkipReason != "" {
-					createDecisionSafe(rl.traceRepo, ctx, &model.ReflectionDecision{
-						ID:      uuid.New().String(),
-						TraceID: rl.traceID,
-						Stage:   "theme_analysis",
-						Subject: "theme_analyst:" + shortThemeName(string(tcLog.Args)),
-						Verdict: "skipped",
-						Reason:  taData.SkipReason + ": " + taData.SkipDetail,
-					})
-				}
-			}
 		}
 
 		result.FinalResponse = resp.Content
@@ -315,17 +296,6 @@ func unrollJSONStrings(v interface{}) interface{} {
 	}
 }
 
-// shortThemeName 从 theme_analyst 的 args JSON 中提取主题名
-func shortThemeName(argsJSON string) string {
-	var a struct {
-		ThemeName string `json:"theme_name"`
-	}
-	if json.Unmarshal([]byte(argsJSON), &a) == nil && a.ThemeName != "" {
-		return a.ThemeName
-	}
-	return "unknown"
-}
-
 // extractUsage 从 ResponseJSON 中解析 token 用量
 func extractUsage(responseJSON string) (promptTokens, completionTokens int) {
 	var v struct {
@@ -339,3 +309,14 @@ func extractUsage(responseJSON string) (promptTokens, completionTokens int) {
 	}
 	return 0, 0
 }
+
+func createDecisionSafe(repo *service.ReflectionTraceRepo, ctx context.Context, decision *model.ReflectionDecision) {
+	if repo == nil { // NewReactLoop 约定 traceRepo 可为 nil（不写 trace）
+		return
+	}
+	if err := repo.CreateDecision(ctx, decision); err != nil {
+		log.Printf("[reflection] CreateDecision error: %v", err)
+	}
+}
+
+func strPtr(s string) *string { return &s }

@@ -75,6 +75,17 @@ func TestPurgeCancelledNotes(t *testing.T) {
 	}
 }
 
+func assertTableCount(t *testing.T, db *gorm.DB, table, cond string, arg interface{}, want int64) {
+	t.Helper()
+	var got int64
+	if err := db.Table(table).Where(cond, arg).Count(&got).Error; err != nil {
+		t.Fatalf("count %s %s=%v: %v", table, cond, arg, err)
+	}
+	if got != want {
+		t.Errorf("count %s %s=%v = %d, want %d", table, cond, arg, got, want)
+	}
+}
+
 func assertCount(t *testing.T, db *gorm.DB, m interface{}, cond string, arg interface{}, want int64) {
 	t.Helper()
 	var got int64
@@ -124,11 +135,14 @@ func TestPurgeLegacyThemes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ThemeState{}, &model.ConceptEmbedding{}, &model.Embedding{}, &model.EmbeddingChunk{}); err != nil {
+	if err := db.AutoMigrate(&model.ConceptEmbedding{}, &model.Embedding{}, &model.EmbeddingChunk{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-
-	if err := db.Create(&model.ThemeState{ID: "t1", UserID: "u1", Name: "旧主题"}).Error; err != nil {
+	// theme_states 已从模型删除，测试里按旧 schema 裸建表，验证清理工具仍能处理存量库。
+	if err := db.Exec("CREATE TABLE theme_states (id TEXT PRIMARY KEY, user_id TEXT, name TEXT)").Error; err != nil {
+		t.Fatalf("create theme_states: %v", err)
+	}
+	if err := db.Exec("INSERT INTO theme_states (id, user_id, name) VALUES (?, ?, ?)", "t1", "u1", "旧主题").Error; err != nil {
 		t.Fatalf("seed theme: %v", err)
 	}
 	concepts := []model.ConceptEmbedding{
@@ -171,13 +185,13 @@ func TestPurgeLegacyThemes(t *testing.T) {
 	if want := (ThemePurgeSummary{Themes: 1, ThemeVectors: 1, ChunkVectors: 1, ChunkRows: 1, Concepts: 1}); *sum != want {
 		t.Fatalf("dry-run summary = %+v, want %+v", *sum, want)
 	}
-	assertCount(t, db, &model.ThemeState{}, "id = ?", "t1", 1)
+	assertTableCount(t, db, "theme_states", "id = ?", "t1", 1)
 
 	// write：旧主题消失，note 数据与 topic concept 保留。
 	if _, err := PurgeLegacyThemes(db, Options{Write: true}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	assertCount(t, db, &model.ThemeState{}, "id = ?", "t1", 0)
+	assertTableCount(t, db, "theme_states", "id = ?", "t1", 0)
 	assertCount(t, db, &model.ConceptEmbedding{}, "id = ?", "c-theme", 0)
 	assertCount(t, db, &model.ConceptEmbedding{}, "id = ?", "c-topic", 1)
 	assertCount(t, db, &model.Embedding{}, "id = ?", "e-theme", 0)
@@ -191,5 +205,24 @@ func TestPurgeLegacyThemes(t *testing.T) {
 	sum, err = PurgeLegacyThemes(db, Options{Write: false})
 	if err != nil || *sum != (ThemePurgeSummary{}) {
 		t.Fatalf("rerun want empty summary, got (%+v,%v)", sum, err)
+	}
+}
+
+// 新库没有 theme_states 表时清理也不能报错（新装环境全靠这条路径）。
+func TestPurgeLegacyThemesWithoutTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.ConceptEmbedding{}, &model.Embedding{}, &model.EmbeddingChunk{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	sum, err := PurgeLegacyThemes(db, Options{Write: true})
+	if err != nil {
+		t.Fatalf("无 theme_states 表时不应报错: %v", err)
+	}
+	if *sum != (ThemePurgeSummary{}) {
+		t.Fatalf("空库统计应全 0, got %+v", *sum)
 	}
 }

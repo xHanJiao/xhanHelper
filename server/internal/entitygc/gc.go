@@ -174,11 +174,17 @@ func PurgeLegacyThemes(db *gorm.DB, opts Options) (*ThemePurgeSummary, error) {
 		query string
 		args  []interface{}
 	}{
-		{&sum.Themes, &model.ThemeState{}, "", nil},
 		{&sum.ThemeVectors, &model.Embedding{}, "entity_type = ?", []interface{}{model.EntityTypeTheme}},
 		{&sum.ChunkVectors, &model.Embedding{}, "entity_type = ? AND entity_id LIKE ?", []interface{}{model.EntityTypeChunk, model.ChunkVectorKeyPrefix(model.EntityTypeTheme) + "%"}},
 		{&sum.ChunkRows, &model.EmbeddingChunk{}, "parent_type = ?", []interface{}{model.EntityTypeTheme}},
 		{&sum.Concepts, &model.ConceptEmbedding{}, "type = ?", []interface{}{model.EntityTypeTheme}},
+	}
+	// theme_states 表可能已不存在（新库不再建）；不存在就当 0，其余残留照清。
+	hasThemeTable := db.Migrator().HasTable("theme_states")
+	if hasThemeTable {
+		if err := db.WithContext(ctx).Table("theme_states").Count(&sum.Themes).Error; err != nil {
+			return nil, fmt.Errorf("统计旧主题残留: %w", err)
+		}
 	}
 	for _, c := range counts {
 		q := db.WithContext(ctx).Model(c.model)
@@ -212,8 +218,10 @@ func PurgeLegacyThemes(db *gorm.DB, opts Options) (*ThemePurgeSummary, error) {
 		if _, err := conceptRepo.DeleteByType(ctx, model.EntityTypeTheme); err != nil {
 			return fmt.Errorf("删主题 concept: %w", err)
 		}
-		if err := tx.WithContext(ctx).Where("id <> ''").Delete(&model.ThemeState{}).Error; err != nil {
-			return fmt.Errorf("删 theme_states: %w", err)
+		if hasThemeTable {
+			if err := tx.WithContext(ctx).Exec("DELETE FROM theme_states").Error; err != nil {
+				return fmt.Errorf("删 theme_states: %w", err)
+			}
 		}
 		return nil
 	})

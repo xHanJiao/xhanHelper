@@ -448,3 +448,9 @@ Part 1 ──────────────────→ Part 5 → Part
 ```
 
 Part 4 独立，可在 Part 2+3 验证通过后随时做。Part 5 依赖 Part 1 的 facts 和 chunk 已存在。Part 6 依赖 Part 5 的 `ContextPacket` 带 state/facts。
+
+---
+
+## 后续变更
+
+- **2026-11-05：主题/状态子系统整体删除。** 本设计描述的 `ThemeAnalyst` / `ThemeDiscoverer` / `StateUpdater` / `ThemeStore` / `ThemeEmbedder` / `theme_states` 表与 `reflection` 配置段全部移除（事件系统已接管该职责）。存量数据的 `theme_states` 行与 theme 向量用 `server/cmd/entity-gc --purge-legacy-themes --write` 清理。本文档仅作历史记录，不再对应代码。

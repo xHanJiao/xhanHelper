@@ -323,7 +323,7 @@ func summarize(dst *gorm.DB, dstCfg *config.Config, keeperID string, took time.D
 
 	key := []string{
 		"conversations", "messages", "conversation_summaries", "user_memories",
-		"notes", "bills", "documents", "reminders", "theme_states",
+		"notes", "bills", "documents", "reminders",
 		"embeddings", "embedding_chunks", "concept_embeddings",
 	}
 	for _, t := range key {

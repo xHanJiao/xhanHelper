@@ -24,7 +24,7 @@ func TestGetOrEmbed_SelfHealsMissingVector(t *testing.T) {
 	}
 	conceptRepo := service.NewConceptEmbeddingRepo(db)
 	embeddingRepo := service.NewEmbeddingRepo(db)
-	svc := &ConceptEmbedService{conceptRepo: conceptRepo, embeddingRepo: embeddingRepo, embedder: &mockEmbedder{}}
+	svc := &ConceptEmbedService{conceptRepo: conceptRepo, embeddingRepo: embeddingRepo, embedder: &mockEmbedderForChunk{}}
 
 	// 造一条「有概念行、无向量行」的孤儿——正是线上那条 "房产投资" 的状态。
 	if err := conceptRepo.Create(context.Background(), &model.ConceptEmbedding{

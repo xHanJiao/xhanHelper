@@ -21,7 +21,6 @@ type Repos struct {
 	Prompt                  *service.UserPromptRepo
 	Tool                    *service.ToolRepo
 	Embedding               *service.EmbeddingRepo
-	ThemeState              *service.ThemeStateRepo
 	Event                   *service.EventRepo
 	Trace                   *service.ReflectionTraceRepo
 	Chunk                   *service.EmbeddingChunkRepo
@@ -61,7 +60,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		Prompt:                  service.NewUserPromptRepo(db),
 		Tool:                    service.NewToolRepo(db),
 		Embedding:               service.NewEmbeddingRepo(db),
-		ThemeState:              service.NewThemeStateRepo(db),
 		Event:                   service.NewEventRepo(db),
 		Trace:                   service.NewReflectionTraceRepo(db, cfg.LLM.DebugPersist()),
 		Chunk:                   service.NewEmbeddingChunkRepo(db),

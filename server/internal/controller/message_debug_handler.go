@@ -15,14 +15,13 @@ import (
 
 // MessageDebugHandler — 消息调试查询（管理端）
 type MessageDebugHandler struct {
-	msgRepo        *service.MessageRepo
-	memRepo        *service.UserMemoryRepo
-	noteRepo       *service.NoteRepo
-	themeStateRepo *service.ThemeStateRepo
+	msgRepo  *service.MessageRepo
+	memRepo  *service.UserMemoryRepo
+	noteRepo *service.NoteRepo
 }
 
-func NewMessageDebugHandler(msgRepo *service.MessageRepo, memRepo *service.UserMemoryRepo, noteRepo *service.NoteRepo, themeStateRepo *service.ThemeStateRepo) *MessageDebugHandler {
-	return &MessageDebugHandler{msgRepo: msgRepo, memRepo: memRepo, noteRepo: noteRepo, themeStateRepo: themeStateRepo}
+func NewMessageDebugHandler(msgRepo *service.MessageRepo, memRepo *service.UserMemoryRepo, noteRepo *service.NoteRepo) *MessageDebugHandler {
+	return &MessageDebugHandler{msgRepo: msgRepo, memRepo: memRepo, noteRepo: noteRepo}
 }
 
 // GetMessageDebug 返回以指定用户消息为锚点的一轮完整消息（不含重量级字段）。
@@ -184,19 +183,6 @@ func (h *MessageDebugHandler) lookupContent(ctx context.Context, userID, typ, id
 			return "", fmt.Errorf("消息不存在")
 		}
 		return msg.Content, nil
-	case "theme":
-		ts, err := h.themeStateRepo.GetByID(ctx, id, userID)
-		if err != nil || ts == nil {
-			return "", fmt.Errorf("主题不存在")
-		}
-		content := ts.Name
-		if ts.Description != "" {
-			content += "\n" + ts.Description
-		}
-		if ts.StateText != "" {
-			content += "\n" + ts.StateText
-		}
-		return content, nil
 	default:
 		return "", fmt.Errorf("不支持的类型: %s", typ)
 	}

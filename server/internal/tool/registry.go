@@ -569,7 +569,7 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 
 	// —— 计划模式：只读放行，写操作拦截 ——
 	// plan 模式仅允许 ReadOnlyFuncs() 声明的只读函数执行（检索/查询），其余一律拦截。
-	// ReadOnlyFuncs() 返回 nil/空 map 的工具（含 task、expose_tools、theme、mailbox）全拦。
+	// ReadOnlyFuncs() 返回 nil/空 map 的工具（含 task、expose_tools、mailbox）全拦。
 	if ec.Mode == model.ConvModePlan && !t.ReadOnlyFuncs()[funcName] {
 		return &Result{Success: false, Error: fmt.Sprintf(
 			"当前处于计划模式（只读讨论状态），本模式仅允许只读操作，禁止执行写操作 %s.%s。如需执行写操作，请让用户切换到工作模式。",

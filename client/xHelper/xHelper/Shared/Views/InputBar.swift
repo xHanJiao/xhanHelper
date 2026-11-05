@@ -241,9 +241,10 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 // 输入框被移除（切页/收起）时焦点态不会自己变，留着会误判 ⌘V 该接管
                 ChatInputFocus.shared.isFocused = false
             }
-            // Return：单独按换行（放行给 TextEditor）；Shift+Return 发送。
+            // Return：单独按发送；Shift+Return / Option+Return 换行（放行给 TextEditor）。
             .onKeyPress(.return, phases: .down) { keyPress in
-                guard keyPress.modifiers.contains(.shift) else { return .ignored }
+                let modifiers = keyPress.modifiers
+                guard !modifiers.contains(.shift), !modifiers.contains(.option) else { return .ignored }
                 // IME 组合态下交给输入法确认。
                 if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
                     return .ignored

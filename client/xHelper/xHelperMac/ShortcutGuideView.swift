@@ -57,8 +57,8 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["Esc"], desc: "关闭建议列表"),
         ]),
         ShortcutSection(icon: "text.bubble", title: "聊天输入", hint: "输入框聚焦时", items: [
-            ShortcutItem(keys: ["⏎"], desc: "换行"),
-            ShortcutItem(keys: ["⇧", "⏎"], desc: "发送消息"),
+            ShortcutItem(keys: ["⏎"], desc: "发送消息"),
+            ShortcutItem(keys: ["⇧", "⏎"], desc: "换行"),
             ShortcutItem(keys: ["Tab"], desc: "切换计划模式（关/计划）"),
             ShortcutItem(keys: ["⌃", "C"], desc: "清空输入（文字与图片）"),
         ]),

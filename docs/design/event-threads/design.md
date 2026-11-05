@@ -694,7 +694,7 @@ event_assembly:
 
 ### 10.2 冷启动指标
 
-基数 = 412 条重构后记忆（`source IN ('post_chat','inline')`）。
+基数 = 重构后记忆（`source IN ('post_chat','inline')`）：dev 412 条 / prod 417 条。
 
 - 生成多少个事件（预期 15-30，明显更多 = 切太细）；
 - 每个事件聚合多少条记忆（p50 / p90 / max）——直接决定 `full` 的 20 要不要调；
@@ -712,6 +712,13 @@ event_assembly:
 - 已分配 287 条（70%），未分配 125 条（30%）——比预期的 40–70% 未分配更激进，抽查未分配样本全是习惯/人物关系/偏好/一次性任务，暂按「dev 数据项目密度高」解释，prod 冷启动再看；
 - 结构复盘改名 2 个、合并 0 个（「回西安准备 / 回西安安家 / 11月退租离京」保留为三条，是同一件事的不同跟进线）；
 - 抽查 summary 均只含本事件内容；未发现跨事件污染。
+
+**实测（2026-11-05，prod 库 `xhan_helper_cloud`，417 条 / 11 批）**：
+
+- 先 `make deploy` 上线新前后端，再停服跑 `--limit 40` → 全量 → `--review`，停机约 7 分钟；
+- 27 个事件，复盘合并 1、改名 5 → 最终 **26 个事件**；p50/p90/max = **8/22/75** 条；超 20 条 **6 个**，时间跨度 >3 个月 0 个；事件名两两相似 >0.9 的对数 0；
+- 已分配 **323 条（77.5%）**，未分配 **94 条（22.5%）**——比 dev（70% 已分配）更激进，也高于预期的 40–70% 未分配，**尚未人工抽查事件边界与未分配样本**；prod 比 dev 多 5 条记忆，余下差异属 Flash 非确定性，需抽查确认不是伞状事件复发；
+- 冷启动前已备份 prod 库（`mysqldumps/xhan_helper_cloud-*.sql.gz`），schema 由 AutoMigrate 就位，未使用 `--reset`。
 
 ### 10.3 注入验收
 
@@ -796,7 +803,7 @@ event_assembly:
 
 ## 后续变更
 
-- 2026-11-05 阶段 8：补两类单测——拼装循环（MiniReAct）里 `event.get` 大事件被 `MaxToolResult: 2000` 截断后仍是合法 JSON（骨架超预算时从最长数组尾部丢条目并标注 `_truncated_entries`，不再回退字节切片吐断裂 JSON；主对话的实时工具结果不走这条截断，属既有行为）、`buildUserMessage` 事件接线端到端（本轮事件进资源区且不重复、新窗口 carried summary）；旧主题收尾：`entity-gc --purge-legacy-themes` 清理 `theme_states` / theme 全文与 chunk 向量 / chunk 行 / concept 行（dry-run 默认，建议先停服务），摘掉监控 `themes` 快照，管理页「主题发现剩余」改为「每日回顾剩余」（`discover_remaining` 是反思节拍，不是主题发现）。
+- 2026-11-05 阶段 8：补两类单测——拼装循环（MiniReAct）里 `event.get` 大事件被 `MaxToolResult: 2000` 截断后仍是合法 JSON（骨架超预算时从最长数组尾部丢条目并标注 `_truncated_entries`，不再回退字节切片吐断裂 JSON；主对话的实时工具结果不走这条截断，属既有行为）、`buildUserMessage` 事件接线端到端（本轮事件进资源区且不重复、新窗口 carried summary）；旧主题收尾：`entity-gc --purge-legacy-themes` 清理 `theme_states` / theme 全文与 chunk 向量 / chunk 行 / concept 行（dry-run 默认，建议先停服务），摘掉监控 `themes` 快照，管理页「主题发现剩余」改为「每日回顾剩余」（`discover_remaining` 是反思节拍，不是主题发现）。prod 已部署新前后端并完成冷启动（417 条 → 26 个事件，指标见 §10.2，停机约 7 分钟）。
 - 2026-11-05 阶段 6 复核：修复游标与 `--reset`/`--dry-run` 的先后顺序；整批没有产出可用 JSON（空内容/坏 JSON/无 `{`）或写库失败时记 `Unparsed/Failed`，冷启动保留游标并非零退出重试该批；`--review` 有未应用项也非零退出；`--user` 校验存在性；报告补「事件名两两相似 >0.9 对数」；帮助与 §8.5 注明先停服务、`--reset` 不清 `EventFocus` 残留。
 - 2026-11-05 阶段 7：新增只读 `GET /api/event-threads`（列表）与 `GET /api/event-threads/:id`（summary + 记忆，`updated_at DESC`）；Vue 新增 `EventView`（`/event-threads`，列表 + 详情弹窗）并挂到功能菜单/我的；Swift 客户端主题页换成事件页（`EventViewModel` / `EventListView` / `EventDetailOverlay`）；删除 `controller/theme.go` 与只读 `GET /api/themes`。
 - 2026-11-05 阶段 6：`cmd/event-bootstrap` 冷启动工具（`--limit` 试跑、`--reset` 重跑、`--review` 结构复盘、游标断点续跑）；拼装器构建抽到 `appinit.BuildEventAssembler`，与生产共用同一套只读工具与阈值；dev 库实测指标见 §10.2。

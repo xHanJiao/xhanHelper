@@ -34,9 +34,9 @@ func NewEventRepo(db *gorm.DB) *EventRepo {
 
 const (
 	eventNameMaxRunes = 100
-	// MaxEventSummaryRunes — 事件 summary 硬上限（设计 §4.4：≤200 字）。
+	// MaxEventSummaryRunes — 事件 summary 硬上限（设计 §4.4：≤600 字）。
 	// 放在 service 里是为了让所有写入口（拼装、工具）共用同一口径。
-	MaxEventSummaryRunes = 200
+	MaxEventSummaryRunes = 600
 	eventListMaxLimit    = 200
 )
 

@@ -24,19 +24,25 @@ const pageSize = 12
 const total = ref(0)
 const keyword = ref('')
 
+// 请求序号：快速改搜索词/翻页时，慢的旧响应不许覆盖新结果
+let listSeq = 0
+
 async function fetchNotes() {
+  const my = ++listSeq
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize
     let url = `/api/notes?limit=${pageSize}&offset=${offset}`
     if (keyword.value) url += `&keyword=${encodeURIComponent(keyword.value)}`
     const res = await api.get(url)
+    if (my !== listSeq) return
     notes.value = res.notes || []
     total.value = res.total || 0
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载笔记列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 

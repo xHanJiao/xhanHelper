@@ -29,17 +29,23 @@ const detail = ref(null)
 const detailLoading = ref(false)
 let detailSeq = 0
 
+// 请求序号：快速翻页时，慢的旧响应不许覆盖新结果
+let listSeq = 0
+
 async function fetchEvents() {
+  const my = ++listSeq
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize
     const res = await api.get(`/api/event-threads?limit=${pageSize}&offset=${offset}`)
+    if (my !== listSeq) return
     items.value = res.items || []
     total.value = res.total || 0
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载事件列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 

@@ -30,15 +30,21 @@ const submitting = ref(false)
 const statusLabel = { draft: '草稿', active: '启用', inactive: '停用' }
 const statusType = { draft: 'default', active: 'success', inactive: 'warning' }
 
+// 请求序号：连续刷新时，慢的旧响应不许覆盖新结果
+let listSeq = 0
+
 async function fetchTools() {
+  const my = ++listSeq
   loading.value = true
   try {
     const res = await api.get('/api/tools')
+    if (my !== listSeq) return
     tools.value = res.tools || []
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载工具列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 

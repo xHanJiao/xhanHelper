@@ -54,7 +54,11 @@ async function copyShareUrl() {
   }
 }
 
+// 请求序号：快速改搜索词/翻页时，慢的旧响应不许覆盖新结果
+let listSeq = 0
+
 async function fetchDocuments() {
+  const my = ++listSeq
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize
@@ -62,12 +66,14 @@ async function fetchDocuments() {
     if (keyword.value) url += `&keyword=${encodeURIComponent(keyword.value)}`
     if (selectedTag.value) url += `&tag=${encodeURIComponent(selectedTag.value)}`
     const res = await api.get(url)
+    if (my !== listSeq) return
     documents.value = res.documents || []
     total.value = res.total || 0
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载文档列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 

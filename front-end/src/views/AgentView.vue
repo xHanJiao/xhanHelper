@@ -34,16 +34,21 @@ const editing = ref(null)
 const formValue = ref({ name: '', system_prompt: '', deep_mode: false, temperature: null, max_tokens: null, thinking: true })
 const submitting = ref(false)
 
+// 请求序号：连续刷新时，慢的旧响应不许覆盖新结果
+let listSeq = 0
 
 async function fetchAgents() {
+  const my = ++listSeq
   loading.value = true
   try {
     const res = await api.get('/api/agents')
+    if (my !== listSeq) return
     agents.value = res.agents || []
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载智能体列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 
@@ -63,7 +68,9 @@ function openEdit(agent) {
       maxTokens = p.max_tokens ?? null
       thinking = p.thinking ?? true
       deepMode = p.deep_mode ?? false
-    } catch {}
+    } catch (e) {
+      console.warn('[agent] bad params_json, fallback to defaults', e)
+    }
   }
   formValue.value = {
     name: agent.name,

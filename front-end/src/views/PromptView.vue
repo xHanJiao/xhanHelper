@@ -33,15 +33,21 @@ const typeOptions = [
 
 const typeLabel = { flash: 'Flash', pro: 'Pro' }
 
+// 请求序号：连续刷新时，慢的旧响应不许覆盖新结果
+let listSeq = 0
+
 async function fetchPrompts() {
+  const my = ++listSeq
   loading.value = true
   try {
     const res = await api.get('/api/prompts')
+    if (my !== listSeq) return
     prompts.value = res.prompts || []
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载 Prompt 列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 

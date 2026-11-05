@@ -45,7 +45,7 @@ func NewSubAgentAdminHandler(convRepo *service.ConversationRepo, msgRepo *servic
 
 // List GET /api/admin/subagents — 子任务列表（倒序，loadMore 分页）。
 func (h *SubAgentAdminHandler) List(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimit(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	rows, hasMore, err := h.convRepo.ListSubConversations(c.Request.Context(), limit, offset)
 	if err != nil {

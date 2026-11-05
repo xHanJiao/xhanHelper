@@ -25,7 +25,7 @@ func NewPromptHandler(promptRepo *service.UserPromptRepo) *PromptHandler {
 // ListPrompts GET /api/prompts?type=&status=
 func (h *PromptHandler) ListPrompts(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	list, total, err := h.promptRepo.ListByUser(c.Request.Context(), userID, c.Query("type"), c.Query("status"), limit, offset)
 	if err != nil {

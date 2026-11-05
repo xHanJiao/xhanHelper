@@ -26,7 +26,7 @@ func NewToolHandler(toolRepo *service.ToolRepo) *ToolHandler {
 // ListTools GET /api/tools?status=
 func (h *ToolHandler) ListTools(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	tools, total, err := h.toolRepo.ListTools(c.Request.Context(), userID, c.Query("status"), limit, offset)
 	if err != nil {

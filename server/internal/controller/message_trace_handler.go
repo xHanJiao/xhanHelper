@@ -21,7 +21,7 @@ func NewMessageTraceHandler(msgRepo *service.MessageRepo) *MessageTraceHandler {
 // ListMessageTraces 分页列出有 prompt trace 的消息
 func (h *MessageTraceHandler) ListMessageTraces(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimit(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, total, err := h.msgRepo.ListWithTrace(c.Request.Context(), userID, limit, offset)

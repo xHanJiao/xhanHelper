@@ -40,7 +40,7 @@ func (h *EvalRunHandler) ListRuns(c *gin.Context) {
 	}
 	defer r.Close()
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimit(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, err := r.ListRuns(project, limit, offset)

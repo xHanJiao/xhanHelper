@@ -22,7 +22,7 @@ func NewReflectionAdminHandler(repo *service.ReflectionTraceRepo) *ReflectionAdm
 // ListTraces GET /api/admin/reflection/traces
 func (h *ReflectionAdminHandler) ListTraces(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimit(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, total, err := h.traceRepo.ListTraces(c.Request.Context(), userID, limit, offset)
@@ -54,7 +54,7 @@ func (h *ReflectionAdminHandler) GetTrace(c *gin.Context) {
 // ListDecisions GET /api/admin/reflection/decisions
 func (h *ReflectionAdminHandler) ListDecisions(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	stage := c.Query("stage")
 	verdict := c.Query("verdict")

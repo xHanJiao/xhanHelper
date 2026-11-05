@@ -40,7 +40,7 @@ func NewLLMIOAuditHandler(repo *service.LLMCallIORepo) *LLMIOAuditHandler {
 
 // List GET /api/admin/llm-io — 分页列表（不含大字段）。
 func (h *LLMIOAuditHandler) List(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	rows, total, err := h.repo.List(c.Request.Context(), service.LLMIOListParams{
 		Category:    c.Query("category"),

@@ -92,7 +92,7 @@ func (h *EvalAdminHandler) ListQueries(c *gin.Context) {
 	}
 	defer r.Close()
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	keyword := c.Query("keyword")
 	status := c.Query("status")
@@ -122,7 +122,7 @@ func (h *EvalAdminHandler) ListPlacedQueries(c *gin.Context) {
 	}
 	defer r.Close()
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	keyword := c.Query("keyword")
 
@@ -204,7 +204,7 @@ func (h *EvalAdminHandler) ListCorpus(c *gin.Context) {
 	}
 	defer r.Close()
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	keyword := c.Query("keyword")
 	sourceType := c.Query("type")
@@ -235,7 +235,7 @@ func (h *EvalAdminHandler) ListQueryAnnotations(c *gin.Context) {
 	}
 	defer r.Close()
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimit(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	queryKeyword := c.Query("keyword")
 	labelSource := c.Query("label_source")
@@ -265,7 +265,7 @@ func (h *EvalAdminHandler) ListAnnotations(c *gin.Context) {
 	}
 	defer r.Close()
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	queryKeyword := c.Query("query_keyword")
 	labelSource := c.Query("label_source")

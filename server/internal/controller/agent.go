@@ -95,7 +95,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 // ListAgents GET /api/agents?limit=50&offset=0
 func (h *AgentHandler) ListAgents(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	agents, total, err := h.agentRepo.ListByUser(c.Request.Context(), userID, limit, offset)

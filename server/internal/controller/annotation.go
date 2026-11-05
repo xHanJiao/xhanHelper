@@ -28,8 +28,6 @@ const (
 	maxAnchorHintLen = 60
 	// maxAnnotationReplyLen 单条回复 / 追问上限（字）
 	maxAnnotationReplyLen = 4000
-	// maxRepliesPageSize 线程接口单页上限
-	maxRepliesPageSize = 200
 )
 
 // AnnotationHandler — 文档划线批注 API handler
@@ -55,7 +53,7 @@ type annotationItem struct {
 func (h *AnnotationHandler) ListAnnotations(c *gin.Context) {
 	userID := c.GetString("user_id")
 	docID := c.Param("id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+	limit := parseListLimitAllowZero(c, 200)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, total, err := h.annoRepo.List(c.Request.Context(), docID, userID, limit, offset)
@@ -100,14 +98,8 @@ func (h *AnnotationHandler) ListAnnotations(c *gin.Context) {
 func (h *AnnotationHandler) ListReplies(c *gin.Context) {
 	userID := c.GetString("user_id")
 	id := c.Param("id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	limit := parseListLimit(c, 100)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > maxRepliesPageSize {
-		limit = maxRepliesPageSize
-	}
 	if offset < 0 {
 		offset = 0
 	}

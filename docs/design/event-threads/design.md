@@ -803,6 +803,7 @@ event_assembly:
 
 ## 后续变更
 
+- 2026-11-05 第五轮：全环境关闭 `memory_auto_extract`（post_chat 停写，只留 inline `record_memory`）。事件系统不受机制影响——`EventWorker` 仍等 `MemoryPhaseDone`（关闭时置位），拼装输入不按 `source` 过滤，inline 记忆照旧进事件；仅事件新增/更新速度随记忆产量下降。存量 post_chat 记忆保留不动。见 `docs/design/memory-quality/design.md` 第五轮。
 - 2026-11-05 阶段 8：补两类单测——拼装循环（MiniReAct）里 `event.get` 大事件被 `MaxToolResult: 2000` 截断后仍是合法 JSON（骨架超预算时从最长数组尾部丢条目并标注 `_truncated_entries`，不再回退字节切片吐断裂 JSON；主对话的实时工具结果不走这条截断，属既有行为）、`buildUserMessage` 事件接线端到端（本轮事件进资源区且不重复、新窗口 carried summary）；旧主题收尾：`entity-gc --purge-legacy-themes` 清理 `theme_states` / theme 全文与 chunk 向量 / chunk 行 / concept 行（dry-run 默认，建议先停服务），摘掉监控 `themes` 快照，管理页「主题发现剩余」改为「每日回顾剩余」（`discover_remaining` 是反思节拍，不是主题发现）。prod 已部署新前后端并完成冷启动（417 条 → 26 个事件，指标见 §10.2，停机约 7 分钟）。
 - 2026-11-05 阶段 6 复核：修复游标与 `--reset`/`--dry-run` 的先后顺序；整批没有产出可用 JSON（空内容/坏 JSON/无 `{`）或写库失败时记 `Unparsed/Failed`，冷启动保留游标并非零退出重试该批；`--review` 有未应用项也非零退出；`--user` 校验存在性；报告补「事件名两两相似 >0.9 对数」；帮助与 §8.5 注明先停服务、`--reset` 不清 `EventFocus` 残留。
 - 2026-11-05 阶段 7：新增只读 `GET /api/event-threads`（列表）与 `GET /api/event-threads/:id`（summary + 记忆，`updated_at DESC`）；Vue 新增 `EventView`（`/event-threads`，列表 + 详情弹窗）并挂到功能菜单/我的；Swift 客户端主题页换成事件页（`EventViewModel` / `EventListView` / `EventDetailOverlay`）；删除 `controller/theme.go` 与只读 `GET /api/themes`。

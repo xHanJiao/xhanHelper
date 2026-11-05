@@ -80,6 +80,7 @@ func seedMemory(t *testing.T, db *gorm.DB, userID, id, value string) *model.User
 		MemoryKey:   "k",
 		ContentHash: "h-" + id,
 		MemoryValue: value,
+		Source:      model.MemorySourceInline, // 事件输入只可能是 inline / post_chat，别用空 source 假绿
 	}
 	if err := db.Create(m).Error; err != nil {
 		t.Fatalf("seed memory %s: %v", id, err)
@@ -419,6 +420,46 @@ func TestEventWorker_SuccessPath(t *testing.T) {
 	}
 	if got := loadMemoryByID(t, db, "m1").EventID; got == nil || *got != e.ID {
 		t.Fatalf("m1 should be assigned to event, got %v", got)
+	}
+}
+
+func TestEventWorker_ProcessesInlineMemoryWhenExtractDisabled(t *testing.T) {
+	// 关掉 post_chat 抽取后，事件拼装仍要处理 inline 写入的记忆：
+	// MemoryWorker 关闭时必须置 MemoryPhaseDone，EventWorker 的输入也不得按 source 过滤。
+	// extractor 传非 nil（生产一致），并断言它一次都没被调用——否则 flag 误写成 true 也会假绿。
+	extractLLM := &syncMockLLM{}
+	extractor := NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: extractLLM})
+
+	mock := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"assignments":[{"memory_id":"m1","event_id":"EVENT_ID"}],"new_events":[],"event_updates":[],"merge":[]}`},
+	}}
+	a, db := setupEventAssembler(t, &fakeEmbedder{}, 0)
+	a.flashClient = mock
+	e := seedEvent(t, db, "u1", "回西安准备", "打包中")
+	mock.responses[0].Content = strings.ReplaceAll(mock.responses[0].Content, "EVENT_ID", e.ID)
+	seedMemory(t, db, "u1", "m1", "开始打包")
+
+	sess := &SessionSnapshot{
+		ConvID: "c1",
+		UserID: "u1",
+		msgs:   []model.Message{{Role: "user", CreatedAt: time.Now().Add(-time.Hour)}},
+	}
+	if err := NewMemoryWorker(&MemoryWorkerConfig{Extractor: extractor, MemoryAutoExtract: false}).Process(context.Background(), sess); err != nil {
+		t.Fatalf("memory worker: %v", err)
+	}
+	if extractLLM.callCount != 0 {
+		t.Fatalf("disabled extractor must not be called, got %d calls", extractLLM.callCount)
+	}
+	if !sess.MemoryPhaseDone {
+		t.Fatal("disabled memory worker must set MemoryPhaseDone")
+	}
+
+	w := NewEventWorker(&EventWorkerConfig{MemRepo: service.NewUserMemoryRepo(db), Assembler: a})
+	if err := w.Process(context.Background(), sess); err != nil {
+		t.Fatalf("event worker: %v", err)
+	}
+	if got := loadMemoryByID(t, db, "m1").EventID; got == nil || *got != e.ID {
+		t.Fatalf("inline memory should still be assigned to event, got %v", got)
 	}
 }
 

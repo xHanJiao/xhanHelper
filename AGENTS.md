@@ -154,7 +154,7 @@ type Tool interface {
 
 | worker | 产物 |
 |--------|------|
-| `memory_worker.go` / `extractor.go` | `UserMemory` 提取 + 向量去重（阈值 `server.memory_dupe_threshold`，默认 0.85） |
+| `memory_worker.go` / `extractor.go` | `UserMemory` 提取 + 向量去重（阈值 `server.memory_dupe_threshold`，默认 0.85）；`server.memory_auto_extract: false` 时跳过，只留主循环 inline `record_memory`（事件拼装照常消费 inline 记忆） |
 | `summary_worker.go` | `ConversationSummary` 增量合并 + embedding + chunk |
 | `profile_worker.go` | `UserProfileFact`（冷启动 / 增量 / 迁移，配额校验重试） |
 | ~~`state_worker.go` / `state_updater.go`~~ | 已停写（事件系统接管；代码保留未接线） |

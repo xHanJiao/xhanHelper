@@ -365,3 +365,16 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
   - 定义收窄（`MemoryDefinition` 的「状态与计划」「外部信息」先留着）
   - 数字锚点校验（summary 数字 ⊆ facts）——细碎，且只喂 user 已挡住主要来源
   - 批内合并（要额外一次 LLM 调用）
+- **2026-11-05（第五轮：全环境停掉 post_chat 抽取，只留 inline）**：用户判断 post_chat 记忆没有必要，
+  决定 `memory_auto_extract: false` 应用到 **prod / local / dev / local.dev 全部环境**（base 本来就是
+  false，此前只有各环境文件覆盖成 true）。存量 **242 条 post_chat 记忆保留不动**（继续可检索、可注入），
+  本次只停新增。
+
+  - **对事件系统无机制影响**：`EventWorker` 只等 `MemoryPhaseDone`，而 `MemoryWorker` 关闭时会置位；
+    拼装输入 `UserMemoryRepo.ListUpdatedSince` 不按 `source` 过滤，inline 记忆照旧进事件。
+    新增链式单测 `TestEventWorker_ProcessesInlineMemoryWhenExtractDisabled` 锁住这条契约。
+  - **影响只有产量**：prod 近 4 天（11/1–11/4）新增 inline 11 条 / post_chat 14 条，
+    关掉后事件的新增与更新速度约减半；已有事件与已分配记忆不变。
+  - **历史对照**：第四轮 A 档（10-28–10-31）只留 inline 的 4 天仅产出 7 条记忆，且漏记「手账偏好手作风」、
+    记错社保生效日期，当时因此回退。本轮接受同样的捕获量下降，若两周内聊天出现 ≥2 次
+    「之前说过 / 不记得了」，回滚 `memory_auto_extract: true` 并转收窄方案。

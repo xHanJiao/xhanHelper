@@ -13,7 +13,7 @@ server:
   local_env: dev # 本环境标签：与 APP_ENV / 数据根 / token 前缀交叉断言（第 4 期）
   local_single_user: true # 免账号密码：凭 local_token 直接进
   local_token: "${XHAN_LOCAL_TOKEN}" # app 生成随机值经 env 注入；make local-dev 缺省 local-dev-token
-  memory_auto_extract: true # 沙盒专用：保留 post_chat 抽取用于调试（三环境现均为 true，值同但用途不同）
+  memory_auto_extract: false # 第五轮：沙盒与 prod/local 一致，停掉 post_chat 抽取
 
 db:
   driver: sqlite

@@ -308,8 +308,18 @@ function handleScrollToBottomBtn() {
   })
 }
 
+// 历史请求序号：快速切会话时，晚到的旧响应不许再写 store（慢网下 A 的响应会盖掉 B）。
+// 与 DocumentReadView 的 renderSeq 是同一套做法。
+let loadSeq = 0
+
+// 序号过期，或请求对应的会话已经不是当前会话（「新对话」会 reset 成 null，但不自增序号）。
+function isStale(seq, convId) {
+  return seq !== loadSeq || convId !== chat.conversationId
+}
+
 async function loadHistory(convId, direction = 'before', cursor = null) {
   if (!convId) return
+  const seq = ++loadSeq
   isLoadingHistory.value = true
   try {
     let url = `/api/conversations/${convId}/messages-v2?limit=7`
@@ -317,6 +327,9 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
       url += `&cursor=${cursor}&direction=${direction}`
     }
     const res = await api.get(url)
+    // convId 也要校验：点「新对话」走的是 chat.reset()（conversationId 变 null），
+    // 它不会自增 loadSeq，只靠 seq 拦不住在途请求写回旧会话消息。
+    if (isStale(seq, convId)) return
     if (res) {
       const msgs = (res.messages || []).flatMap(normalizeMessage)
       if (direction === 'before' && cursor) {
@@ -329,6 +342,11 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
         await nextTick()
         await new Promise(resolve => {
           requestAnimationFrame(() => {
+            // 等 DOM 期间切了会话就别再动滚动条了，容器里已经是另一个会话的消息
+            if (isStale(seq, convId)) {
+              resolve()
+              return
+            }
             const newScrollHeight = scrollContainer.scrollHeight
             scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
             resolve()
@@ -337,18 +355,26 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
       } else {
         chat.setMessages(msgs)
       }
+      // 上面可能有 await（前置历史要等 DOM 重排），期间又切了会话就到此为止
+      if (isStale(seq, convId)) return
       chat.oldestCursor = res.oldest_cursor
       chat.hasMoreBefore = res.has_more_before
       // 批量获取关联记忆详情
       await fetchAssociatedMemories()
     }
   } catch (e) {
+    if (isStale(seq, convId)) return
     console.error('Failed to load history', e)
     nMessage.error('加载历史消息失败')
   } finally {
-    isLoadingHistory.value = false
+    // 这里只认序号：新对话分支会把 conversationId 置 null，若也按会话判过期，
+    // 旧请求的 finally 会被跳过，isLoadingHistory 永远停 true（spinner 卡死）。
+    if (seq === loadSeq) isLoadingHistory.value = false
   }
 }
+
+// 路由序号：切会话后，旧 watcher / 旧刷新流程的后续 UI 动作（滚动、同步智能体）不再执行。
+let routeSeq = 0
 
 // 多端同步兜底：tab 从后台切回前台时，全量刷新当前会话最新消息，
 // 补齐其他端（客户端/其它 tab）在此期间产生的新消息。
@@ -359,7 +385,9 @@ async function syncCurrentConversation() {
   const now = Date.now()
   if (now - lastSyncAt < 3000) return
   lastSyncAt = now
+  const seq = routeSeq
   await loadHistory(chat.conversationId)
+  if (seq !== routeSeq) return
   await nextTick()
   requestAnimationFrame(() => {
     const el = messagesContainerRef.value
@@ -374,8 +402,11 @@ function onVisibilityChange() {
 }
 
 async function fetchAssociatedMemories() {
+  // 先捕获数组引用：setMessages / prependMessages 都是整体替换数组，
+  // 这样 await 期间切了会话，结果只会写回旧数组，不会污染新会话的消息。
+  const messages = chat.messages
   const allMemIds = new Set()
-  for (const msg of chat.messages) {
+  for (const msg of messages) {
     if (msg.memoryIds?.length) {
       for (const id of msg.memoryIds) allMemIds.add(id)
     }
@@ -389,7 +420,7 @@ async function fetchAssociatedMemories() {
         memMap[mem.id] = mem
       }
     }
-    for (const msg of chat.messages) {
+    for (const msg of messages) {
       if (msg.memoryIds?.length) {
         msg.associatedMemories = msg.memoryIds.map(id => memMap[id]).filter(Boolean)
       }
@@ -498,6 +529,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   // 放在这里消费而不是在分支 C 里，避免「深链打开 /chat/A → 点新对话」又弹回最新会话。
   const coldStart = coldStartPending
   coldStartPending = false
+  const seq = ++routeSeq
 
   exitSelectionMode()
   // --- 离开旧会话时，取消正在进行的 SSE 流 ---
@@ -522,6 +554,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     // ① 切换 chat store 中的当前会话 ID，并拉取最近 20 条消息
     chat.setConversation(newId)
     await loadHistory(newId)
+    if (seq !== routeSeq) return
 
     // ② 等 DOM 渲染完新消息后，把滚动条直接定位到底部（最新消息处）
     await nextTick()
@@ -535,7 +568,7 @@ watch(() => route.params.id, async (newId, oldId) => {
 
     // ③ 解除首次加载标记，并在 200ms 后激活滚动监听（给滚动条一个稳定期）
     isFirstLoad.value = false
-    setTimeout(() => { isInitialScrollDone.value = true }, 200)
+    setTimeout(() => { if (seq === routeSeq) isInitialScrollDone.value = true }, 200)
 
     // ④ 从 conversations store 中读取该会话绑定的智能体，同步到 chat store
     // 这样后续发送消息时会携带正确的 agent_id
@@ -561,6 +594,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     isFirstLoad.value = true
     isInitialScrollDone.value = false
     await loadHistory(newId)
+    if (seq !== routeSeq) return
     await nextTick()
     requestAnimationFrame(() => {
       const el = messagesContainerRef.value
@@ -573,7 +607,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     chat.needsRefetch = false
 
     isFirstLoad.value = false
-    setTimeout(() => { isInitialScrollDone.value = true }, 200)
+    setTimeout(() => { if (seq === routeSeq) isInitialScrollDone.value = true }, 200)
 
     const currentConv2 = convs.list.find(c => c.id === newId)
     if (currentConv2?.agent_id) {
@@ -593,11 +627,14 @@ watch(() => route.params.id, async (newId, oldId) => {
   } else if (!newId) {
     inputVisible.value = true
     isInitialScrollDone.value = false
+    // 上一条分支可能停在 skip=true 就被新路由顶掉了，这里兜底恢复，别让输入框动画一直关着
+    skipInputTransition.value = false
     if (chat.isStreaming) cancel()
 
     if (coldStart) {
       // 顺带把列表换成最新的，顶栏会话切换器直接可用
       await convs.fetchList()
+      if (seq !== routeSeq) return
       const latest = convs.list[0]
       if (latest?.id) {
         router.replace(`/chat/${latest.id}`)
@@ -606,6 +643,8 @@ watch(() => route.params.id, async (newId, oldId) => {
     }
 
     chat.reset()
+    // 新对话没有在途的历史请求，旧请求的 spinner 不该继续顶着（它的 finally 还要等网络）
+    isLoadingHistory.value = false
   }
 }, { immediate: true })
 
@@ -700,7 +739,9 @@ function handleStop() {
 async function retryAfterError() {
   chat.error = null
   if (!chat.conversationId) return
+  const seq = routeSeq
   await loadHistory(chat.conversationId)
+  if (seq !== routeSeq) return
   await nextTick()
   requestAnimationFrame(() => {
     const el = messagesContainerRef.value

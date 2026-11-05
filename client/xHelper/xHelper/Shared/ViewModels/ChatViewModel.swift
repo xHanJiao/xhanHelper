@@ -250,8 +250,6 @@ class ChatViewModel: ObservableObject {
     @Published var showMemoryPopup = false
     @Published var showNotePopup = false
     @Published var showChatSettings = false
-    @AppStorage("memoryThreshold") var memoryThreshold: Double = 0.5
-    @AppStorage("memoryLimit") var memoryLimit: Int = 8
 
     @Published var planNodes: [PlanNode] = []
     @Published var isPlanModalVisible = false
@@ -277,7 +275,14 @@ class ChatViewModel: ObservableObject {
     ///   - previousExpanded: 重置前便签折叠态，用于"同计划重载"恢复；nil 时保持当前值。
     func loadPlanTodo(previousFingerprint: String? = nil, previousExpanded: Bool? = nil) async {
         guard let cid = conversationId, !cid.isEmpty else { return }
-        guard let plan = try? await apiClient.getConversationPlan(conversationId: cid) else { return }
+        let plan: ConversationPlan
+        do {
+            plan = try await apiClient.getConversationPlan(conversationId: cid)
+        } catch {
+            // 有意降级：计划便签拉不到就保持旧状态，不打断当前会话
+            LogBuffer.shared.warning("loadPlanTodo: 拉取执行计划失败 \(error)")
+            return
+        }
         let oldFingerprint = previousFingerprint ?? planFingerprint()
         planGoal = plan.goal
         planTodo = plan.steps
@@ -692,8 +697,15 @@ class ChatViewModel: ObservableObject {
 
     /// 拉取子会话完整消息（DB 为准，活动面板展开态渲染）
     func reloadSubagentMessages(_ convID: String) async {
-        guard let msgs = try? await apiClient.getMessages(conversationId: convID),
-              let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) else { return }
+        let msgs: [Message]
+        do {
+            msgs = try await apiClient.getMessages(conversationId: convID)
+        } catch {
+            // 有意降级：子任务面板保留上一次的消息，不打断主对话
+            LogBuffer.shared.warning("reloadSubagentMessages(\(convID)): \(error)")
+            return
+        }
+        guard let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) else { return }
         subagentSessions[idx].messages = msgs
     }
 
@@ -1093,7 +1105,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
     func stopStreaming() {

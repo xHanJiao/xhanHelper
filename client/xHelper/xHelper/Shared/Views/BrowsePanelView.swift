@@ -1129,7 +1129,12 @@ struct BrowsePanelView: View {
             guard response == .OK, let url = panel.url else { return }
             Task {
                 guard let csv = await billVM.exportCSV(baseURL: baseURL, token: token) else { return }
-                try? csv.write(to: url, atomically: true, encoding: .utf8)
+                do {
+                    try csv.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    LogBuffer.shared.error("exportCSV write: \(error)")
+                    ToastCenter.shared.show("保存失败：\(error.localizedDescription)")
+                }
             }
         }
         #endif

@@ -75,9 +75,7 @@ export function useChatSSE() {
         // 空串而不是 undefined：undefined 会被 JSON.stringify 丢掉，服务端就按「老入口」落默认会话
         conversation_id: conversationId ?? '',
         deep_mode: deepMode || false,
-        agent_id: agentId || undefined,
-        memory_threshold: 0.5,
-        memory_limit: 8
+        agent_id: agentId || undefined
       }
       if (attachments && attachments.length) body.attachments = attachments
       // 仅新会话生效：服务端对已有会话忽略这两个字段

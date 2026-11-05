@@ -357,9 +357,7 @@ router.beforeEach((to, from, next) => {
       "message": "帮我记一笔账",
       "conversation_id": "uuid-xxx",
       "deep_mode": true,
-      "agent_id": "agent-uuid",
-      "memory_threshold": 0.5,
-      "memory_limit": 8
+      "agent_id": "agent-uuid"
     }
     ```
 

@@ -25,6 +25,33 @@ struct StreamEvent {
     let data: String
 }
 
+extension StreamEventType {
+    /// SSE `event:` 名 → 事件类型。服务端 `controller/chat.go` 的转发 switch 是唯一事实来源；
+    /// 认不出的名字返回 nil，由调用方记一次 warning（别静默丢，也别每轮刷屏）。
+    static func from(eventName: String) -> StreamEventType? {
+        switch eventName {
+        case "plan":              return .plan
+        case "plan_node_start":   return .planNodeStart
+        case "plan_node_done":    return .planNodeDone
+        case "plan_done":         return .planDone
+        case "thought":           return .thought
+        case "thought_delta":     return .thoughtDelta
+        case "thought_done":      return .thoughtDone
+        case "status":            return .status
+        case "verify":            return .verify
+        case "text_delta", "message": return .message
+        case "tool_call":         return .toolCall
+        case "tool_result":       return .toolResult
+        case "client_tool_call":  return .clientToolCall
+        case "subagent":          return .subagent
+        case "reminders_changed": return .remindersChanged
+        case "done":              return .done
+        case "error":             return .error
+        default:                  return nil
+        }
+    }
+}
+
 
 struct PlanNodeJSON: Codable {
     let id: String

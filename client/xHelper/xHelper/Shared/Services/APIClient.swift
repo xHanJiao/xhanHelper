@@ -149,8 +149,24 @@ class APIClient {
 		let path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)" + (q.isEmpty ? "" : "&" + q)
 		var req = URLRequest(url: try requestURL(path))
 		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-		let (data, _) = try await URLSession.shared.data(for: req)
-		return String(data: data, encoding: .utf8) ?? ""
+		let (data, resp) = try await URLSession.shared.data(for: req)
+		let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+		if statusCode == 401 {
+			throw NSError(domain: "APIClient", code: 401,
+				userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+		}
+		// 非 2xx 时服务端返回的是错误 JSON，不能当成 CSV 写盘（否则用户拿到一个内容是
+		// {"status":"error"...} 的 bills.csv 还以为导出成功）。
+		guard statusCode == 200 else {
+			let msg = String(data: data, encoding: .utf8) ?? "unknown"
+			throw NSError(domain: "APIClient", code: statusCode,
+				userInfo: [NSLocalizedDescriptionKey: "导出失败（HTTP \(statusCode)）：\(msg.prefix(200))"])
+		}
+		guard let csv = String(data: data, encoding: .utf8) else {
+			throw NSError(domain: "APIClient", code: -1,
+				userInfo: [NSLocalizedDescriptionKey: "导出内容不是 UTF-8 文本"])
+		}
+		return csv
 	}
 
 	// MARK: Notes

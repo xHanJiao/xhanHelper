@@ -128,6 +128,7 @@ class BillViewModel: ObservableObject {
             )
         } catch {
             LogBuffer.shared.error("BillViewModel.exportCSV: \(error)")
+            ToastCenter.shared.show("导出失败：\(error.localizedDescription)")
             return nil
         }
     }

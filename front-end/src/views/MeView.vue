@@ -124,6 +124,8 @@ function go(path) {
   gap: 8px;
   margin-bottom: 16px;
 }
+/* 奇数张时最后一张独占一行，铺满整行 */
+.grid > .item:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .item {
   display: flex;
   align-items: center;

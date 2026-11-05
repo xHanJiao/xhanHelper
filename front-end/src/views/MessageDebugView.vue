@@ -1,18 +1,18 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import MarkdownIt from 'markdown-it'
 import PageTopBar from '@/components/PageTopBar.vue'
 import { isMacEmbedded } from '@/utils/embed'
 import { api } from '@/api/client'
 import { useThemeStore } from '@/stores/theme'
+// 统一用 html:false 的实例：这里渲染的是 LLM 原文和 system prompt（含用户笔记/网页内容），
+// 默认 MarkdownIt 会把其中的 HTML 当标签执行。
+import md from '@/utils/markdown'
 
 const route = useRoute()
 const router = useRouter()
 const msgId = route.params.id
 const themeStore = useThemeStore()
-
-const md = new MarkdownIt()
 
 const loading = ref(true)
 const error = ref('')

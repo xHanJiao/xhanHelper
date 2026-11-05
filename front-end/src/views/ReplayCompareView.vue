@@ -4,9 +4,9 @@ import { useRoute } from 'vue-router'
 import PageTopBar from '@/components/PageTopBar.vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import MarkdownIt from 'markdown-it'
-
-const md = new MarkdownIt()
+// 统一用 html:false 的实例：system prompt 里混着用户笔记/记忆/网页抓取内容，
+// 默认 MarkdownIt 会把其中的 HTML 当标签执行（存储型 XSS）。
+import md from '@/utils/markdown'
 
 const route = useRoute()
 const auth = useAuthStore()

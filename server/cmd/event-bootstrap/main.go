@@ -56,7 +56,7 @@ func main() {
 	reset := flag.Bool("reset", false, "清空该用户全部事件、记忆退回普通池，并删除游标后重跑")
 	dryRun := flag.Bool("dry-run", false, "只统计输入与事件现状；不调 LLM、不改事件/记忆数据（AutoMigrate 仍会跑）")
 	review := flag.Bool("review", false, "跑完后做一次结构复盘：Flash 看全部事件，输出 merge + 改名")
-	pruneSingles := flag.Bool("prune-singles", false, "删除只含 0/1 条记忆的事件（记忆退回普通池）；可配 --dry-run 先看清单")
+	pruneSingles := flag.Bool("prune-singles", false, "删除只含 0/1 条记忆的事件（记忆退回普通池）；可配 --dry-run 先看清单；建议先停服务")
 	userFlag := flag.String("user", "", "user_id（默认：本地单用户 / 库里唯一用户）")
 	cursorPath := flag.String("cursor", filepath.Join("data", "event-bootstrap.cursor"), "游标文件路径")
 

@@ -35,6 +35,10 @@ async function handleCreate() {
     message.warning('请填写用户名和密码')
     return
   }
+  if (password.value.length < 10) {
+    message.warning('密码至少 10 个字符')
+    return
+  }
   creating.value = true
   try {
     await api.post('/api/admin/users', {
@@ -118,7 +122,7 @@ const columns = computed(() => [
         secondary: true,
         loading: resetingId.value === row.id
       }, { default: () => '重置密码' }),
-      default: () => '将生成一个新的7位数字密码，确定重置吗？'
+      default: () => '将生成一个新的随机密码，并让该用户所有设备重新登录，确定重置吗？'
     })
   }
 ])

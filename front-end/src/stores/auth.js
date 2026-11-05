@@ -136,6 +136,8 @@ export const useAuthStore = defineStore('auth', () => {
         message = '注册已禁用或用户名不在允许列表'
       } else if (err.status === 409) {
         message = '用户名已存在'
+      } else if (err.status === 400) {
+        message = '密码需至少 10 个字符（最多 72 字节）'
       }
       return { success: false, message }
     } finally {

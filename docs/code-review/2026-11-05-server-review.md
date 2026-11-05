@@ -208,6 +208,35 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 
 验证：`gofmt -l`、`go build ./...`、`go vet ./...`、`go test ./...`、`go test -race ./...` 全部通过。
 
+### 5.4 认证加固（A3 / A4 / A5，2026-11-05）
+
+用户拍板：改密保留当前设备；管理员重置全踢；token 改为哈希后强制重登；密码最短 10 个字符。
+
+- **A3 改密吊销**：`ChangePassword` 在事务里更新 hash 并删除该用户除当前 token 外的全部 token；
+  `ResetPassword`（管理员）删除全部 token。旧密码错返回 `ErrInvalidPassword`（401），
+  DB 故障返回 500，不再折叠成「旧密码错」。
+- **A4 登录时序**：用户不存在时也跑一次固定 dummy hash 的 bcrypt，拉平与密码错误的耗时差。
+- **A5-1 密码策略**：注册 / 改密 / 管理员创建共用 `validatePassword`——最少 10 个字符、最多 72 字节
+  （bcrypt 上限，超长明确 400）；管理员重置改为 `crypto/rand` 生成的 22 字符随机密码。
+- **A5-2 token 哈希**：`UserToken` 存 `SHA-256(token)` 的 64 位 hex（列名仍为 `token`，宽度 36→64，
+  由 AutoMigrate 扩列）；`FindByToken` / `RefreshToken` / `Logout` 全部按哈希查询。
+  启动时清掉 `LENGTH(token) = 36` 的旧明文行，**升级后所有客户端需要重新登录一次**。
+- 新增测试：`TestUserRepo_TokenHashedAtRest`、`TestUserRepo_ChangePasswordRevokesOtherTokens`、
+  `TestUserRepo_ResetPasswordRevokesAllTokens`、`TestPurgeLegacyPlaintextTokens`、
+  `TestValidatePassword`、`TestRandomPassword`、`TestCreateUserRejectsShortPassword`。
+
+**复审补正（二）**
+
+- **换用户名绕过限流**：dummy bcrypt 让每次「用户不存在」也有 ~100ms 成本，而 userKey 是 IP+用户名，
+  随机换名永远是新 key。新增纯 IP 维度限制（50 次 / 15 分钟），与用户维度同时 `Allow/Fail/Reset`；
+  新增 `TestAuthFailureLimiterIPCap`、`TestLoginRejectsAfterIPFailures`。
+- **登录/注册/重置错误折叠**：`Login` 未知用户/密码错返回 `ErrInvalidCredentials`，`Create` 重名返回
+  `ErrUsernameTaken`；handler 对业务错误回 401/409/404，其余记日志后回 500（不再把 DB 故障伪装成
+  「密码错」或「用户不存在」）。新增 `TestLoginDBErrorIs500`、`TestRegisterDBErrorIs500`、
+  `TestRegisterDuplicateIs409`、`TestResetPasswordUnknownUserIs404`、`TestResetPasswordDBErrorIs500`。
+- **文档/基线脚本**：审查报告改为 `LENGTH(token) = 36`；`server/migrations/001_init.sql` 的
+  `user_tokens.token` 改为 `VARCHAR(64)` 并注明存哈希。
+
 ## 六、后续变更
 
 - 2026-11-05：建立本报告；批次 A 开始实施（分支 `fix/server-security-a`）。
@@ -220,3 +249,9 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
   用户拍板：限流放服务端内存窗口；`agent/theme_*` / `state_*` 保留未接线；AutoMigrate 全环境 Fatal。
 - 2026-11-05：批次 C 复审补正——限流信任回环代理并给 map 加硬上限、账单导入 body 上限、
   列表 limit 覆盖扩大（保留文档 limit=0 语义）、四份设计文档补「后续变更」。
+- 2026-11-05：认证加固（A3/A4/A5）——改密/重置吊销 token、登录时序对齐、密码长度策略、
+  token 改 SHA-256 哈希存储（升级后需重新登录一次）。
+- 2026-11-05：认证复审补正——限流增加 IP 维度（防换用户名绕过 dummy bcrypt）、
+  登录/注册/重置区分业务错误与 DB 故障（后者 5xx + 日志）、文档与基线 SQL 同步。
+- 2026-11-05：认证复审补正（三）——`Create` 的预检注释说明并发同名仍可能 500（注册默认关闭，接受）；
+  设计文档补 IP 维度限流与错误码拆分。`Reset(ipKey)` 保留：成功登录清零整个 IP 计数，对个人应用更友好。

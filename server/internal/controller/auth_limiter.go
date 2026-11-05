@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -11,10 +12,13 @@ import (
 // 内存窗口只在单实例内生效；多实例部署需要网关层再兜一层。
 const (
 	authFailWindow = 15 * time.Minute
-	authFailMax    = 10
+	authFailMax    = 10 // 同一 IP+用户名
+	authIPFailMax  = 50 // 同一 IP（换用户名也绕不过；同时兜住 bcrypt 放大）
 	authFailMaxKey = 10000
 	authPruneEvery = time.Minute // 饱和时最多每分钟清理一次，避免每次失败都全表扫描
 )
+
+const authIPKeyPrefix = "ip:"
 
 type authFailure struct {
 	count   int
@@ -47,7 +51,14 @@ func (l *authFailureLimiter) Allow(key string) bool {
 		delete(l.entries, key)
 		return true
 	}
-	return e.count < authFailMax
+	return e.count < l.maxForKey(key)
+}
+
+func (l *authFailureLimiter) maxForKey(key string) int {
+	if strings.HasPrefix(key, authIPKeyPrefix) {
+		return authIPFailMax
+	}
+	return authFailMax
 }
 
 // Fail 记一次失败；窗口过期则重新开窗。
@@ -98,4 +109,9 @@ func (l *authFailureLimiter) pruneIfSaturatedLocked(now time.Time) {
 // 只信任回环反代，X-Forwarded-For 由 gin 从右往左取第一个非受信地址。
 func authKey(c *gin.Context, username string) string {
 	return c.ClientIP() + "|" + username
+}
+
+// authIPKey 纯 IP 维度，防止攻击者靠随机用户名让 userKey 永远命中新 key。
+func authIPKey(c *gin.Context) string {
+	return authIPKeyPrefix + c.ClientIP()
 }

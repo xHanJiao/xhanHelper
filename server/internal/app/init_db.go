@@ -89,5 +89,18 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		log.Fatalf("[db] AutoMigrate failed (refusing to start): %v", err)
 	}
 
+	if n, err := purgeLegacyPlaintextTokens(db); err != nil {
+		log.Fatalf("[db] purge legacy plaintext tokens failed (refusing to start): %v", err)
+	} else if n > 0 {
+		log.Printf("[db] purged %d legacy plaintext tokens; affected clients must log in again", n)
+	}
+
 	return db
+}
+
+// purgeLegacyPlaintextTokens 删除旧版明文 token（36 位 UUID）。
+// token 现在存 SHA-256 的 64 位 hex；旧行无法再匹配，留着只会泄露明文，启动时直接清掉。
+func purgeLegacyPlaintextTokens(db *gorm.DB) (int64, error) {
+	res := db.Where("LENGTH(token) = 36").Delete(&model.UserToken{})
+	return res.RowsAffected, res.Error
 }

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -12,7 +14,26 @@ import (
 	"xhan-helper/internal/model"
 )
 
-var ErrTokenExpired = errors.New("token expired")
+var (
+	ErrTokenExpired       = errors.New("token expired")
+	ErrInvalidPassword    = errors.New("invalid old password")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrUsernameTaken      = errors.New("username already exists")
+)
+
+// dummyPasswordHash 用于「用户不存在」时也跑一次 bcrypt，拉平登录耗时。
+// 它不对应任何真实密码，比较结果没有意义。
+const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
+// hashToken 存库前对 bearer token 做 SHA-256；token 是 122 位随机 UUID，不需要 bcrypt。
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func equalizeLoginTiming(password string) {
+	bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(password))
+}
 
 // UserRepo — 用户数据访问
 type UserRepo struct {
@@ -29,6 +50,14 @@ func NewUserRepo(db *gorm.DB, tokenTTLMinutes, maxTokensPerUser int) *UserRepo {
 }
 
 func (r *UserRepo) Create(ctx context.Context, username, password string) (*model.User, string, error) {
+	// 预检只为友好报错：并发同名仍可能撞唯一索引落到 500。注册默认关闭，不值得为此开 TranslateError。
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&model.User{}).Where("username = ?", username).Count(&count).Error; err != nil {
+		return nil, "", err
+	}
+	if count > 0 {
+		return nil, "", ErrUsernameTaken
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, "", err
@@ -78,10 +107,15 @@ func (r *UserRepo) EnsureByUsername(ctx context.Context, username string) (*mode
 func (r *UserRepo) Login(ctx context.Context, username, password string) (*model.User, string, error) {
 	var user model.User
 	if err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 用户不存在也耗一次 bcrypt 的时间，避免用响应快慢枚举用户名。
+			equalizeLoginTiming(password)
+			return nil, "", ErrInvalidCredentials
+		}
 		return nil, "", err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return nil, "", err
+		return nil, "", ErrInvalidCredentials
 	}
 
 	var token string
@@ -109,22 +143,37 @@ func (r *UserRepo) Login(ctx context.Context, username, password string) (*model
 	return &user, token, nil
 }
 
-func (r *UserRepo) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
+// ChangePassword 校验旧密码后更新 hash，并吊销该用户除 keepToken 外的全部 token。
+// keepToken 为空时吊销全部（调用方拿不到当前 token 的兜底）。
+func (r *UserRepo) ChangePassword(ctx context.Context, userID, oldPassword, newPassword, keepToken string) (int64, error) {
 	var user model.User
 	if err := r.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
-		return err
+		return 0, err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
-		return err
+		return 0, ErrInvalidPassword
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return r.db.WithContext(ctx).Model(&user).Update("password_hash", string(hash)).Error
+	var revoked int64
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Update("password_hash", string(hash)).Error; err != nil {
+			return err
+		}
+		q := tx.Where("user_id = ?", userID)
+		if keepToken != "" {
+			q = q.Where("token <> ?", hashToken(keepToken))
+		}
+		res := q.Delete(&model.UserToken{})
+		revoked = res.RowsAffected
+		return res.Error
+	})
+	return revoked, err
 }
 
-// ResetPassword 管理员重置密码（不做旧密码校验）。不失效已有 token。
+// ResetPassword 管理员重置密码（不做旧密码校验），并吊销该用户全部 token。
 func (r *UserRepo) ResetPassword(ctx context.Context, userID, newPassword string) error {
 	var user model.User
 	if err := r.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
@@ -134,11 +183,16 @@ func (r *UserRepo) ResetPassword(ctx context.Context, userID, newPassword string
 	if err != nil {
 		return err
 	}
-	return r.db.WithContext(ctx).Model(&user).Update("password_hash", string(hash)).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Update("password_hash", string(hash)).Error; err != nil {
+			return err
+		}
+		return tx.Where("user_id = ?", userID).Delete(&model.UserToken{}).Error
+	})
 }
 
 func (r *UserRepo) Logout(ctx context.Context, token string) error {
-	return r.db.WithContext(ctx).Where("token = ?", token).Delete(&model.UserToken{}).Error
+	return r.db.WithContext(ctx).Where("token = ?", hashToken(token)).Delete(&model.UserToken{}).Error
 }
 
 // ListAll 列出所有用户
@@ -186,7 +240,7 @@ func (r *UserRepo) List(ctx context.Context, offset, limit int) (*ListResult, er
 
 func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, error) {
 	var ut model.UserToken
-	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&ut).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("token = ?", hashToken(token)).First(&ut).Error; err != nil {
 		return nil, err
 	}
 	if time.Now().After(ut.ExpiresAt) {
@@ -203,13 +257,14 @@ func issueTokenTx(db *gorm.DB, userID string, ttlMinutes int) (string, error) {
 	if ttlMinutes <= 0 {
 		ttlMinutes = 5
 	}
+	raw := uuid.New().String()
 	ut := &model.UserToken{
 		ID:        uuid.New().String(),
 		UserID:    userID,
-		Token:     uuid.New().String(),
+		TokenHash: hashToken(raw),
 		ExpiresAt: time.Now().Add(time.Duration(ttlMinutes) * time.Minute),
 	}
-	return ut.Token, db.Create(ut).Error
+	return raw, db.Create(ut).Error
 }
 
 // UserStats — 用户统计数据
@@ -327,7 +382,7 @@ func (r *UserRepo) GetUserStats(ctx context.Context, userIDs []string, since tim
 // 仅当 token 存在且未过期时才续期；已过期的 token 返回 ErrTokenExpired。
 func (r *UserRepo) RefreshToken(ctx context.Context, token string) error {
 	var ut model.UserToken
-	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&ut).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("token = ?", hashToken(token)).First(&ut).Error; err != nil {
 		return err
 	}
 	if time.Now().After(ut.ExpiresAt) {

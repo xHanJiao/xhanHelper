@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -22,8 +23,13 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, a
 			view.JSONError(c, 400, "username and password required")
 			return
 		}
+		if err := validatePassword(req.Password); err != nil {
+			view.JSONError(c, 400, err.Error())
+			return
+		}
 		key := authKey(c, req.Username)
-		if !limiter.Allow(key) {
+		ipKey := authIPKey(c)
+		if !limiter.Allow(key) || !limiter.Allow(ipKey) {
 			view.JSONError(c, 429, "too many attempts, try again later")
 			return
 		}
@@ -42,11 +48,18 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, a
 		}
 		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password)
 		if err != nil {
-			limiter.Fail(key)
-			view.JSONError(c, 409, "registration failed (username may already exist)")
+			if errors.Is(err, service.ErrUsernameTaken) {
+				limiter.Fail(key)
+				limiter.Fail(ipKey)
+				view.JSONError(c, 409, "username already exists")
+				return
+			}
+			log.Printf("[auth] register error: user=%s err=%v", req.Username, err)
+			view.JSONError(c, 500, "registration failed")
 			return
 		}
 		limiter.Reset(key)
+		limiter.Reset(ipKey)
 		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token, "is_admin": isAdmin(user.ID, adminUsers)})
 	}
 }
@@ -62,17 +75,25 @@ func loginUser(userRepo *service.UserRepo, adminUsers []string, limiter *authFai
 			return
 		}
 		key := authKey(c, req.Username)
-		if !limiter.Allow(key) {
+		ipKey := authIPKey(c)
+		if !limiter.Allow(key) || !limiter.Allow(ipKey) {
 			view.JSONError(c, 429, "too many attempts, try again later")
 			return
 		}
 		user, token, err := userRepo.Login(c.Request.Context(), req.Username, req.Password)
 		if err != nil {
-			limiter.Fail(key)
-			view.JSONError(c, 401, "invalid credentials")
+			if errors.Is(err, service.ErrInvalidCredentials) {
+				limiter.Fail(key)
+				limiter.Fail(ipKey)
+				view.JSONError(c, 401, "invalid credentials")
+				return
+			}
+			log.Printf("[auth] login error: user=%s err=%v", req.Username, err)
+			view.JSONError(c, 500, "login failed")
 			return
 		}
 		limiter.Reset(key)
+		limiter.Reset(ipKey)
 		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token, "is_admin": isAdmin(user.ID, adminUsers)})
 	}
 }
@@ -88,11 +109,22 @@ func changePassword(userRepo *service.UserRepo) gin.HandlerFunc {
 			view.JSONError(c, 400, "old_password and new_password required")
 			return
 		}
-		if err := userRepo.ChangePassword(c.Request.Context(), userID, req.OldPassword, req.NewPassword); err != nil {
-			view.JSONError(c, 401, "invalid old password")
+		if err := validatePassword(req.NewPassword); err != nil {
+			view.JSONError(c, 400, err.Error())
 			return
 		}
-		view.JSONOK(c, gin.H{"ok": true})
+		revoked, err := userRepo.ChangePassword(c.Request.Context(), userID, req.OldPassword, req.NewPassword, c.GetString("bearer_token"))
+		if err != nil {
+			if errors.Is(err, service.ErrInvalidPassword) {
+				view.JSONError(c, 401, "invalid old password")
+				return
+			}
+			log.Printf("[auth] change password error: user=%s err=%v", userID, err)
+			view.JSONError(c, 500, "change password failed")
+			return
+		}
+		log.Printf("[auth] password changed: user=%s revoked_tokens=%d", userID, revoked)
+		view.JSONOK(c, gin.H{"ok": true, "revoked": revoked})
 	}
 }
 

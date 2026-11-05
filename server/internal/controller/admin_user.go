@@ -1,12 +1,13 @@
 package controller
 
 import (
+	"errors"
 	"log"
-	"math/rand"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/service"
@@ -24,24 +25,41 @@ func createUserByAdmin(userRepo *service.UserRepo) gin.HandlerFunc {
 			view.JSONError(c, 400, "username and password required")
 			return
 		}
+		if err := validatePassword(req.Password); err != nil {
+			view.JSONError(c, 400, err.Error())
+			return
+		}
 		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password)
 		if err != nil {
-			log.Printf("[admin] create user error: %v", err)
-			view.JSONError(c, 409, "创建用户失败（用户名可能已存在）")
+			if errors.Is(err, service.ErrUsernameTaken) {
+				view.JSONError(c, 409, "用户名已存在")
+				return
+			}
+			log.Printf("[admin] create user error: user=%s err=%v", req.Username, err)
+			view.JSONError(c, 500, "创建用户失败")
 			return
 		}
 		view.JSONOK(c, gin.H{"user_id": user.ID, "username": user.Username, "token": token})
 	}
 }
 
-// resetUserPassword POST /api/admin/users/:id/reset-password — 管理员重置用户密码为随机7位数字
+// resetUserPassword POST /api/admin/users/:id/reset-password — 管理员重置为随机密码，并吊销该用户全部 token
 func resetUserPassword(userRepo *service.UserRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.Param("id")
-		newPassword := strconv.Itoa(1000000 + rand.Intn(9000000))
+		newPassword, err := randomPassword()
+		if err != nil {
+			log.Printf("[admin] generate reset password error: %v", err)
+			view.JSONError(c, 500, "reset password failed")
+			return
+		}
 		if err := userRepo.ResetPassword(c.Request.Context(), userID, newPassword); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				view.JSONError(c, 404, "重置失败：用户不存在")
+				return
+			}
 			log.Printf("[admin] reset password error user=%s: %v", userID, err)
-			view.JSONError(c, 404, "重置失败：用户不存在")
+			view.JSONError(c, 500, "重置失败")
 			return
 		}
 		view.JSONOK(c, gin.H{"user_id": userID, "new_password": newPassword})

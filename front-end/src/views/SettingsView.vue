@@ -97,6 +97,10 @@ async function changePassword() {
     message.warning('两次输入的新密码不一致')
     return
   }
+  if (newPassword.value.length < 10) {
+    message.warning('新密码至少 10 个字符')
+    return
+  }
   saving.value = true
   try {
     await api.post('/api/auth/change-password', {

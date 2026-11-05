@@ -11,10 +11,11 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uk_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- token 列存 SHA-256(token) 的 64 位 hex，不是明文 token。
 CREATE TABLE IF NOT EXISTS user_tokens (
     id          VARCHAR(36) NOT NULL PRIMARY KEY,
     user_id     VARCHAR(36) NOT NULL,
-    token       VARCHAR(36) NOT NULL,
+    token       VARCHAR(64) NOT NULL,
     created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_token (token),
     KEY idx_user_id (user_id)

@@ -56,6 +56,7 @@ func main() {
 	reset := flag.Bool("reset", false, "清空该用户全部事件、记忆退回普通池，并删除游标后重跑")
 	dryRun := flag.Bool("dry-run", false, "只统计输入与事件现状；不调 LLM、不改事件/记忆数据（AutoMigrate 仍会跑）")
 	review := flag.Bool("review", false, "跑完后做一次结构复盘：Flash 看全部事件，输出 merge + 改名")
+	pruneSingles := flag.Bool("prune-singles", false, "删除只含 0/1 条记忆的事件（记忆退回普通池）；可配 --dry-run 先看清单")
 	userFlag := flag.String("user", "", "user_id（默认：本地单用户 / 库里唯一用户）")
 	cursorPath := flag.String("cursor", filepath.Join("data", "event-bootstrap.cursor"), "游标文件路径")
 
@@ -75,6 +76,8 @@ Flags:
   APP_ENV=dev event-bootstrap
   APP_ENV=dev event-bootstrap --reset
   APP_ENV=dev event-bootstrap --review
+  APP_ENV=dev event-bootstrap --prune-singles --dry-run
+  APP_ENV=dev event-bootstrap --prune-singles
 `)
 	}
 	flag.Parse()
@@ -103,6 +106,15 @@ Flags:
 	}
 	if !*dryRun {
 		config.GuardProdWrite(cfg.DB.Database)
+	}
+	if *pruneSingles {
+		if *reset || *review || *limit > 0 {
+			log.Fatal("--prune-singles 只能单独使用（不能与 --reset / --review / --limit 同时）")
+		}
+		if err := pruneSingleMemoryEvents(ctx, repos, userID, *dryRun); err != nil {
+			log.Fatalf("prune singles: %v", err)
+		}
+		return
 	}
 
 	var cur *cursorFile
@@ -189,6 +201,34 @@ Flags:
 		}
 		printReport(ctx, repos, userID, total)
 	}
+}
+
+// pruneSingleMemoryEvents 删除只含 0/1 条记忆的事件：记忆退回普通池、事件软删。
+// dryRun 只打印清单。用于清理冷启动留下的「单记忆事件」。
+func pruneSingleMemoryEvents(ctx context.Context, repos *app.Repos, userID string, dryRun bool) error {
+	stats, err := loadEventStats(ctx, repos, userID)
+	if err != nil {
+		return fmt.Errorf("load events: %w", err)
+	}
+	pruned, kept := 0, 0
+	for _, st := range stats {
+		if st.Count >= 2 {
+			kept++
+			continue
+		}
+		if dryRun {
+			log.Printf("[prune] would delete %q (%s): %d memories", st.Event.Name, st.Event.ID, st.Count)
+			pruned++
+			continue
+		}
+		if err := repos.Event.Delete(ctx, userID, st.Event.ID); err != nil {
+			return fmt.Errorf("delete event %s: %w", st.Event.ID, err)
+		}
+		log.Printf("[prune] deleted %q (%s): %d memories", st.Event.Name, st.Event.ID, st.Count)
+		pruned++
+	}
+	log.Printf("[prune] done: pruned=%d kept=%d dry_run=%v", pruned, kept, dryRun)
+	return nil
 }
 
 // resolveUser 依次尝试 --user、本地单用户、库里唯一用户。

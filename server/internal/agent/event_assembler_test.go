@@ -214,12 +214,13 @@ func TestApplyPlan_NewEventDedupeByName(t *testing.T) {
 	ctx := context.Background()
 	e := seedEvent(t, db, "u1", "驾照考取", "科三补考中")
 	m1 := seedMemory(t, db, "u1", "m1", "科三补考预约 11-14")
+	m2 := seedMemory(t, db, "u1", "m2", "练车加到每周两次")
 
 	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
 		NewEvents: []assemblyNewEvent{{
-			Name: "驾照 考取", Summary: "科三还没过", MemoryIDs: []string{"m1"},
+			Name: "驾照 考取", Summary: "科三还没过", MemoryIDs: []string{"m1", "m2"},
 		}},
-	}, batchOf(m1), activeOf(e))
+	}, batchOf(m1, m2), activeOf(e))
 
 	if stats.Created != 0 || stats.Rejected != 1 {
 		t.Fatalf("expected rejected, got %+v", stats)
@@ -235,12 +236,13 @@ func TestApplyPlan_NewEventDedupeBySummary(t *testing.T) {
 	ctx := context.Background()
 	e := seedEvent(t, db, "u1", "旧事件", "旧摘要")
 	m1 := seedMemory(t, db, "u1", "m1", "完全不同的内容")
+	m2 := seedMemory(t, db, "u1", "m2", "另一条内容")
 
 	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
 		NewEvents: []assemblyNewEvent{{
-			Name: "新事件", Summary: "新摘要", MemoryIDs: []string{"m1"},
+			Name: "新事件", Summary: "新摘要", MemoryIDs: []string{"m1", "m2"},
 		}},
-	}, batchOf(m1), activeOf(e))
+	}, batchOf(m1, m2), activeOf(e))
 
 	if stats.Created != 0 || stats.Rejected != 1 {
 		t.Fatalf("expected summary dedupe rejection, got %+v", stats)
@@ -463,6 +465,33 @@ func TestEventWorker_ProcessesInlineMemoryWhenExtractDisabled(t *testing.T) {
 	}
 }
 
+func TestApplyPlan_RejectsSingleMemoryNewEvent(t *testing.T) {
+	// 单条记忆不建事件：一次性决策/选型最容易长成 1 条记忆的空事件，留在普通池即可。
+	a, db := setupEventAssembler(t, &fakeEmbedder{}, 0)
+	ctx := context.Background()
+	m1 := seedMemory(t, db, "u1", "m1", "浏览器正文提取库最终选型结论")
+
+	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
+		NewEvents: []assemblyNewEvent{{
+			Name: "浏览器正文提取库选型", Summary: "选了某库", MemoryIDs: []string{"m1"},
+		}},
+	}, batchOf(m1), map[string]*model.Event{})
+
+	if stats.Created != 0 || stats.Rejected != 1 {
+		t.Fatalf("expected single-memory event rejected, got %+v", stats)
+	}
+	if got := loadMemoryByID(t, db, "m1").EventID; got != nil {
+		t.Fatalf("memory should stay in pool, got %v", got)
+	}
+	var events []model.Event
+	if err := db.Find(&events).Error; err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected no event, got %d", len(events))
+	}
+}
+
 func TestApplyPlan_NewEventsDoNotShareMemory(t *testing.T) {
 	a, db := setupEventAssembler(t, &fakeEmbedder{fn: func(text string) []float64 {
 		if strings.HasPrefix(text, "A") {
@@ -472,13 +501,14 @@ func TestApplyPlan_NewEventsDoNotShareMemory(t *testing.T) {
 	}}, 0)
 	ctx := context.Background()
 	m1 := seedMemory(t, db, "u1", "m1", "唯一记忆")
+	m2 := seedMemory(t, db, "u1", "m2", "第二条记忆")
 
 	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
 		NewEvents: []assemblyNewEvent{
-			{Name: "A 事件", Summary: "a", MemoryIDs: []string{"m1"}},
-			{Name: "B 事件", Summary: "b", MemoryIDs: []string{"m1"}},
+			{Name: "A 事件", Summary: "a", MemoryIDs: []string{"m1", "m2"}},
+			{Name: "B 事件", Summary: "b", MemoryIDs: []string{"m1", "m2"}},
 		},
-	}, batchOf(m1), map[string]*model.Event{})
+	}, batchOf(m1, m2), map[string]*model.Event{})
 
 	if stats.Created != 1 || stats.Rejected != 1 {
 		t.Fatalf("expected one created + one rejected, got %+v", stats)
@@ -500,10 +530,11 @@ func TestApplyPlan_NewEventFailsClosedOnEmbedError(t *testing.T) {
 	ctx := context.Background()
 	e := seedEvent(t, db, "u1", "旧事件", "旧摘要")
 	m1 := seedMemory(t, db, "u1", "m1", "新记忆")
+	m2 := seedMemory(t, db, "u1", "m2", "另一条新记忆")
 
 	stats := a.applyPlan(ctx, "u1", &assemblyPlan{
-		NewEvents: []assemblyNewEvent{{Name: "新事件", Summary: "新摘要", MemoryIDs: []string{"m1"}}},
-	}, batchOf(m1), activeOf(e))
+		NewEvents: []assemblyNewEvent{{Name: "新事件", Summary: "新摘要", MemoryIDs: []string{"m1", "m2"}}},
+	}, batchOf(m1, m2), activeOf(e))
 
 	if stats.Created != 0 || stats.Rejected != 1 {
 		t.Fatalf("expected fail-closed rejection, got %+v", stats)

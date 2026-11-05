@@ -14,8 +14,9 @@ const name = computed(() => auth.user?.username || 'xhanHelper')
 const items = [
   { label: '账单', sub: '记录', path: '/bills', icon: '¥' },
   { label: '记忆', sub: '长期', path: '/memories', icon: '◎' },
-  { label: '事件', sub: '记忆聚合', path: '/event-threads', icon: '✳' },
+  { label: '图片', sub: '图床', path: '/images', icon: '▣' },
   { label: '智能体', sub: '自定义', path: '/agents', icon: '◇' },
+  { label: '事件', sub: '记忆聚合', path: '/event-threads', icon: '✳' },
   { label: '设置', sub: '外观与账号', path: '/settings', icon: '⚙' }
 ]
 
@@ -124,8 +125,6 @@ function go(path) {
   gap: 8px;
   margin-bottom: 16px;
 }
-/* 奇数张时最后一张独占一行，铺满整行 */
-.grid > .item:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .item {
   display: flex;
   align-items: center;

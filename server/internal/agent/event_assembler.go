@@ -457,6 +457,13 @@ func (a *EventAssembler) applyNewEvents(ctx context.Context, userID string, newE
 			stats.Rejected++
 			continue
 		}
+		// 单条记忆不建事件：一次性的决策/选型/产出常被模型当成「事件」，
+		// 它们留在普通记忆池即可（等后续同批出现 ≥2 条相关记忆再建）。
+		if len(ids) < 2 {
+			log.Printf("[event] new event %q rejected: needs at least 2 unclaimed memories (got %d)", name, len(ids))
+			stats.Rejected++
+			continue
+		}
 		norm := normalizeEventName(name)
 		if names[norm] {
 			log.Printf("[event] new event %q rejected: duplicate name", name)
@@ -658,7 +665,7 @@ event.get（只读）：拿到事件 ID 后读完整事件（summary + 全部记
 
 规则：
 - 一条记忆最多归一个事件；归不进且不是事件性质的，不要分配，留在普通记忆池。
-- new_events 只放真实事件，memory_ids 必须来自本批新记忆；没有合适记忆就不要建。
+- new_events 只放真实事件，memory_ids 必须来自本批新记忆；**至少 2 条**，单条记忆即使像事件也不要建，留在普通记忆池。
 - event_updates 用来重写被改动事件的 summary（≤200 字，写当前状态，未定的事写在里面）；只改名时 name 必填、summary 留空。
 - 记忆的 current_event_id 非空表示它已属于该事件；内容有变化时把该事件放进 event_updates。
 - merge 只在两个事件确实重复时用；同一批里不要写链式合并（A→B 又 B→C）。

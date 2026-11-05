@@ -55,12 +55,9 @@ function go(path) {
         </button>
       </div>
 
-      <div class="section">
+      <div v-if="isAdmin && isDesktop" class="section">
         <div class="section-title">帮助</div>
-        <button class="row card" type="button" @click="go('/settings')">
-          <span>设置</span><span class="chev">›</span>
-        </button>
-        <button v-if="isAdmin && isDesktop" class="row card" type="button" @click="go('/admin')">
+        <button class="row card" type="button" @click="go('/admin')">
           <span>管理后台</span><span class="row-meta">仅桌面端</span><span class="chev">›</span>
         </button>
       </div>

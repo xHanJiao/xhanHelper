@@ -1,8 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
-import { useAuthStore } from '@/stores/auth'
-import { useMobile } from '@/composables/useMobile'
 import {
   NDataTable,
   NSelect,
@@ -12,9 +10,7 @@ import {
 } from 'naive-ui'
 import PageHeader from '@/components/PageHeader.vue'
 
-const auth = useAuthStore()
 const message = useMessage()
-const { isMobile } = useMobile()
 
 const bills = ref([])
 const loading = ref(false)
@@ -64,7 +60,11 @@ const columns = [
 
 function rowKey(row) { return row.id }
 
+// 请求序号：快速改筛选/翻页时，慢的旧响应不许覆盖新结果
+let listSeq = 0
+
 async function fetchBills() {
+  const my = ++listSeq
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize
@@ -77,12 +77,14 @@ async function fetchBills() {
     if (filterCategory.value) url += `&category=${encodeURIComponent(filterCategory.value)}`
 
     const res = await api.get(url)
+    if (my !== listSeq) return
     bills.value = res.bills || []
     total.value = res.total || 0
   } catch (e) {
+    if (my !== listSeq) return
     message.error('加载账单列表失败')
   } finally {
-    loading.value = false
+    if (my === listSeq) loading.value = false
   }
 }
 
@@ -139,35 +141,6 @@ function formatRange(range) {
   return fmt(range[0] || range[1])
 }
 
-async function handleExport() {
-  try {
-    let url = `/api/bills/export`
-    const params = []
-    if (filterDateRange.value) {
-      const [start, end] = filterDateRange.value
-      if (start) params.push(`start_date=${ymd(start)}`)
-      if (end) params.push(`end_date=${ymd(end)}`)
-    }
-    if (filterCategory.value) params.push(`category=${encodeURIComponent(filterCategory.value)}`)
-    if (params.length) url += '?' + params.join('&')
-
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${auth.token}` }
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
-    const blob = await res.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `bills-${ymd(Date.now())}.csv`
-    a.click()
-    URL.revokeObjectURL(a.href)
-    message.success('导出成功')
-  } catch (e) {
-    message.error('导出失败')
-  }
-}
-
 onMounted(fetchBills)
 </script>
 
@@ -183,12 +156,6 @@ onMounted(fetchBills)
         @clear="clearFilters"
         @reset="resetFilters"
       >
-        <template #actions>
-          <button v-if="!isMobile" class="icon-btn" type="button" aria-label="导出账单" title="导出账单" @click="handleExport">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10"/><path d="M8 10.5l4 4 4-4"/><path d="M4.5 17v1.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V17"/></svg>
-          </button>
-        </template>
-
         <template #pills>
           <span v-if="filterCategory" class="filter-pill">
             {{ filterCategory }}

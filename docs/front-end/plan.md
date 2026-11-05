@@ -386,14 +386,12 @@ router.beforeEach((to, from, next) => {
 
 ### BillsView（新增）
 
-账单通过聊天中的 `bookkeeping` 工具创建，此页面提供浏览和 CSV 导入导出入口。
+账单通过聊天中的 `bookkeeping` 工具创建，此页面只提供浏览。
+CSV 导入/导出已从 Web 前端下线，后端接口保留给 macOS 客户端。
 
 - `n-data-table` 展示账单列表
 - 列：项目、金额、一级/二级分类、消费类型、日期、支付方式、归属人、备注
 - 筛选：日期范围（`n-date-picker`）、分类下拉、消费类型
-- 右上角按钮组：
-  - **导入 CSV**：`n-upload` 组件，accept `.csv`，调 `POST /api/bills/import`（Content-Type: text/plain）
-  - **导出 CSV**：下载按钮，调 `GET /api/bills/export`，触发浏览器下载
 - 分页（`n-pagination`）
 
 ### AgentView
@@ -737,8 +735,9 @@ export const api = {
 | 前端功能 | 后端 API |
 |---------|----------|
 | 账单列表 | `GET /api/bills` |
-| 导出 CSV | `GET /api/bills/export` |
-| 导入 CSV | `POST /api/bills/import` |
+
+> CSV 导入/导出（`/api/bills/import`、`/api/bills/export`）已从 Web 前端下线，
+> 后端接口保留给 macOS 客户端与 `scripts/export-bills.sh`。
 
 ### 笔记
 | 前端功能 | 后端 API |

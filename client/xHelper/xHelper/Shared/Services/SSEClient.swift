@@ -13,6 +13,10 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private var currentEvent = ""
     private let lock = NSLock()
 
+    /// 未知事件名（服务端加了新事件、客户端没跟上）：每种名字只警告一次，避免整轮刷屏。
+    private let unknownEventLock = NSLock()
+    private var warnedUnknownEvents = Set<String>()
+
     var onEvent: ((StreamEvent) -> Void)?
     var onError: ((Error) -> Void)?
 
@@ -25,11 +29,16 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {
         // 上一轮未断开时先取消；cancel() 只是尽力而为，已入队的回调仍会执行，
         // 由下面三个 delegate 里的 task 身份守卫拦掉
         disconnect()
-        let url = URL(string: "\(baseURL)/api/chat")!
+        guard let url = URL(string: "\(baseURL)/api/chat") else {
+            // 用户填的服务地址不合法（如残留的 `127.0.0.1:8080` 未归一化）：报错而不是崩。
+            onError?(NSError(domain: "APIClient", code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "服务地址无效：\(baseURL)"]))
+            return
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -42,8 +51,6 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if let t = thinking { body["thinking"] = t }
         if let temp = temperature { body["temperature"] = temp }
         if let mt = maxTokens { body["max_tokens"] = mt }
-        if memoryThreshold != 0.5 { body["memory_threshold"] = memoryThreshold }
-        if memoryLimit != 8 { body["memory_limit"] = memoryLimit }
         if let ct = clientTools, !ct.isEmpty { body["client_tools"] = ct }
         // 空 tab（无会话）场景：客户端已切换的模式经 init_mode 传给服务端，新建会话时落库
         if let im = initMode { body["init_mode"] = im }
@@ -160,25 +167,13 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     private func dispatch(event: String, data: String) {
-        let type: StreamEventType
-        switch event {
-        case "plan":             type = .plan
-        case "plan_node_start":  type = .planNodeStart
-        case "plan_node_done":   type = .planNodeDone
-        case "thought_delta":    type = .thoughtDelta
-        case "thought_done":     type = .thoughtDone
-        case "status":           type = .status
-        case "verify":           type = .verify
-        case "text_delta":       type = .message
-        case "message":          type = .message
-        case "tool_call":        type = .toolCall
-        case "tool_result":      type = .toolResult
-        case "client_tool_call": type = .clientToolCall
-        case "subagent":         type = .subagent
-        case "reminders_changed": type = .remindersChanged
-        case "done":             type = .done
-        case "error":            type = .error
-        default:                 return
+        guard let type = StreamEventType.from(eventName: event) else {
+            // 注意：本方法在 `lock` 内被调用（见 didReceive data），这里必须用独立的锁。
+            let first = unknownEventLock.withLock { warnedUnknownEvents.insert(event).inserted }
+            if first {
+                Self.log.warning("unknown SSE event (server/client drift): \(event, privacy: .public)")
+            }
+            return
         }
         onEvent?(StreamEvent(type: type, data: data))
     }

@@ -138,5 +138,17 @@ let package = Package(
             dependencies: ["ArtifactHTMLCacheCore"],
             path: "Tests/ArtifactHTMLCacheCoreTests"
         ),
+        // ChatWireCore — 聊天线协议里可纯逻辑化的部分（tool_call/tool_result 配对规则、SSE 事件名映射）。
+        // 服务端事件顺序不保证与调用顺序一致，配对必须按 id；事件名是两端契约。规则抽出来让 swift test 钉住。
+        .target(
+            name: "ChatWireCore",
+            path: "xHelper/Shared",
+            sources: ["ViewModels/ToolCallPairing.swift", "Models/StreamEvent.swift"]
+        ),
+        .testTarget(
+            name: "ChatWireCoreTests",
+            dependencies: ["ChatWireCore"],
+            path: "Tests/ChatWireCoreTests"
+        ),
     ]
 )

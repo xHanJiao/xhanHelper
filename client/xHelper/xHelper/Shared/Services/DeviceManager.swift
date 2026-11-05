@@ -247,18 +247,32 @@ class DeviceManager: ObservableObject {
         }
         #endif
         if let t = token {
-            var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/logout")!)
-            req.httpMethod = "POST"
-            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
-            _ = try? await URLSession.shared.data(for: req)
+            do {
+                var req = URLRequest(url: try requestURL("/api/auth/logout"))
+                req.httpMethod = "POST"
+                req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
+                _ = try await URLSession.shared.data(for: req)
+            } catch {
+                // 登出是尽力而为：清本地态优先，失败只记录
+                LogBuffer.shared.warning("logout request failed: \(error.localizedDescription)")
+            }
         }
         clearAuthState()
+    }
+
+    /// 构造请求 URL；服务地址不合法时抛可见错误，不用 `!` 崩掉 app。
+    private func requestURL(_ path: String) throws -> URL {
+        guard let url = URL(string: "\(baseURL)\(path)") else {
+            throw NSError(domain: "APIClient", code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "服务地址无效：\(baseURL)"])
+        }
+        return url
     }
 
     func login(username: String, password: String) async throws {
         let body = ["username": username, "password": password]
         let data = try JSONEncoder().encode(body)
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/login")!)
+        var req = URLRequest(url: try requestURL("/api/auth/login"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = data
@@ -281,7 +295,7 @@ class DeviceManager: ObservableObject {
     func register(username: String, password: String) async throws {
         let body = ["username": username, "password": password]
         let data = try JSONEncoder().encode(body)
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/register")!)
+        var req = URLRequest(url: try requestURL("/api/auth/register"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = data
@@ -338,7 +352,7 @@ class DeviceManager: ObservableObject {
     }
     
     private func getDefaultConversationInfo() async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/conversations/default")!)
+        var req = URLRequest(url: try requestURL("/api/conversations/default"))
         guard let token = token else {
             throw URLError(.userAuthenticationRequired)
         }

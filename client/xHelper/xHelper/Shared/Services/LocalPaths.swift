@@ -85,8 +85,11 @@ enum LocalPaths {
     /// 不加后缀时 dev 里设的值会串到 prod（数据根都分开了，配置同理）。
     static func scoped(_ key: String) -> String { "\(key)_\(env)" }
 
-    /// 用户填的「服务地址」`xhan_server_url`（已 trim；空白/未填 = nil）。判空口径的唯一来源。
-    static var serverURLOverride: String? { trimmedOverride("xhan_server_url") }
+    /// 用户填的「服务地址」`xhan_server_url`（已归一化；空白/未填 = nil）。判空口径的唯一来源。
+    static var serverURLOverride: String? {
+        guard let raw = trimmedOverride("xhan_server_url") else { return nil }
+        return normalizeServerURL(raw)
+    }
     /// 用户填的「网页地址」`xhan_web_url`（已 trim；空白/未填 = nil）。
     static var webURLOverride: String? { trimmedOverride("xhan_web_url") }
 
@@ -94,6 +97,59 @@ enum LocalPaths {
         guard let raw = UserDefaults.standard.string(forKey: scoped(key)) else { return nil }
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
+    }
+
+    /// 归一化用户填写的服务地址：去首尾空白与尾斜杠，缺 scheme 时按主机补
+    /// （回环 / 私网 → `http://`，其余 → `https://`）。
+    ///
+    /// 为什么必须做：`URL(string: "127.0.0.1:8080/api/chat")` 返回 nil，而请求层曾用 `!` 强解包，
+    /// 用户填一个不带 scheme 的本机地址（最常见写法）就会在启动请求时崩溃。
+    ///
+    /// 为什么远端补 https：给公网主机补 http 会把首次登录的密码明文发出去；
+    /// 线上 nginx 的 80→443 301 还会把 POST 改写成 GET，表现为「登录失败」而不是「地址无效」。
+    /// 用户确实要明文时显式写 `http://` 即可。
+    ///
+    /// 归一化后仍解析不出 host 时**原样返回**（不静默回退默认后端）——由请求层抛出可见的
+    /// 「服务地址无效」，避免用户以为连上了另一个后端。
+    static func normalizeServerURL(_ raw: String) -> String? {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        if !t.contains("://") {
+            let host = URLComponents(string: "http://" + t)?.host ?? ""
+            t = (isLocalOrPrivateHost(host) ? "http" : "https") + "://" + t
+        }
+        if let schemeRange = t.range(of: "://") {
+            let prefixCount = t.distance(from: t.startIndex, to: schemeRange.upperBound)
+            while t.count > prefixCount, t.hasSuffix("/") { t.removeLast() }
+        }
+        guard let components = URLComponents(string: t),
+              let host = components.host, !host.isEmpty else {
+            return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return t
+    }
+
+    /// 是否本机 / 局域网主机（这些补 http；公网补 https）。
+    /// `.local`（mDNS）也按局域网处理。
+    static func isLocalOrPrivateHost(_ rawHost: String) -> Bool {
+        let host = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard !host.isEmpty else { return false }
+        if host == "localhost" || host == "::1" || host.hasSuffix(".local") { return true }
+        if host.contains(":") {
+            // IPv6：ULA fc00::/7 与 link-local fe80::/10（fe80–febf，不只是 fe80）
+            if host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+            return ["fe8", "fe9", "fea", "feb"].contains { host.hasPrefix($0) }
+        }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4, host.split(separator: ".").count == 4,
+              parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+        let a = parts[0], b = parts[1]
+        return a == 0 || a == 127 || a == 10
+            || (a == 172 && (16...31).contains(b))
+            || (a == 192 && b == 168)
+            || (a == 169 && b == 254)
+            || (a == 100 && (64...127).contains(b))   // CGNAT / Tailscale 100.64/10
+            || (a == 198 && (18...19).contains(b))    // 基准测试网段 198.18/15（也常用于内网）
     }
 }
 

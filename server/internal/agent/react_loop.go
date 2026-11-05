@@ -143,8 +143,10 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 			CompletionTokens: ct,
 			LatencyMs:        latencyMs,
 		}
-		if err := rl.traceRepo.CreateLLMCall(ctx, call); err != nil {
-			log.Printf("[react_loop] create llm call error: %v", err)
+		if rl.traceRepo != nil { // 契约：nil = 不写 trace
+			if err := rl.traceRepo.CreateLLMCall(ctx, call); err != nil {
+				log.Printf("[react_loop] create llm call error: %v", err)
+			}
 		}
 
 		// 解析 LLM 响应中的 JSON

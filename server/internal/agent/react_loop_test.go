@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhan-helper/internal/llm"
 	"xhan-helper/internal/tool"
 )
 
@@ -29,4 +30,22 @@ func TestReactLoopToolPanicIsRecovered(t *testing.T) {
 	if !strings.Contains(results[0].Result.Error, "intentional panic") {
 		t.Errorf("错误信息应包含 panic 值: %q", results[0].Result.Error)
 	}
+}
+
+// NewReactLoop 的契约是 traceRepo 可为 nil（不写 trace）。Run 里除了
+// createDecisionSafe，还会写 LLMCall；这条路径必须同样跳过，否则 nil 契约是假的。
+func TestReactLoopRunWithNilTraceRepo(t *testing.T) {
+	client := &syncMockLLM{responses: []llm.Message{{Content: `{"reply":"ok","tool_calls":[]}`}}}
+	rl := NewReactLoop(client, nil, "sys", 2, "u1", "test", nil, "")
+
+	res, err := rl.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("nil traceRepo 不应影响执行: %v", err)
+	}
+	if res == nil || !strings.Contains(res.FinalResponse, "ok") {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+
+	// endTraceSafe 是另一条 nil 入口（反思编排器/状态更新器共用），也不能解引用
+	endTraceSafe(nil, context.Background(), "trace-1", "completed", 0, 0, nil)
 }

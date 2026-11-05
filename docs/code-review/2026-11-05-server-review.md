@@ -17,7 +17,7 @@
 | `go vet ./...` | ✅ |
 | `gofmt -l` | ✅ |
 | `go test ./...` | ✅ 全绿 |
-| `go test -race ./internal/{agent,activity,async,tool,service}/...` | ❌ 36 处 DATA RACE，5 个测试失败（均在测试替身，见 P2-6） |
+| `go test -race ./internal/{agent,activity,async,tool,service}/...` | ❌ 36 处 DATA RACE，6 个测试失败（均在测试替身，见 P2-6） |
 | `staticcheck` | ⚠️ 工具自身 panic（v0.4.7 不支持 Go 1.26）；仓库无 CI、无 lint 配置 |
 
 ---
@@ -70,7 +70,7 @@ log.Printf("[config] db.driver=%s db.dsn=%s", cfg.DB.Driver, cfg.DB.DSN())
 
 主循环（`orchestrator.go:1890`）每个工具 goroutine 都 `recover`，`ReactLoop.executeConcurrently` 没有。工具 panic 会终止整个进程（`gin.Recovery` 只覆盖 HTTP handler）。改用 `util.SafeGo` 或补同样的 recover + 日志。
 
-### 3.3 测试套件在 `-race` 下不干净（36 处）
+### 3.3 测试套件在 `-race` 下不干净（36 处告警、6 个用例失败）
 
 - `agent/client_tool_subagent_test.go:25/30`：`captureSink` 被 `MiniReAct` goroutine 写、测试 goroutine 读；
 - `agent/subagent_test.go:826`：`costRecorder.Record` 在 `llmcost.ChatSync` 后台 goroutine 里写，测试在 851 读。
@@ -148,12 +148,23 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
   顺带修 `createDecisionSafe` 对 `traceRepo == nil` 的解引用（`NewReactLoop` 注释约定允许 nil），
   新增 `agent/react_loop_test.go` 覆盖 panic + nil trace。
 - **3.3** 测试替身竞态：`captureSink` / `costRecorder` 加锁，删除 mock repo 里未使用的计数器；
-  **`go test -race ./...` 全绿**（此前 36 处告警、5 个用例失败）。
+  **`go test -race ./...` 全绿**（此前 36 处告警、6 个用例失败）。
 - **3.4** 评测项目名白名单 `^[A-Za-z0-9_-]+$`，挂在 `/api/admin/eval` 分组中间件上统一校验；
   新增 `controller/eval_routes_test.go`。
 - **3.5** 业务路径静默吞错：reminder 参数解析 ×2、subagent admin extra、logout、聊天标题落库、
   会话 Touch、cron 的 MarkDone/ScheduleRetry/MarkFailed、图片指纹查询、反思 trace 创建。
 - 额外：`reflection.dailyReview` 的 `CreateTrace` 错误不再丢弃。
+
+**复审补正（同日）**
+
+- `traceRepo` 的 nil 契约补全：`ReactLoop.Run` 里的 `CreateLLMCall` 与 `endTraceSafe` 都加了 nil 判断
+  （此前只有 `createDecisionSafe` 判了，注释与实际不符）。新增 `TestReactLoopRunWithNilTraceRepo`
+  覆盖 `Run` 路径 + `endTraceSafe(nil)`。
+- `eval_routes_test.go` 改真路由测试：经过分组中间件、断言拒绝时下游 handler 不执行
+  （锁住 `view.JSONError` 的 `c.Abort()` 语义）；`a/b` 这类多段路径在路由层就 404，单独断言。
+- `chat_ownership_test.go` 补 `FindDefaultByUser` 故障分支（关库 → 500）。
+- reminder 的空参数：`list_reminders` / `search_reminders` 对 `nil` / `""` / `{}` 走默认值或业务校验，
+  只有**非空且格式坏**的 args 才报「参数解析失败」；新增 `TestReminderTool_EmptyArgsAccepted`。
 
 仍留批次 C：3.6 登录限流（需要决定实现位置：服务端窗口 / nginx）、3.7 账单导入批量插入、
 `tool/theme.go` 与 `eval/repo.go` 的静默错误（随死代码决策一起处理）。
@@ -164,3 +175,4 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - 2026-11-05：批次 A 完成（A1/A2/A3），全量 build/vet/test 通过；B/C 批次待排期。
 - 2026-11-05：复审补正——`requireConversationOwner` 的 DB 错误不再折叠为 404，改为记日志 + 500，并补回归测试。
 - 2026-11-05：批次 B 完成（3.1–3.5），`go test -race ./...` 全绿；剩 C 批次（限流、账单批量、死代码）。
+- 2026-11-05：批次 B 复审补正——traceRepo nil 契约补全、eval/reminder 测试收紧、空参数行为明确。

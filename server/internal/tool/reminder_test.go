@@ -267,6 +267,32 @@ func TestReminderTool_ListReminders(t *testing.T) {
 	}
 }
 
+// 无参函数在原生 FC 下可能收到 nil / 空串 / "{}"：解析空 args 不应报错，
+// 而是走默认值（list）或业务校验（search 报 query 为空）。
+func TestReminderTool_EmptyArgsAccepted(t *testing.T) {
+	tool, cleanup := setupReminderTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user1"}
+
+	for _, args := range []json.RawMessage{nil, json.RawMessage(""), json.RawMessage("{}")} {
+		if r := tool.Execute(ec, "list_reminders", args); !r.Success {
+			t.Errorf("list_reminders args=%q 应成功: %s", args, r.Error)
+		}
+		r := tool.Execute(ec, "search_reminders", args)
+		if r.Success || r.Error != "query 不能为空" {
+			t.Errorf("search_reminders args=%q 应报 query 为空: %+v", args, r)
+		}
+	}
+
+	// 非空但格式坏的 args 仍然报解析失败（校验不能一起放宽）
+	for _, fn := range []string{"list_reminders", "search_reminders"} {
+		r := tool.Execute(ec, fn, json.RawMessage(`{bad`))
+		if r.Success || !strings.Contains(r.Error, "参数解析失败") {
+			t.Errorf("%s 坏参数应报解析失败: %+v", fn, r)
+		}
+	}
+}
+
 func TestReminderTool_SearchReminders(t *testing.T) {
 	tool, cleanup := setupReminderTool(t)
 	defer cleanup()

@@ -232,8 +232,10 @@ func (t *ReminderTool) listReminders(ec *ExecuteContext, args json.RawMessage) *
 		Limit  int    `json:"limit"`
 		Offset int    `json:"offset"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &req); err != nil {
+			return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+		}
 	}
 	if req.Limit <= 0 {
 		req.Limit = 20
@@ -259,8 +261,10 @@ func (t *ReminderTool) searchReminders(ec *ExecuteContext, args json.RawMessage)
 		Limit  int    `json:"limit"`
 		Offset int    `json:"offset"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &req); err != nil {
+			return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+		}
 	}
 	if req.Query == "" {
 		return &Result{Success: false, Error: "query 不能为空"}

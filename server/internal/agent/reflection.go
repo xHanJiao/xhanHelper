@@ -273,6 +273,9 @@ func logErr(format string, args ...interface{}) {
 }
 
 func endTraceSafe(repo *service.ReflectionTraceRepo, ctx context.Context, traceID, status string, totalFindings, deliveredCount int, errMsg *string) {
+	if repo == nil { // 与 createDecisionSafe 同一约定：nil = 不写 trace
+		return
+	}
 	if err := repo.EndTrace(ctx, traceID, status, totalFindings, deliveredCount, errMsg); err != nil {
 		log.Printf("[reflection] EndTrace error: %v", err)
 	}

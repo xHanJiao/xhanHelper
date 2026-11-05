@@ -82,15 +82,26 @@ func TestChatConversationLookupDBErrorIsNot404(t *testing.T) {
 	}
 
 	h := chat(nil, nil, service.NewConversationRepo(db), nil, nil, nil)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/chat",
-		strings.NewReader(`{"conversation_id":"conv-1","message":"hi"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	c.Set("user_id", "user-1")
-	h(c)
+	newCtx := func(body string) (*gin.Context, *httptest.ResponseRecorder) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("user_id", "user-1")
+		return c, w
+	}
 
+	// 显式会话：FindByID 故障 → 500
+	c, w := newCtx(`{"conversation_id":"conv-1","message":"hi"}`)
+	h(c)
 	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("DB 故障应 500，got status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("显式会话 DB 故障应 500，got status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// 新入口：FindDefaultByUser 故障也不能当成"没有默认会话"去新建
+	c, w = newCtx(`{"message":"hi"}`)
+	h(c)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("默认会话查询 DB 故障应 500，got status=%d body=%s", w.Code, w.Body.String())
 	}
 }

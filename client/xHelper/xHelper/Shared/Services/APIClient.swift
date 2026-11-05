@@ -136,7 +136,7 @@ class APIClient {
 
     func uploadBillsCSV(_ csvText: String) async throws -> ImportResult {
         let path = "/api/bills/import"
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("text/plain", forHTTPHeaderField: "Content-Type")
@@ -147,7 +147,7 @@ class APIClient {
     func exportBillsCSV(startDate: String, endDate: String, categorys: [String] = [], keyword: String = "", owner: String = "") async throws -> String {
 		let q = billFilterQuery(categorys: categorys, keyword: keyword, owner: owner)
 		let path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)" + (q.isEmpty ? "" : "&" + q)
-		var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+		var req = URLRequest(url: try requestURL(path))
 		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 		let (data, _) = try await URLSession.shared.data(for: req)
 		return String(data: data, encoding: .utf8) ?? ""
@@ -205,7 +205,7 @@ class APIClient {
 	/// 裸 HTML 正文（灵阅本地缓存用）。带 etag 时走 `If-None-Match`：
 	/// 304 → `notModified=true`，调用方直接用本地缓存；200 → 新正文 + 新 etag。
 	func fetchArtifactHTML(id: String, etag: String? = nil) async throws -> ArtifactHTMLResponse {
-		var req = URLRequest(url: URL(string: "\(baseURL)/api/artifacts/\(id)/html")!)
+		var req = URLRequest(url: try requestURL("/api/artifacts/\(id)/html"))
 		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 		if let etag, !etag.isEmpty {
 			req.setValue(etag, forHTTPHeaderField: "If-None-Match")
@@ -478,7 +478,7 @@ class APIClient {
     // MARK: Auth
 
     func refreshToken() async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/refresh")!)
+        var req = URLRequest(url: try requestURL("/api/auth/refresh"))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let _: [String: Bool] = try await doRequest(req)
@@ -510,7 +510,7 @@ class APIClient {
         body.append(data)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
 
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/images/upload")!)
+        var req = URLRequest(url: try requestURL("/api/images/upload"))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -520,7 +520,7 @@ class APIClient {
 
     /// 拉取私有图字节（需 Bearer 鉴权；私有图不能走 AsyncImage）
     func fetchImageData(id: String) async throws -> Data {
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/images/\(id)/file")!)
+        var req = URLRequest(url: try requestURL("/api/images/\(id)/file"))
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
@@ -550,13 +550,13 @@ class APIClient {
     }
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return try await doRequest(req)
     }
 
     private func patch(_ path: String, body: [String: Any]) async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "PATCH"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -565,7 +565,7 @@ class APIClient {
     }
 
     private func post<T: Decodable>(_ path: String, body: [String: Any], timeout: TimeInterval? = nil) async throws -> T {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -577,7 +577,7 @@ class APIClient {
 
     /// POST 但只校验统一包装，不解析 data 结构。
     private func post(_ path: String, body: [String: Any]) async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -586,7 +586,7 @@ class APIClient {
     }
 
     private func patch<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "PATCH"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -595,7 +595,7 @@ class APIClient {
     }
 
     private func delete(_ path: String) async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         try await doRequestStatusOnly(req)
@@ -603,7 +603,7 @@ class APIClient {
 
     /// DELETE 但要把 `data` 解析出来（撤销分享要知道是否真的撤销了）。
     private func deleteWithResponse<T: Decodable>(_ path: String) async throws -> T {
-        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        var req = URLRequest(url: try requestURL(path))
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return try await doRequest(req)
@@ -655,6 +655,16 @@ class APIClient {
                 userInfo: [NSLocalizedDescriptionKey: "empty response data"])
         }
         return value
+    }
+
+    /// 构造请求 URL。用户填错服务地址（如 `127.0.0.1:8080`）时
+    /// `URL(string:)` 会返回 nil —— 这里抛可见错误，不用 `!` 崩掉整个 app。
+    private func requestURL(_ path: String) throws -> URL {
+        guard let url = URL(string: "\(baseURL)\(path)") else {
+            throw NSError(domain: "APIClient", code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "服务地址无效：\(baseURL)"])
+        }
+        return url
     }
 }
 

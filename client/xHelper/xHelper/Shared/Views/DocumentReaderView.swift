@@ -552,11 +552,33 @@ private struct ReaderWebView: NSViewRepresentable {
                 decisionHandler(.cancel)
                 guard let id = DocumentSelectionCoordinator.documentID(from: url) else { return }
                 Task { @MainActor in DocumentSelectionCoordinator.shared.openDocument(id: id) }
-            case "http", "https", "about", "mailto", "tel":
+            case "http", "https":
+                // 外链不在阅读器里打开：`reader` bridge 只该服务本文档，放行导航等于把它交给任意网站。
+                // 初始 loadHTMLString 的导航类型是 .other（baseURL 本身），不能拦；只处理用户点的链接。
+                guard navigationAction.navigationType == .linkActivated else {
+                    decisionHandler(.allow)
+                    return
+                }
+                if Self.isSameDocument(url, current: webView.url) {
+                    decisionHandler(.allow)   // 同文档锚点（#foo）
+                } else {
+                    decisionHandler(.cancel)
+                    NSWorkspace.shared.open(url)
+                }
+            case "about", "mailto", "tel":
                 decisionHandler(.allow)
             default:
                 decisionHandler(.cancel)
             }
+        }
+
+        /// 同文档锚点判断（去 fragment 后与当前页相同）。
+        private static func isSameDocument(_ url: URL, current: URL?) -> Bool {
+            guard let current, url.fragment != nil else { return false }
+            func withoutFragment(_ u: URL) -> Substring {
+                u.absoluteString.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+            }
+            return withoutFragment(url) == withoutFragment(current)
         }
     }
 }
@@ -613,7 +635,11 @@ private enum ReaderHTML {
         let tags = parseTagTexts(document.tags)
         let tagsHTML = tags.map { "<span>\(MarkdownWebUtils.escapeHTML($0))</span>" }.joined()
 
+        // 每次加载换一个 CSP nonce：只放行本模板的两段脚本，正文里注入的 <script>/内联事件一律不执行。
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+
         return template
+            .replacingOccurrences(of: "__NONCE__", with: nonce)
             .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", fontSize))
             .replacingOccurrences(of: "__MARKED_JS__", with: markedJS)
             .replacingOccurrences(of: "__TITLE_HTML__", with: MarkdownWebUtils.escapeHTML(document.title))
@@ -744,6 +770,10 @@ private let template = #"""
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<!-- 内容信任边界：正文可能来自 agent 抓取的网页（含提示注入），markdown 里的 HTML
+     是**不可信输入**。nonce 只发给本模板的两段脚本，注入的 <script> 与内联事件
+     处理器都执行不了；外链图片/脚本/连接也一并收紧。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'nonce-__NONCE__'; font-src data:; media-src 'self' data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <style>
 /* 设计 token 的唯一来源是 client/xHelper/xHelperMac/Assets.xcassets/*.colorset。
    这里只落 appAccent / assistantText 两个色相，其余（淡色、描边）一律
@@ -817,6 +847,14 @@ html, body {
 #content tr:nth-child(even) td { background: var(--border-soft); }
 #content hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
 #content img { max-width: 100%; height: auto; cursor: zoom-in; }
+
+/* 外链图片被 CSP 挡住（img-src 只放行本站 + data/blob）：换成可点击占位，别留裂图 */
+.blocked-img {
+  display: inline-block; max-width: 100%; padding: 8px 12px; border: 1px dashed var(--border);
+  border-radius: 8px; color: var(--muted); font-size: calc(var(--fs) * 0.72);
+  text-decoration: none; overflow-wrap: anywhere;
+}
+.blocked-img:hover { border-color: var(--accent); color: var(--accent); }
 
 /* mermaid：浅/深各一张，媒体查询切显隐（所以切主题不用重载） */
 .mermaid { margin: 18px 0; text-align: center; }
@@ -1057,10 +1095,10 @@ span.ann-bubble:hover { transform: scale(1.6); }
     删除划线
   </button>
 </div>
-<script>
+<script nonce="__NONCE__">
 __MARKED_JS__
 </script>
-<script>
+<script nonce="__NONCE__">
 var reader = (function () {
   var content = document.getElementById('content');
   var findRanges = [];
@@ -1757,6 +1795,46 @@ var reader = (function () {
     window.scrollTo({ top: y, behavior: 'auto' });
   }
 
+  /* 内容加固：markdown 原样放行 HTML（agent 抓来的网页也算输入），所以渲染结果按 DOM
+     实际形态再清一遍 —— 移除可执行/可导航元素与 on* 事件属性。CSP 的 nonce 已能挡住
+     注入脚本与内联事件，这里防的是旧 WebKit 的 CSP 空档，两层都留着。 */
+  function harden(root) {
+    /* URL 解析器会吃掉 scheme 中间的空格/制表/换行（`java&#9;script:` 解析后仍是 javascript:），
+       所以判定前先去掉 C0 控制符与空格，别做“前缀看起来安全”的假阴性。 */
+    function isScriptURL(v) {
+      return /^(javascript|vbscript):/i.test(String(v).replace(/[\u0000-\u0020\u007f]/g, ''));
+    }
+    [].forEach.call(root.querySelectorAll('script, iframe, object, embed, link, meta, base, form'), function (n) {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+    [].forEach.call(root.querySelectorAll('*'), function (el) {
+      [].slice.call(el.attributes).forEach(function (a) {
+        if (/^on/i.test(a.name)) {
+          el.removeAttribute(a.name);
+        } else if ((a.name === 'href' || a.name === 'src' || a.name === 'srcset' || a.name === 'xlink:href')
+                   && isScriptURL(a.value)) {
+          el.removeAttribute(a.name);
+        }
+      });
+    });
+  }
+
+  /* 外链图片被 CSP 挡住（img-src 只放行本站 + data/blob）：换成一句人话 + 可点链接，
+     点开交给系统浏览器。不静默留裂图，也不把第三方请求带进 WebView。 */
+  function markBlockedImages(root) {
+    var origin = location.origin;
+    [].forEach.call(root.querySelectorAll('img'), function (img) {
+      var src = img.src || '';
+      if (!/^https?:/i.test(src)) return;              // data: / blob: / 相对路径不拦
+      if (origin && src.indexOf(origin) === 0) return;  // 本站图床（/images/...）
+      var a = document.createElement('a');
+      a.className = 'blocked-img';
+      a.href = src;
+      a.textContent = '外链图片已阻止' + (img.getAttribute('alt') ? '：' + img.getAttribute('alt') : '');
+      if (img.parentNode) img.parentNode.replaceChild(a, img);
+    });
+  }
+
   function render(md, images) {
     /* breaks:false —— 与旧的 MarkdownUI 阅读器（CommonMark）一致：单个换行按空格接续，
        不变成硬换行。PDF 导出用的是 breaks:true，那边是另一套排版，别跟着改。 */
@@ -1767,6 +1845,8 @@ var reader = (function () {
       return '<div class="mermaid"><img class="m-light" src="' + d.light +
              '"><img class="m-dark" src="' + d.dark + '"></div>';
     });
+    harden(content);
+    markBlockedImages(content);
     /* 硬换行 <br>（源文「行尾两空格 + 换行」）：服务端投影里它是一个空格，而 DOM 文本里
        没有任何字符（<br> 是元素），flatten 也不会在它两侧补分隔符 —— 跨硬换行的选区就会
        少一个空格、永远锚不上。补一个 '\n' 文本节点（行内空白，渲染无影响），折成空格后两边对齐。 */

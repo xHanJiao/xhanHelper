@@ -92,7 +92,14 @@ struct HistoryPanelView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
-            Button { BrowserToolProvider.shared.openURL(URL(string: e.url)!) } label: {
+            Button {
+                guard let url = URL(string: e.url) else {
+                    LogBuffer.shared.warning("history: 无效 URL：\(e.url.prefix(120))")
+                    ToastCenter.shared.show("链接无效，无法打开")
+                    return
+                }
+                BrowserToolProvider.shared.openURL(url)
+            } label: {
                 Text("打开").font(.system(size: 11))
             }
             .buttonStyle(.plain)

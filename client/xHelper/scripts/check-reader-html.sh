@@ -73,6 +73,18 @@ x = 1
 ZZMDIMG0X
 
 ![配图](/images/abc.png)
+
+![外链](https://example.com/pic.png)
+
+<script>window.__pwned = 1;</script>
+
+<img src="x-onerror-probe.png" onerror="window.__pwned = 2">
+
+<a id="js-link" href="javascript:window.__pwned=3">坏链接</a>
+
+<a id="obf-link" href="java&#9;script:window.__pwned=4">混淆链接</a>
+
+<iframe src="https://example.com"></iframe>
 MD
 
 PNG="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/gHrKAAAAABJRU5ErkJggg=="
@@ -85,7 +97,7 @@ p = sys.argv[1]
 html = open(p, encoding='utf-8').read()
 
 # 拦截 JS→Swift 的 postMessage，把回话收进 __msgs；并记录 scrollIntoView 命中的元素
-probe = """<script>
+probe = """<script nonce="testnonce">
 window.__msgs = [];
 window.webkit = { messageHandlers: { reader: { postMessage: function (m) { window.__msgs.push(m); } } } };
 window.__scrolled = [];
@@ -95,7 +107,7 @@ Element.prototype.scrollIntoView = function () { window.__scrolled.push(this); }
 html = html.replace('<meta charset="utf-8">', '<meta charset="utf-8">\n' + probe, 1)
 
 # 断言脚本：全部通过则把 PASS 写进 #result
-tests = """<script>
+tests = """<script nonce="testnonce">
 var fails = [];
 try {
 var okCount = 0;
@@ -126,6 +138,17 @@ ok('点正文配图回传 image（绝对 URL）', !!pmsg && /\/images\/abc\.png$
 ok('标题/标签在外面', document.querySelector('.doc-title').textContent.indexOf('N.E.K.O') === 0 && document.querySelectorAll('.doc-tags span').length === 2);
 ok('底色透明', getComputedStyle(document.body).backgroundColor === 'rgba(0, 0, 0, 0)');
 ok('字号变量生效', getComputedStyle(document.documentElement).getPropertyValue('--fs').trim() === '20.06px');
+
+// 内容加固：markdown 里的 HTML 是不可信输入（agent 抓来的网页也算），渲染后必须清干净
+ok('注入 script 未执行', window.__pwned === undefined, String(window.__pwned));
+ok('注入 script 已移除', c.querySelectorAll('script').length === 0);
+ok('on* 事件属性已剥离', !c.querySelector('img[onerror]'));
+ok('javascript: 链接已剥离', !c.querySelector('a[href^="javascript:"]'));
+var obf = document.getElementById('obf-link');
+ok('控制符混淆的 javascript: 已剥离', !!obf && !obf.hasAttribute('href'));
+ok('iframe 已移除', c.querySelectorAll('iframe').length === 0);
+ok('外链图片换成占位（不裂图）',
+   c.querySelectorAll('a.blocked-img').length === 1 && !c.querySelector('#content img[src^="https://example.com"]'));
 
 // 查找：正文 3 处「记忆系统」（含代码块里的那一处）
 reader.find('记忆系统');

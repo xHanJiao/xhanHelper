@@ -29,7 +29,12 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         // 上一轮未断开时先取消；cancel() 只是尽力而为，已入队的回调仍会执行，
         // 由下面三个 delegate 里的 task 身份守卫拦掉
         disconnect()
-        let url = URL(string: "\(baseURL)/api/chat")!
+        guard let url = URL(string: "\(baseURL)/api/chat") else {
+            // 用户填的服务地址不合法（如残留的 `127.0.0.1:8080` 未归一化）：报错而不是崩。
+            onError?(NSError(domain: "APIClient", code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "服务地址无效：\(baseURL)"]))
+            return
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

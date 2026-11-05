@@ -67,7 +67,7 @@ python3 "$HERE/reader-template.py" "$MARKED" 'N.E.K.O 记忆系统切面调研' 
 python3 - "$HTML" <<'PY'
 import sys
 p = sys.argv[1]
-hook = """<script>
+hook = """<script nonce="testnonce">
 window.__step = function (name) {
   if (name === 'collapse') { window.getSelection().removeAllRanges(); return 'collapsed'; }
   if (name === 'marks') { return window.__marks('容器 li 里的一段'); }

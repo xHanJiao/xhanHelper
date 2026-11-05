@@ -23,12 +23,13 @@ def render(marked_path, title, tags_html, md, images, fs='20.06'):
     if not m:
         sys.exit('没能从 Swift 源码里抠出 template 字面量')
     return (m.group(1)
+            .replace('__NONCE__', 'testnonce')
             .replace('__FS__', fs)
             .replace('__MARKED_JS__', open(marked_path, encoding='utf-8').read())
             .replace('__TITLE_HTML__', title)
             .replace('__TAGS_HTML__', tags_html)
-            .replace('__MD_JSON__', json.dumps(md, ensure_ascii=False))
-            .replace('__IMAGES_JSON__', json.dumps(images, ensure_ascii=False)))
+            .replace('__MD_JSON__', json.dumps(md, ensure_ascii=False).replace('</', '<\\/'))
+            .replace('__IMAGES_JSON__', json.dumps(images, ensure_ascii=False).replace('</', '<\\/')))
 
 
 if __name__ == '__main__':

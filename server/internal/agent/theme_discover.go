@@ -1,5 +1,7 @@
 package agent
 
+// 保留未接线：本文件及 prompt 中的 get_topic_stats / get_topic_detail 工具已被删除，
+// 重新接线前必须先恢复这些工具或改 prompt，否则模型会调用不存在的工具。
 import (
 	"context"
 	"encoding/json"

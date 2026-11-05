@@ -350,12 +350,13 @@ func (s *EventSource) degrade(states map[string]*eventState, from, to string, qu
 	}
 }
 
-// loadActiveEvents 分页加载全部未删除事件（不静默截断）。
-func (s *EventSource) loadActiveEvents(ctx context.Context, userID string) (map[string]*model.Event, error) {
+// LoadActiveEvents 分页加载用户全部未删除事件（不静默截断）。
+// 事件注入（EventSource）与事件拼装（agent.EventAssembler）共用这一份实现。
+func LoadActiveEvents(ctx context.Context, repo *service.EventRepo, userID string) (map[string]*model.Event, error) {
 	const pageSize = 200
 	out := make(map[string]*model.Event)
 	for offset := 0; ; offset += pageSize {
-		page, err := s.eventRepo.List(ctx, userID, false, pageSize, offset)
+		page, err := repo.List(ctx, userID, false, pageSize, offset)
 		if err != nil {
 			return nil, fmt.Errorf("list events (offset %d): %w", offset, err)
 		}
@@ -367,6 +368,10 @@ func (s *EventSource) loadActiveEvents(ctx context.Context, userID string) (map[
 		}
 	}
 	return out, nil
+}
+
+func (s *EventSource) loadActiveEvents(ctx context.Context, userID string) (map[string]*model.Event, error) {
+	return LoadActiveEvents(ctx, s.eventRepo, userID)
 }
 
 // searchMemoryScores 复用记忆向量（chunk + 全量），返回 memoryID → 最高分。

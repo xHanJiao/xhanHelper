@@ -213,3 +213,9 @@ reflection:
 | 多个 draft 都满足升级条件 | 选最新一条升 active，其余同聚类 draft close |
 | 同聚类有不同 Duration | 取最长 |
 | 无历史 session 的新用户 | 无 draft，无 active，等待发现 |
+
+---
+
+## 后续变更
+
+- 2026-11-05：每日主题回顾（`MorningReview` / `EveningReview`）已停用，`CronRunner` 不再按 `daily_schedules` 触发；主题发现/分析/归档整条链路不再运行。`theme` 管理工具、`get_topic_stats` / `get_topic_detail` / `get_bill_stats` 已删除；`agent/theme_*`、`agent/state_*` 作为未接线参考代码保留（prompt 中的旧工具名已失效，重新接线前需先恢复工具）。影响文件：`server/internal/agent/cron_runner.go`、`server/internal/agent/reflection.go`、`server/internal/tool/`、`server/internal/appinit/`、`server/internal/config/config.go`。

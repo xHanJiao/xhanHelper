@@ -46,5 +46,3 @@ reflection:
   analyst_max_iterations: 6
   discover_max_iterations: 6
   cluster_threshold: 0.70
-  daily_schedules: ["03:00"]
-  min_active_days: 3

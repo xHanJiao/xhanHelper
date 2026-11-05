@@ -10,9 +10,7 @@ import (
 // 不能对 nil timer 指针做字段访问（曾导致 select 进入即 panic）。
 func TestCronRunnerStart_DisabledLoops(t *testing.T) {
 	cr := &CronRunner{
-		discoverTimes:    []string{time.Now().Add(-2 * time.Minute).Format("15:04")}, // 下一个触发点在明天，测试窗口内不会触发
-		archiveAfterDays: 0,                                                          // 关闭归档
-		minActiveDays:    3,
+		archiveAfterDays: 0, // 关闭归档
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

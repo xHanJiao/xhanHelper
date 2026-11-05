@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,9 @@ import (
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
+
+// maxBillsImportBodyBytes — CSV 导入请求体上限（约 4 万行），防止无界读内存。
+const maxBillsImportBodyBytes = 4 << 20
 
 // BillHandler — 账单 REST API
 type BillHandler struct {
@@ -42,7 +46,7 @@ func billFilterFromQuery(c *gin.Context) service.BillFilter {
 // ListBills GET /api/bills?limit=50&offset=0
 func (h *BillHandler) ListBills(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, billFilterFromQuery(c), limit, offset)
@@ -98,16 +102,17 @@ func (h *BillHandler) CategoriesBills(c *gin.Context) {
 func (h *BillHandler) ImportBills(c *gin.Context) {
 	userID := c.GetString("user_id")
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBillsImportBodyBytes)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		view.JSONError(c, 400, "read body failed")
+		log.Printf("[bills] Import read body error: %v", err)
+		view.JSONError(c, 400, "read body failed or too large")
 		return
 	}
 
-	imported := 0
 	skipped := 0
 	var errs []string
-	var importedBills []model.Bill
+	var valid []*model.Bill
 
 	scanner := bufio.NewScanner(strings.NewReader(string(body)))
 	lineNum := 0
@@ -162,7 +167,7 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 			continue
 		}
 
-		bill := &model.Bill{
+		valid = append(valid, &model.Bill{
 			ID:          uuid.New().String(),
 			UserID:      userID,
 			Item:        item,
@@ -175,20 +180,25 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 			Owner:       owner,
 			Remark:      remark,
 			Status:      model.BillStatusNormal,
-		}
-		if err := h.billRepo.Create(c.Request.Context(), bill); err != nil {
-			skipped++
-			errs = append(errs, fmt.Sprintf("第%d行: 写入失败 - %s", lineNum, err.Error()))
-			continue
-		}
-		imported++
-		importedBills = append(importedBills, *bill)
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[bills] Import scan error: %v", err)
+		view.JSONError(c, 400, "read csv failed")
+		return
+	}
+
+	// 校验通过的行一次性批量插入：不再逐行访问数据库。
+	if err := h.billRepo.CreateBatch(c.Request.Context(), valid); err != nil {
+		log.Printf("[bills] Import batch create error: user=%s rows=%d err=%v", userID, len(valid), err)
+		view.JSONError(c, 500, "import bills failed")
+		return
 	}
 
 	view.JSONOK(c, gin.H{
-		"imported": imported,
+		"imported": len(valid),
 		"skipped":  skipped,
-		"total":    imported + skipped,
+		"total":    len(valid) + skipped,
 		"errors":   errs,
 	})
 }

@@ -23,7 +23,7 @@ func NewSummaryHandler(summaryRepo *service.ConversationSummaryRepo, msgRepo *se
 // ListSummaries GET /api/summaries?limit=50&offset=0&keyword=
 func (h *SummaryHandler) ListSummaries(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	summaries, total, err := h.summaryRepo.ListByUser(c.Request.Context(), userID,

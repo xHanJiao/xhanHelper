@@ -12,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -183,23 +184,9 @@ func (a *EventAssembler) assembleBatch(ctx context.Context, userID string, batch
 	return a.applyPlan(ctx, userID, &plan, batchByID, active), nil
 }
 
-// loadActiveEvents 加载全部未删除事件（分页取全量，不静默截断）。
+// loadActiveEvents 加载全部未删除事件（实现与检索侧共用 retrieval.LoadActiveEvents）。
 func (a *EventAssembler) loadActiveEvents(ctx context.Context, userID string) (map[string]*model.Event, error) {
-	const pageSize = 200
-	out := make(map[string]*model.Event)
-	for offset := 0; ; offset += pageSize {
-		page, err := a.eventRepo.List(ctx, userID, false, pageSize, offset)
-		if err != nil {
-			return nil, fmt.Errorf("list events (offset %d): %w", offset, err)
-		}
-		for i := range page {
-			out[page[i].ID] = &page[i]
-		}
-		if len(page) < pageSize {
-			break
-		}
-	}
-	return out, nil
+	return retrieval.LoadActiveEvents(ctx, a.eventRepo, userID)
 }
 
 // buildCandidates 计算注入给 LLM 的候选事件：

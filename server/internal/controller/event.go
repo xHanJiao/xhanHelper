@@ -47,7 +47,7 @@ type eventMemoryItem struct {
 // ListEvents GET /api/event-threads?limit=50&offset=0
 func (h *EventHandler) ListEvents(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	if offset < 0 {
 		offset = 0

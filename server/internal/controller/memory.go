@@ -25,7 +25,7 @@ func NewMemoryHandler(memRepo *service.UserMemoryRepo, purger *service.EntityPur
 // ListMemories GET /api/memories?limit=50&offset=0&keyword=
 func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit := parseListLimit(c, 50)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	memories, total, err := h.memRepo.ListByUser(c.Request.Context(), userID,

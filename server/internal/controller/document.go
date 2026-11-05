@@ -30,7 +30,7 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
 	keyword := c.Query("keyword")
 	fields := parseDocFields(c.Query("fields"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimitAllowZero(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	audience, ok := model.ParseDocumentAudienceFilter(c.Query("audience"))
@@ -149,7 +149,7 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 // ListTrashDocuments GET /api/documents/trash?limit=&offset= — 回收站列表
 func (h *DocumentHandler) ListTrashDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimitAllowZero(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, total, err := h.docRepo.ListTrash(c.Request.Context(), userID, limit, offset)

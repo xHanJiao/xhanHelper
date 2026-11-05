@@ -75,11 +75,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	recordMemoryTool := tool.NewRecordMemoryTool(nil)
 	reg.Register(tool.NewLoggingWrapper(recordMemoryTool, log.Default()))
 
-	// --- 反思注册表 ---
-	// 旧主题状态页已停写：事件系统接管后不再注册 theme_analyst / theme_discoverer /
-	// theme 管理工具。注册表留空，ReflectionOrchestrator 的每日回顾只做记录。
-	reflectionReg := tool.NewRegistry()
-
 	// --- 内存提取器 ---
 	// 抽取段的采样温度单独设：抽取的产物是「用户原话」，越贪心越少改写（见
 	// docs/design/memory-facts-verbatim）。只套在这一处，BgFlash 的其他消费者不受影响。
@@ -127,7 +122,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	return &ToolsBundle{
 		Registry:            reg,
-		ReflectionReg:       reflectionReg,
 		MCPManager:          mcpManager,
 		MemExtractor:        memExtractor,
 		ConceptEmbedService: conceptEmbedService,

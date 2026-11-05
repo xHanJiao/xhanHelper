@@ -21,7 +21,6 @@ type HookStatus struct {
 	PendingDelayedTasks   int64                          `json:"pending_delayed_tasks"`
 	NextDelayedTaskAt     string                         `json:"next_delayed_task_at"`
 	TaskQueues            []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
-	DiscoverRemaining     string                         `json:"discover_remaining"`
 	ArchiveRemaining      string                         `json:"archive_remaining"`
 	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
 	VectorEvictRemaining  string                         `json:"vector_evict_remaining"`
@@ -38,17 +37,13 @@ const (
 // activityRecomputeEvery — 活动埋点派生重算间隔（每晚一次）。
 const activityRecomputeEvery = 24 * time.Hour
 
-// CronRunner — 反思循环调度器
+// CronRunner — 后台任务调度器（会话后处理、归档、清理、活动埋点重算等）
 type CronRunner struct {
-	orch              *ReflectionOrchestrator
 	userRepo          *service.UserRepo
-	discoverTimes     []string      // 每日回顾定时列表（主题维护已停写，只留 trace 节拍）
-	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
 	delayedTaskRepo   *service.DelayedTaskRepo
 	sessionEndGroup   *PostChatWorkerGroup      // 对话后处理组（摘要/记忆/事件）
 	ephemeralPurger   EphemeralPurger           // 无痕会话物理销毁器（Stage B）
 	sessionGapMinutes int                       // session 间隔阈值（分钟）
-	minActiveDays     int                       // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
 	convRepo          *service.ConversationRepo // 会话自动归档
 	archiveAfterDays  int                       // 无活动天数超过则自动归档；<=0 关闭
 	archiveInterval   time.Duration             // 归档扫描间隔
@@ -68,7 +63,6 @@ type CronRunner struct {
 
 	// 钩子状态追踪
 	mu                sync.Mutex
-	discoverNext      time.Time
 	archiveNext       time.Time
 	imageCleanupNext  time.Time
 	evictNext         time.Time
@@ -90,15 +84,11 @@ type ActivityRecomputer interface {
 
 // CronRunnerConfig — 调度器依赖配置
 type CronRunnerConfig struct {
-	Orch              *ReflectionOrchestrator
 	UserRepo          *service.UserRepo
 	DelayedTaskRepo   *service.DelayedTaskRepo
 	SessionEndGroup   *PostChatWorkerGroup
 	EphemeralPurger   EphemeralPurger
 	SessionGapMinutes int // session 间隔阈值（分钟），用于 session_end 任务延迟
-	DiscoverSchedules []string
-	RunTimeout        time.Duration
-	MinActiveDays     int // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
 	ConvRepo          *service.ConversationRepo
 	ArchiveAfterDays  int           // 无活动天数超过则自动归档；<=0 关闭
 	ArchiveInterval   time.Duration // 归档扫描间隔；<=0 默认 24h
@@ -119,12 +109,6 @@ type CronRunnerConfig struct {
 
 // NewCronRunner 创建调度器
 func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
-	if len(cfg.DiscoverSchedules) == 0 {
-		cfg.DiscoverSchedules = []string{"03:00"}
-	}
-	if cfg.RunTimeout <= 0 {
-		cfg.RunTimeout = 30 * time.Minute
-	}
 	if cfg.ArchiveInterval <= 0 {
 		cfg.ArchiveInterval = 24 * time.Hour
 	}
@@ -135,15 +119,11 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		cfg.EvictInterval = 24 * time.Hour
 	}
 	return &CronRunner{
-		orch:              cfg.Orch,
 		userRepo:          cfg.UserRepo,
 		delayedTaskRepo:   cfg.DelayedTaskRepo,
-		discoverTimes:     cfg.DiscoverSchedules,
-		runTimeout:        cfg.RunTimeout,
 		sessionEndGroup:   cfg.SessionEndGroup,
 		ephemeralPurger:   cfg.EphemeralPurger,
 		sessionGapMinutes: cfg.SessionGapMinutes,
-		minActiveDays:     cfg.MinActiveDays,
 		convRepo:          cfg.ConvRepo,
 		archiveAfterDays:  cfg.ArchiveAfterDays,
 		archiveInterval:   cfg.ArchiveInterval,
@@ -161,12 +141,6 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		docRepo:           cfg.DocRepo,
 		activity:          cfg.Activity,
 	}
-}
-
-func (cr *CronRunner) setDiscoverNext(t time.Time) {
-	cr.mu.Lock()
-	cr.discoverNext = t
-	cr.mu.Unlock()
 }
 
 // setArchiveNext 更新归档扫描下次触发时间
@@ -284,7 +258,6 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 			s.TaskQueues = stats
 		}
 	}
-	s.DiscoverRemaining = remainingLabel(cr.discoverNext, now)
 	s.ArchiveRemaining = remainingLabel(cr.archiveNext, now)
 	s.ImageCleanupRemaining = remainingLabel(cr.imageCleanupNext, now)
 	s.VectorEvictRemaining = remainingLabel(cr.evictNext, now)
@@ -403,11 +376,7 @@ func (cr *CronRunner) createSessionEndTask(userID, convID, userMsgID string) {
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）
 func (cr *CronRunner) Start(ctx context.Context) {
-	log.Printf("[cron] started, discover_times=%v", cr.discoverTimes)
-
-	discoverTimer := time.NewTimer(nextDailyDelay(cr.discoverTimes))
-	cr.setDiscoverNext(time.Now().Add(nextDailyDelay(cr.discoverTimes)))
-	defer discoverTimer.Stop()
+	log.Printf("[cron] started")
 
 	sessionEndTicker := time.NewTicker(30 * time.Second)
 	defer sessionEndTicker.Stop()
@@ -475,15 +444,6 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] stopped")
 			return
 
-		case <-discoverTimer.C:
-			log.Printf("[cron] discover trigger")
-			users, _ := cr.activeUsers(context.Background())
-			for _, u := range users {
-				cr.discoverOnce(ctx, u.ID)
-			}
-			discoverTimer.Reset(nextDailyDelay(cr.discoverTimes))
-			cr.setDiscoverNext(time.Now().Add(nextDailyDelay(cr.discoverTimes)))
-
 		case <-sessionEndTicker.C:
 			cr.mu.Lock()
 			if cr.sessionEndRunning {
@@ -550,22 +510,6 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			cr.setActivityNext(time.Now().Add(activityRecomputeEvery))
 		}
 	}
-}
-
-// activeUsers 返回应执行反思的用户列表。
-// minActiveDays < 0 时不过滤（全部用户）；否则只返回最近 N 天内有聊天的用户。
-func (cr *CronRunner) activeUsers(ctx context.Context) ([]model.User, error) {
-	if cr.minActiveDays < 0 {
-		return cr.userRepo.ListAll(ctx)
-	}
-	since := time.Now().AddDate(0, 0, -cr.minActiveDays)
-	users, err := cr.userRepo.ListActiveSince(ctx, since)
-	if err != nil {
-		log.Printf("[cron] ListActiveSince error: %v", err)
-		return nil, err
-	}
-	log.Printf("[cron] active users=%d (min_active_days=%d)", len(users), cr.minActiveDays)
-	return users, nil
 }
 
 // cleanupImages 按保留期清理过期图片（全局，不分用户）：被引用过的走长保留期，孤儿走短保留期；
@@ -788,43 +732,6 @@ func (cr *CronRunner) processPurgeTasks(ctx context.Context) {
 		}
 		if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
 			log.Printf("[cron] MarkDone ephemeral_purge error: %v", err)
-		}
-	}
-}
-
-// nextDailyDelay 计算距离下一个触发时间还需要多久
-func nextDailyDelay(times []string) time.Duration {
-	now := time.Now()
-	minDelay := 24 * time.Hour
-	for _, t := range times {
-		parsed, err := time.Parse("15:04", t)
-		if err != nil {
-			continue
-		}
-		next := time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), 0, 0, now.Location())
-		if next.Before(now) {
-			next = next.Add(24 * time.Hour)
-		}
-		delay := next.Sub(now)
-		if delay < minDelay {
-			minDelay = delay
-		}
-	}
-	return minDelay
-}
-
-func (cr *CronRunner) discoverOnce(ctx context.Context, userID string) {
-	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
-	defer cancel()
-	now := time.Now()
-	hour := now.Hour()
-	if hour < 12 {
-		if _, err := cr.orch.MorningReview(runCtx, userID); err != nil {
-			log.Printf("[cron] morning review error: %v", err)
-		}
-	} else {
-		if _, err := cr.orch.EveningReview(runCtx, userID); err != nil {
-			log.Printf("[cron] evening review error: %v", err)
 		}
 	}
 }

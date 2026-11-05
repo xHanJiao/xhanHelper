@@ -37,7 +37,6 @@
 |---|---|
 | unified_search | 全部 |
 | message_search / get_summary | 全部 |
-| get_topic_stats / get_topic_detail / get_bill_stats | 全部 |
 | note | semantic_search / get_note / query_notes / count_notes / list_topics / get_note_versions |
 | document | get_document / query_documents / list_documents / get_document_versions / list_tags |
 | bookkeeping | query_bills / get_bill_by_id / get_monthly_stats / get_category_stats / get_category_options / get_owner_options |
@@ -112,3 +111,4 @@ Swift `ModePill` tooltip 已写"计划模式 · 只读"，无需功能改动（�
 ## 后续变更
 
 - 2026-10-31：计划模式放行客户端 **fs 的 `glob`/`grep`/`read`**，让方案讨论可以直接读本地文件。白名单在服务端 `planModeClientToolFuncs`（不依赖客户端 `is_read_only`），plan 分支直接把这三个函数定义下发到请求体 `tools`；shell/browser/chart/MCP 与 `task` 仍全拦。影响文件：`server/internal/agent/client_tools.go`、`server/internal/agent/orchestrator.go`、`server/internal/controller/chat.go`。
+- 2026-11-05：删除未注册的 `get_topic_stats` / `get_topic_detail` / `get_bill_stats` 工具（主题子系统停写后已无接线），放行清单同步移除这三项。影响文件：`server/internal/tool/`（删除 4 个工具文件及测试）、`AGENTS.md`。

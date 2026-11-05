@@ -28,8 +28,6 @@ reflection: # 非本地化项，与 prod 对齐
   analyst_max_iterations: 3
   discover_max_iterations: 3
   cluster_threshold: 0.70
-  daily_schedules: ["03:00"]
-  min_active_days: 3
 
 chat:
   session_gap_minutes: 30 # session 间隔阈值（分钟）

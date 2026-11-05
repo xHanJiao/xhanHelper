@@ -7,8 +7,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/google/uuid"
-
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -60,8 +58,8 @@ func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrc
 }
 
 // DiscoverDraftFromConversation 从单个会话的消息中发现主题。
-// 注：此方法当前未使用。主题发现已收敛至每日定时任务（MorningReview/EveningReview），
-// 对话后处理只做记忆提取和主题更新。保留此方法以备后续需要。
+// 注：此方法当前未使用。主题发现与每日回顾均已停用（事件系统接管），
+// 对话后处理只做记忆提取。保留此方法以备后续需要。
 func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Context, userID, convID string) error {
 	msgs, err := o.msgRepo.ListByConversation(ctx, convID, 50)
 	if err != nil || len(msgs) == 0 {
@@ -98,36 +96,6 @@ func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Conte
 	log.Printf("[reflection] draft discovery done: created=%d rejected=%d",
 		len(output.Created), len(output.Rejected))
 	return nil
-}
-
-// MorningReview 早安回顾
-func (o *ReflectionOrchestrator) MorningReview(ctx context.Context, userID string) (int, error) {
-	return o.dailyReview(ctx, userID, "morning_review")
-}
-
-// EveningReview 晚安回顾
-func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID string) (int, error) {
-	return o.dailyReview(ctx, userID, "evening_review")
-}
-
-// dailyReview 早晚回顾：旧主题维护已停写，只写一条 trace 记录节拍。
-func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, triggerType string) (int, error) {
-	traceID := uuid.New().String()
-	log.Printf("[reflection] trace=%s trigger=%s user=%s START", traceID[:8], triggerType, userID)
-
-	tr := &model.ReflectionTrace{
-		ID: traceID, UserID: userID, TriggerType: triggerType,
-		StartedAt: time.Now(), Status: "running",
-	}
-	if err := o.traceRepo.CreateTrace(ctx, tr); err != nil {
-		log.Printf("[reflection] trace=%s create error: %v", traceID[:8], err)
-	}
-
-	// 旧主题状态页已停写（事件系统接管）：不再 expire active 主题、不再跑主题发现。
-	// 保留 trace 记录，方便确认每日节拍仍在运行。
-	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, 0, nil)
-	log.Printf("[reflection] trace=%s DONE %s (theme maintenance disabled)", traceID[:8], triggerType)
-	return 0, nil
 }
 
 // durationDays 返回 duration 对应的衰减天数（从配置读取）

@@ -8,7 +8,7 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, adminUsers []string) gin.HandlerFunc {
+func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, adminUsers []string, limiter *authFailureLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if enabled == nil || !*enabled {
 			view.JSONError(c, 403, "registration is disabled")
@@ -20,6 +20,11 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, a
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
 			view.JSONError(c, 400, "username and password required")
+			return
+		}
+		key := authKey(c, req.Username)
+		if !limiter.Allow(key) {
+			view.JSONError(c, 429, "too many attempts, try again later")
 			return
 		}
 		if len(allowed) > 0 {
@@ -37,14 +42,16 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, a
 		}
 		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password)
 		if err != nil {
+			limiter.Fail(key)
 			view.JSONError(c, 409, "registration failed (username may already exist)")
 			return
 		}
+		limiter.Reset(key)
 		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token, "is_admin": isAdmin(user.ID, adminUsers)})
 	}
 }
 
-func loginUser(userRepo *service.UserRepo, adminUsers []string) gin.HandlerFunc {
+func loginUser(userRepo *service.UserRepo, adminUsers []string, limiter *authFailureLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Username string `json:"username"`
@@ -54,11 +61,18 @@ func loginUser(userRepo *service.UserRepo, adminUsers []string) gin.HandlerFunc 
 			view.JSONError(c, 400, "username and password required")
 			return
 		}
+		key := authKey(c, req.Username)
+		if !limiter.Allow(key) {
+			view.JSONError(c, 429, "too many attempts, try again later")
+			return
+		}
 		user, token, err := userRepo.Login(c.Request.Context(), req.Username, req.Password)
 		if err != nil {
+			limiter.Fail(key)
 			view.JSONError(c, 401, "invalid credentials")
 			return
 		}
+		limiter.Reset(key)
 		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token, "is_admin": isAdmin(user.ID, adminUsers)})
 	}
 }

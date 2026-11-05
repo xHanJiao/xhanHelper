@@ -20,6 +20,10 @@ import (
 	"xhan-helper/internal/web"
 )
 
+// trustedProxyCIDRs — 只信任回环反代（nginx）。直连客户端用 RemoteAddr，
+// 避免伪造 X-Forwarded-For 绕过登录限流。
+var trustedProxyCIDRs = []string{"127.0.0.1", "::1"}
+
 // RouterConfig — 路由注册所需的所有依赖
 type RouterConfig struct {
 	Cfg                  *config.Config
@@ -65,6 +69,11 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	// 关闭 gin 自动重定向（尾斜杠/大小写修正会返回 301，而 301 响应不带 CORS 头，
 	// 跨域直连下浏览器报误导性的 "Cross-origin redirection denied"）——错误路径直接 404。
 	r := gin.New()
+	// 只信任回环反代（nginx）：gin 从右往左取 X-Forwarded-For 里第一个非受信地址，
+	// 客户端自己伪造的左侧地址不会影响 ClientIP()/限流 key。
+	if err := r.SetTrustedProxies(trustedProxyCIDRs); err != nil {
+		panic("set trusted proxies: " + err.Error())
+	}
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 	r.Use(gin.Logger(), gin.Recovery())
@@ -80,9 +89,10 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		AllowCredentials: false,
 	}))
 
-	// 无需认证 — 账号注册/登录
-	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers))
-	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
+	// 无需认证 — 账号注册/登录（共享一个失败限流器，按 IP+用户名 计数）
+	authLimiter := newAuthFailureLimiter()
+	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers, authLimiter))
+	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers, authLimiter))
 	// 公开分享
 	r.GET("/api/share/messages/:token", rc.MessageShareHandler.ViewSharedMessages)
 	r.GET("/api/share/artifacts/:token", rc.ArtifactHandler.ViewSharedArtifact)

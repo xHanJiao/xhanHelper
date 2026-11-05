@@ -18,11 +18,10 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-// InitAgents 创建 Retrieval Sources、Orchestrator、ReflectionOrchestrator、CronRunner
+// InitAgents 创建 Retrieval Sources、Orchestrator、CronRunner
 func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore, activityStore *activity.Store) *AgentBundle {
 	// 活动埋点：工具调度器统一收口 tool.call.*（store 为 nil 时不采集）
 	tools.Registry.SetActivityStore(activityStore)
-	tools.ReflectionReg.SetActivityStore(activityStore)
 
 	// --- Retrieval Sources ---
 	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
@@ -91,18 +90,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	)
 	tools.Registry.Register(tool.NewLoggingWrapper(eventTool, log.Default()))
 
-	// --- ReflectionOrchestrator + CronRunner (先于 orch 创建) ---
-	reflectionOrch := agent.NewReflectionOrchestrator(&agent.ReflectionOrchestratorConfig{
-		FlashClient:        llmClients.BgFlash,
-		ReflectionReg:      tools.ReflectionReg,
-		TraceRepo:          repos.Trace,
-		ThemeStore:         agent.NewThemeStore(repos.ThemeState),
-		MsgRepo:            repos.Message,
-		NoteRepo:           repos.Note,
-		MemRepo:            repos.Mem,
-		MaxIterations:      cfg.Reflection.LaunchMaxIterations,
-		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
-	})
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
 		FlashClient:   llmClients.BgFlash,
@@ -178,14 +165,11 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	}, repos.Message, ephemeralDestroyer)
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
-		Orch:              reflectionOrch,
 		UserRepo:          repos.User,
 		DelayedTaskRepo:   repos.DelayedTask,
 		SessionEndGroup:   sessionEndGroup,
 		EphemeralPurger:   ephemeralDestroyer,
 		SessionGapMinutes: cfg.Chat.SessionGapMinutes,
-		DiscoverSchedules: cfg.Reflection.DailySchedules,
-		MinActiveDays:     cfg.Reflection.MinActiveDays,
 		ConvRepo:          repos.Conversation,
 		ArchiveAfterDays:  cfg.Archive.AfterDays,
 		ArchiveInterval:   time.Duration(cfg.Archive.IntervalMinutes) * time.Minute,
@@ -325,15 +309,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	})
 
 	return &AgentBundle{
-		Orch:           orch,
-		CronRunner:     cronRunner,
-		ReflectionOrch: reflectionOrch,
-		ReplayRunner:   replayRunner,
-		ClientBridge:   clientBridge,
-		Destroyer:      ephemeralDestroyer,
-		BGCtx:          bgCtx,
-		BGCancel:       bgCancel,
-		Ready:          ready,
+		Orch:         orch,
+		CronRunner:   cronRunner,
+		ReplayRunner: replayRunner,
+		ClientBridge: clientBridge,
+		Destroyer:    ephemeralDestroyer,
+		BGCtx:        bgCtx,
+		BGCancel:     bgCancel,
+		Ready:        ready,
 	}
 }
 

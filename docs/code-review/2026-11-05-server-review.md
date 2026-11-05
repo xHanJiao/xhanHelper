@@ -166,8 +166,47 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - reminder 的空参数：`list_reminders` / `search_reminders` 对 `nil` / `""` / `{}` 走默认值或业务校验，
   只有**非空且格式坏**的 args 才报「参数解析失败」；新增 `TestReminderTool_EmptyArgsAccepted`。
 
-仍留批次 C：3.6 登录限流（需要决定实现位置：服务端窗口 / nginx）、3.7 账单导入批量插入、
-`tool/theme.go` 与 `eval/repo.go` 的静默错误（随死代码决策一起处理）。
+### 5.3 批次 C（2026-11-05）
+
+已修：
+
+- **3.6** 登录/注册失败限流：服务端内存窗口（`controller/auth_limiter.go`），按 IP+用户名 计数，
+  15 分钟内失败 10 次后返回 429；成功即清零。登录/注册共用同一个限流器。
+  新增 `TestAuthFailureLimiter`、`TestLoginRejectsAfterTooManyFailures`。
+- **3.7** 账单 CSV 导入改批量插入：先校验收集，末尾 `BillRepo.CreateBatch` 一次写入（200 条/批），
+  不再循环内逐条 INSERT；整批包在一个事务里（失败全回滚，重试不会产生重复账单）；
+  顺带检查 `scanner.Err()`。新增 `TestImportBillsBatch`、`TestBillRepoCreateBatchAtomic`。
+- **列表 `limit` 上限**：新增 `parseListLimit`（默认值 + 上限 200），应用到账单 / 笔记 / 记忆列表；
+  `?limit=100000` 不再能拉全表。新增 `TestParseListLimit`。
+- **`loadActiveEvents` 去重**：合并为 `retrieval.LoadActiveEvents`，
+  `agent.EventAssembler` 与 `retrieval.EventSource` 共用。
+- **prod `AutoMigrate` 失败策略**：改为所有环境都 `Fatal`，不再带病启动。
+- **`eval/repo.go` 静默错误**：十余处 `_ = Scan` / `_ = rows.Err()` 改为返回错误；
+  `BatchGetCorpusContent` 增加 error 返回值，调用方（`eval_run_handler`）失败即 500。
+- **死代码**：删除未注册的主题/统计工具 `tool/theme.go`、`get_bill_stats.go`、`get_topic_stats.go`、
+  `get_topic_detail.go` 及其测试（同步更新 `AGENTS.md` 的工具表）。`agent/theme_*`、`agent/state_*`
+  当前已无生产调用方（`NewReflectionOrchestrator` / `NewThemeStore` 只剩测试或未接线代码引用），
+  按用户决定「保留未接线」保留；`ThemeState` model/repo 仍被 entitygc 与 admin message-debug 使用。
+- **停掉每日反思**：移除 `CronRunner` 的 discover 定时器、`discoverOnce`、`activeUsers`、
+  `MorningReview`/`EveningReview`/`dailyReview`，以及 `Orch` / `DiscoverSchedules` / `RunTimeout` /
+  `MinActiveDays` 接线；`HookStatus.DiscoverRemaining` 与前端「每日回顾剩余」一并删除；
+  配置项 `daily_schedules` / `min_active_days` 从 `ReflectionConfig` 与各环境 YAML 移除。
+  每日反思不再产生新的 `ReflectionTrace`（历史记录保留可查）。
+
+**复审补正（同日）**
+
+- **限流可被 XFF 绕过**：`router.go` 增加 `SetTrustedProxies([]string{"127.0.0.1", "::1"})`，
+  只信任回环反代；gin 从右往左取第一个非受信地址，客户端伪造的左侧 XFF 不再影响 key。
+- **限流 map 无硬上限**：饱和时清理过期项（最多每分钟一次），清理后仍满则随机丢一个旧条目；
+  `len(entries)` 恒 `<= authFailMaxKey`。新增 `TestAuthFailureLimiterMemoryBounded`。
+- **账单导入 body 无上限**：加 `http.MaxBytesReader`（4 MiB），超限 400。
+- **列表 limit 覆盖扩大**：除账单/笔记/记忆外，会话、文档、文档回收站、摘要、事件、提醒也走
+  `parseListLimit`；文档/回收站用 `parseListLimitAllowZero` 保留 `limit=0`（只取 total）语义。
+- **文档同步**：`phase-7/theme-lifecycle-v2.md`、`event-threads/design.md`、`plan-mode-readonly.md`、
+  `local-sqlite/design.md` 均补「后续变更」；保留的 `state_updater.go` / `theme_analyst.go` /
+  `theme_discover.go` 文件头注明 prompt 中的旧工具名已失效。
+
+验证：`gofmt -l`、`go build ./...`、`go vet ./...`、`go test ./...`、`go test -race ./...` 全部通过。
 
 ## 六、后续变更
 
@@ -176,3 +215,8 @@ bcrypt 逐次比对 + 无限流；公网暴露可被撞库/CPU 消耗。加按 I
 - 2026-11-05：复审补正——`requireConversationOwner` 的 DB 错误不再折叠为 404，改为记日志 + 500，并补回归测试。
 - 2026-11-05：批次 B 完成（3.1–3.5），`go test -race ./...` 全绿；剩 C 批次（限流、账单批量、死代码）。
 - 2026-11-05：批次 B 复审补正——traceRepo nil 契约补全、eval/reminder 测试收紧、空参数行为明确。
+- 2026-11-05：批次 C 完成——登录/注册限流、账单批量导入、列表 limit 上限、事件加载去重、
+  AutoMigrate 全环境 Fatal、eval 静默错误收敛、删除 4 个未注册工具、停掉每日反思定时。
+  用户拍板：限流放服务端内存窗口；`agent/theme_*` / `state_*` 保留未接线；AutoMigrate 全环境 Fatal。
+- 2026-11-05：批次 C 复审补正——限流信任回环代理并给 map 加硬上限、账单导入 body 上限、
+  列表 limit 覆盖扩大（保留文档 limit=0 语义）、四份设计文档补「后续变更」。

@@ -33,7 +33,7 @@ func NewReminderHandler(reminderRepo *service.ReminderRepo, convRepo *service.Co
 func (h *ReminderHandler) ListReminders(c *gin.Context) {
 	userID := c.GetString("user_id")
 	status := c.Query("status")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit := parseListLimit(c, 20)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, total, err := h.reminderRepo.List(c.Request.Context(), userID, status, limit, offset)

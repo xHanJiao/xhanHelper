@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gorm.io/gorm"
 
@@ -86,11 +85,8 @@ func InitDB(cfg *config.Config) *gorm.DB {
 	db := service.NewDB(cfg.DB)
 
 	if err := db.AutoMigrate(AllModels()...); err != nil {
-		// 本地模式带坏库运行没有意义，直接致命；云端保持「打日志继续」的现状
-		if strings.HasPrefix(os.Getenv("APP_ENV"), "local") {
-			log.Fatalf("[db] AutoMigrate failed (local mode, refusing to start): %v", err)
-		}
-		log.Printf("[db] AutoMigrate error: %v", err)
+		// schema 与代码不一致时带病运行只会在运行时炸（且可能写坏数据），所有环境都拒绝启动。
+		log.Fatalf("[db] AutoMigrate failed (refusing to start): %v", err)
 	}
 
 	return db

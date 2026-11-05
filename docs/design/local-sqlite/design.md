@@ -714,3 +714,9 @@ sequenceDiagram
 | 16 | dev 密钥 / token | LLM / Embedding 密钥 + `model` / `base_url` 覆盖项**按 env 分家**（dev 换供应商 / key / 模型不动 prod；旧共享项一次性迁入本环境）；本地 token **按 env 分家**（钥匙串 `local_token_dev` / `local_token_prod`，值是 `<env>:<random>`）——env 校验的载体（第 4 期定稿，密钥分家为第五轮修订） |
 | 17 | 拦越界请求 | 本地模式中间件校验 `Bearer` 的 env 前缀 == 后端 `local_env`，不符 **403**（不是加独立 header：token 天然被每个请求携带，连面板里的 Vue 调用也带） |
 | 18 | 防错配 | 启动**交叉断言**：`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀 四者配套，不符 `log.Fatalf` / Swift `assertionFailure`（第 4 期定稿） |
+
+---
+
+## 后续变更
+
+- 2026-11-05：`AutoMigrate` 失败策略统一为**所有环境 `log.Fatalf`**（不再只本地致命、云端只记日志继续）。schema 与代码不一致时拒绝启动，避免运行时才炸或写坏数据。影响文件：`server/internal/app/init_db.go`。

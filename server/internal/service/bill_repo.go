@@ -75,6 +75,17 @@ func (r *BillRepo) Create(ctx context.Context, bill *model.Bill) error {
 	return r.db.WithContext(ctx).Create(bill).Error
 }
 
+// CreateBatch 批量插入账单（CSV 导入用）。分块避免单条 SQL 过大；
+// 整批放在一个事务里，避免前几批已落库、后一批失败时用户重试产生重复账单。
+func (r *BillRepo) CreateBatch(ctx context.Context, bills []*model.Bill) error {
+	if len(bills) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return tx.CreateInBatches(bills, 200).Error
+	})
+}
+
 // UpdateFields 按列更新账单，只写 updates 中显式给出的字段。
 // 调用方必须只放需要修改的列：整条写回会把未改字段的旧快照覆盖回去，并发更新下丢改动。
 func (r *BillRepo) UpdateFields(ctx context.Context, id, userID string, updates map[string]interface{}) error {

@@ -816,3 +816,4 @@ event_assembly:
 - 2026-11-05 阶段 6：`cmd/event-bootstrap` 冷启动工具（`--limit` 试跑、`--reset` 重跑、`--review` 结构复盘、游标断点续跑）；拼装器构建抽到 `appinit.BuildEventAssembler`，与生产共用同一套只读工具与阈值；dev 库实测指标见 §10.2。
 - 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
 - 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩调试读取（Admin message-debug），代码保留待统一删除。
+- 2026-11-05：每日回顾（MorningReview / EveningReview）彻底停用——`CronRunner` 移除 discover 定时器与相关配置，不再产生新的 `ReflectionTrace`；`HookStatus.discover_remaining` 与前端「每日回顾剩余」一并删除。影响文件：`server/internal/agent/cron_runner.go`、`server/internal/agent/reflection.go`、`server/internal/appinit/agents.go`、`server/internal/config/config.go`、`front-end/src/views/AdminView.vue`。

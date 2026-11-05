@@ -129,7 +129,7 @@ func createConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 func listConversations(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
-		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		limit := parseListLimit(c, 50)
 		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 		var list []model.Conversation
 		var total int64

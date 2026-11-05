@@ -164,7 +164,12 @@ func (h *EvalRunHandler) GetRun(c *gin.Context) {
 					})
 				}
 				// 批量补 corpus content
-				contentMap := r.BatchGetCorpusContent(corpusIDs)
+				contentMap, err := r.BatchGetCorpusContent(corpusIDs)
+				if err != nil {
+					log.Printf("[eval] batch get corpus content: %v", err)
+					view.JSONError(c, 500, "load corpus content failed")
+					return
+				}
 				for i := range preview {
 					if c, ok := contentMap[preview[i].CorpusID]; ok {
 						preview[i].Content = c

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -37,6 +38,33 @@ func seedTestBills(t *testing.T, repo *BillRepo, userID string) {
 		if err := repo.Create(context.Background(), &b); err != nil {
 			t.Fatalf("seed bill %s: %v", b.ID, err)
 		}
+	}
+}
+
+// 批量导入必须是整批事务：第二批主键冲突时，第一批已写的 200 条也要回滚。
+func TestBillRepoCreateBatchAtomic(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+
+	bills := make([]*model.Bill, 0, 201)
+	for i := 0; i < 201; i++ {
+		bills = append(bills, &model.Bill{
+			ID: fmt.Sprintf("b-%03d", i), UserID: "u1", Item: "测试", Amount: 1,
+			Category1: "餐饮", Category2: "堂食", ConsumeType: "一次性",
+			Date: "2026-11-01", PayType: "微信", Owner: "我", Status: model.BillStatusNormal,
+		})
+	}
+	bills[200].ID = bills[0].ID // 第二批撞主键
+
+	if err := repo.CreateBatch(context.Background(), bills); err == nil {
+		t.Fatal("主键冲突应返回错误")
+	}
+	var count int64
+	if err := repo.db.Model(&model.Bill{}).Count(&count).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("整批应回滚，实际落库 %d 条", count)
 	}
 }
 

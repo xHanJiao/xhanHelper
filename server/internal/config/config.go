@@ -371,9 +371,7 @@ type ReflectionConfig struct {
 	AnalystMaxIterations  int            `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
 	DiscoverMaxIterations int            `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
 	ClusterThreshold      float64        `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
-	DailySchedules        []string       `yaml:"daily_schedules"`         // 主题发现定时触发时间列表，默认 ["03:00"]（每天一次）
 	ActiveDurationDays    map[string]int `yaml:"active_duration_days"`    // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
-	MinActiveDays         int            `yaml:"min_active_days"`         // 反思门控：用户最近 N 天内有聊天才跑，默认 3；<0 表示不过滤
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -646,14 +644,8 @@ func merge(dst, src *Config) {
 	if src.Reflection.ClusterThreshold != 0 {
 		dst.Reflection.ClusterThreshold = src.Reflection.ClusterThreshold
 	}
-	if len(src.Reflection.DailySchedules) > 0 {
-		dst.Reflection.DailySchedules = src.Reflection.DailySchedules
-	}
 	if len(src.Reflection.ActiveDurationDays) > 0 {
 		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
-	}
-	if src.Reflection.MinActiveDays != 0 {
-		dst.Reflection.MinActiveDays = src.Reflection.MinActiveDays
 	}
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
@@ -996,16 +988,10 @@ func validate(cfg *Config) error {
 	if cfg.Reflection.ClusterThreshold == 0 {
 		cfg.Reflection.ClusterThreshold = 0.70
 	}
-	if len(cfg.Reflection.DailySchedules) == 0 {
-		cfg.Reflection.DailySchedules = []string{"09:00", "20:00"}
-	}
 	if len(cfg.Reflection.ActiveDurationDays) == 0 {
 		cfg.Reflection.ActiveDurationDays = map[string]int{
 			"long": 90, "medium": 30, "short": 14, "ephemeral": 7,
 		}
-	}
-	if cfg.Reflection.MinActiveDays == 0 {
-		cfg.Reflection.MinActiveDays = 3
 	}
 	if cfg.LLM.MaxToolResultChars == 0 {
 		cfg.LLM.MaxToolResultChars = 2000

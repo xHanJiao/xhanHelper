@@ -2,6 +2,7 @@ package eval
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,9 +80,15 @@ func (r *Repo) GetProjectInfo() (*ProjectInfo, error) {
 	if err := r.db.QueryRow(`SELECT id, name, status FROM eval_projects`).Scan(&p.ID, &p.Name, &p.Status); err != nil {
 		return nil, fmt.Errorf("query project: %w", err)
 	}
-	_ = r.db.QueryRow(`SELECT COUNT(*) FROM raw_queries`).Scan(&p.QueryCount)
-	_ = r.db.QueryRow(`SELECT COUNT(*) FROM eval_corpus`).Scan(&p.CorpusCount)
-	_ = r.db.QueryRow(`SELECT COUNT(*) FROM annotation_sessions`).Scan(&p.SessionCount)
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM raw_queries`).Scan(&p.QueryCount); err != nil {
+		return nil, fmt.Errorf("count raw_queries: %w", err)
+	}
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM eval_corpus`).Scan(&p.CorpusCount); err != nil {
+		return nil, fmt.Errorf("count eval_corpus: %w", err)
+	}
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM annotation_sessions`).Scan(&p.SessionCount); err != nil {
+		return nil, fmt.Errorf("count annotation_sessions: %w", err)
+	}
 	return p, nil
 }
 
@@ -107,9 +114,15 @@ type SessionInfo struct {
 // GetStats returns project statistics.
 func (r *Repo) GetStats() (*Stats, error) {
 	s := &Stats{}
-	_ = r.db.QueryRow(`SELECT COUNT(*) FROM raw_queries`).Scan(&s.TotalQueries)
-	_ = r.db.QueryRow(`SELECT COUNT(DISTINCT query_id) FROM eval_ground_truth`).Scan(&s.LabeledQueries)
-	_ = r.db.QueryRow(`SELECT COUNT(DISTINCT query_id) FROM annotation_session_queries WHERE label_status IN ('reviewed','finalized')`).Scan(&s.ReviewedQueries)
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM raw_queries`).Scan(&s.TotalQueries); err != nil {
+		return nil, fmt.Errorf("count raw_queries: %w", err)
+	}
+	if err := r.db.QueryRow(`SELECT COUNT(DISTINCT query_id) FROM eval_ground_truth`).Scan(&s.LabeledQueries); err != nil {
+		return nil, fmt.Errorf("count labeled queries: %w", err)
+	}
+	if err := r.db.QueryRow(`SELECT COUNT(DISTINCT query_id) FROM annotation_session_queries WHERE label_status IN ('reviewed','finalized')`).Scan(&s.ReviewedQueries); err != nil {
+		return nil, fmt.Errorf("count reviewed queries: %w", err)
+	}
 	s.UnlabeledQueries = s.TotalQueries - s.LabeledQueries
 
 	rows, err := r.db.Query(`SELECT relevance, COUNT(*) FROM eval_ground_truth GROUP BY relevance`)
@@ -125,7 +138,9 @@ func (r *Repo) GetStats() (*Stats, error) {
 		}
 		s.RelevanceDist[rel] = cnt
 	}
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate relevance dist: %w", err)
+	}
 
 	sessRows, err := r.db.Query(`SELECT id, COALESCE(name,''), query_count, status, created_at FROM annotation_sessions ORDER BY created_at DESC`)
 	if err != nil {
@@ -139,7 +154,9 @@ func (r *Repo) GetStats() (*Stats, error) {
 		}
 		s.Sessions = append(s.Sessions, si)
 	}
-	_ = sessRows.Err()
+	if err := sessRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate annotation sessions: %w", err)
+	}
 	return s, nil
 }
 
@@ -284,18 +301,23 @@ func (r *Repo) GetQueryDetail(queryID string) (*QueryDetail, error) {
 		return nil, fmt.Errorf("query raw_queries: %w", err)
 	}
 
-	// Check if human-reviewed via annotation_session_queries
+	// Check if human-reviewed via annotation_session_queries（没有标注会话行是正常情况）
 	var revStatus string
-	_ = r.db.QueryRow(
+	err := r.db.QueryRow(
 		`SELECT COALESCE(label_status,'') FROM annotation_session_queries WHERE query_id=? ORDER BY selected_at DESC LIMIT 1`,
 		queryID,
 	).Scan(&revStatus)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("query annotation status: %w", err)
+	}
 	d.Query.Reviewed = revStatus == "reviewed" || revStatus == "finalized"
 
 	// Safety net: if label_status is still 'selected' but ground_truth has records,
 	// the labeling completed without updating the status. Treat as prelabeled.
 	var gtHasRecords bool
-	_ = r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM eval_ground_truth WHERE query_id=?)`, queryID).Scan(&gtHasRecords)
+	if err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM eval_ground_truth WHERE query_id=?)`, queryID).Scan(&gtHasRecords); err != nil {
+		return nil, fmt.Errorf("query ground truth exists: %w", err)
+	}
 	if revStatus == "selected" && gtHasRecords {
 		revStatus = "prelabeled"
 	}
@@ -318,7 +340,9 @@ func (r *Repo) GetQueryDetail(queryID string) (*QueryDetail, error) {
 		}
 		d.Annotations = append(d.Annotations, ar)
 	}
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate annotations: %w", err)
+	}
 
 	d.Query.LabeledCount = len(d.Annotations)
 	if d.Query.Reviewed {
@@ -541,7 +565,9 @@ func (r *Repo) ListQueryAnnotations(queryKeyword, labelSource string, relevance 
 		}
 		queryIDs = append(queryIDs, qid)
 	}
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate query ids: %w", err)
+	}
 	if len(queryIDs) == 0 {
 		return nil, total, nil
 	}
@@ -568,7 +594,9 @@ func (r *Repo) ListQueryAnnotations(queryKeyword, labelSource string, relevance 
 		}
 		annMap[ar.QueryID] = append(annMap[ar.QueryID], ar)
 	}
-	_ = annRows.Err()
+	if err := annRows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate query annotations: %w", err)
+	}
 
 	// Build ordered output
 	out := make([]QueryWithAnnotations, 0, len(queryIDs))
@@ -632,10 +660,12 @@ func (r *Repo) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 		return nil, err
 	}
 
-	_ = r.db.QueryRow(
+	if err := r.db.QueryRow(
 		`SELECT COUNT(*) FROM annotation_session_queries WHERE session_id=? AND label_status IN ('prelabeled','reviewed','finalized')`,
 		sessionID,
-	).Scan(&d.DoneCount)
+	).Scan(&d.DoneCount); err != nil {
+		return nil, fmt.Errorf("count session done: %w", err)
+	}
 
 	rows, err := r.db.Query(`SELECT query_id FROM annotation_session_queries WHERE session_id=? ORDER BY selected_at`, sessionID)
 	if err != nil {
@@ -649,7 +679,9 @@ func (r *Repo) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 		}
 		d.QueryIDs = append(d.QueryIDs, qid)
 	}
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session queries: %w", err)
+	}
 
 	return d, nil
 }
@@ -682,9 +714,9 @@ func (r *Repo) GetQueryContent(queryID string) (string, error) {
 }
 
 // BatchGetCorpusContent 批量获取 corpus 内容，返回 corpusID → content 映射。
-func (r *Repo) BatchGetCorpusContent(corpusIDs []string) map[string]string {
+func (r *Repo) BatchGetCorpusContent(corpusIDs []string) (map[string]string, error) {
 	if len(corpusIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	// 构建 IN 查询
 	placeholders := make([]byte, 0, len(corpusIDs)*2)
@@ -701,7 +733,7 @@ func (r *Repo) BatchGetCorpusContent(corpusIDs []string) map[string]string {
 		args...,
 	)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("batch get corpus content: %w", err)
 	}
 	defer rows.Close()
 
@@ -709,9 +741,12 @@ func (r *Repo) BatchGetCorpusContent(corpusIDs []string) map[string]string {
 	for rows.Next() {
 		var id, content string
 		if err := rows.Scan(&id, &content); err != nil {
-			continue
+			return nil, fmt.Errorf("scan corpus content: %w", err)
 		}
 		out[id] = content
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate corpus content: %w", err)
+	}
+	return out, nil
 }

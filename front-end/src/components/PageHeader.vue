@@ -154,6 +154,7 @@ watch(() => props.filterable, (v) => {
 
       <span class="ph-divide" aria-hidden="true"></span>
       <TopBarActions />
+      <slot name="actions-right"></slot>
     </div>
 
     <div v-if="searchable && searchOpen" class="ph-search-row">

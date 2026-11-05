@@ -10,7 +10,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     /// 当前流的任务；delegate 只采纳它的回调（旧任务 cancel 后仍可能有已入队的回调）
     private var currentTask: URLSessionDataTask?
     private var httpStatusCode: Int?
-    private var currentEvent = ""
+    private var eventAssembler = SSEEventAssembler()
     private let lock = NSLock()
 
     /// 未知事件名（服务端加了新事件、客户端没跟上）：每种名字只警告一次，避免整轮刷屏。
@@ -77,7 +77,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             httpStatusCode = nil
             lineDecoder.reset()
             warnedInvalidUTF8 = false
-            currentEvent = ""
+            eventAssembler.reset()
         }
         newTask.resume()
     }
@@ -91,7 +91,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             currentTask = nil
             lineDecoder.reset()
             warnedInvalidUTF8 = false
-            currentEvent = ""
+            eventAssembler.reset()
             return t
         }
         stale?.cancel()
@@ -157,13 +157,9 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     // MARK: Line parsing
 
     private func parseLine(_ line: String) {
-        if line.hasPrefix("event: ") {
-            currentEvent = String(line.dropFirst(7))
-        } else if line.hasPrefix("data: ") {
-            let data = String(line.dropFirst(6))
-            dispatch(event: currentEvent, data: data)
-            currentEvent = ""
-        }
+        // 不在这里直接派发：一条事件可能有多行 `data:`（payload 里的换行由服务端拆开）
+        guard let event = eventAssembler.feed(line) else { return }
+        dispatch(event: event.event, data: event.data)
     }
 
     private func dispatch(event: String, data: String) {

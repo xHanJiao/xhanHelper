@@ -41,3 +41,40 @@ nonisolated struct SSELineDecoder {
         return (String(decoding: data, as: UTF8.self), true)
     }
 }
+
+/// 按 SSE 规范把「行」拼成「事件」：`data:` 允许多行，遇到空行才派发（多行用 `\n` 拼回）。
+///
+/// 服务端 `view.WriteSSE` 会把 payload 里的换行拆成多条 `data:` 行。逐行派发会把
+/// `thought_delta` / `error` 这类裸文本在第一个换行处截断，后面的行还会被当成未知事件丢掉。
+nonisolated struct SSEEventAssembler {
+    private var event = ""
+    private var dataLines: [String] = []
+
+    /// 喂一行（调用方已做 trim），凑齐一个事件时返回 `(event, data)`。
+    mutating func feed(_ line: String) -> (event: String, data: String)? {
+        if line.hasPrefix("event:") {
+            event = Self.payload(of: line, prefixLength: 6)
+            return nil
+        }
+        if line.hasPrefix("data:") {
+            dataLines.append(Self.payload(of: line, prefixLength: 5))
+            return nil
+        }
+        guard line.isEmpty else { return nil } // 注释（`: ping`）与未知字段一律忽略
+        defer { reset() }
+        guard !dataLines.isEmpty else { return nil }
+        return (event, dataLines.joined(separator: "\n"))
+    }
+
+    mutating func reset() {
+        event = ""
+        dataLines.removeAll(keepingCapacity: true)
+    }
+
+    /// 取字段值并去掉冒号后的一个空格（`data: x` / `data:x` 都认；空行为空串）。
+    private static func payload(of line: String, prefixLength: Int) -> String {
+        var value = String(line.dropFirst(prefixLength))
+        if value.hasPrefix(" ") { value.removeFirst() }
+        return value
+    }
+}

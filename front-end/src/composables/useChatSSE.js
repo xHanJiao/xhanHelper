@@ -3,6 +3,7 @@ import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
+import { createSSEParser } from '@/utils/sse'
 
 // 旧格式兜底映射（新工具由后端 FillDisplay 下发，勿在此新增条目）
 const DISPLAY_NAMES = {
@@ -102,7 +103,7 @@ export function useChatSSE() {
         throw new Error(`HTTP ${res.status}`)
       }
 
-      await parseSSEStream(res)
+      await parseSSEStream(res, abortController)
     } catch (err) {
       if (err.name === 'AbortError') return
       if (err.name === 'AuthError') {
@@ -116,34 +117,28 @@ export function useChatSSE() {
     }
   }
 
-  async function parseSSEStream(res) {
+  async function parseSSEStream(res, controller) {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
-    let buffer = ''
-    let currentEvent = ''
+    const parser = createSSEParser((event, rawData) => {
+      // abort 时已经缓冲在手里的帧不能再派发：否则切会话后旧流的 done
+      // 会把 user_message_id / memory_ids 写到新会话的最后一条用户消息上。
+      if (controller.signal.aborted) return
+      try {
+        dispatchEvent(event, rawData)
+      } catch (e) {
+        console.error('SSE dispatch error', event, e)
+      }
+    })
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() // 保留不完整的行
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7).trim()
-        } else if (line.startsWith('data: ')) {
-          const raw = line.slice(6)
-          try {
-            dispatchEvent(currentEvent, raw)
-          } catch (e) {
-            console.error('SSE dispatch error', currentEvent, e)
-          }
-        }
-        // 忽略注释行（:开头）和空行
-      }
+      parser.feed(decoder.decode(value, { stream: true }))
     }
+    // 冲掉解码器里残留的多字节片段，再派发可能未收尾的最后一个事件
+    parser.feed(decoder.decode())
+    parser.end()
   }
 
   function dispatchEvent(event, rawData) {

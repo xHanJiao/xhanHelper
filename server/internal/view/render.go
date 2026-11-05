@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,8 +17,12 @@ type apiResponse struct {
 	Data      interface{} `json:"data"`
 }
 
-// WriteSSE 写入一条 SSE 事件
+// WriteSSE 写入一条 SSE 事件。
+// data 里的换行必须拆成多条 data: 行：SSE 规范里 data 只占一行，
+// 裸换行之后的内容会被客户端当成未知字段丢掉（thought_delta / error 是裸文本，不是 JSON）。
 func WriteSSE(w io.Writer, flusher http.Flusher, event, data string) {
+	data = strings.ReplaceAll(data, "\r\n", "\n")
+	data = strings.ReplaceAll(data, "\n", "\ndata: ")
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
 	flusher.Flush()
 }

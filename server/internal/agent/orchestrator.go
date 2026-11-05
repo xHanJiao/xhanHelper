@@ -2365,7 +2365,13 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistan
 		}
 	}
 	if errStr != "" {
-		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))
+		// 错误文案可能带引号/换行，手拼 JSON 会产出非法载荷，前端 JSON.parse 失败就丢掉整个 done
+		b, err := json.Marshal(errStr)
+		if err != nil {
+			log.Printf("[orch] marshal done error: %v", err)
+		} else {
+			parts = append(parts, `"error":`+string(b))
+		}
 	}
 	o.sendEvent(events, &llm.StreamEvent{Type: "done", Content: "{" + strings.Join(parts, ",") + "}"})
 }

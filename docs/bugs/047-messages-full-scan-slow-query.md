@@ -1,4 +1,4 @@
-# 046 — `messages` 全表扫描慢查询（retention + 关键词检索）
+# 047 — `messages` 全表扫描慢查询（retention + 关键词检索）
 
 > **日期**：2026-11-06
 > **环境**：阿里云 2C2G ECS，40G 云盘，MySQL 8.0.46（`disable_log_bin`）

@@ -59,7 +59,7 @@ func InitDebugJSON(cfg *config.Config, msgRepo *service.MessageRepo, bgCtx conte
 	if !cfg.Server.BackgroundTasksDisabled() {
 		// lastCutoff 记录上次成功清到的位置，本轮只扫「新过期」的窄带。
 		// 首次运行（进程刚起）仍会全量扫一次；之后稳态下每轮只扫最近一个清理间隔，
-		// 避免 0 命中时反复扫 595MB 的 messages 表。见 docs/bugs/046。
+		// 避免 0 命中时反复扫 595MB 的 messages 表。见 docs/bugs/047。
 		// shortcut: 水位只在进程内，重启后首轮全量扫一次；要跨重启持久化再落表。
 		var lastCutoff time.Time
 		cleanup := func(ctx context.Context) {
@@ -116,7 +116,7 @@ func InitExtraTraceCleanup(cfg *config.Config, msgRepo *service.MessageRepo, bgC
 		return
 	}
 	batch := cfg.LLM.DebugJSON.CleanupBatchRows
-	// 同 debug_json：只清「新过期」的窄带，首次运行全量扫一次。见 docs/bugs/046。
+	// 同 debug_json：只清「新过期」的窄带，首次运行全量扫一次。见 docs/bugs/047。
 	// shortcut: 水位只在进程内，重启后首轮全量扫一次；要跨重启持久化再落表。
 	var lastCutoff time.Time
 	cleanup := func(ctx context.Context) {

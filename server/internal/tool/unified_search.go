@@ -17,7 +17,7 @@ import (
 
 // 历史消息关键词检索的扫描窗口：默认最近 90 天，避免对 messages 全表做 content LIKE。
 // 90 天无命中时自动放宽到 365 天，避免把「更早聊过」误答成「从没聊过」。
-// 更早历史请用 message_search 按时间/ID 查（它不支持关键词）。见 docs/bugs/046。
+// 更早历史请用 message_search 按时间/ID 查（它不支持关键词）。见 docs/bugs/047。
 const (
 	keywordHistoryWindowDays   = 90
 	keywordHistoryFallbackDays = 365

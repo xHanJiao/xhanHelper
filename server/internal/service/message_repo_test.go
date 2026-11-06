@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,16 @@ func setupMessageRepo(t *testing.T) (*MessageRepo, func()) {
 		os.RemoveAll(tmpDir)
 	}
 	return NewMessageRepo(db), cleanup
+}
+
+// TestMessageSchema_HasCreatedRoleIndex 钉住慢查询治理依赖的索引：
+// messages(created_at, role) 用于保留清理与历史关键词检索的时间窗裁剪。
+func TestMessageSchema_HasCreatedRoleIndex(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	if !repo.db.Migrator().HasIndex(&model.Message{}, "idx_messages_created_role") {
+		t.Fatal("missing index idx_messages_created_role (created_at, role)")
+	}
 }
 
 // seedTestRounds 创建 N 轮对话，每轮：1 user + 2 assistant + 1 internal tool + 1 final assistant。
@@ -1076,7 +1087,7 @@ func TestSearchMessages_ExcludesSubConversation(t *testing.T) {
 	}
 
 	// 关键词检索
-	msgs, _, err := repo.SearchMessagesByCursor(ctx, "u1", []string{"缓存"}, "user", "", nil, 10)
+	msgs, _, err := repo.SearchMessagesByCursor(ctx, "u1", []string{"缓存"}, "user", "", nil, nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1136,8 +1147,8 @@ func TestBatchUpdateDebugJSON_Empty(t *testing.T) {
 	}
 }
 
-// TestClearDebugJSONBefore — 保留清理：只清空 cutoff 之前有 request_json 的行，分批生效
-func TestClearDebugJSONBefore(t *testing.T) {
+// TestClearDebugJSONRange_NoLowerBound — 不传下界时只清空 cutoff 之前有 request_json 的行，分批生效。
+func TestClearDebugJSONRange_NoLowerBound(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -1158,16 +1169,16 @@ func TestClearDebugJSONBefore(t *testing.T) {
 
 	// 分批清理：limit=1 时一轮只能清 1 行
 	cutoff := now.Add(-24 * time.Hour)
-	n, err := repo.ClearDebugJSONBefore(ctx, cutoff, 1)
+	n, err := repo.ClearDebugJSONRange(ctx, time.Time{}, cutoff, 1)
 	if err != nil {
-		t.Fatalf("ClearDebugJSONBefore error: %v", err)
+		t.Fatalf("ClearDebugJSONRange error: %v", err)
 	}
 	if n != 1 {
 		t.Errorf("第一轮应清 1 行, got %d", n)
 	}
-	n, err = repo.ClearDebugJSONBefore(ctx, cutoff, 1)
+	n, err = repo.ClearDebugJSONRange(ctx, time.Time{}, cutoff, 1)
 	if err != nil {
-		t.Fatalf("ClearDebugJSONBefore error: %v", err)
+		t.Fatalf("ClearDebugJSONRange error: %v", err)
 	}
 	if n != 0 {
 		t.Errorf("第二轮应清 0 行（只剩 noReq 无 request_json 不计入）, got %d", n)
@@ -1187,9 +1198,77 @@ func TestClearDebugJSONBefore(t *testing.T) {
 	}
 }
 
-// TestClearExtraDebugBefore — extra 保留清理：只删调试字段（providers/user_message_prefix/
+// TestClearDebugJSONRange — 水位窄带只清 [after, before) 内的 request_json。
+func TestClearDebugJSONRange(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	req := `{"req":1}`
+
+	tooOld := model.Message{ID: "too-old", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "too-old", RequestJSON: &req, CreatedAt: now.Add(-48 * time.Hour)}
+	inWindow := model.Message{ID: "in-window", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "in-window", RequestJSON: &req, CreatedAt: now.Add(-2 * time.Hour)}
+	for _, m := range []model.Message{tooOld, inWindow} {
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := repo.ClearDebugJSONRange(ctx, now.Add(-3*time.Hour), now.Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ClearDebugJSONRange error: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("窄带应只清 1 行, got %d", n)
+	}
+	if m, _ := repo.GetByID(ctx, "too-old"); m.RequestJSON == nil {
+		t.Error("下界之外的消息不应被清")
+	}
+	if m, _ := repo.GetByID(ctx, "in-window"); m.RequestJSON != nil {
+		t.Error("窄带内的消息应被清")
+	}
+}
+
+// TestClearExtraDebugRange — 水位窄带只清 [after, before) 内的 extra 调试字段。
+func TestClearExtraDebugRange(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	extra := `{"usage":{"prompt_tokens":1},"providers":[]}`
+
+	tooOld := model.Message{ID: "too-old-extra", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "too-old", Extra: &extra, CreatedAt: now.Add(-48 * time.Hour)}
+	inWindow := model.Message{ID: "in-window-extra", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "in-window", Extra: &extra, CreatedAt: now.Add(-2 * time.Hour)}
+	for _, m := range []model.Message{tooOld, inWindow} {
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := repo.ClearExtraDebugRange(ctx, now.Add(-3*time.Hour), now.Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ClearExtraDebugRange error: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("窄带应只清 1 行, got %d", n)
+	}
+	oldMsg, _ := repo.GetByID(ctx, "too-old-extra")
+	if oldMsg.Extra == nil || !strings.Contains(*oldMsg.Extra, "providers") {
+		t.Error("下界之外的 extra 不应被清")
+	}
+	newMsg, _ := repo.GetByID(ctx, "in-window-extra")
+	if newMsg.Extra == nil || strings.Contains(*newMsg.Extra, "providers") {
+		t.Error("窄带内的 extra 调试字段应被清")
+	}
+}
+
+// TestClearExtraDebugRange_NoLowerBound — extra 保留清理：只删调试字段（providers/user_message_prefix/
 // history_builder_msg_ids/prompt_trace），功能字段与近期行不动，脏数据跳过不破坏。
-func TestClearExtraDebugBefore(t *testing.T) {
+func TestClearExtraDebugRange_NoLowerBound(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -1217,9 +1296,9 @@ func TestClearExtraDebugBefore(t *testing.T) {
 		}
 	}
 
-	n, err := repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100)
+	n, err := repo.ClearExtraDebugRange(ctx, time.Time{}, now.Add(-24*time.Hour), 100)
 	if err != nil {
-		t.Fatalf("ClearExtraDebugBefore error: %v", err)
+		t.Fatalf("ClearExtraDebugRange error: %v", err)
 	}
 	if n != 4 {
 		t.Errorf("应清 4 行(m1,m2,m5,m6)，got %d", n)
@@ -1271,13 +1350,13 @@ func TestClearExtraDebugBefore(t *testing.T) {
 	}
 
 	// limit<=0 走默认 500
-	if n, err := repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 0); err != nil || n != 0 {
+	if n, err := repo.ClearExtraDebugRange(ctx, time.Time{}, now.Add(-24*time.Hour), 0); err != nil || n != 0 {
 		t.Fatalf("limit<=0 应走默认值且保留脏数据, got n=%d err=%v", n, err)
 	}
 	// 第二轮：候选只剩脏数据 m7 → 清 0，且不死循环
-	n, err = repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100)
+	n, err = repo.ClearExtraDebugRange(ctx, time.Time{}, now.Add(-24*time.Hour), 100)
 	if err != nil {
-		t.Fatalf("second ClearExtraDebugBefore error: %v", err)
+		t.Fatalf("second ClearExtraDebugRange error: %v", err)
 	}
 	if n != 0 {
 		t.Errorf("第二轮应清 0 行（仅剩脏数据跳过），got %d", n)
@@ -1290,7 +1369,7 @@ func TestClearExtraDebugBefore(t *testing.T) {
 	if err := repo.Create(ctx, emptyMsg); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100); err != nil || n != 0 {
+	if n, err := repo.ClearExtraDebugRange(ctx, time.Time{}, now.Add(-24*time.Hour), 100); err != nil || n != 0 {
 		t.Fatalf("空 extra 行应跳过, got n=%d err=%v", n, err)
 	}
 
@@ -1299,13 +1378,13 @@ func TestClearExtraDebugBefore(t *testing.T) {
 	defer cleanup2()
 	sqlDB, _ := repo2.db.DB()
 	sqlDB.Close()
-	if _, err := repo2.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100); err == nil {
+	if _, err := repo2.ClearExtraDebugRange(ctx, time.Time{}, now.Add(-24*time.Hour), 100); err == nil {
 		t.Error("DB 关闭后应返回错误")
 	}
 }
 
-// TestClearExtraDebugBefore_NilExtraRow — 候选行 Extra 为 NULL 时跳过（nil 分支），不 panic。
-func TestClearExtraDebugBefore_NilExtraRow(t *testing.T) {
+// TestClearExtraDebugRange_NilExtraRow — 候选行 Extra 为 NULL 时跳过（nil 分支），不 panic。
+func TestClearExtraDebugRange_NilExtraRow(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -1317,12 +1396,12 @@ func TestClearExtraDebugBefore_NilExtraRow(t *testing.T) {
 	if err := repo.Create(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	n, err := repo.ClearExtraDebugBefore(ctx, time.Now().Add(-24*time.Hour), 100)
+	n, err := repo.ClearExtraDebugRange(ctx, time.Time{}, time.Now().Add(-24*time.Hour), 100)
 	if err != nil || n != 1 {
 		t.Fatalf("应清 1 行, got n=%d err=%v", n, err)
 	}
 	// 二次执行：providers 已删但 usage 仍在 → 不再命中过滤（changed=false 分支由脏数据覆盖）
-	n, err = repo.ClearExtraDebugBefore(ctx, time.Now().Add(-24*time.Hour), 100)
+	n, err = repo.ClearExtraDebugRange(ctx, time.Time{}, time.Now().Add(-24*time.Hour), 100)
 	if err != nil || n != 0 {
 		t.Fatalf("二次应清 0 行, got n=%d err=%v", n, err)
 	}
@@ -1339,8 +1418,8 @@ func TestClearExtraDebugBefore_NilExtraRow(t *testing.T) {
 	}
 }
 
-// TestClearExtraDebugBefore_Batching — limit 控制单批行数
-func TestClearExtraDebugBefore_Batching(t *testing.T) {
+// TestClearExtraDebugRange_Batching — limit 控制单批行数
+func TestClearExtraDebugRange_Batching(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -1355,19 +1434,19 @@ func TestClearExtraDebugBefore_Batching(t *testing.T) {
 		}
 	}
 	cutoff := now.Add(-24 * time.Hour)
-	if n, err := repo.ClearExtraDebugBefore(ctx, cutoff, 2); err != nil || n != 2 {
+	if n, err := repo.ClearExtraDebugRange(ctx, time.Time{}, cutoff, 2); err != nil || n != 2 {
 		t.Fatalf("limit=2 应清 2 行, got n=%d err=%v", n, err)
 	}
-	if n, err := repo.ClearExtraDebugBefore(ctx, cutoff, 2); err != nil || n != 1 {
+	if n, err := repo.ClearExtraDebugRange(ctx, time.Time{}, cutoff, 2); err != nil || n != 1 {
 		t.Fatalf("第二轮应清 1 行, got n=%d err=%v", n, err)
 	}
 }
 
-// TestClearExtraDebugBefore_NoMatch — 无匹配返回 0
-func TestClearExtraDebugBefore_NoMatch(t *testing.T) {
+// TestClearExtraDebugRange_NoMatch — 无匹配返回 0
+func TestClearExtraDebugRange_NoMatch(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)
 	defer cleanup()
-	n, err := repo.ClearExtraDebugBefore(context.Background(), time.Now(), 100)
+	n, err := repo.ClearExtraDebugRange(context.Background(), time.Time{}, time.Now(), 100)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

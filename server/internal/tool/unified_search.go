@@ -3,14 +3,24 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"sort"
 	"sync"
+	"time"
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/service"
+)
+
+// 历史消息关键词检索的扫描窗口：默认最近 90 天，避免对 messages 全表做 content LIKE。
+// 90 天无命中时自动放宽到 365 天，避免把「更早聊过」误答成「从没聊过」。
+// 更早历史请用 message_search 按时间/ID 查（它不支持关键词）。见 docs/bugs/046。
+const (
+	keywordHistoryWindowDays   = 90
+	keywordHistoryFallbackDays = 365
 )
 
 // ==================== 输出结构 ====================
@@ -100,12 +110,13 @@ func (t *UnifiedSearchTool) Name() string { return "unified_search" }
 
 // Description 工具描述
 func (t *UnifiedSearchTool) Description() string {
-	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、事件、历史消息五个域，返回结构化 JSON"
+	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、事件、历史消息五个域，返回结构化 JSON。" +
+		"关键词搜索的 history 域只覆盖最近 90 天（无命中会自动放宽到 365 天）；更早历史请用 message_search 按时间/ID 查（不支持关键词）。"
 }
 
 func (t *UnifiedSearchTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "统一检索。语义/关键词搜记忆、笔记、摘要、事件、历史消息。",
+		ShortDesc: "统一检索。语义/关键词搜记忆、笔记、摘要、事件、历史消息；history 关键词默认最近 90 天。",
 		Funcs:     []string{"semantic_search", "keyword_search"},
 	}, true
 }
@@ -126,7 +137,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 					"types": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},
-						"description": "限定搜索域，可选值: memory/note/summary/event/history，默认全部",
+						"description": "限定搜索域，可选值: memory/note/summary/event/history，默认 memory/note/summary/event（不含 history；查历史需显式传 history）",
 					},
 					"top_k": map[string]interface{}{
 						"type": "integer", "description": "每类结果数上限，默认 5，最大 10",
@@ -138,7 +149,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "keyword_search",
 			Display:     "关键词搜索",
-			Description: "用关键词精确搜索记忆、笔记、摘要、事件和历史消息，返回结构化 JSON。适合查找包含特定词汇的内容",
+			Description: "用关键词精确搜索记忆、笔记、摘要、事件和历史消息，返回结构化 JSON。适合查找包含特定词汇的内容。history 域只搜最近 90 天，无命中会自动放宽到 365 天；更早历史请用 message_search 按时间/ID 查（不支持关键词）",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -148,7 +159,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 					"types": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},
-						"description": "限定搜索域，可选值: memory/note/summary/event/history，默认全部",
+						"description": "限定搜索域，可选值: memory/note/summary/event/history，默认 memory/note/summary/event（不含 history；查历史需显式传 history）",
 					},
 					"topic": map[string]interface{}{
 						"type": "string", "description": "主题过滤，仅对记忆和笔记生效",
@@ -294,6 +305,9 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 
 	packets := make(map[string][]retrieval.ContextPacket)
 	var eventHits []eventHit
+	historyRequested := false
+	historyFailed := false
+	historyWindow := keywordHistoryWindowDays
 	for _, typ := range types {
 		switch typ {
 		case "memory":
@@ -319,14 +333,34 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 				eventHits = hits
 			}
 		case "history":
-			pkts := t.searchHistoryByKeyword(ec, keywords, a.TopK)
-			if len(pkts) > 0 {
+			historyRequested = true
+			pkts, days, err := t.searchHistoryByKeyword(ec, keywords, a.TopK)
+			historyWindow = days
+			if err != nil {
+				historyFailed = true
+			} else if len(pkts) > 0 {
 				packets["history"] = pkts
 			}
 		}
 	}
 
 	result := t.buildSearchResult(packets, false)
+	if historyRequested {
+		if historyFailed {
+			result.History = &unifiedDomainResult{
+				Description: retrieval.DescMessages + "（历史关键词检索失败；请稍后重试，或改用 message_search 按时间/ID 查）",
+				Data:        []historyItem{},
+			}
+		} else {
+			desc := fmt.Sprintf("%s（本次关键词检索覆盖最近 %d 天；更早历史请用 message_search 按时间/ID 查，不支持关键词）",
+				retrieval.DescMessages, historyWindow)
+			if result.History == nil {
+				result.History = &unifiedDomainResult{Description: desc + "。本次未命中。", Data: []historyItem{}}
+			} else {
+				result.History.Description = desc
+			}
+		}
+	}
 	if len(eventHits) > 0 {
 		result.Events = &unifiedDomainResult{Description: retrieval.DescEvents, Data: eventHits}
 	}
@@ -502,11 +536,30 @@ func (t *UnifiedSearchTool) searchSummariesByKeyword(ec *ExecuteContext, keyword
 	return pkts
 }
 
-func (t *UnifiedSearchTool) searchHistoryByKeyword(ec *ExecuteContext, keywords []string, limit int) []retrieval.ContextPacket {
-	msgs, _, err := t.msgRepo.SearchMessagesByCursor(ec.Ctx, ec.UserID, keywords, "user", "", nil, limit)
+// searchHistoryByKeyword 返回命中的历史消息、实际使用的窗口天数与错误：
+// 90 天无命中时放宽到 365 天；出错时由调用方标成「检索失败」，不要伪造成「未命中」。
+func (t *UnifiedSearchTool) searchHistoryByKeyword(ec *ExecuteContext, keywords []string, limit int) ([]retrieval.ContextPacket, int, error) {
+	pkts, err := t.searchHistoryByKeywordWithin(ec, keywords, limit, keywordHistoryWindowDays)
 	if err != nil {
 		log.Printf("[unified_search] history keyword: %v", err)
-		return nil
+		return nil, keywordHistoryWindowDays, err
+	}
+	if len(pkts) > 0 {
+		return pkts, keywordHistoryWindowDays, nil
+	}
+	pkts, err = t.searchHistoryByKeywordWithin(ec, keywords, limit, keywordHistoryFallbackDays)
+	if err != nil {
+		log.Printf("[unified_search] history keyword fallback: %v", err)
+		return nil, keywordHistoryFallbackDays, err
+	}
+	return pkts, keywordHistoryFallbackDays, nil
+}
+
+func (t *UnifiedSearchTool) searchHistoryByKeywordWithin(ec *ExecuteContext, keywords []string, limit, days int) ([]retrieval.ContextPacket, error) {
+	after := time.Now().AddDate(0, 0, -days)
+	msgs, _, err := t.msgRepo.SearchMessagesByCursor(ec.Ctx, ec.UserID, keywords, "user", "", &after, nil, limit)
+	if err != nil {
+		return nil, err
 	}
 	pkts := make([]retrieval.ContextPacket, 0, len(msgs))
 	for _, m := range msgs {
@@ -520,7 +573,7 @@ func (t *UnifiedSearchTool) searchHistoryByKeyword(ec *ExecuteContext, keywords 
 			},
 		})
 	}
-	return pkts
+	return pkts, nil
 }
 
 func (t *UnifiedSearchTool) convertHistoryPackets(pkts []retrieval.ContextPacket, includeScore bool) []historyItem {

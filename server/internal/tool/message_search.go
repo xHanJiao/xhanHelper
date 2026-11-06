@@ -60,7 +60,7 @@ func (t *MessageSearchTool) Description() string {
 
 func (t *MessageSearchTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "历史消息。按时间/ID 精确查。语义检索走 unified_search。",
+		ShortDesc: "历史消息。按时间/ID 精确查。语义/关键词检索走 unified_search。",
 		Funcs:     []string{"search_by_time", "search_by_range"},
 		Others:    "按ID查、统计数量 等",
 	}, true
@@ -91,7 +91,7 @@ func (t *MessageSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "count_messages",
 			Display:     "统计消息数量",
-			Description: "统计符合条件的消息总数。支持 keyword+time+role+conversation_id 全维度组合过滤。在调用 search_by_keyword 或 search_by_time 之前，先调用此函数评估数据量，帮助决定是否有必要搜索以及是否需要缩小范围。",
+			Description: "统计符合条件的消息总数。支持 keyword+time+role+conversation_id 全维度组合过滤。在调用 search_by_time 之前，先调用此函数评估数据量，帮助决定是否有必要搜索以及是否需要缩小范围。注意：keyword 统计没有时间窗时会扫全历史，可能较慢，尽量同时传时间范围。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

@@ -33,7 +33,7 @@ func (t *GetSummaryTool) Name() string { return "get_summary" }
 
 func (t *GetSummaryTool) Description() string {
 	return "对话摘要由系统在每次对话 session 结束后自动提取，是对话主题和脉络的高层概括，适合快速了解用户过去某段时间聊了什么、发生了什么事。" +
-		"query_by_time 按时间范围拉取摘要（回顾过去几天/几周的对话脉络首选）；search_summaries 用自然语言语义搜索；search_by_keyword 按关键词搜索；" +
+		"query_by_time 按时间范围拉取摘要（回顾过去几天/几周的对话脉络首选）；" +
 		"get_summary 按 ID 获取单条摘要并沿 parent 链回溯。" +
 		"相比直接查消息（message_search），摘要提供全局视角和浓缩话题，但丢失了细节信息。" +
 		"找到感兴趣的话题后，可配合 message_search.search_by_range 查看覆盖范围内的原始消息。"

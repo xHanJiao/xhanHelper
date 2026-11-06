@@ -114,15 +114,6 @@ func TestMessageSearchTool_FunctionSchemas(t *testing.T) {
 					t.Errorf("required should be []string, got %T", req)
 				}
 			}
-			// verify query param exists for search_by_keyword
-			if fn.Name == "search_by_keyword" {
-				if _, ok := params["query"]; !ok {
-					t.Error("search_by_keyword missing 'query' param")
-				}
-				if _, ok := params["expand_context"]; !ok {
-					t.Error("search_by_keyword missing 'expand_context' param")
-				}
-			}
 			// verify time params for search_by_time
 			if fn.Name == "search_by_time" {
 				if _, ok := params["start_time"]; !ok {
@@ -151,20 +142,6 @@ func TestMessageSearchTool_Errors(t *testing.T) {
 	tool, cleanup := setupMessageSearchTool(t)
 	defer cleanup()
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
-
-	t.Run("search_by_keyword empty query", func(t *testing.T) {
-		res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]string{"query": ""}))
-		if res.Success {
-			t.Error("expected error for empty query")
-		}
-	})
-
-	t.Run("search_by_keyword bad cursor", func(t *testing.T) {
-		res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]string{"query": "test", "cursor": "not-a-date"}))
-		if res.Success {
-			t.Error("expected error for bad cursor")
-		}
-	})
 
 	t.Run("search_by_time no time params", func(t *testing.T) {
 		res := tool.Execute(ec, "search_by_time", mustMarshal(t, map[string]interface{}{}))
@@ -219,14 +196,14 @@ func TestMessageSearchTool_Errors(t *testing.T) {
 	})
 
 	t.Run("malformed json", func(t *testing.T) {
-		res := tool.Execute(ec, "search_by_keyword", []byte(`{bad`))
+		res := tool.Execute(ec, "search_by_time", []byte(`{bad`))
 		if res.Success {
 			t.Error("expected error for malformed json")
 		}
 	})
 }
 
-// ==================== search_by_keyword Tests ====================
+// ==================== search_by_time Tests ====================
 
 func TestSearchByTime_LastNDays(t *testing.T) {
 	tool, cleanup := setupMessageSearchTool(t)

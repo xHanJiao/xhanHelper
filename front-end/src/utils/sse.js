@@ -42,3 +42,34 @@ export function createSSEParser(onEvent) {
     }
   }
 }
+
+// 空闲看门狗：每 touch() 一次重置计时，超过 ms 没有 touch 就回调一次（只回调一次）。
+// 流式响应用它兜住「半开连接」——reader 既不返回也不报错时，UI 会永远停在流式中。
+// shortcut: 服务端没有心跳帧，只能按「多久没收到任何字节」判死；要更灵敏需服务端定时发 `: ping`。
+export function createIdleWatchdog(ms, onIdle) {
+  let timer = null
+  let fired = false
+
+  function clear() {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+  }
+
+  return {
+    touch() {
+      if (fired) return
+      clear()
+      timer = setTimeout(() => {
+        timer = null
+        fired = true
+        onIdle()
+      }, ms)
+    },
+    stop() {
+      clear()
+      fired = true
+    }
+  }
+}

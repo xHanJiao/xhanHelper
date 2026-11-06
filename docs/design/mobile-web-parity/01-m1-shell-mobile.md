@@ -191,4 +191,5 @@ html, body, #app { height: 100%; }
 ## 后续变更
 
 - 2026-11-03：灵阅详情 `/artifacts/:id` 放开底部 Tab（用户要求：其他一级 tab 激活时底栏都不消失，保持一致）。去掉该路由的 `meta.hideTabs`，并删掉 `BottomTabs` 里恒为 false 的 `isHidden` 守卫（判据只在 `AppShell` 一处）。影响 `front-end/src/router/index.js`、`front-end/src/components/BottomTabs.vue`。文档阅读页 `/documents/:id` 维持隐藏，原因见第九节。
+- 2026-11-06：PWA 会话列表不再陈旧（bug 见 `docs/bugs/046-pwa-conversation-list-stale.md`）。① 顶栏 `＋` 改为先 `POST /api/conversations` 再 `push('/chat/:id')`，不再靠首条消息懒创建（流式中切 Tab/锁屏断流会丢 `conversation_id`）；② 会话下拉每次打开都 `fetchList()`，原来只在列表为空时拉一次，PWA 挂起几天就几天不刷新；③ 新建逻辑收口到 `stores/conversations.js` 的 `create()`。影响 `front-end/src/components/{PageTopBar,ConversationSwitcher}.vue`、`front-end/src/stores/conversations.js`、`front-end/src/views/AgentView.vue`。代价：点了＋不发消息会留下一条空「新对话」。
 

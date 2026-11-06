@@ -3,7 +3,13 @@ import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
-import { createSSEParser } from '@/utils/sse'
+import { createIdleWatchdog, createSSEParser } from '@/utils/sse'
+
+// 流式空闲上限：移动端 PWA 被挂起后可能留下一条半开连接（reader 既不返回也不报错），
+// 不兜底就会永远停在 isStreaming，连回前台都发不出消息。
+// shortcut: 服务端不发心跳帧，只能按「多久没收到任何字节」判死；verify 和子任务里的单次
+// ChatSync 是完全静默的，如果实测出现误判（假超时），就先让服务端静默时发 `: ping` 再压阈值。
+const STREAM_IDLE_TIMEOUT_MS = 120000
 
 // 旧格式兜底映射（新工具由后端 FillDisplay 下发，勿在此新增条目）
 const DISPLAY_NAMES = {
@@ -54,7 +60,17 @@ export function useChatSSE() {
     const createdMode = initMode || 'work'
     const createdEphemeral = !!ephemeral
 
-    abortController = new AbortController()
+    const controller = new AbortController()
+    abortController = controller
+    // 看门狗覆盖「请求发出 → 响应头 → 流结束」整条链路：半开连接可能停在任一阶段。
+    // 超时就先把 UI 收尾（别指望 AbortController 一定能叫醒半死的 read），再断流。
+    const watchdog = createIdleWatchdog(STREAM_IDLE_TIMEOUT_MS, () => {
+      // 已经 abort 过（用户停止/切会话）：当迟到的心跳，别碰新一轮的状态
+      if (controller.signal.aborted) return
+      chat.isStreaming = false
+      failStream('连接超时（长时间没有响应），请重试')
+      controller.abort()
+    })
     chat.isStreaming = true
     chat.error = null
     chat.statusMessage = null
@@ -71,6 +87,7 @@ export function useChatSSE() {
     chat.planEdges = []
 
     try {
+      watchdog.touch()
       const body = {
         message,
         // 空串而不是 undefined：undefined 会被 JSON.stringify 丢掉，服务端就按「老入口」落默认会话
@@ -91,7 +108,7 @@ export function useChatSSE() {
       if (thinking !== undefined && thinking !== null) {
         body.thinking = thinking
       }
-      const res = await api.stream('/api/chat', body, abortController.signal)
+      const res = await api.stream('/api/chat', body, controller.signal)
 
       if (!res.ok) {
         if (res.status === 401) {
@@ -101,8 +118,9 @@ export function useChatSSE() {
         throw new Error(`HTTP ${res.status}`)
       }
 
-      await parseSSEStream(res, abortController)
+      await parseSSEStream(res, controller, watchdog)
     } catch (err) {
+      // 用户点「停止」和看门狗超时都会走到这里：超时的收尾已由 watchdog 自己做完
       if (err.name === 'AbortError') return
       if (err.name === 'AuthError') {
         auth.logout()
@@ -111,11 +129,13 @@ export function useChatSSE() {
       console.error('Chat error', err)
       failStream(err.message || '网络连接失败，请重试')
     } finally {
-      chat.isStreaming = false
+      watchdog.stop()
+      // 超时后可能已经开了新一轮：别把新一轮的 isStreaming 误清掉
+      if (abortController === controller) chat.isStreaming = false
     }
   }
 
-  async function parseSSEStream(res, controller) {
+  async function parseSSEStream(res, controller, watchdog) {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     const parser = createSSEParser((event, rawData) => {
@@ -129,9 +149,11 @@ export function useChatSSE() {
       }
     })
 
+    watchdog.touch()
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+      watchdog.touch()
       parser.feed(decoder.decode(value, { stream: true }))
     }
     // 冲掉解码器里残留的多字节片段，再派发可能未收尾的最后一个事件
@@ -263,7 +285,7 @@ export function useChatSSE() {
 
         if (!chat.conversationId && d.conversation_id) {
           chat.conversationId = d.conversation_id
-          // 会话懒创建后让路由跟上：否则 URL 停在 /chat，顶栏「新对话」推到同一路由等于没点
+          // 懒创建的会话（直接访问 /chat 等路径）拿到 id 后让路由跟上，否则 URL 停在 /chat
           router.replace(`/chat/${d.conversation_id}`)
           convs.prepend({
             id: d.conversation_id,
@@ -295,6 +317,8 @@ export function useChatSSE() {
     abortController?.abort()
     // 断流后不会再有任何事件到达，半截气泡留着就永远停在「流式中」。
     // 调用方（handleStop）在 cancel() 之前已经捕获 partial，不会丢已展示的内容。
+    // isStreaming 也在这里复位：连接半死时 read 可能永不 settle，别等 sendMessage 的 finally。
+    chat.isStreaming = false
     chat.streamingMessage = null
     chat.statusMessage = null
   }

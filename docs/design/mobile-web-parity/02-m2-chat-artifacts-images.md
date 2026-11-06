@@ -281,3 +281,9 @@ new MarkdownIt({
 - 补 M2 遗留：停止按钮接 `POST /api/chat/stop`（新会话首条消息除外）、错误态「重新加载」、代码块复制按钮（聊天/文档/分享页共用，导出 PDF 不带按钮）。
 - 键盘处理落到 `useKeyboardInset` + `--keyboard-inset`（见 `01-*.md`），真机仍需复验。
 - 图片库 `/images` 决定本次不做，「我的」和桌面「功能」菜单入口已隐藏，路由保留但无入口；同时移除「我的」里「无痕会话」「快捷操作说明」两个点进去没有内容的入口。
+
+## 十三、后续变更（2026-11-06）
+
+- 流式加 120s 空闲看门狗：`utils/sse.js` 的 `createIdleWatchdog` 在 `api.stream()` 之前 arm，覆盖「请求发出 → 响应头 → 流结束」整条链路；超时先把 UI 收尾（`failStream` + `isStreaming=false`）再 `abort`，已 abort 过（用户停止）则只复位状态、不报假超时。`cancel()` 也直接复位 `isStreaming`。
+- 起因：移动端 PWA 被挂起后可能留下半开连接（reader 既不返回也不报错），`chat.isStreaming` 会永远为真，回前台既不同步历史也发不出消息、只能杀进程。
+- 服务端没有心跳帧，阈值不能再压低；要更灵敏需服务端在静默时发 `: ping`（SSE 注释行，`createSSEParser` 已能忽略）。

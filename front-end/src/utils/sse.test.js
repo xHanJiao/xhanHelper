@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createSSEParser } from './sse.js'
+import { createIdleWatchdog, createSSEParser } from './sse.js'
 
 function collect() {
   const events = []
@@ -62,4 +62,32 @@ test('只有 event 没有 data 不派发', () => {
   parser.feed('event: status\n\n')
   parser.end()
   assert.deepEqual(events, [])
+})
+
+test('看门狗：一直没数据时按 ms 触发一次', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let fired = 0
+  const dog = createIdleWatchdog(100, () => fired++)
+  dog.touch()
+  t.mock.timers.tick(99)
+  assert.equal(fired, 0)
+  t.mock.timers.tick(1)
+  assert.equal(fired, 1)
+  // 触发后不再重复
+  t.mock.timers.tick(1000)
+  assert.equal(fired, 1)
+})
+
+test('看门狗：touch 会重置计时，stop 之后永不触发', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let fired = 0
+  const dog = createIdleWatchdog(100, () => fired++)
+  dog.touch()
+  t.mock.timers.tick(90)
+  dog.touch() // 收到新数据
+  t.mock.timers.tick(90)
+  assert.equal(fired, 0)
+  dog.stop()
+  t.mock.timers.tick(1000)
+  assert.equal(fired, 0)
 })

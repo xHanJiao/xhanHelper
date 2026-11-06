@@ -1,8 +1,9 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NPopover } from 'naive-ui'
+import { NPopover, useMessage } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
+import { useConversationsStore } from '@/stores/conversations'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import ConversationSwitcher from '@/components/ConversationSwitcher.vue'
 import TopBarActions from '@/components/TopBarActions.vue'
@@ -25,6 +26,9 @@ const showAgentPopover = ref(false)
 const route = useRoute()
 const router = useRouter()
 const { isDesktop } = useMobile()
+const convs = useConversationsStore()
+const message = useMessage()
+const creating = ref(false)
 
 // 有 PageHeader 的列表页不再渲染本组件，桌面顶栏由 PageHeader + TopBarActions 承担
 const showBack = computed(() =>
@@ -51,8 +55,21 @@ function handleUnbind() {
   emit('select-agent', null)
 }
 
-function newChat() {
-  router.push('/chat')
+// 先建会话再跳：id 在发消息之前就确定，流式中切 Tab/锁屏断流也不会丢掉这条会话的归属。
+// 这里不 reset：路由分支 A 会先 cancel() 旧流再 setConversation，顺序反了会让在途的
+// done 把 conversationId 写回旧会话。失败就不跳，避免「看着像新建了、其实没有」。
+async function newChat() {
+  if (creating.value) return
+  creating.value = true
+  try {
+    const conv = await convs.create()
+    router.push(`/chat/${conv.id}`)
+  } catch (e) {
+    console.error('Failed to create conversation', e)
+    message.error('创建对话失败')
+  } finally {
+    creating.value = false
+  }
 }
 </script>
 
@@ -72,7 +89,7 @@ function newChat() {
       </button>
 
       <ConversationSwitcher v-if="showConversation" />
-      <button v-if="showConversation" class="icon-btn" type="button" aria-label="新对话" title="新对话" @click="newChat">
+      <button v-if="showConversation" class="icon-btn" type="button" aria-label="新对话" title="新对话" :disabled="creating" @click="newChat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
 

@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
-import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import {
   NButton,
@@ -24,7 +23,6 @@ import PageHeader from '@/components/PageHeader.vue'
 const message = useMessage()
 const { isMobile } = useMobile()
 const router = useRouter()
-const chat = useChatStore()
 const convs = useConversationsStore()
 
 const agents = ref([])
@@ -136,11 +134,10 @@ async function handleDelete(agent) {
 
 async function handleStartChat(agent) {
   try {
-    const res = await api.post('/api/conversations', { agent_id: agent.id })
-    chat.reset()
-    convs.prepend({ id: res.id, title: res.title, agent_id: res.agent_id, agent_name: res.agent_name })
-    router.push(`/chat/${res.id}`)
+    const conv = await convs.create(agent.id)
+    router.push(`/chat/${conv.id}`)
   } catch (e) {
+    console.error('Failed to create conversation', e)
     message.error('创建对话失败')
   }
 }

@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { NInput, useMessage } from 'naive-ui'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatStore } from '@/stores/chat'
-import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 
 const route = useRoute()
@@ -21,7 +20,7 @@ const rootRef = ref(null)
 const currentId = computed(() => route.params.id || '')
 const current = computed(() => convs.list.find(c => c.id === currentId.value))
 const label = computed(() => current.value?.title || (currentId.value ? '对话' : '新对话'))
-const hasMore = computed(() => convs.list.length < convs.total)
+const hasMore = computed(() => convs.loadedCount < convs.total)
 const filtered = computed(() => {
   const q = keyword.value.trim().toLowerCase()
   if (!q) return convs.list
@@ -38,8 +37,14 @@ function formatTime(value) {
 }
 
 async function refresh() {
-  // 冷启动时 ChatView 也会拉列表，正在加载中就不再发一次
-  if (!convs.list.length && !convs.loading) await convs.fetchList()
+  // 面板是会话列表唯一的可见入口，而列表是内存里增量维护的（done / 新建后 prepend）。
+  // PWA 进程可能活好几天：其它端新建的会话、流断掉时漏掉的条目，只有重拉才会出现。
+  if (convs.loading) return
+  const current = convs.list.find(c => c.id === currentId.value)
+  await convs.fetchList()
+  // 重拉只取第一页：当前会话可能在更后面（深链、点过「加载更多」），补回来，
+  // 否则胶囊标题退回「对话」、列表里也没有当前行。
+  if (current && !convs.list.some(c => c.id === current.id)) convs.prepend(current)
 }
 
 function toggle() {
@@ -54,12 +59,11 @@ function select(conv) {
 
 async function createConversation() {
   try {
-    const res = await api.post('/api/conversations', {})
-    chat.reset()
-    convs.prepend({ id: res.id, title: res.title, agent_id: res.agent_id, agent_name: res.agent_name })
+    const conv = await convs.create()
     open.value = false
-    router.push(`/chat/${res.id}`)
+    router.push(`/chat/${conv.id}`)
   } catch (e) {
+    console.error('Failed to create conversation', e)
     message.error('创建对话失败')
   }
 }
@@ -146,7 +150,7 @@ watch(() => route.fullPath, () => { open.value = false })
       </div>
 
       <div class="conv-foot">
-        <button v-if="hasMore" type="button" @click="convs.fetchList(convs.list.length)">加载更多</button>
+        <button v-if="hasMore" type="button" @click="convs.fetchList(convs.loadedCount)">加载更多</button>
         <span>已归档会话在设置里</span>
       </div>
     </div>

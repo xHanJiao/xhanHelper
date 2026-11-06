@@ -205,10 +205,11 @@ watch(() => route.fullPath, () => { open.value = false })
   background: rgba(255, 255, 255, 0.05);
 }
 .conv-pill:hover {
-  background: var(--color-primary-soft);
+  /* 用中性白霜而不是 primary-soft：否则和「＋」圆圈的淡绿底同色，悬停时圆圈会消失 */
+  background: var(--color-surface);
   border-color: var(--color-border-strong);
 }
-/* 胶囊内左端的「新对话」：点它只建会话、不展开面板。独立圆圈，看起来是个按钮 */
+/* 胶囊内左端的「新对话」：点它只建会话、不展开面板。主题色淡底 + 主题色图标，深浅两套自动跟随 */
 .conv-add {
   width: 28px;
   height: 28px;
@@ -216,18 +217,16 @@ watch(() => route.fullPath, () => { open.value = false })
   display: grid;
   place-items: center;
   padding: 0;
-  border: 0.5px solid var(--color-border);
+  border: 0.5px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
-[data-theme="dark"] .conv-add { background: rgba(255, 255, 255, 0.12); }
 .conv-add:hover {
-  background: var(--color-primary-soft);
-  border-color: var(--color-border-strong);
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
 }
 .conv-add:disabled { opacity: 0.4; cursor: default; }
 .conv-add svg { width: 14px; height: 14px; }

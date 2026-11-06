@@ -103,8 +103,8 @@ expose_tools.enable(["组名"])，一次可多组，启用后下一轮即可直�
 - agent: 智能体。建/查/改自定义 AI 助手，绑定/解绑会话。函数: create_agent, find_agent, list_agents, update_agent, bind_agent, unbind_agent
 - reminder: 提醒。设/查/取消待办。函数: create_reminder, list_reminders, search_reminders, cancel_reminder
 - get_summary: 对话摘要。按时间/ID 查过去聊了什么。函数: query_by_time, get_summary
-- message_search: 历史消息。按时间/ID 精确查。语义检索走 unified_search。函数: search_by_time, search_by_range, get_by_ids, count_messages
-- unified_search: 统一检索。语义/关键词搜记忆、笔记、摘要、事件、历史消息。函数: semantic_search, keyword_search
+- message_search: 历史消息。按时间/ID 精确查。语义/关键词检索走 unified_search。函数: search_by_time, search_by_range, get_by_ids, count_messages
+- unified_search: 统一检索。语义/关键词搜记忆、笔记、摘要、事件、历史消息（history 关键词只搜最近 90 天，无命中放宽到 365 天；更早用 message_search 按时间/ID 查，不支持关键词）。函数: semantic_search, keyword_search
 - plan: 执行计划。存/读当前会话步骤清单（todo）。函数: save, get
 - task: 子任务。派子 agent 独立干活：联网调研 web_explore、本地文件 file_explore。函数: run
 ```

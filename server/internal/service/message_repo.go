@@ -68,15 +68,18 @@ func (r *MessageRepo) BatchUpdateDebugJSON(ctx context.Context, updates []DebugJ
 	})
 }
 
-// ClearDebugJSONBefore 清空 before 之前消息的 request_json（保留清理用，limit 控制单批行数）。
-func (r *MessageRepo) ClearDebugJSONBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+// ClearDebugJSONRange 清空 [after, before) 内消息的 request_json；after 为零值时不设下界。
+// 生产按增量窗口调用（上次水位 .. 本次 cutoff），避免「稳态 0 命中」时每次扫完整张表。
+func (r *MessageRepo) ClearDebugJSONRange(ctx context.Context, after, before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	res := r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("created_at < ? AND request_json IS NOT NULL", before).
-		Limit(limit).
-		Update("request_json", nil)
+	q := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("created_at < ? AND request_json IS NOT NULL", before)
+	if !after.IsZero() {
+		q = q.Where("created_at >= ?", after)
+	}
+	res := q.Limit(limit).Update("request_json", nil)
 	return res.RowsAffected, res.Error
 }
 
@@ -85,10 +88,11 @@ func (r *MessageRepo) ClearDebugJSONBefore(ctx context.Context, before time.Time
 // prompt_trace 是旧格式的 trace 容器，内容仅 providers，整键删除安全。
 var extraDebugKeys = []string{"providers", "user_message_prefix", "history_builder_msg_ids", "prompt_trace"}
 
-// ClearExtraDebugBefore 清除 before 之前消息 extra 中的调试字段，保留功能字段，
-// 返回本批实际改写的行数。JSON 处理在 Go 侧完成（map 键删除），兼容 SQLite/MySQL。
+// ClearExtraDebugRange 清除 [after, before) 内消息 extra 中的调试字段，保留功能字段，
+// 返回本批实际改写的行数。after 为零值时不设下界。
+// JSON 处理在 Go 侧完成（map 键删除），兼容 SQLite/MySQL。
 // 解析失败的脏数据行跳过并记日志，不删除、不报错；无匹配行返回 0。
-func (r *MessageRepo) ClearExtraDebugBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+func (r *MessageRepo) ClearExtraDebugRange(ctx context.Context, after, before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -96,13 +100,15 @@ func (r *MessageRepo) ClearExtraDebugBefore(ctx context.Context, before time.Tim
 		ID    string
 		Extra *string
 	}
-	if err := r.db.WithContext(ctx).Model(&model.Message{}).
+	q := r.db.WithContext(ctx).Model(&model.Message{}).
 		Select("id, extra").
 		Where("created_at < ? AND extra IS NOT NULL AND extra != '' AND "+
 			"(extra LIKE ? OR extra LIKE ? OR extra LIKE ?)",
-			before, `%"providers"%`, `%user_message_prefix%`, `%history_builder_msg_ids%`).
-		Limit(limit).
-		Find(&rows).Error; err != nil {
+			before, `%"providers"%`, `%user_message_prefix%`, `%history_builder_msg_ids%`)
+	if !after.IsZero() {
+		q = q.Where("created_at >= ?", after)
+	}
+	if err := q.Limit(limit).Find(&rows).Error; err != nil {
 		return 0, fmt.Errorf("list messages with extra trace: %w", err)
 	}
 	if len(rows) == 0 {
@@ -797,9 +803,10 @@ func (r *MessageRepo) searchMessages(ctx context.Context, userID string, keyword
 
 // SearchMessagesByCursor 按关键词搜索消息，cursor 分页（DESC，最新在前）。
 // keywords 之间为 OR 关系。role 为空时不过滤 role（查全部角色），支持逗号分隔多 role。
-// convID 为空时跨所有会话搜索。cursor 为 nil 表示首页。
-func (r *MessageRepo) SearchMessagesByCursor(ctx context.Context, userID string, keywords []string, role, convID string, cursor *time.Time, limit int) ([]model.Message, bool, error) {
-	return r.searchMessages(ctx, userID, keywords, role, convID, nil, nil, cursor, "desc", limit)
+// convID 为空时跨所有会话搜索。after 非 nil 时只搜该时间之后的消息（调用方用于收窄扫描范围）。
+// cursor 为 nil 表示首页。
+func (r *MessageRepo) SearchMessagesByCursor(ctx context.Context, userID string, keywords []string, role, convID string, after *time.Time, cursor *time.Time, limit int) ([]model.Message, bool, error) {
+	return r.searchMessages(ctx, userID, keywords, role, convID, after, nil, cursor, "desc", limit)
 }
 
 // SearchMessagesByTimeCursor 按时间范围搜索消息，cursor 分页。

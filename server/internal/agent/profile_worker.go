@@ -167,9 +167,9 @@ func coldStartSystemPrompt() string {
 
 你只有一个工具：unified_search
 - unified_search.semantic_search(query, types, top_k)
-  语义搜索。types 可选 memory/note/summary/event/history，默认全部。top_k 默认 5
+  语义搜索。types 可选 memory/note/summary/event/history，默认 memory/note/summary/event（不含 history；查历史需显式传 history）。top_k 默认 5
 - unified_search.keyword_search(keywords, types, topic, top_k)
-  关键词搜索。keywords 用空格/逗号分隔。types 同上，topic 仅对 memory/note 生效
+  关键词搜索。keywords 用空格/逗号分隔。types 同上（默认不含 history）；history 只搜最近 90 天，无命中放宽到 365 天。topic 仅对 memory/note 生效
 
 建议先做一次宽泛搜索了解用户，再针对需要的字段做精确搜索。
 

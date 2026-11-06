@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -638,6 +639,174 @@ func TestUnifiedSearch_KeywordBasic(t *testing.T) {
 	}
 }
 
+func TestUnifiedSearch_KeywordHistoryWindow(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ctx := context.Background()
+	for _, m := range []model.Message{
+		{ID: "msg-history-old", UserID: userID, ConversationID: "conv-old", Role: "user", Content: "很久以前聊过回西安", Status: model.MsgStatusNormal, CreatedAt: time.Now().AddDate(0, 0, -100)},
+		{ID: "msg-history-recent", UserID: userID, ConversationID: "conv-recent", Role: "user", Content: "今天聊回西安", Status: model.MsgStatusNormal, CreatedAt: time.Now().Add(-time.Hour)},
+	} {
+		if err := repos.msg.Create(ctx, &m); err != nil {
+			t.Fatalf("seed history %s: %v", m.ID, err)
+		}
+	}
+
+	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "回西安",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.History == nil {
+		t.Fatal("expected history result")
+	}
+	items := out.History.Data.([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected only recent history, got %d items", len(items))
+	}
+	if id := items[0].(map[string]interface{})["id"]; id != "msg-history-recent" {
+		t.Errorf("expected msg-history-recent, got %v", id)
+	}
+}
+
+func TestUnifiedSearch_KeywordDefaultTypesExcludeHistory(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ctx := context.Background()
+	m := model.Message{ID: "msg-history-default-off", UserID: userID, ConversationID: "conv-default", Role: "user", Content: "默认不该搜到的历史词", Status: model.MsgStatusNormal, CreatedAt: time.Now().AddDate(0, 0, -100)}
+	if err := repos.msg.Create(ctx, &m); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
+
+	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]string{"keywords": "历史词"}))
+	if !res.Success {
+		t.Fatalf("keyword search failed: %s", res.Error)
+	}
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.History != nil {
+		t.Errorf("默认 types 不应包含 history, got %+v", out.History)
+	}
+}
+
+func TestUnifiedSearch_KeywordHistoryWindowBoundary(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ctx := context.Background()
+	m := model.Message{ID: "msg-history-89d", UserID: userID, ConversationID: "conv-89d", Role: "user", Content: "边界词聊过一次", Status: model.MsgStatusNormal, CreatedAt: time.Now().AddDate(0, 0, -89)}
+	if err := repos.msg.Create(ctx, &m); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
+
+	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "边界词",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.History == nil || len(out.History.Data.([]interface{})) != 1 {
+		t.Fatalf("89 天内的消息应命中, got %+v", out.History)
+	}
+	if strings.Contains(out.History.Description, "365") {
+		t.Errorf("89 天不应触发 365 天回退, got %q", out.History.Description)
+	}
+}
+
+func TestUnifiedSearch_KeywordHistoryFallback(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ctx := context.Background()
+	old := model.Message{ID: "msg-history-only-old", UserID: userID, ConversationID: "conv-old", Role: "user", Content: "很久以前聊过回西安", Status: model.MsgStatusNormal, CreatedAt: time.Now().AddDate(0, 0, -100)}
+	if err := repos.msg.Create(ctx, &old); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
+
+	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "回西安",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.History == nil {
+		t.Fatal("expected history result")
+	}
+	items := out.History.Data.([]interface{})
+	if len(items) != 1 || items[0].(map[string]interface{})["id"] != "msg-history-only-old" {
+		t.Fatalf("expected fallback to return old history, got %+v", items)
+	}
+	if !strings.Contains(out.History.Description, "365") {
+		t.Errorf("expected fallback hint (365 days), got %q", out.History.Description)
+	}
+}
+
+func TestUnifiedSearch_KeywordHistoryNoHitHint(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "外星人",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.History == nil {
+		t.Fatal("expected history hint even when no hit")
+	}
+	if !strings.Contains(out.History.Description, "365") {
+		t.Errorf("expected window hint, got %q", out.History.Description)
+	}
+	if items := out.History.Data.([]interface{}); len(items) != 0 {
+		t.Errorf("expected empty history, got %+v", items)
+	}
+}
+
 func TestUnifiedSearch_KeywordTopicFilter(t *testing.T) {
 	tool, repos, cleanup := setupUnifiedSearchDB(t)
 	defer cleanup()
@@ -879,8 +1048,11 @@ func TestUnifiedSearch_KeywordHistorySummaryFields(t *testing.T) {
 	if out.History == nil {
 		t.Fatal("expected history results for keyword '泛型'")
 	}
-	if out.History.Description != retrieval.DescMessages {
+	if !strings.HasPrefix(out.History.Description, retrieval.DescMessages) {
 		t.Errorf("expected history description, got %q", out.History.Description)
+	}
+	if !strings.Contains(out.History.Description, "90") {
+		t.Errorf("expected window hint in description, got %q", out.History.Description)
 	}
 
 	items := out.History.Data.([]interface{})
@@ -911,8 +1083,11 @@ func TestUnifiedSearch_KeywordHistoryUserIsolation(t *testing.T) {
 
 	var out searchResult
 	json.Unmarshal(res.Data, &out)
-	if out.History != nil {
-		t.Error("history should be nil for other-user")
+	if out.History == nil {
+		t.Fatal("expected empty history hint for other-user")
+	}
+	if items := out.History.Data.([]interface{}); len(items) != 0 {
+		t.Errorf("history should be empty for other-user, got %+v", items)
 	}
 }
 

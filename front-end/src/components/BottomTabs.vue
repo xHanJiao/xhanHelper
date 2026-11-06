@@ -53,14 +53,11 @@ function go(tab) {
   display: flex;
   align-items: flex-start;
   justify-content: space-around;
-  background: rgba(252, 248, 240, 0.82);
+  /* 不透明且与 html/body 的画布同色：iOS 橡皮筋回弹把底栏顶起来时，下面露出的是同一个色，
+     不会出现一条白缝。原来是半透明白 + backdrop-filter，模糊的是纯渐变，视觉上等价。 */
+  background: var(--bottom-chrome);
   border-top: 0.5px solid var(--color-border);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   flex-shrink: 0;
-}
-[data-theme="dark"] .bottom-tabs {
-  background: rgba(30, 30, 32, 0.86);
 }
 .tab {
   flex: 1;

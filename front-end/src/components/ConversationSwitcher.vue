@@ -14,6 +14,7 @@ const message = useMessage()
 const { isMobile } = useMobile()
 
 const open = ref(false)
+const creating = ref(false)
 const keyword = ref('')
 const rootRef = ref(null)
 
@@ -58,6 +59,11 @@ function select(conv) {
 }
 
 async function createConversation() {
+  // 不在这里 chat.reset()：路由分支 A 会先 cancel() 旧流再 setConversation。顺序反了会让
+  // 在途的 done 把 conversationId 写回旧会话（bug 046 的根因之一）。会话 id 也已经先建好，
+  // 不再依赖 done 回传。
+  if (creating.value) return
+  creating.value = true
   try {
     const conv = await convs.create()
     open.value = false
@@ -65,6 +71,8 @@ async function createConversation() {
   } catch (e) {
     console.error('Failed to create conversation', e)
     message.error('创建对话失败')
+  } finally {
+    creating.value = false
   }
 }
 
@@ -110,10 +118,23 @@ watch(() => route.fullPath, () => { open.value = false })
 
 <template>
   <div ref="rootRef" class="conv-switcher">
-    <button class="conv-pill" type="button" @click.stop="toggle">
-      <span class="conv-title">{{ label }}</span>
-      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
+    <!-- 外框是 div：HTML 不允许 button 套 button，左边「＋ 新建」和右边「标题 ⌄」是两个按钮 -->
+    <div class="conv-pill">
+      <button
+        class="conv-add"
+        type="button"
+        aria-label="新对话"
+        title="新对话"
+        :disabled="creating"
+        @click.stop="createConversation"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="conv-toggle" type="button" :aria-expanded="open" @click.stop="toggle">
+        <span class="conv-title">{{ label }}</span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
 
     <div v-if="open" class="conv-panel" :class="{ mobile: isMobile }" @click.stop>
       <div class="conv-search">
@@ -124,7 +145,7 @@ watch(() => route.fullPath, () => { open.value = false })
         </NInput>
       </div>
 
-      <button class="conv-new" type="button" @click="createConversation">
+      <button class="conv-new" type="button" :disabled="creating" @click="createConversation">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:15px;height:15px"><path d="M12 5v14M5 12h14"/></svg>
         新对话
       </button>
@@ -161,18 +182,20 @@ watch(() => route.fullPath, () => { open.value = false })
 .conv-switcher {
   position: relative;
   min-width: 0;
+  flex: 0 1 auto;
 }
 .conv-pill {
   height: 34px;
-  max-width: 340px;
-  padding: 0 12px 0 14px;
+  /* 上限 340；手机上不能越过顶栏中线（50vw - 左右留白与间隙），也不能超过父容器 */
+  max-width: min(340px, calc(50vw - 20px), 100%);
+  /* 左边留给胶囊内的「＋」圆圈（28 圆 + 3 边距），右侧 2 + toggle 自己的 10 = 12 */
+  padding: 2px 2px 2px 3px;
   border-radius: 999px;
   border: 0.5px solid var(--color-border);
   background: rgba(255, 255, 255, 0.36);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
+  gap: 4px;
   font-size: 13.5px;
   font-weight: 550;
   color: var(--color-text);
@@ -182,12 +205,51 @@ watch(() => route.fullPath, () => { open.value = false })
   background: rgba(255, 255, 255, 0.05);
 }
 .conv-pill:hover {
-  background: var(--color-primary-soft);
+  /* 用中性白霜而不是 primary-soft：否则和「＋」圆圈的淡绿底同色，悬停时圆圈会消失 */
+  background: var(--color-surface);
   border-color: var(--color-border-strong);
+}
+/* 胶囊内左端的「新对话」：点它只建会话、不展开面板。主题色淡底 + 主题色图标，深浅两套自动跟随 */
+.conv-add {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0.5px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.conv-add:hover {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+.conv-add:disabled { opacity: 0.4; cursor: default; }
+.conv-add svg { width: 14px; height: 14px; }
+.conv-toggle {
+  min-width: 0;
+  flex: 0 1 auto;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* 右侧留白挂在按钮上而不是胶囊上：否则那块 12px 是点不到的死区 */
+  padding: 0 10px 0 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 .conv-title {
   min-width: 0;
   max-width: 260px;
+  flex: 0 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -243,6 +305,7 @@ watch(() => route.fullPath, () => { open.value = false })
   text-align: left;
 }
 .conv-new:hover { background: var(--color-primary-soft); }
+.conv-new:disabled { opacity: 0.4; cursor: default; background: transparent; }
 .conv-list { max-height: 320px; overflow-y: auto; }
 .conv-row {
   display: flex;

@@ -76,6 +76,9 @@
   /* 主屏 PWA 的状态栏带色：取页面顶部中央（上端 4px）的实测像素值 —— iOS 拿它涂状态栏，
      和页面顶部同色才看不出"一条带"。改背景渐变（色斑/透明度）必须重新采一次。 */
   --pwa-top-color: #E7E6D4;
+  /* 页面最底部（底栏脚下）的实测复合色。iOS 橡皮筋回弹露出的画布只会用实底，
+     渐变图片铺不进去；底栏和这层用同一个值，回弹时才不会有"白缝"。改页面底部渐变必须重采。 */
+  --bottom-chrome: #F9F5EC;
 }
 
 [data-theme="dark"] {
@@ -123,6 +126,8 @@
   --app-veil: rgba(0, 0, 0, 0.18);
   /* 深色下页面顶部中央的实测像素值（同 :root 的说明） */
   --pwa-top-color: #494C43;
+  /* 深色下页面最底部的实测复合色（同 :root 的说明） */
+  --bottom-chrome: #1E1F21;
 }
 
 /* 全局过渡 */
@@ -166,7 +171,10 @@ html, body, #app {
 }
 
 html {
-  background: var(--color-bg);
+  /* 橡皮筋（rubber band）弹出去露的是画布实底，渐变图片铺不进去；
+     这里和底栏共用 --bottom-chrome，回弹时两条颜色才连成一片（原来是 --color-bg，浅色下就是白缝） */
+  background: var(--bottom-chrome);
+  overscroll-behavior-y: none;
   /* 禁双击放大；不能写 none —— 会连单指滚动一起禁掉，捏合交给 main.js */
   touch-action: manipulation;
 }
@@ -181,8 +189,11 @@ body {
   background: var(--app-bg-image);
   background-attachment: fixed;
   /* 必须显式给一个实底：iOS 26 的顶栏/状态栏取色读的是 background-color，
-     不认 background-image，没有实底就回退成白色（顶部一条白带）。 */
-  background-color: var(--color-bg);
+     不认 background-image，没有实底就回退成白色（顶部一条白带）。
+     iOS 橡皮筋回弹露出的也是这个色（html 上同值），所以用底部实色而不是 --color-bg。 */
+  background-color: var(--bottom-chrome);
+  /* 文档级回弹能拦就拦（Safari 16+）；拦不住的机型靠上面的实底兜住颜色 */
+  overscroll-behavior-y: none;
 }
 
 body::before {

@@ -64,7 +64,7 @@ front-end/src/
 - 顶栏高 48px，`padding-top: env(safe-area-inset-top)`。**手机不显示深浅色切换按钮**（主题切换在「设置」页；内嵌 WebView 本来也隐藏），顶栏右侧只留智能体胶囊。两个胶囊（会话 / 智能体）都有最大宽度（`calc(50vw - 20px)` 封顶，不越过顶栏中线）并单行省略，避免窄屏互相压盖（实测 390px：会话胶囊右边缘 189、智能体胶囊左边缘 206，中间留 17px；360/320 同样各留 12px）。
 - iOS Safari 聚焦字号 <16px 的输入控件会自动放大整页：手机端所有输入控件字号保底 16px（`style.css` 末尾的 iOS 专用规则，聊天输入框取 `max(16px, --chat-font-size)`），双指缩放不受影响。
 - 主区 `overflow-y: auto`，底部给输入区和 Tab 留空间。
-- 底部 Tab 高 56px + `env(safe-area-inset-bottom)`；4 项：对话 / 灵阅 / 文档 / 我的。
+- 底部 Tab 高 56px + `env(safe-area-inset-bottom)`；4 项：对话 / 灵阅 / 文档 / 我的。底栏是不透明 `--bottom-chrome`（与画布实底同色，见「PWA 底部白缝」），不再用半透明 + `backdrop-filter`。
 - 聊天页输入区在 Tab 上方；键盘弹起时隐藏 Tab，输入区贴键盘上沿（`useKeyboardInset` 监听 `visualViewport` 写 `--keyboard-inset`）。
 - 内容页（灵阅/文档/我的）用全屏路由，底部 Tab 保持可见；二级详情页隐藏 Tab，只留返回。
 - 顶栏「返回」：手机维持 Tab 页不显示（Tab 已能切过去），桌面除聊天外一律显示；列表页固定回聊天（`meta.backToChat`），二级页（设置等）和详情页回上一页、无历史兜底 `/chat`。按钮文字 `white-space: nowrap`，窄屏不会被拆成上下两行。
@@ -85,7 +85,8 @@ html, body, #app { height: 100%; }
 - 监听 `visualViewport.resize`，把 `--keyboard-inset` 设为 `window.innerHeight - visualViewport.height - visualViewport.offsetTop`；输入区 `bottom: var(--keyboard-inset)`。
 - 不用 `100vh`；所有 `height: 100vh` 改 `100dvh`。
 - **PWA 顶部模糊/白条**：iOS 26 起，主屏 PWA 的状态栏区域会出现一条白色/发糊的带子（iOS 26.1 上是公认的回归）。两个成因分别处理：
-  - **取色**：iOS 26 不认 `theme-color`，顶栏取色读的是根元素的 `background-color`，**不认 `background-image`**。`body` 的背景是 `--app-bg-image`（渐变=图片），拿不到实底就回退白色 —— 所以 `body` 必须显式补一条 `background-color: var(--color-bg)`。
+  - **取色**：iOS 26 不认 `theme-color`，顶栏取色读的是根元素的 `background-color`，**不认 `background-image`**。`body` 的背景是 `--app-bg-image`（渐变=图片），拿不到实底就回退白色 —— 所以 `body` 必须显式补一条实底（现在是 `background-color: var(--bottom-chrome)`，同一层也负责底部回弹，见下一条）。
+  - **底部橡皮筋白缝**：页面到底后再往上拖，iOS 会整体回弹，露出的是**画布实底**，渐变图片铺不进去 —— 原来实底取 `--color-bg`（浅色 `#F7EEDD`），而底栏脚下实际是 `#F9F5EC`，回弹时就会闪出一条白缝。现在 `html` / `body` 的实底与底栏统一用 `--bottom-chrome`（浅 `#F9F5EC`、深 `#1E1F21`，实测复合值），并加 `overscroll-behavior-y: none`（Safari 16+ 能直接拦掉；拦不下的机型靠颜色兜住）。**改底部渐变或底栏背景要重采这个值。**
   - **色块颜色**：iOS 拿 `.pwa-blur-killer` 的 `background-color` 涂状态栏，必须和「页面顶部中央（距顶 4px）」的实测像素一致，否则会出现一条明显的接缝。当前值 `--pwa-top-color`：浅色 `#E7E6D4`、深色 `#494C43`（**改背景渐变后要重新采一次**）。页面顶部是横向渐变，单色块无法逐点匹配，左右两端理论上仍有 ≤10/255 的差；要彻底消除得把页面顶部 ~70px 也压成同色。
   - **系统模糊**：WebKit 里 `_shouldHideTopScrollPocket == _hasVisibleColorExtensionView(Top)`，即上端存在「可见的 fixed 元素」时**不画模糊**，并拿它的 `background-color` 涂状态栏。判定：采样点在上端中央距顶 4px；元素或祖先须 `fixed`/`sticky`；宽高 >10px 且宽度 ≥ 视口 90%；`opacity < 0.1` 弃用；颜色读 computed style 而非渲染像素。据此在 `AppShell.vue` 放 `.pwa-blur-killer`：`height: 11px` + `z-index: 2147483647` + `background-clip: text`（空元素 → 一个像素都不画）。
   - 该机制被 `_obscuredInsets.top > 0` 门控：`black-translucent` 那种 edge-to-edge PWA 里整条链路是死的，任何元素都无效 —— 所以 `apple-mobile-web-app-status-bar-style` 不能是 `black-translucent`。
@@ -193,5 +194,6 @@ html, body, #app { height: 100%; }
 - 2026-11-03：灵阅详情 `/artifacts/:id` 放开底部 Tab（用户要求：其他一级 tab 激活时底栏都不消失，保持一致）。去掉该路由的 `meta.hideTabs`，并删掉 `BottomTabs` 里恒为 false 的 `isHidden` 守卫（判据只在 `AppShell` 一处）。影响 `front-end/src/router/index.js`、`front-end/src/components/BottomTabs.vue`。文档阅读页 `/documents/:id` 维持隐藏，原因见第九节。
 - 2026-11-06：PWA 会话列表不再陈旧（bug 见 `docs/bugs/046-pwa-conversation-list-stale.md`）。① 顶栏 `＋` 改为先 `POST /api/conversations` 再 `push('/chat/:id')`，不再靠首条消息懒创建（流式中切 Tab/锁屏断流会丢 `conversation_id`）；② 会话下拉每次打开都 `fetchList()`，原来只在列表为空时拉一次，PWA 挂起几天就几天不刷新；③ 新建逻辑收口到 `stores/conversations.js` 的 `create()`。影响 `front-end/src/components/{PageTopBar,ConversationSwitcher}.vue`、`front-end/src/stores/conversations.js`、`front-end/src/views/AgentView.vue`。代价：点了＋不发消息会留下一条空「新对话」。
 - 2026-11-06（用户要求）：手机顶栏去掉深浅色切换按钮（主题改在「设置」页切）；会话胶囊 `max-width: min(340px, 100%)` + 标题 `flex: 0 1 auto`，`TopBarBtn` 的 pill 变体 `max-width: 170px` 且文字单行省略 —— 修掉窄屏下会话胶囊溢出、盖住旁边 `＋` 的错位。影响 `front-end/src/components/{TopBarActions,ConversationSwitcher,TopBarBtn}.vue`。
+- 2026-11-06（用户反馈）：修手机端「使劲往上拖，底栏和屏幕底之间出现白缝」。根因是 iOS 橡皮筋回弹露出画布实底（渐变图片铺不进去），实底 `--color-bg` 与底栏脚下的实际色差一档。新增 `--bottom-chrome`（浅 `#F9F5EC` / 深 `#1E1F21`），`html`/`body` 实底与 `.bottom-tabs` 背景统一用它（底栏改为不透明，去掉无实际效果的 `backdrop-filter`），并加 `overscroll-behavior-y: none`。影响 `front-end/src/style.css`、`front-end/src/components/BottomTabs.vue`。
 - 2026-11-06（用户要求）：`＋` 收进会话胶囊左端（桌面 + 手机同形），不再是胶囊旁边的独立按钮。`ConversationSwitcher` 的外框从 `<button>` 改为 `<div>`，内部分「＋ 新建」与「标题 + ▾ 展开」两个按钮；新建逻辑只剩 `createConversation()` 一处，`PageTopBar` 删掉 `newChat()` / `creating` / 两个无用 import。`＋` 是主题色淡底（12%）+ 主题色描边/图标的圆圈，悬停加深到 22%；胶囊悬停背景改用 `--color-surface`（否则和圆圈同色，圆会消失）。两个胶囊统一 `calc(50vw - 20px)` 封顶 —— 谁都不许越过顶栏中线，超长一律省略号。影响 `front-end/src/components/{ConversationSwitcher,PageTopBar,TopBarBtn}.vue`。
 

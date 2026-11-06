@@ -8,7 +8,7 @@ import { useThemeStore } from '@/stores/theme'
 import { isMacEmbedded } from '@/utils/embed'
 import FunctionMenu from '@/components/FunctionMenu.vue'
 
-// 全局入口：功能菜单 / 主题 / 头像。手机只有主题（功能菜单与头像在底部 Tab / 我的）。列表页并入页头，其余页由 PageTopBar 复用。
+// 全局入口：功能菜单 / 主题 / 头像。手机顶栏不再放主题（手机上的主题切换在「设置」页，功能菜单与头像在底部 Tab / 我的）。列表页并入页头，其余页由 PageTopBar 复用。
 const router = useRouter()
 const { isDesktop } = useMobile()
 const auth = useAuthStore()
@@ -31,7 +31,7 @@ async function logout() {
     <FunctionMenu v-if="isDesktop" />
 
     <button
-      v-if="!isEmbedded"
+      v-if="!isEmbedded && isDesktop"
       class="icon-btn"
       type="button"
       :aria-label="theme.isDark ? '切到浅色' : '切到深色'"

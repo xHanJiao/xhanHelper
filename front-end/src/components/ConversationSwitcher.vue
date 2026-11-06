@@ -161,10 +161,12 @@ watch(() => route.fullPath, () => { open.value = false })
 .conv-switcher {
   position: relative;
   min-width: 0;
+  flex: 0 1 auto;
 }
 .conv-pill {
   height: 34px;
-  max-width: 340px;
+  /* 上限 340，但不能超过父容器：窄屏（手机）里原来的 340 会让胶囊溢出、盖住后面的＋ */
+  max-width: min(340px, 100%);
   padding: 0 12px 0 14px;
   border-radius: 999px;
   border: 0.5px solid var(--color-border);
@@ -188,6 +190,7 @@ watch(() => route.fullPath, () => { open.value = false })
 .conv-title {
   min-width: 0;
   max-width: 260px;
+  flex: 0 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

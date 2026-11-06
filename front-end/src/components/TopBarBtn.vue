@@ -59,6 +59,15 @@ const hasTooltip = computed(() => !!props.tooltip)
   border-color: var(--color-primary);
 }
 
+/* 胶囊有上限：agent 名很长时不能把左边会话胶囊挤扁/挤重叠 */
+.topbar-btn.pill { max-width: 170px; }
+.topbar-btn.pill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* text 变体 — 无背景无边框，hover 微亮 */
 .topbar-btn.text {
   padding: 2px 6px;

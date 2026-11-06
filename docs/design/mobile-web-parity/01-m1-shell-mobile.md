@@ -52,7 +52,7 @@ front-end/src/
 
 - 顶栏高 52px，透明底，内容不铺底色（窗口底由 `body` 的暖米底 + 静态色块负责）。
 - 对话页顶栏传 `alignCard`，桌面端内容与聊天卡片同宽（`max(24px, calc((100% - 1080px)/2))`）；其他通栏管理页保持贴边。
-- 左侧：会话下拉胶囊（当前标题 + `▾`），旁边 `＋` 新建。
+- 左侧：会话下拉胶囊（左端 `＋` 新建、右侧当前标题 + `▾`）。整个胶囊是一个容器，内部两个按钮（HTML 不允许 button 套 button）；`＋` 只建会话不展开面板。
 - 右侧：`功能`、主题切换、头像菜单。
 - 主区：居中聊天卡片，`max-width: 1080`（正文列 960），白霜 + 0.5px 描边 + 外投影，圆角 14。
 - 聊天卡片顶部可以向上溢出包住顶栏一点（macOS 的 `cardTopRise`），Web 用负 margin 做近似即可；如果影响滚动，就放弃，保持普通卡片。
@@ -61,7 +61,7 @@ front-end/src/
 
 ## 五、手机 shell
 
-- 顶栏高 48px，`padding-top: env(safe-area-inset-top)`。**手机不显示深浅色切换按钮**（主题切换在「设置」页；内嵌 WebView 本来也隐藏），顶栏右侧只留智能体胶囊。两个胶囊（会话 / 智能体）都有最大宽度并单行省略，避免窄屏互相压盖。
+- 顶栏高 48px，`padding-top: env(safe-area-inset-top)`。**手机不显示深浅色切换按钮**（主题切换在「设置」页；内嵌 WebView 本来也隐藏），顶栏右侧只留智能体胶囊。两个胶囊（会话 / 智能体）都有最大宽度（`calc(50vw - 20px)` 封顶，不越过顶栏中线）并单行省略，避免窄屏互相压盖（实测 390px：会话胶囊右边缘 189、智能体胶囊左边缘 206，中间留 17px；360/320 同样各留 12px）。
 - iOS Safari 聚焦字号 <16px 的输入控件会自动放大整页：手机端所有输入控件字号保底 16px（`style.css` 末尾的 iOS 专用规则，聊天输入框取 `max(16px, --chat-font-size)`），双指缩放不受影响。
 - 主区 `overflow-y: auto`，底部给输入区和 Tab 留空间。
 - 底部 Tab 高 56px + `env(safe-area-inset-bottom)`；4 项：对话 / 灵阅 / 文档 / 我的。
@@ -193,4 +193,5 @@ html, body, #app { height: 100%; }
 - 2026-11-03：灵阅详情 `/artifacts/:id` 放开底部 Tab（用户要求：其他一级 tab 激活时底栏都不消失，保持一致）。去掉该路由的 `meta.hideTabs`，并删掉 `BottomTabs` 里恒为 false 的 `isHidden` 守卫（判据只在 `AppShell` 一处）。影响 `front-end/src/router/index.js`、`front-end/src/components/BottomTabs.vue`。文档阅读页 `/documents/:id` 维持隐藏，原因见第九节。
 - 2026-11-06：PWA 会话列表不再陈旧（bug 见 `docs/bugs/046-pwa-conversation-list-stale.md`）。① 顶栏 `＋` 改为先 `POST /api/conversations` 再 `push('/chat/:id')`，不再靠首条消息懒创建（流式中切 Tab/锁屏断流会丢 `conversation_id`）；② 会话下拉每次打开都 `fetchList()`，原来只在列表为空时拉一次，PWA 挂起几天就几天不刷新；③ 新建逻辑收口到 `stores/conversations.js` 的 `create()`。影响 `front-end/src/components/{PageTopBar,ConversationSwitcher}.vue`、`front-end/src/stores/conversations.js`、`front-end/src/views/AgentView.vue`。代价：点了＋不发消息会留下一条空「新对话」。
 - 2026-11-06（用户要求）：手机顶栏去掉深浅色切换按钮（主题改在「设置」页切）；会话胶囊 `max-width: min(340px, 100%)` + 标题 `flex: 0 1 auto`，`TopBarBtn` 的 pill 变体 `max-width: 170px` 且文字单行省略 —— 修掉窄屏下会话胶囊溢出、盖住旁边 `＋` 的错位。影响 `front-end/src/components/{TopBarActions,ConversationSwitcher,TopBarBtn}.vue`。
+- 2026-11-06（用户要求）：`＋` 收进会话胶囊左端（桌面 + 手机同形），不再是胶囊旁边的独立按钮。`ConversationSwitcher` 的外框从 `<button>` 改为 `<div>`，内部分「＋ 新建」与「标题 + ▾ 展开」两个按钮；新建逻辑只剩 `createConversation()` 一处，`PageTopBar` 删掉 `newChat()` / `creating` / 两个无用 import。`＋` 自带白底描边圆圈（像个按钮）；两个胶囊统一 `calc(50vw - 20px)` 封顶 —— 谁都不许越过顶栏中线，超长一律省略号。影响 `front-end/src/components/{ConversationSwitcher,PageTopBar,TopBarBtn}.vue`。
 

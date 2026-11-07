@@ -141,7 +141,8 @@ columns(n, [blocks]) / tag / divider / footer
 
 - `html`：成品（模板 + 内容 + 图片已内联），给客户端/分享；
 - `source_html`：模型原文（图片是 `image:<id>`），细粒度编辑的唯一操作对象；
-- `title` / `summary` / `share_token` / `deleted_at`：不变。
+- `title` / `summary`：工具可改，走 `patch(title=… / summary=…)`（2026-11-07 起）：不传＝不动，纯元数据修改不重写正文；
+- `share_token` / `deleted_at`：不变。
 
 **新增列？没有。**
 
@@ -211,11 +212,14 @@ columns(n, [blocks]) / tag / divider / footer
   ],
   "style": "…<style> 里的 CSS…",
   "style_hash": "11223344",
+  "title": "新标题",
+  "summary": "新的一句话摘要",
   "tags": "手账,旅行"
 }
 ```
 
-- `ops` / `insert` / `remove` / `style` 至少给一个；`tags` 也可单独给（那一次只改标签）；
+- `ops` / `insert` / `remove` / `style` / `title` / `summary` / `tags` 至少给一个；
+- `title` / `summary`（可选，2026-11-07）：只改元数据，不传＝沿用旧值；trim 后不允许空串或超过 80 / 200 字。可以和块编辑放在同一次请求里（同一条 UPDATE 落库，仍带 `source_html` 乐观锁）；只改元数据时不重写正文（仍会读一次页面行做归属校验、取旧值），**老页面（没有 `source_html`）也能改**；
 - `tags`（可选，2026-10-31）：整套替换标签，1–5 个，空串拒绝；不参与块编辑的 hash 校验，也不触发正文重新清洗（只改 `tags` 列）；
 - `insert`：插到 `after` 块的后面；`html` 是**块级片段**（figure/div/p/img…），图片写 `image:<id>`，服务端统一清洗 + 内联；单次 ≤10 段；
 - `remove`：删掉整块；单次 ≤20 块。删完从该块的父节点向上**收缩变空的容器**（判据见 §4.5「空容器」）：删图不留空相框 + 孤立图注，删光单元格不留 `<table>` 骨架；同一 figure 里还有别的图就不动；
@@ -233,16 +237,11 @@ columns(n, [blocks]) / tag / divider / footer
 
 ```
 patch
- → 取 source_html（空 = 老页面 → 报错，不做回退）
- → parse source_html
- → 遍历生成 nid 表（同 get）
- → 校验（§4.5，全部通过再往下）
- → 应用：替换内容（ops）→ 插入片段（insert）→ 删除块（remove）→ 替换 style
- → 序列化 HTML
- → htmlsanitize（含 CSS 清洗）
- → inlineImages（新图会在这里被内联；图失效 → 点名 id）
- → 乐观锁 UPDATE（WHERE source_html = 旧值），0 行 → 「页面已变」
- → MarkReferenced（被用到的图续期）
+ → 取 source_html（空 = 老页面；有块/样式改动才报错，纯元数据照常写）
+ → 解析/编辑（仅当有 ops / insert / remove / style）
+ → 有正文改动时：清洗 → inlineImages → 乐观锁 UPDATE（WHERE source_html = 旧值），0 行 → 「页面已变」
+ → 纯元数据（title / summary / tags）：一条 UPDATE 只写这几列，不读整页、不重算 html
+ → MarkReferenced（被用到的图续期，仅正文改动时）
  → 返回摘要
 ```
 
@@ -251,7 +250,7 @@ patch
 **身份与存在性**
 
 - `user_id` 归属校验；软删页面视为不存在；
-- `source_html` 为空（这次改动前生成的老页面）→ 明确报「这页是早期格式，只能重做」。
+- `source_html` 为空（这次改动前生成的老页面）+ 有 `ops/insert/remove/style` → 明确报「这页是早期格式，只能重做」；只改 `title`/`summary`/`tags` 不受影响。
 
 **nid / hash**
 
@@ -284,6 +283,12 @@ patch
 - `style` 长度 ≤ 64 KB；
 - 保存前必须过 `htmlsanitize` 的 CSS 清洗（去外链 `url()` 等）；
 - `style_hash` 与当前 `<style>` 内容一致（防错位）。
+
+**元数据**
+
+- `title` / `summary` 传了就 trim；trim 后为空 → 拒绝（这两列没有「清空」语义，不想改就别传）；
+- `title` ≤ 80 字、`summary` ≤ 200 字（与 `create` 同一组常量）；
+- 与块编辑同一次请求时，跟正文并进同一条 `UPDATE`（仍带 `source_html` 乐观锁）；只有元数据时走单条 `UPDATE`，不校验 hash。
 
 **结果**
 
@@ -359,7 +364,7 @@ patch
 
 ## 六、兼容
 
-- 老页面（无 `source_html`）：`get` / `patch` 明确报「只能重做」，不回退读 `html`（读回来也会超限）；
+- 老页面（无 `source_html`）：`get` / 有正文改动的 `patch` 明确报「只能重做」，不回退读 `html`（读回来也会超限）；`patch(title=… / summary=… / tags=…)` 不依赖原文，照常可用（2026-11-07 起）；
 - 客户端、分享、灵阅、卡片槽、无痕销毁：**零改动**；
 - 表结构不变，不需要迁移。
 
@@ -487,3 +492,8 @@ patch
 - **2026-10-31 · patch 支持改标签**
   - 加：`patch(tags=…)` 整套替换标签（1–5 个，空串拒绝）；不传＝不动。只改标签时不重传整页、不触发重新清洗（`newSrc == src` 分支直接 `SetTags`）；无标签老页改正文会返回补标签的 `tip`。
   - 影响文件：`tool/html_artifact.go`（patch 的 `tags` 参数、`validateArtifactTags`、`SetTags` 分支）+测试、`service/artifact_repo.go`（+`SetTags`）、`design.md`、本文件。
+- **2026-11-07 · patch 支持改标题/摘要（工具与灵阅对齐）**
+  - 起因：`patch` 只有 `tags` 能单独改，标题/摘要想改一句也必须 `get(full)` + `create` 整页重传；灵阅只有 LLM 能写，等于这两列改起来代价极大。同时模型在工具目录里看不到 `html` 就是「灵阅」，用户说「改下灵阅那篇的摘要」时对不上号。
+  - 决定：`patch` 加可选 `title` / `summary`，不传＝不动，trim 后空串拒绝，长度沿用 80 / 200。与块编辑可同时给（同一条 `UPDATE` + `source_html` 乐观锁）；纯元数据走单条 `UPDATE`（`SetTags` 扩成 `SetMeta`），不重写正文，老页面也能改。
+  - 决定：`Catalog().ShortDesc` 与工具 `Description` 明确写「灵阅就是它」，`create` 描述补「只想改标题/摘要用 patch，不用整页重传」。
+  - 影响文件：`tool/html_artifact.go`（`patch` 参数/校验/结果、`Catalog`/`Description`/`create` 描述）+测试、`service/artifact_repo.go`（`SetTags` → `SetMeta`、`UpdateIfSourceUnchanged` 加 title/summary）+测试、`design.md`、本文件。

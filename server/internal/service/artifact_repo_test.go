@@ -288,7 +288,8 @@ func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
 	}
 
 	tags := "标签X"
-	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2", &tags)
+	newTitle, newSummary := "t2", "s2"
+	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2", &newTitle, &newSummary, &tags)
 	if err != nil || !ok {
 		t.Fatalf("原文匹配应写入: ok=%v err=%v", ok, err)
 	}
@@ -296,12 +297,12 @@ func TestArtifactRepoUpdateIfSourceUnchanged(t *testing.T) {
 	if err := db.First(&got, "id = ?", "a1").Error; err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got.SourceHTML != "v2" || got.HTML != "<html>v2</html>" || got.Tags != "标签X" {
-		t.Fatalf("更新不对（正文与标签应同一条 UPDATE 落库）: %+v", got)
+	if got.SourceHTML != "v2" || got.HTML != "<html>v2</html>" || got.Tags != "标签X" || got.Title != "t2" || got.Summary != "s2" {
+		t.Fatalf("更新不对（正文与标题/摘要/标签应同一条 UPDATE 落库）: %+v", got)
 	}
 
 	// 拿旧原文再写一次 → 拒绝，库不动
-	ok, err = repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v3</html>", "v3", &tags)
+	ok, err = repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v3</html>", "v3", nil, nil, &tags)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -417,15 +418,26 @@ func TestArtifactRepoTagsGraphAndHelpers(t *testing.T) {
 		t.Fatalf("未打标签应为 1（g3），实际 n=%d err=%v", n, err)
 	}
 
-	ok, err := repo.SetTags(ctx, "u1", "g1", "手账,旅行,日本")
+	newTags := "手账,旅行,日本"
+	ok, err := repo.SetMeta(ctx, "u1", "g1", nil, nil, &newTags)
 	if err != nil || !ok {
-		t.Fatalf("SetTags 应成功，ok=%v err=%v", ok, err)
+		t.Fatalf("SetMeta 应成功，ok=%v err=%v", ok, err)
 	}
 	a, err := repo.GetMeta(ctx, "u1", "g1")
 	if err != nil || a.Tags != "手账,旅行,日本" || a.Title != "a" {
 		t.Fatalf("只应改标签，实际 %+v err=%v", a, err)
 	}
-	if ok, err := repo.SetTags(ctx, "u1", "g4", "x"); err != nil || ok {
+	// 只改标题/摘要：tags 传 nil 必须原样保留
+	newTitle, newSummary := "新标题", "新摘要"
+	if ok, err := repo.SetMeta(ctx, "u1", "g1", &newTitle, &newSummary, nil); err != nil || !ok {
+		t.Fatalf("SetMeta title/summary: ok=%v err=%v", ok, err)
+	}
+	a, err = repo.GetMeta(ctx, "u1", "g1")
+	if err != nil || a.Title != "新标题" || a.Summary != "新摘要" || a.Tags != "手账,旅行,日本" {
+		t.Fatalf("只应改标题/摘要、标签不动，实际 %+v err=%v", a, err)
+	}
+	badTags := "x"
+	if ok, err := repo.SetMeta(ctx, "u1", "g4", nil, nil, &badTags); err != nil || ok {
 		t.Fatalf("越权改标签应 false，ok=%v err=%v", ok, err)
 	}
 
@@ -453,12 +465,13 @@ func TestArtifactRepoUpdateIfSourceUnchangedKeepsTagsWhenNil(t *testing.T) {
 	}
 
 	// 并发里的另一条：只改标签（不动 source_html）
-	if ok, err := repo.SetTags(ctx, "u1", "a1", "旅行,日本"); err != nil || !ok {
-		t.Fatalf("SetTags: ok=%v err=%v", ok, err)
+	concurrentTags := "旅行,日本"
+	if ok, err := repo.SetMeta(ctx, "u1", "a1", nil, nil, &concurrentTags); err != nil || !ok {
+		t.Fatalf("SetMeta: ok=%v err=%v", ok, err)
 	}
 
 	// 正文 patch 不带 tags：照常按乐观锁写正文，但 tags 列必须原样保留
-	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2", nil)
+	ok, err := repo.UpdateIfSourceUnchanged(ctx, "u1", "a1", "v1", "<html>v2</html>", "v2", nil, nil, nil)
 	if err != nil || !ok {
 		t.Fatalf("正文写应成功: ok=%v err=%v", ok, err)
 	}

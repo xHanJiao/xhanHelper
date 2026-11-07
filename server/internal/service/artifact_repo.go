@@ -213,11 +213,22 @@ func (r *ArtifactRepo) Update(ctx context.Context, userID, id, title, summary, t
 	return exists > 0, nil
 }
 
-// SetTags — 只改标签（html.patch 的 tags），不碰正文。返回 false 表示不存在或不属于该用户。
-func (r *ArtifactRepo) SetTags(ctx context.Context, userID, id, tags string) (bool, error) {
+// SetMeta — 只改标题/摘要/标签（html.patch 的元数据），不碰正文。nil＝这一列不动。
+// 返回 false 表示不存在或不属于该用户。
+func (r *ArtifactRepo) SetMeta(ctx context.Context, userID, id string, title, summary, tags *string) (bool, error) {
+	m := map[string]any{}
+	if title != nil {
+		m["title"] = *title
+	}
+	if summary != nil {
+		m["summary"] = *summary
+	}
+	if tags != nil {
+		m["tags"] = *tags
+	}
 	res := r.db.WithContext(ctx).Model(&model.Artifact{}).
 		Where("id = ? AND user_id = ?", id, userID).
-		Update("tags", tags)
+		Updates(m)
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -242,13 +253,19 @@ func (r *ArtifactRepo) SetTags(ctx context.Context, userID, id, tags string) (bo
 // 注意：MySQL 在「新旧值完全相同」时 RowsAffected 也是 0；调用方应先判断
 // newSource == oldSource 直接返回成功，别把幂等重放误判成并发冲突。
 //
-// tags 与正文同一条 UPDATE 落库：分开写会出现「正文已改、标签失败」的半成功状态，
-// 模型重试又被乐观锁判成「页面已变」，人话就变成「不是我改的吗」。
-// tags 传 nil 表示「这次不动标签」（不传 tags 的 patch 走这里）；不要把读到的旧值写回去，
-// 否则与「只改标签」的并发 patch 会互相回滚。
-func (r *ArtifactRepo) UpdateIfSourceUnchanged(ctx context.Context, userID, id, oldSource, html, sourceHTML string, tags *string) (bool, error) {
+// title/summary/tags 与正文同一条 UPDATE 落库：分开写会出现「正文已改、元数据失败」的
+// 半成功状态，模型重试又被乐观锁判成「页面已变」，人话就变成「不是我改的吗」。
+// 三者传 nil 表示「这次不动这一列」；不要把读到的旧值写回去，
+// 否则与「只改元数据」的并发 patch 会互相回滚。
+func (r *ArtifactRepo) UpdateIfSourceUnchanged(ctx context.Context, userID, id, oldSource, html, sourceHTML string, title, summary, tags *string) (bool, error) {
 	m := map[string]any{"html": html, "source_html": sourceHTML}
-	// nil = 这次不动标签。别把调用方读到的旧值写回去，否则并发改的标签会被静默回滚。
+	// nil = 这次不动这一列。别把调用方读到的旧值写回去，否则并发改的元数据会被静默回滚。
+	if title != nil {
+		m["title"] = *title
+	}
+	if summary != nil {
+		m["summary"] = *summary
+	}
 	if tags != nil {
 		m["tags"] = *tags
 	}

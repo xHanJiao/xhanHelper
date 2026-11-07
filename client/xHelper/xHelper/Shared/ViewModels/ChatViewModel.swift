@@ -121,6 +121,20 @@ enum ChatMode: String {
 class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
+    // 续传锚点：本轮最后一帧的 seq / turn_id（meta 帧下发）。每轮 sendMessage 归零。
+    private(set) var lastEventSeq: Int64 = 0
+    private(set) var currentTurnID = ""
+    /// 懒创建会话在 done 之前先从 meta 拿到的 id。不动 conversationId：
+    /// 空白 tab 要靠「done 时 conversationId 仍为空」判定是否补落盘本地产物。
+    private(set) var pendingConversationID = ""
+    /// 本轮已处理过的客户端工具 call_id：续传会重放 client_tool_call，
+    /// 别二次弹审批 / 二次执行（服务端对已消费的 id 会回 404）。
+    private(set) var handledClientToolCallIDs: Set<String> = []
+
+    /// 标记一个客户端工具调用已处理；返回 false 表示是续传重放，调用方应跳过。
+    func markClientToolCallHandled(_ callID: String) -> Bool {
+        handledClientToolCallIDs.insert(callID).inserted
+    }
     @Published var thoughtMessage: String?
     @Published var thoughtDone = false
     @Published var statusMessage: String?
@@ -984,6 +998,11 @@ class ChatViewModel: ObservableObject {
         isStreaming = true
         streamingContent = ""
         streamStartedAt = Date()
+        lastEventSeq = 0
+        currentTurnID = ""
+        pendingConversationID = ""
+        handledClientToolCallIDs.removeAll()
+        isResumeInFlight = false // 上一轮续传若以「200 直接关闭」收尾，标志不许漏到新一轮
         thoughtMessage = nil
         thoughtDone = false
         subagentSessions = []
@@ -1081,9 +1100,18 @@ class ChatViewModel: ObservableObject {
         sseClient.onError = { [weak self] error in
             Task { @MainActor in
                 let nsError = error as NSError
+                // 续传窗口里的 404/501 = 后端没有 /api/chat/stream（老后端），
+                // 按「不支持续传」收尾并拉历史；别当成会话已销毁去关 tab。
+                if nsError.domain == "XHANHTTP", nsError.code == 404 || nsError.code == 501,
+                   self?.isResumeInFlight == true {
+                    LogBuffer.shared.warning("ChatViewModel.sse: resume unsupported (HTTP \(nsError.code)), fallback to reload")
+                    self?.handleStreamEnded(reload: false)
+                    return
+                }
                 // 会话不存在（如无痕会话已销毁）：SSEClient 以 HTTP 状态码上报
                 if nsError.domain == "XHANHTTP", nsError.code == 404 {
                     LogBuffer.shared.warning("ChatViewModel.sse: conversation gone (404)")
+                    self?.isResumeInFlight = false
                     self?.finishStreaming()
                     self?.detachStreamingMessage()
                     if let cid = self?.conversationId, !cid.isEmpty {
@@ -1091,6 +1119,7 @@ class ChatViewModel: ObservableObject {
                     }
                     return
                 }
+                self?.isResumeInFlight = false
                 if nsError.domain == NSURLErrorDomain,
                    nsError.code == NSURLErrorNetworkConnectionLost || nsError.code == NSURLErrorCancelled {
                     self?.finishStreaming()
@@ -1134,10 +1163,84 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    // MARK: 续传（挂起 → 回前台）
+
+    /// 续传请求在途：这个窗口里的 404/501 说明「后端没有续传能力」，
+    /// 不能当成会话已销毁（旧后端 + 新客户端时会把用户 tab 关掉）。
+    private var isResumeInFlight = false
+
+    /// 续传用的会话 id：空白 tab 还没拿到 done 时，先看 meta 帧给的 pending id。
+    private var effectiveConversationID: String? {
+        if let cid = conversationId, !cid.isEmpty { return cid }
+        return pendingConversationID.isEmpty ? nil : pendingConversationID
+    }
+
+    /// 回前台续传：带 turn + from 重连，补发断点后的帧并继续跟流。
+    /// 返回 false 表示续不了（没有会话 id / 没收到 meta），调用方改走拉历史。
+    @discardableResult
+    func resumeStreaming() -> Bool {
+        guard isStreaming else { return false }
+        guard let cid = effectiveConversationID, !currentTurnID.isEmpty else {
+            LogBuffer.shared.warning("resumeStreaming: missing conversation/turn id, fallback to reload")
+            handleStreamEnded(reload: false)
+            return false
+        }
+        LogBuffer.shared.info("resumeStreaming: conv=\(cid) turn=\(currentTurnID) from=\(lastEventSeq)")
+        isResumeInFlight = true
+        sseClient.resume(baseURL: apiClient.baseURL, token: apiClient.token,
+                         conversationId: cid, turn: currentTurnID, from: lastEventSeq)
+        return true
+    }
+
+    /// 续传拿不到可接的轮次（idle / reset）时的统一收尾：结束流式 → 以服务端为准重载。
+    private func handleStreamEnded(reload: Bool) {
+        isResumeInFlight = false
+        let cid = effectiveConversationID
+        finishStreaming()
+        detachStreamingMessage()
+        if reload {
+            ToastCenter.shared.show("连接中断，已重新加载")
+        }
+        guard let cid else { return }
+        // 空白 tab：先用 meta 给的 id 转正，否则下次发送会又新建一个会话
+        if (conversationId ?? "").isEmpty {
+            conversationId = cid
+            onConversationCreated?(cid, "新对话")
+        }
+        Task { await self.loadConversation(id: cid, title: conversationTitle ?? "新对话", mode: mode) }
+    }
+
     // MARK: SSE Event Handling
 
     private func handleEvent(_ event: StreamEvent) {
+        if let idStr = event.id, let seq = Int64(idStr) {
+            lastEventSeq = seq
+        }
         switch event.type {
+        case .meta:
+            guard let d = event.data.data(using: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else {
+                LogBuffer.shared.warning("meta: bad payload: \(event.data.prefix(200))")
+                break
+            }
+            if let turnID = obj["turn_id"] as? String, !turnID.isEmpty {
+                if !currentTurnID.isEmpty, currentTurnID != turnID {
+                    // 手里是另一轮（断开期间另一台设备发了新消息，把这一轮取消了）
+                    handleStreamEnded(reload: true)
+                    break
+                }
+                currentTurnID = turnID
+            }
+            if let cid = obj["conversation_id"] as? String, !cid.isEmpty,
+               (conversationId ?? "").isEmpty {
+                pendingConversationID = cid
+            }
+
+        case .idle, .reset:
+            // 续传没有可接的轮次 / 连续性断了：按历史重载，别留在灰态
+            LogBuffer.shared.info("chat stream ended without resume (\(event.type == .reset ? "reset" : "idle"))")
+            handleStreamEnded(reload: event.type == .reset)
+
         case .planNodeStart:
             if let node = parsePlanNode(event.data) {
                 if !isPlanModalVisible { isPlanModalVisible = true }
@@ -1275,6 +1378,7 @@ class ChatViewModel: ObservableObject {
             handleSubagentEvent(event.data)
 
         case .done:
+            isResumeInFlight = false
             let doneError = parseDoneError(event.data)
             // 久等后回复完成提示音：判定必须在 finishStreaming 清空 streamStartedAt 之前
             let replyElapsed = streamStartedAt.map { Date().timeIntervalSince($0) } ?? 0

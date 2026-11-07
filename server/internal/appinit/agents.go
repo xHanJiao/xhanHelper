@@ -14,6 +14,7 @@ import (
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/controller"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
@@ -282,6 +283,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	} else {
 		log.Printf("[appinit] background tasks disabled, skip cronRunner")
 	}
+
+	// 续传 buffer 的 TTL 回收（只清已结束的轮，活轮永不回收）
+	controller.StartChatStreamSweeper(bgCtx)
 
 	// 启动时异步迁移旧画像（开关控制，facts 空才迁；迁移完成后可关）
 	if cfg.Server.ProfileStartupMigration && !cfg.Server.BackgroundTasksDisabled() {

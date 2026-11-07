@@ -120,6 +120,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/auth/logout", logoutUser(rc.UserRepo))
 		auth.POST("/auth/change-password", changePassword(rc.UserRepo))
 		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo, rc.ImageHandler.Store()))
+		auth.GET("/chat/stream", chatStream(rc.ConvRepo))
 		auth.POST("/chat/tool-result", chatToolResult(rc.ClientBridge))
 		auth.POST("/chat/stop", stopChat(rc.ConvRepo))
 		auth.POST("/events/batch", eventsBatch(rc.Activity))

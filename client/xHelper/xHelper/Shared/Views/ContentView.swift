@@ -238,6 +238,31 @@ struct ContentView: View {
         #endif
     }
 
+    /// 回到前台：正在流式的会话优先续传（补发断点后的事件并继续跟流）；
+    /// 续不上（没有 turn id / 老后端）时由 resumeStreaming 自己收尾，再走拉历史。
+    private func onReturnedToForeground() {
+        #if os(macOS)
+        // 多 tab：每个在流式的 tab 各自续（hub buffer 按会话区分，不会串台）
+        for tab in chatTabManager.tabs where tab.viewModel.isStreaming {
+            _ = tab.viewModel.resumeStreaming()
+        }
+        #else
+        _ = chatViewModel.resumeStreaming()
+        #endif
+
+        let now = Date()
+        if !(activeChatViewModel?.isStreaming ?? false), now.timeIntervalSince(lastSyncAt) >= 3 {
+            lastSyncAt = now
+            Task { await syncActiveChat() }
+        }
+
+        Task { await syncReminders() }
+        #if os(macOS)
+        // 回到前台时刷新会话列表，清掉服务端已销毁（如无痕）的幽灵条目
+        Task { await conversationListVM.reload() }
+        #endif
+    }
+
     private func syncActiveChat() async {
         #if os(macOS)
         // 激活时刷新当前所在对话（而非默认会话），避免劫持其他会话 tab
@@ -531,32 +556,12 @@ struct ContentView: View {
                 else { conversationListVM.stopAutoRefresh() }
                 #endif
                 guard newPhase == .active else { return }
-                guard !(activeChatViewModel?.isStreaming ?? false) else { return }
-                let now = Date()
-                guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
-                lastSyncAt = now
-
-                Task { await syncActiveChat() }
-
-                Task { await syncReminders() }
-                #if os(macOS)
-                // 回到前台时刷新会话列表，清掉服务端已销毁（如无痕）的幽灵条目
-                Task { await conversationListVM.reload() }
-                #endif
+                onReturnedToForeground()
             }
 #if os(macOS)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 conversationListVM.startAutoRefresh()
-                guard !(activeChatViewModel?.isStreaming ?? false) else { return }
-                let now = Date()
-                guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
-                lastSyncAt = now
-
-                Task { await syncActiveChat() }
-
-                Task { await syncReminders() }
-
-                Task { await conversationListVM.reload() }
+                onReturnedToForeground()
             }
 #endif
 #if os(macOS)

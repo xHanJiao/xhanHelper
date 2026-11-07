@@ -28,6 +28,12 @@ extension ChatViewModel {
             return
         }
         let args = (obj["arguments"] as? [String: Any]) ?? [:]
+        // 续传会重放本轮 client_tool_call：已处理过的 call_id 直接跳过，
+        // 别二次弹审批/二次执行（服务端对已消费的 id 回 404）
+        guard markClientToolCallHandled(callID) else {
+            LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID) already handled (replay), skip")
+            return
+        }
         let budgetBytes = (obj["result_budget_bytes"] as? NSNumber)?.intValue
         let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue
         // 服务端预算从下发时刻起算；排队 + 审批耗时必须在执行时扣掉，

@@ -337,6 +337,22 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		// 事件钉住：权威来源是 Conversation.Extra.EventFocus（event.enable 写入）。
 		pinnedEventIDs := pinnedEventIDsFromExtra(conv.Extra)
 
+		// 本轮事件留档：原连接照旧直接写，另存一份给回前台的续传连接按 seq 补发。
+		// meta 帧（seq=1）带 turn_id / conversation_id，懒创建的会话也能续。
+		turn := chatStreams.Begin(conv.ID)
+		defer turn.Finish()
+
+		clientGone := false
+		setDeadline := newDeadlineSetter(w, conv.ID)
+		// meta 也要写给原连接：Begin 只负责入 buffer + 广播给续连的订阅者
+		if meta, ok := turn.Meta(); ok {
+			setDeadline()
+			if werr := view.WriteSSEID(w, flusher, meta.Seq, meta.Event, meta.Data); werr != nil {
+				clientGone = true
+				log.Printf("[chat] meta write failed, client gone: conv=%s err=%v", conv.ID, werr)
+			}
+		}
+
 		events, err := orch.Run(runCtx, &agent.RunRequest{
 			UserID:             userID,
 			ConversationID:     conv.ID,
@@ -362,55 +378,84 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)
-			view.WriteSSE(w, flusher, "error", agent.UserErrorMessage(err))
+			msg := agent.UserErrorMessage(err)
+			// 同样留档：回前台的连接要能拿到这条错误，而不是空等
+			frame := turn.Publish("error", msg)
+			if werr := view.WriteSSEID(w, flusher, frame.Seq, frame.Event, frame.Data); werr != nil {
+				log.Printf("[chat] run error write failed, client gone: conv=%s err=%v", conv.ID, werr)
+			}
 			return
 		}
 
 		// 客户端断开（SSE 断开/关客户端）时只停止转发，不中断 ReAct 运行——
 		// 独立 runCtx 不受 Request.Context 影响，网络波动不误终止正常执行。
-		clientGone := false
-		for evt := range events {
+		// 断线后事件照常入 hub buffer，回前台凭 seq 续传补齐（这才是「接回」的数据来源）。
+		// 只触发一次的「请求已结束」信号：置 nil 后该 case 永久失效（否则 close 后 select 空转）
+		requestDone := c.Request.Context().Done()
+
+		ticker := time.NewTicker(streamHeartbeat)
+		defer ticker.Stop()
+
+		for {
+			var evt *llm.StreamEvent
+			var ok bool
 			select {
-			case <-c.Request.Context().Done():
+			case evt, ok = <-events:
+				if !ok {
+					return
+				}
+			case <-requestDone:
+				requestDone = nil
 				clientGone = true
-			default:
-			}
-			if clientGone {
-				// 继续消费 events 直到 ReAct 完成（消息完整入库），但不再写 SSE。
-				// done 事件的标题合并用背景 ctx（Request.Context 已取消，DB 操作会失败）
-				if evt.Type == "done" {
-					mergeTitle(context.Background(), orch, convRepo, conv, req.Message, evt.Content, req.HiddenRound)
+				log.Printf("[chat] client disconnected, keep running: conv=%s", conv.ID)
+				continue
+			case <-ticker.C:
+				// 心跳让客户端能区分「静默但活着」与「半死」。clientGone 后不再写。
+				if clientGone {
+					continue
+				}
+				setDeadline()
+				if werr := view.WriteComment(w, flusher, "ping"); werr != nil {
+					clientGone = true
+					log.Printf("[chat] heartbeat write failed, client gone: conv=%s err=%v", conv.ID, werr)
 				}
 				continue
 			}
+
+			// 事件 → 线上帧。done 的 JSON 只算一次：写连接与入 buffer 必须同一份，
+			// 否则续传出来的标题/灵阅卡片会和实时流不一致。
+			event, data := evt.Type, evt.Content
 			switch evt.Type {
 			case "text_delta":
-				view.WriteSSE(w, flusher, "message",
-					`{"delta":"`+view.EscapeJSON(evt.Content)+`"}`)
-			case "plan", "plan_node_start", "plan_node_done", "plan_done":
-				view.WriteSSE(w, flusher, evt.Type, evt.Content)
-			case "thought", "thought_delta", "thought_done":
-				view.WriteSSE(w, flusher, evt.Type, evt.Content)
-			case "status":
-				view.WriteSSE(w, flusher, "status", evt.Content)
-			case "reminders_changed":
-				view.WriteSSE(w, flusher, "reminders_changed", evt.Content)
-			case "tool_call":
-				view.WriteSSE(w, flusher, "tool_call", evt.Content)
-			case "subagent":
-				// 子任务活动面板事件（start/end/status/tool_call/tool_result，JSON 含 conv_id）
-				view.WriteSSE(w, flusher, "subagent", evt.Content)
-			case "client_tool_call":
-				view.WriteSSE(w, flusher, "client_tool_call", evt.Content)
-			case "tool_result":
-				view.WriteSSE(w, flusher, "tool_result", evt.Content)
-			case "verify":
-				view.WriteSSE(w, flusher, "verify", evt.Content)
+				event = "message"
+				data = `{"delta":"` + view.EscapeJSON(evt.Content) + `"}`
+			case "plan", "plan_node_start", "plan_node_done", "plan_done",
+				"thought", "thought_delta", "thought_done", "status",
+				"reminders_changed", "tool_call", "subagent", "client_tool_call",
+				"tool_result", "verify":
+				// 原样转发
 			case "done":
-				doneJSON := mergeTitle(c.Request.Context(), orch, convRepo, conv, req.Message, evt.Content, req.HiddenRound)
-				view.WriteSSE(w, flusher, "done", doneJSON)
+				// 用事实判断而不是 clientGone：events 与 requestDone 同时就绪时 select 随机，
+				// 选到 done 时 clientGone 可能还没置上，而 Request.Context 已取消 → mergeTitle 会失败。
+				doneCtx := c.Request.Context()
+				if clientGone || doneCtx.Err() != nil {
+					doneCtx = context.Background()
+				}
+				data = mergeTitle(doneCtx, orch, convRepo, conv, req.Message, evt.Content, req.HiddenRound)
 			case "error":
-				view.WriteSSE(w, flusher, "error", evt.Error)
+				data = evt.Error
+			default:
+				continue
+			}
+
+			frame := turn.Publish(event, data)
+			if clientGone {
+				continue
+			}
+			setDeadline()
+			if werr := view.WriteSSEID(w, flusher, frame.Seq, frame.Event, frame.Data); werr != nil {
+				clientGone = true
+				log.Printf("[chat] stream write failed, client gone: conv=%s err=%v", conv.ID, werr)
 			}
 		}
 	}

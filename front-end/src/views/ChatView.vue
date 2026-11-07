@@ -93,7 +93,7 @@ const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
 const convs = useConversationsStore()
-const { sendMessage, cancel } = useChatSSE()
+const { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream } = useChatSSE()
 const nMessage = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
@@ -112,7 +112,7 @@ onMounted(() => {
   // 导致 watcher 三分支全跳过）时，主动同步一次：拉取最新消息 + 滚到底，
   // 避免看到陈旧列表且停在旧滚动位置。
   // 注意：仅当 route id === store conversationId 时才补，避免与 watcher 分支 A（切换会话）重复请求。
-  if (chat.conversationId && route.params.id === chat.conversationId) {
+  if (chat.conversationId && !chat.isStreaming && route.params.id === chat.conversationId) {
     syncCurrentConversation()
   }
 })
@@ -325,7 +325,7 @@ function isStale(seq, convId) {
 }
 
 async function loadHistory(convId, direction = 'before', cursor = null) {
-  if (!convId) return
+  if (!convId) return false
   const seq = ++loadSeq
   isLoadingHistory.value = true
   try {
@@ -336,7 +336,7 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
     const res = await api.get(url)
     // convId 也要校验：离开会话时 conversationId 可能变 null（归档当前会话、落到 /chat 的
     // chat.reset()），那种情况不会自增 loadSeq，只靠 seq 拦不住在途请求写回旧会话消息。
-    if (isStale(seq, convId)) return
+    if (isStale(seq, convId)) return false
     if (res) {
       const msgs = (res.messages || []).flatMap(normalizeMessage)
       if (direction === 'before' && cursor) {
@@ -363,16 +363,19 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
         chat.setMessages(msgs)
       }
       // 上面可能有 await（前置历史要等 DOM 重排），期间又切了会话就到此为止
-      if (isStale(seq, convId)) return
+      if (isStale(seq, convId)) return false
       chat.oldestCursor = res.oldest_cursor
       chat.hasMoreBefore = res.has_more_before
       // 批量获取关联记忆详情
       await fetchAssociatedMemories()
+      return true
     }
+    return false
   } catch (e) {
-    if (isStale(seq, convId)) return
+    if (isStale(seq, convId)) return false
     console.error('Failed to load history', e)
     nMessage.error('加载历史消息失败')
+    return false
   } finally {
     // 这里只认序号：新对话分支会把 conversationId 置 null，若也按会话判过期，
     // 旧请求的 finally 会被跳过，isLoadingHistory 永远停 true（spinner 卡死）。
@@ -386,15 +389,16 @@ let routeSeq = 0
 // 多端同步兜底：tab 从后台切回前台时，全量刷新当前会话最新消息，
 // 补齐其他端（客户端/其它 tab）在此期间产生的新消息。
 let lastSyncAt = 0
-async function syncCurrentConversation() {
+async function syncCurrentConversation({ force = false } = {}) {
   if (!chat.conversationId) return
-  if (chat.isStreaming) return
   const now = Date.now()
-  if (now - lastSyncAt < 3000) return
+  if (!force && now - lastSyncAt < 3000) return
   lastSyncAt = now
   const seq = routeSeq
-  await loadHistory(chat.conversationId)
+  const ok = await loadHistory(chat.conversationId)
   if (seq !== routeSeq) return
+  // 拉历史成功 = 连接没问题：把「网络层」断流错误收掉（服务端 error 保留，用户需要知道）
+  if (ok) clearNetworkError()
   await nextTick()
   requestAnimationFrame(() => {
     const el = messagesContainerRef.value
@@ -402,10 +406,37 @@ async function syncCurrentConversation() {
   })
 }
 
-function onVisibilityChange() {
-  if (document.visibilityState === 'visible') {
-    syncCurrentConversation()
+// 回前台：在流式中就续传（补发断点后的事件并继续跟流），否则拉一次历史。
+// 续传失败/后端不支持（老后端 404）一律降级成拉历史，绝不留在灰态。
+let resuming = false
+async function resumeOrSync() {
+  if (resuming) return
+  resuming = true
+  try {
+    if (!chat.isStreaming) {
+      await syncCurrentConversation()
+      return
+    }
+    const why = await resumeStream()
+    // done：续上了；failed：已把半截收尾并亮错；suspended：又切后台了，等下次回来
+    if (why === 'done' || why === 'failed' || why === 'suspended') return
+    // idle/reset/unsupported/closed：本轮已结束或续不上，收尾后以服务端为准
+    if (why === 'reset') nMessage.warning('连接中断，已重新加载')
+    finishStream()
+    await syncCurrentConversation({ force: true })
+  } finally {
+    resuming = false
   }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    // 冻结期间浏览器会攒着定时器、恢复时立刻补触发：先暂停看门狗，别误报超时
+    setSuspended(true)
+    return
+  }
+  setSuspended(false)
+  resumeOrSync()
 }
 
 async function fetchAssociatedMemories() {

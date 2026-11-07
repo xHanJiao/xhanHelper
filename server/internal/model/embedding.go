@@ -16,6 +16,7 @@ const (
 	EntityTypeConcept = "concept"
 	EntityTypeSummary = "summary"
 	EntityTypeChunk   = "chunk"
+	EntityTypeImage   = "image"
 )
 
 // 内存向量库 metadata["type"] 取值（不带冒号）。
@@ -29,6 +30,7 @@ const (
 	VectorTypeSummary = "summary"
 	VectorTypeTheme   = "theme"
 	VectorTypeTool    = "tool"
+	VectorTypeImage   = "img"
 )
 
 // 内存向量库 key 前缀 = 对应 type + ":"（同一套向量库词表）。
@@ -41,6 +43,7 @@ const (
 	VectorPrefixSummary = VectorTypeSummary + ":"
 	VectorPrefixTheme   = VectorTypeTheme + ":"
 	VectorPrefixTool    = VectorTypeTool + ":"
+	VectorPrefixImage   = VectorTypeImage + ":"
 )
 
 // FullVectorPrefix 返回实体全文向量 key 的前缀；entityType ∈ {note, memory}。

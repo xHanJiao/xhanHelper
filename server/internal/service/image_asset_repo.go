@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -122,6 +123,46 @@ func (r *ImageAssetRepo) ListByUser(ctx context.Context, userID string, limit, o
 	err := r.db.WithContext(ctx).Where("user_id = ?", userID).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
+}
+
+// SearchByDescription 按描述关键词搜索（OR 语义，新的在前）。
+// 用 INSTR 而不是 LIKE：关键词里的 % / _ 无需转义，MySQL 与 SQLite 都支持。
+func (r *ImageAssetRepo) SearchByDescription(ctx context.Context, userID string, keywords []string, limit int) ([]model.ImageAsset, error) {
+	if len(keywords) == 0 {
+		return nil, nil
+	}
+	conds := make([]string, 0, len(keywords))
+	args := make([]interface{}, 0, len(keywords))
+	for _, kw := range keywords {
+		conds = append(conds, "INSTR(LOWER(description), ?) > 0")
+		args = append(args, strings.ToLower(kw))
+	}
+	var list []model.ImageAsset
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Where("("+strings.Join(conds, " OR ")+")", args...).
+		Order("created_at DESC, id DESC").Limit(limit).Find(&list).Error
+	return list, err
+}
+
+// ListDescribedAfter 键集分页列出有描述的图片（id > afterID，按 id 升序），供启动回填向量。
+func (r *ImageAssetRepo) ListDescribedAfter(ctx context.Context, afterID string, limit int) ([]model.ImageAsset, error) {
+	var list []model.ImageAsset
+	err := r.db.WithContext(ctx).
+		Where("description <> '' AND id > ?", afterID).
+		Order("id ASC").Limit(limit).Find(&list).Error
+	return list, err
+}
+
+// ExistingIDs 返回 ids 里真实存在的图片 id（孤儿向量对账用）。
+func (r *ImageAssetRepo) ExistingIDs(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var out []string
+	err := r.db.WithContext(ctx).Model(&model.ImageAsset{}).
+		Where("id IN ?", ids).Pluck("id", &out).Error
+	return out, err
 }
 
 // Delete 按 ID + owner 删除记录（文件由调用方负责）

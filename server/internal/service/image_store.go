@@ -48,6 +48,13 @@ type ImageDescriber interface {
 	Describe(ctx context.Context, fileID string) (string, error)
 }
 
+// ImageIndexer — 图片描述的向量索引（语义搜索用）。
+// 可选依赖（nil 时不建索引，语义搜索会缺结果）；由 agent 层实现，避免 service 依赖具体 LLM 厂商。
+type ImageIndexer interface {
+	IndexImage(ctx context.Context, userID, imageID, description string) error
+	RemoveImages(ctx context.Context, imageIDs []string) error
+}
+
 // imageDescribeConcurrency 同时进行的识图外呼上限（单次最长 90s，批量上传时避免打爆）。
 const imageDescribeConcurrency = 3
 
@@ -59,6 +66,7 @@ type ImageStore struct {
 	repo      *ImageAssetRepo
 	uploader  FileUploader   // 可为 nil：未配置时图片无法送模型，但不影响存取
 	describer ImageDescriber // 可为 nil：未接线时不生成描述
+	indexer   ImageIndexer   // 可为 nil：未接线时不建描述向量
 
 	descMu     sync.Mutex
 	describing map[string]bool // 在途去重：同一张图不并发识图
@@ -94,6 +102,9 @@ func (s *ImageStore) Repo() *ImageAssetRepo { return s.repo }
 
 // SetDescriber 注入描述生成器（启动装配调用一次）。d 为 nil 时表示不生成描述。
 func (s *ImageStore) SetDescriber(d ImageDescriber) { s.describer = d }
+
+// SetIndexer 注入描述向量索引器（启动装配调用一次）。i 为 nil 时不建索引。
+func (s *ImageStore) SetIndexer(i ImageIndexer) { s.indexer = i }
 
 // FilePath 返回记录的磁盘绝对/相对路径。id 来自 DB，不含用户输入，天然免疫目录穿越。
 func (s *ImageStore) FilePath(a *model.ImageAsset) string {
@@ -217,6 +228,16 @@ func (s *ImageStore) describe(ctx context.Context, a *model.ImageAsset) error {
 	if err := s.repo.SetDescription(ctx, a.ID, desc); err != nil {
 		s.noteDescribed(a.ID) // 写库失败也标记一次，避免持久故障下反复识图
 		return fmt.Errorf("save description: %w", err)
+	}
+	// 描述已落库；向量索引失败只影响语义搜索（下次启动 warmup 会补），不打断描述生成。
+	// 单独给短超时：describe 的 90s 预算主要留给识图，识图慢时别把 embedding 饿死。
+	if s.indexer != nil {
+		idxCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		err := s.indexer.IndexImage(idxCtx, a.UserID, a.ID, desc)
+		cancel()
+		if err != nil {
+			log.Printf("[image] index description %s failed: %v", a.ID[:8], err)
+		}
 	}
 	log.Printf("[image] described %s (user=%s)", a.ID[:8], a.UserID)
 	return nil
@@ -387,7 +408,22 @@ func (s *ImageStore) Delete(ctx context.Context, a *model.ImageAsset) error {
 		return fmt.Errorf("remove image file: %w", err)
 	}
 	s.removeInlineCache(a.ID)
-	return s.repo.Delete(ctx, a.ID, a.UserID)
+	if err := s.repo.Delete(ctx, a.ID, a.UserID); err != nil {
+		return fmt.Errorf("delete image record: %w", err)
+	}
+	s.removeVectors(ctx, []string{a.ID})
+	return nil
+}
+
+// removeVectors 清理描述向量。best-effort：搜索结果最终以 DB 为准，
+// 向量删不掉最多留孤儿，不会让已删除的图被搜出来。
+func (s *ImageStore) removeVectors(ctx context.Context, ids []string) {
+	if s.indexer == nil || len(ids) == 0 {
+		return
+	}
+	if err := s.indexer.RemoveImages(ctx, ids); err != nil {
+		log.Printf("[image] remove vectors (%d ids) failed: %v", len(ids), err)
+	}
 }
 
 // ImageCleanupStats — 一次清理的结果
@@ -488,6 +524,10 @@ func (s *ImageStore) purgeMissingFiles(ctx context.Context) (int, error) {
 				return total, fmt.Errorf("delete broken image records: %w", err)
 			}
 			total += int(n)
+			// 部分删除时不动向量：分不清哪几条还在，留给下次对账/重启 warmup。
+			if int(n) == len(missing) {
+				s.removeVectors(ctx, missing)
+			}
 		}
 	}
 }
@@ -524,6 +564,9 @@ func (s *ImageStore) purge(ctx context.Context, cutoff time.Time, list staleList
 			return total, fmt.Errorf("delete image records: %w", err)
 		}
 		total += int(n)
+		if int(n) == len(ids) {
+			s.removeVectors(ctx, ids)
+		}
 		// 删除没生效时必须退出，否则下一轮会取到同一批（死循环）
 		if int(n) < len(ids) {
 			log.Printf("[image_cleanup] delete affected %d of %d rows, stopping to avoid a loop", n, len(ids))

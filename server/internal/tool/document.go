@@ -203,7 +203,7 @@ func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAn
 func (t *DocumentTool) Name() string { return "document" }
 
 func (t *DocumentTool) Description() string {
-	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。创建时必须声明 audience：给用户读的成品填 finished，供助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal；internal 默认不出现在用户列表，但工具检索/读取仍可见。需要配图时用 image.list_images 找用户上传的图，把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docBodyHint + docLinkHint
+	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。创建时必须声明 audience：给用户读的成品填 finished，供助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal；internal 默认不出现在用户列表，但工具检索/读取仍可见。需要配图时用 image.list_images 浏览、或用 image.search_images 按描述搜（关键词/语义），把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docBodyHint + docLinkHint
 }
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {

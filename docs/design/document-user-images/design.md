@@ -167,3 +167,4 @@ document 工具保存时扫描引用：
 ## 后续变更
 
 - **2026-10-04**：macOS 阅读器补「点图放大」。`DocumentReaderView` 的 JS 对 `#content` 里 `<img>` 点击回传 `{type:'image', src}`，原生 present `DocumentImageLightbox`（data URI / http URL 都接，复用 `AttachmentPreviewView`）。mermaid 图同样可点（按当前主题那张）。属旧 MarkdownUI 路径点击放大能力的回归补齐，详见 `docs/bugs/026-macos-doc-image-no-zoom.md`。影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`、`client/xHelper/scripts/check-reader-html.sh`。
+- **2026-11-07**：`image` 工具新增 `search_images`（关键词 / 描述语义），配图前可先搜再挑，不必翻页遍历。可见性口径不变：搜索不改变 private/public，仍只有写进文档才 `PromoteToDoc`。详见 `docs/design/image-search/design.md`。影响文件：`server/internal/tool/image.go`、`server/internal/tool/document.go`、`server/internal/tool/html_artifact.go`。

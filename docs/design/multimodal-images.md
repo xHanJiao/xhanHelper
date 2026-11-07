@@ -476,6 +476,11 @@ chat:
 
 ## 后续变更
 
+- **2026-11-07 · 图片搜索（关键词 + 语义）**
+  - 新增 `image.search_images`：按描述关键词搜，或按描述语义搜（向量元数据 `type=img`）。语义搜索只覆盖描述已生成的图；图片本身嵌入留给以后。
+  - 描述生成成功后自动建向量（`agent.ImageIndexer`）；启动 warmup 加载并回填老图；删图（手动 / 到期清理 / 坏记录自愈）同步清向量。搜索结果一律回 DB 取资产，已删除的图不会出现。
+  - 详见 `docs/design/image-search/design.md`。影响文件：`server/internal/{model/embedding.go,service/image_asset_repo.go,service/image_store.go,agent/image_indexer.go,agent/warmup.go,tool/image.go,tool/document.go,tool/html_artifact.go,appinit/tools.go,appinit/agents.go}`、`server/cmd/xhan-helper/main.go`。
+
 - **2026-10-06 · 带图发送：文字与图片一起瞬时清空**
   - 旧行为：点发送先清文字，待发图托盘留到上传成功后再清（托盘转圈当上传占位）→ 真机上「文字先消失、图片后消失」时差明显。
   - 新决定：文字与待发图同一帧一起清空，上传期间输入栏整体变空（等同已发出），上传成功后用户气泡带本地图出现；上传全失败则文字与图一起还原并 toast。失败不再只还原文字。发送期间用 `isUploadingAttachments` 拦住重复触发。

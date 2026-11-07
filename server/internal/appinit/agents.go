@@ -63,6 +63,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		// 从 embedding 表加载向量到内存 store
 		agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, cfg.Vector.ChunkDisabledParents)
 		ready.Store(true)
+
+		// 图片描述向量：含外呼回填，放就绪之后，不绑 /api/health 的 starting 状态。
+		agent.WarmupImageEmbeddings(bgCtx, infra.VectorStore, infra.ImageStore.Repo(), repos.Embedding, infra.Embedder)
 	}()
 
 	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）。

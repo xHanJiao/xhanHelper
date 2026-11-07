@@ -102,7 +102,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"get 读回的 HTML 里图片是 `image:<id>` 引用，改完原样留着即可，服务端会重新内联。",
 			"**改版时不要传 title / summary**：它们描述的是「这一页是什么」，不是「这次改了什么」。不传会自动沿用旧页的标题和摘要。只有整页主题真的变了（比如三页变四页）才传，传了也必须是一句话的整页摘要，别写「本次修改/其余沿用上一版」这类修改记录。",
 			"页面要求：按 760px 宽设计、不要横向滚动。body 只放底色，内容放进自己的容器（如 .page{width:100%;max-width:760px;margin:0 auto;padding:...}）；不要给 body 写 width/max-width/margin——渲染器会在外层保留桌面底色，并把容器限制在 760px 内。可以内联 <style>，但不要写 script、iframe，也不要用外链图片或字体（会被删除）。",
-			fmt.Sprintf("放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片压到适合屏幕的尺寸（最长边 %d）再内联进页面，别自己写 base64、也不用担心原图多大。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单页最多 %d 张不同图片（同一张重复引用只算一张）且内联后的图片总量 ≤%dMB。", service.InlineMaxEdge, maxInlineImages, htmlsanitize.MaxInlineBytes>>20),
+			fmt.Sprintf("放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），或 image.search_images 按描述搜，再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片压到适合屏幕的尺寸（最长边 %d）再内联进页面，别自己写 base64、也不用担心原图多大。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单页最多 %d 张不同图片（同一张重复引用只算一张）且内联后的图片总量 ≤%dMB。", service.InlineMaxEdge, maxInlineImages, htmlsanitize.MaxInlineBytes>>20),
 			"观感参考（手账只是其中一种，别套模板、别固定风格）：手账风＝米色纸底 + 胶带/时间轴 + 手写感标题；对比页＝两栏并排 + 色块区分优劣；时间线＝左侧时间列 + 竖向连线；一页纸总结＝大标题 + 三块要点。留白充足、统一配色，别做满屏边框。",
 			"summary 必须一句话说清这页讲了什么（用户据此决定点不点），不要写「以下是对比」「详见下图」，也不要在里面记修改历史。",
 			"每页必须带 1–5 个标签（tags，半角逗号分隔）。打之前先 html.list_tags 看已有哪些标签能复用，别造同义词（手账/手帐）；灵阅标签独立于文档标签，别拿 document.list_tags 的结果套用。改版不传 tags＝沿用旧页；旧页还没有标签时，这次必须补上。",
@@ -200,7 +200,7 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 			"只有语义块（标题/段落/列表项/表格单元格/图注/引用）有 nid；div 里的文字不在清单里，改它请 get(view=\"full\") 整页重写，别拿不存在的 nid 反复试。",
 			"锚点位置：插块落在锚点之后——锚在图注/列表项上会落到整个 figure/列表之后（锚在照片上仍留在 figure 里）；要加在页面末尾就锚在页脚之前那块（锚在页脚内部的块上会插进页脚里）。别锚在表格单元格（td/th）上，那会插出非法结构。",
 			"整张 <table> 可以插；单独插 tr/td 不行，要增删行列请整页重写。表格若是页面最后一个块（后面没有块可当锚点），往后追加只能整页重写。",
-			"换图必须是 image:<id> 引用（先用 image.list_images 拿 id）。",
+			"换图必须是 image:<id> 引用（先用 image.list_images / image.search_images 拿 id）。",
 			"改标签：tags=\"新,标签\"（整套替换，1–5 个）。传空串会被拒绝——每页至少一个标签；不传 tags 且这页还没有标签时，结果会提示你补上。",
 		}, "\n"),
 		Parameters: map[string]interface{}{

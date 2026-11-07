@@ -38,7 +38,7 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "note", Description: "旧笔记工具（逐步退役）：仅检索与作废旧笔记，不再新增/修改", Category: "note"},
 	{Name: "record_memory", Description: "记录长期记忆（决定/结论/洞察/事实/关系），一条一个 topic", Category: "memory"},
 	{Name: "document", Description: "文档管理工具，创建/查看(窗口读)/更新/删除文档，支持标签检索", Category: "document"},
-	{Name: "image", Description: "图片列表：查看用户上传过的图片（含描述），给文档配图时用来挑图", Category: "document"},
+	{Name: "image", Description: "图片工具：查看用户上传过的图片（含描述），按关键词/语义搜索图片，给文档配图时用来挑图", Category: "document"},
 	{Name: "agent", Description: "管理智能体：创建、查看、删除自定义 AI 助手", Category: "agent"},
 	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/事件/历史消息，支持语义与关键词两种模式", Category: "search"},
 	{Name: "message_search", Description: "查询历史消息：时间范围/ID 范围/按 ID 获取/数量统计", Category: "search"},

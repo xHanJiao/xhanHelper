@@ -36,7 +36,8 @@ func TestImageToolScopeTurn(t *testing.T) {
 	}
 
 	tl := NewImageTool(service.NewImageAssetRepo(db),
-		service.NewImageStore(filepath.Join(t.TempDir(), "images"), 32<<20, service.NewImageAssetRepo(db), nil))
+		service.NewImageStore(filepath.Join(t.TempDir(), "images"), 32<<20, service.NewImageAssetRepo(db), nil),
+		&fixedEmbedder{vec: []float64{1, 0}}, newFakeVectorStore())
 	// 本轮只发了 a2（顺序由消息字段决定，不按时间）
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", UserImageIDs: []string{"a2"}}
 	args, _ := json.Marshal(map[string]any{"scope": "turn"})
@@ -93,7 +94,7 @@ func TestImageToolMarksMissingFiles(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	tl := NewImageTool(repo, store)
+	tl := NewImageTool(repo, store, &fixedEmbedder{vec: []float64{1, 0}}, newFakeVectorStore())
 	res := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "list_images", nil)
 	if !res.Success {
 		t.Fatalf("list_images: %s", res.Error)

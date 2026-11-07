@@ -90,6 +90,8 @@ func main() {
 	if !cfg.Server.BackgroundTasksDisabled() {
 		infra.ImageStore.SetDescriber(agent.NewImageDescriber(llmClients.BgFlash))
 	}
+	// 描述向量索引：语义搜索用。与描述生成分开接线——删除图片时也要清向量。
+	infra.ImageStore.SetIndexer(agent.NewImageIndexer(infra.Embedder, infra.VectorStore, repos.Embedding))
 
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients, activityStore)

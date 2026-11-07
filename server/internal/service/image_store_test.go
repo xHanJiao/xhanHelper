@@ -330,6 +330,51 @@ func (f *fakeDescriber) Describe(ctx context.Context, fileID string) (string, er
 	return f.desc, f.err
 }
 
+type fakeIndexer struct {
+	indexed []string
+	removed []string
+}
+
+func (f *fakeIndexer) IndexImage(ctx context.Context, userID, imageID, description string) error {
+	f.indexed = append(f.indexed, imageID)
+	return nil
+}
+
+func (f *fakeIndexer) RemoveImages(ctx context.Context, imageIDs []string) error {
+	f.removed = append(f.removed, imageIDs...)
+	return nil
+}
+
+// 描述成功后建向量；删图时清向量（语义搜索的事实来源仍是 DB，这里只保证卫生）。
+func TestImageStoreIndexesDescriptionAndRemovesVectors(t *testing.T) {
+	store, _, cleanup := setupImageStore(t, 1<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	store.uploader = fakeUploader{fileID: "fid-1"}
+	asset, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, fakePNG)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	idx := &fakeIndexer{}
+	store.SetIndexer(idx)
+	store.SetDescriber(&fakeDescriber{desc: "一只坐着的橘猫"})
+
+	if err := store.describe(ctx, asset); err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if len(idx.indexed) != 1 || idx.indexed[0] != asset.ID {
+		t.Fatalf("描述成功后应建索引，实际 %+v", idx.indexed)
+	}
+
+	if err := store.Delete(ctx, asset); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(idx.removed) != 1 || idx.removed[0] != asset.ID {
+		t.Fatalf("删图后应清向量，实际 %+v", idx.removed)
+	}
+}
+
 // 描述链路（EnsureFileID → 视觉模型 → 回写）成功：描述与 description_at 都落库。
 func TestImageStoreDescribeSuccess(t *testing.T) {
 	store, _, cleanup := setupImageStore(t, 1<<20)

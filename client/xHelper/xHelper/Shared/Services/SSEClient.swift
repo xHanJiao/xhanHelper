@@ -70,6 +70,32 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         }
 
         let newTask = session.dataTask(with: req)
+        start(newTask)
+    }
+
+    /// 回前台续传：GET + `turn`/`from`，复用同一套 delegate / 任务身份守卫。
+    /// 补发断点后的帧并继续跟流；服务端没有可续的轮次时返回一帧 `idle`。
+    func resume(baseURL: String, token: String, conversationId: String, turn: String, from: Int64) {
+        disconnect()
+        var comps = URLComponents(string: "\(baseURL)/api/chat/stream")
+        comps?.queryItems = [
+            URLQueryItem(name: "conversation_id", value: conversationId),
+            URLQueryItem(name: "turn", value: turn),
+            URLQueryItem(name: "from", value: String(from)),
+        ]
+        guard let url = comps?.url else {
+            onError?(NSError(domain: "APIClient", code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "服务地址无效：\(baseURL)"]))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        start(session.dataTask(with: req))
+    }
+
+    private func start(_ newTask: URLSessionDataTask) {
         lock.withLock {
             // 与 delegate 的守卫同一把锁：只有当前任务的数据/完成回调会被采纳。
             // resume() 在锁外、这之后，所以这里清一次就够，旧状态不会在中间回流。
@@ -159,10 +185,10 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private func parseLine(_ line: String) {
         // 不在这里直接派发：一条事件可能有多行 `data:`（payload 里的换行由服务端拆开）
         guard let event = eventAssembler.feed(line) else { return }
-        dispatch(event: event.event, data: event.data)
+        dispatch(event: event.event, data: event.data, id: event.id)
     }
 
-    private func dispatch(event: String, data: String) {
+    private func dispatch(event: String, data: String, id: String?) {
         guard let type = StreamEventType.from(eventName: event) else {
             // 注意：本方法在 `lock` 内被调用（见 didReceive data），这里必须用独立的锁。
             let first = unknownEventLock.withLock { warnedUnknownEvents.insert(event).inserted }
@@ -171,7 +197,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             }
             return
         }
-        onEvent?(StreamEvent(type: type, data: data))
+        onEvent?(StreamEvent(type: type, data: data, id: id))
     }
 }
 

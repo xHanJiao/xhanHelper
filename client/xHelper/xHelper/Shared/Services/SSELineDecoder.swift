@@ -49,9 +49,11 @@ nonisolated struct SSELineDecoder {
 nonisolated struct SSEEventAssembler {
     private var event = ""
     private var dataLines: [String] = []
+    /// 最后一个事件 ID（`id:`），按规范跨事件保留；续传用它当断点。
+    private var lastID: String?
 
-    /// 喂一行（调用方已做 trim），凑齐一个事件时返回 `(event, data)`。
-    mutating func feed(_ line: String) -> (event: String, data: String)? {
+    /// 喂一行（调用方已做 trim），凑齐一个事件时返回 `(event, data, id)`。
+    mutating func feed(_ line: String) -> (event: String, data: String, id: String?)? {
         if line.hasPrefix("event:") {
             event = Self.payload(of: line, prefixLength: 6)
             return nil
@@ -60,10 +62,14 @@ nonisolated struct SSEEventAssembler {
             dataLines.append(Self.payload(of: line, prefixLength: 5))
             return nil
         }
+        if line.hasPrefix("id:") {
+            lastID = Self.payload(of: line, prefixLength: 3)
+            return nil
+        }
         guard line.isEmpty else { return nil } // 注释（`: ping`）与未知字段一律忽略
         defer { reset() }
         guard !dataLines.isEmpty else { return nil }
-        return (event, dataLines.joined(separator: "\n"))
+        return (event, dataLines.joined(separator: "\n"), lastID)
     }
 
     mutating func reset() {

@@ -24,6 +24,9 @@ final class StreamEventMappingTests: XCTestCase {
             "client_tool_call": .clientToolCall,
             "subagent": .subagent,
             "reminders_changed": .remindersChanged,
+            "meta": .meta,
+            "idle": .idle,
+            "reset": .reset,
             "done": .done,
             "error": .error,
         ]

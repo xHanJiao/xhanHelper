@@ -64,5 +64,10 @@ export const api = {
     body: JSON.stringify(body),
     signal
   }),
+  // 续传：GET 也走 Bearer（用 fetch 而不是 EventSource，才能带 header）
+  streamGet: (path, signal) => request(path, {
+    headers: { Accept: 'text/event-stream' },
+    signal
+  }),
   publicGet: (path) => fetch(BASE + path).then(r => r.json()).then(unwrap)
 }

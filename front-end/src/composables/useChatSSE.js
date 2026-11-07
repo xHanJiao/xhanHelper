@@ -5,11 +5,10 @@ import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
 import { createIdleWatchdog, createSSEParser } from '@/utils/sse'
 
-// 流式空闲上限：移动端 PWA 被挂起后可能留下一条半开连接（reader 既不返回也不报错），
-// 不兜底就会永远停在 isStreaming，连回前台都发不出消息。
-// shortcut: 服务端不发心跳帧，只能按「多久没收到任何字节」判死；verify 和子任务里的单次
-// ChatSync 是完全静默的，如果实测出现误判（假超时），就先让服务端静默时发 `: ping` 再压阈值。
-const STREAM_IDLE_TIMEOUT_MS = 120000
+// 流式空闲上限：服务端每 15s 发一次 `: ping`，60s 没收到任何字节就按半死连接处理。
+// （挂起期间看门狗会被 pause，回前台重连时给 STREAM_RESUME_GRACE_MS 的宽限。）
+const STREAM_IDLE_TIMEOUT_MS = 60000
+const STREAM_RESUME_GRACE_MS = 15000
 
 // 旧格式兜底映射（新工具由后端 FillDisplay 下发，勿在此新增条目）
 const DISPLAY_NAMES = {
@@ -29,21 +28,56 @@ function buildToolSummary(tc, result) {
   return display
 }
 
+// 网络层失败的判定：fetch 被掐（iOS 挂起/断网）在 WebKit 是 TypeError + "Load failed"，
+// Chrome 是 "Failed to fetch"。这不是「服务出错」，不该把英文原文丢给用户。
+function isNetworkError(err) {
+  return err?.name === 'TypeError'
+}
+
+// 失败 → 给用户看的文案 + 错误类别（'network' 才能被「拉历史成功」清掉）
+function classifyError(err) {
+  if (isNetworkError(err)) return { message: '网络连接失败，请重试', kind: 'network' }
+  if (String(err?.message || '').startsWith('HTTP ')) return { message: '服务暂时不可用，请重试', kind: 'server' }
+  return { message: err?.message || '网络连接失败，请重试', kind: 'network' }
+}
+
 export function useChatSSE() {
   const chat = useChatStore()
   const convs = useConversationsStore()
   const auth = useAuthStore()
   const router = useRouter()
   let abortController = null
+  let activeWatchdog = null
+  let suspended = false
+  // 本轮曾经被切到后台：rejection 何时执行由引擎决定（iOS 恢复后才跑，那时已经 visible），
+  // 不能只靠 catch 里现查 visibilityState。sendMessage 开头清零。
+  let hiddenSinceSend = false
+  // 续传锚点：本轮最后一帧的 seq / turn_id（meta 帧下发）。每轮 sendMessage 归零。
+  let lastSeq = null
+  let lastTurnId = ''
+  // 本轮流式被我方打断（挂起期失败）：保持 isStreaming，回前台续传接上
+  let suspendedDuringStream = false
+  // 流结束原因：done | error | idle | reset | closed
+  let streamOutcome = null
+  // 上一次失败是不是网络层（决定「拉历史成功」时能不能清掉错误）
+  let lastErrorKind = null
+  // 新会话（懒创建）在 meta 帧就先拿到 id；模式/无痕用发送那一刻的快照
+  let streamMode = 'work'
+  let streamEphemeral = false
   // failStream 本次收尾的消息 id：done 只认它，避免把真实 id/灵阅卡片
   // 补到上一轮「停止」遗留的 local- 消息上（那条永远不会有真实 id）。
   let failedLocalId = null
 
+  function isCurrent(controller) {
+    return abortController === controller
+  }
+
   // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
   // 服务端随后仍会发 done（带本轮灵阅卡片），由 done 分支补到这条本地消息上。
-  function failStream(message) {
+  function failStream(message, kind) {
     const partial = chat.streamingMessage
     failedLocalId = null
+    lastErrorKind = kind || 'server'
     if (partial?.content || partial?.reasoning) {
       failedLocalId = `local-${Date.now()}`
       chat.addMessage({ ...partial, id: failedLocalId, toolCalls: [] })
@@ -53,24 +87,65 @@ export function useChatSSE() {
     chat.error = message
   }
 
+  function finishStream() {
+    abortController?.abort()
+    abortController = null
+    activeWatchdog?.stop()
+    activeWatchdog = null
+    chat.isStreaming = false
+    chat.streamingMessage = null
+    chat.statusMessage = null
+  }
+
+  function makeWatchdog(controller) {
+    return createIdleWatchdog(STREAM_IDLE_TIMEOUT_MS, () => {
+      // 挂起期间到达的超时不算（浏览器会把冻结的定时器在恢复时补触发）
+      if (suspended) return
+      // 已经 abort 过（用户停止/切会话）或已被新一轮取代：当迟到的心跳，别碰新一轮的状态
+      if (controller.signal.aborted || !isCurrent(controller)) return
+      chat.isStreaming = false
+      failStream('连接超时（长时间没有响应），请重试', 'network')
+      controller.abort()
+    })
+  }
+
+  // 新会话（懒创建）adopt：meta 帧比 done 早到，让「首轮挂起」也能续传。
+  // 收口在这里，避免 meta / done 各写一份 prepend 逻辑。
+  function adoptConversation(id) {
+    if (!id || chat.conversationId === id) return
+    const isNew = !chat.conversationId
+    chat.conversationId = id
+    if (!isNew) return
+    router.replace(`/chat/${id}`)
+    convs.prepend({
+      id,
+      title: '新对话',
+      agent_id: chat.agentId,
+      agent_name: chat.agentName,
+      mode: streamMode,
+      ephemeral: streamEphemeral
+    })
+  }
+
   async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral } = {}) {
     if (chat.isStreaming) return
 
     // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再点开关不该改写已落库的值）
-    const createdMode = initMode || 'work'
-    const createdEphemeral = !!ephemeral
+    streamMode = initMode || 'work'
+    streamEphemeral = !!ephemeral
+    lastSeq = null
+    lastTurnId = ''
+    streamOutcome = null
+    lastErrorKind = null
+    suspendedDuringStream = false
+    hiddenSinceSend = false
 
     const controller = new AbortController()
     abortController = controller
     // 看门狗覆盖「请求发出 → 响应头 → 流结束」整条链路：半开连接可能停在任一阶段。
     // 超时就先把 UI 收尾（别指望 AbortController 一定能叫醒半死的 read），再断流。
-    const watchdog = createIdleWatchdog(STREAM_IDLE_TIMEOUT_MS, () => {
-      // 已经 abort 过（用户停止/切会话）：当迟到的心跳，别碰新一轮的状态
-      if (controller.signal.aborted) return
-      chat.isStreaming = false
-      failStream('连接超时（长时间没有响应），请重试')
-      controller.abort()
-    })
+    const watchdog = makeWatchdog(controller)
+    activeWatchdog = watchdog
     chat.isStreaming = true
     chat.error = null
     chat.statusMessage = null
@@ -120,28 +195,94 @@ export function useChatSSE() {
 
       await parseSSEStream(res, controller, watchdog)
     } catch (err) {
-      // 用户点「停止」和看门狗超时都会走到这里：超时的收尾已由 watchdog 自己做完
-      if (err.name === 'AbortError') return
+      // 用户点「停止」、看门狗超时、旧流被续流取代：都不该再碰当前状态
+      if (err.name === 'AbortError' || !isCurrent(controller)) return
+      // 挂起期间网络断开：不亮错误、不结束流式，回前台按 seq 续传接上。
+      // 用「本轮曾进过后台」而不是现查 visibilityState——iOS 的 rejection 要等恢复后才执行。
+      if (isNetworkError(err) && (hiddenSinceSend || document.visibilityState === 'hidden')) {
+        suspendedDuringStream = true
+        streamOutcome = 'background-interrupted'
+        return
+      }
       if (err.name === 'AuthError') {
         auth.logout()
         return
       }
       console.error('Chat error', err)
-      failStream(err.message || '网络连接失败，请重试')
+      const { message: text, kind } = classifyError(err)
+      failStream(text, kind)
     } finally {
       watchdog.stop()
-      // 超时后可能已经开了新一轮：别把新一轮的 isStreaming 误清掉
-      if (abortController === controller) chat.isStreaming = false
+      if (activeWatchdog === watchdog) activeWatchdog = null
+      // 超时后可能已经开了新一轮：别把新一轮的 isStreaming 误清掉；
+      // 挂起期失败也一样保留，等回前台续传收尾。
+      if (isCurrent(controller) && !suspendedDuringStream) chat.isStreaming = false
+    }
+  }
+
+  // 回前台续传：带 turn + from 重连，补发断点后的事件并继续跟流。
+  // 不需要判断「老连接是不是还活着」——seq 天然去重。
+  async function resumeStream() {
+    if (!chat.isStreaming) return 'none'
+    // 半截已经被 failStream 收尾（streamingMessage 已清空）：续上会另起一条气泡、和旧半截重复，
+    // 直接按 reset 处理——收尾后以服务端历史为准。
+    if (!chat.streamingMessage) return 'reset'
+    const conversationId = chat.conversationId
+    if (!conversationId) return 'no-conversation'
+
+    const controller = new AbortController()
+    const previous = abortController
+    abortController = controller
+    previous?.abort()
+    activeWatchdog?.stop()
+    const watchdog = makeWatchdog(controller)
+    activeWatchdog = watchdog
+    streamOutcome = null
+    suspendedDuringStream = false
+
+    try {
+      watchdog.touch()
+      const from = lastSeq ?? 0
+      const path = `/api/chat/stream?conversation_id=${encodeURIComponent(conversationId)}` +
+        `&turn=${encodeURIComponent(lastTurnId)}&from=${from}`
+      const res = await api.streamGet(path, controller.signal)
+      // 旧后端没有续传能力：优雅降级成「拉历史」，不弹错
+      if (res.status === 404 || res.status === 501) return 'unsupported'
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await parseSSEStream(res, controller, watchdog)
+      return streamOutcome || 'closed'
+    } catch (err) {
+      if (err.name === 'AbortError' || !isCurrent(controller)) return 'aborted'
+      if (err.name === 'AuthError') {
+        auth.logout()
+        return 'aborted'
+      }
+      console.error('Chat resume error', err)
+      // 续传刚发出就切后台：同样别亮错、别结束流式，下次回前台再续
+      if (isNetworkError(err) && document.visibilityState === 'hidden') {
+        suspendedDuringStream = true
+        return 'suspended'
+      }
+      // 半截内容不能因为续传失败就消失：收尾成普通消息，再露出可重试的错误
+      const { message: text, kind } = classifyError(err)
+      failStream(text, kind)
+      return 'failed'
+    } finally {
+      watchdog.stop()
+      if (activeWatchdog === watchdog) activeWatchdog = null
+      if (isCurrent(controller) && !suspendedDuringStream) chat.isStreaming = false
     }
   }
 
   async function parseSSEStream(res, controller, watchdog) {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
-    const parser = createSSEParser((event, rawData) => {
+    const parser = createSSEParser((event, rawData, id) => {
       // abort 时已经缓冲在手里的帧不能再派发：否则切会话后旧流的 done
       // 会把 user_message_id / memory_ids 写到新会话的最后一条用户消息上。
-      if (controller.signal.aborted) return
+      // lastSeq 也必须在守卫之后推进：被丢弃的帧不能成为下一次续传的断点（会漏一个 delta）。
+      if (controller.signal.aborted || !isCurrent(controller)) return
+      if (id !== null && id !== undefined && id !== '') lastSeq = Number(id)
       try {
         dispatchEvent(event, rawData)
       } catch (e) {
@@ -163,6 +304,22 @@ export function useChatSSE() {
 
   function dispatchEvent(event, rawData) {
     switch (event) {
+      case 'meta': {
+        // 本轮身份 + 会话 id：懒创建的会话在 done 之前也能续传
+        const m = JSON.parse(rawData)
+        if (lastTurnId && m.turn_id && m.turn_id !== lastTurnId) {
+          // 手里是另一轮（另一台设备刚发消息把这一轮取消了）：别把别人的内容拼进来
+          streamOutcome = 'reset'
+          return
+        }
+        if (m.turn_id) lastTurnId = m.turn_id
+        if (m.conversation_id) adoptConversation(m.conversation_id)
+        break
+      }
+      case 'idle':
+      case 'reset':
+        streamOutcome = event
+        break
       case 'message': {
         const parsed = JSON.parse(rawData)
         chat.streamingMessage.content += parsed.delta
@@ -239,6 +396,7 @@ export function useChatSSE() {
       }
       case 'done': {
         const d = JSON.parse(rawData)
+        streamOutcome = 'done'
         // 服务端可能「先 error 再 done」（收尾轮未收敛 / 另一台设备停止），
         // failStream 已经把半截消息收尾了；这时只更新元数据，别再推一条空消息。
         if (chat.streamingMessage) {
@@ -283,47 +441,49 @@ export function useChatSSE() {
           }
         }
 
-        if (!chat.conversationId && d.conversation_id) {
-          chat.conversationId = d.conversation_id
-          // 懒创建的会话（直接访问 /chat 等路径）拿到 id 后让路由跟上，否则 URL 停在 /chat
-          router.replace(`/chat/${d.conversation_id}`)
-          convs.prepend({
-            id: d.conversation_id,
-            title: d.title || '新对话',
-            agent_id: chat.agentId,
-            agent_name: chat.agentName,
-            mode: createdMode,
-            ephemeral: createdEphemeral
-          })
-        }
+        if (d.conversation_id) adoptConversation(d.conversation_id)
         if (d.title) {
-          convs.updateTitle(d.conversation_id, d.title)
+          convs.updateTitle(chat.conversationId, d.title)
         }
         if (d.error) {
           chat.error = d.error
+          lastErrorKind = 'server'
         }
         break
       }
       case 'error':
-        failStream(rawData)
+        streamOutcome = 'error'
+        failStream(rawData, 'server')
         break
     }
+  }
+
+  // 页面切后台：暂停看门狗（浏览器会把冻结的定时器在恢复时补触发）
+  function setSuspended(value) {
+    suspended = value
+    if (value) {
+      hiddenSinceSend = true
+      activeWatchdog?.pause()
+      return
+    }
+    if (chat.isStreaming) activeWatchdog?.resume(STREAM_RESUME_GRACE_MS)
+  }
+
+  // 拉历史成功时清掉「网络层」错误；服务端 error 一律保留（用户需要知道这一轮失败了）
+  function clearNetworkError() {
+    if (lastErrorKind !== 'network') return
+    chat.error = null
+    lastErrorKind = null
   }
 
   function cancel() {
     if (chat.isStreaming) {
       chat.needsRefetch = true
     }
-    abortController?.abort()
-    // 断流后不会再有任何事件到达，半截气泡留着就永远停在「流式中」。
-    // 调用方（handleStop）在 cancel() 之前已经捕获 partial，不会丢已展示的内容。
-    // isStreaming 也在这里复位：连接半死时 read 可能永不 settle，别等 sendMessage 的 finally。
-    chat.isStreaming = false
-    chat.streamingMessage = null
-    chat.statusMessage = null
+    finishStream()
   }
 
-  return { sendMessage, cancel }
+  return { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream }
 }
 
 export { buildToolSummary }

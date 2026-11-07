@@ -5,9 +5,9 @@ import XCTest
 /// 逐行派发会把 thought_delta / error 这类裸文本在第一个换行处截断。
 final class SSEEventAssemblerTests: XCTestCase {
 
-    private func feed(_ lines: [String]) -> (event: String, data: String)? {
+    private func feed(_ lines: [String]) -> (event: String, data: String, id: String?)? {
         var assembler = SSEEventAssembler()
-        var result: (event: String, data: String)?
+        var result: (event: String, data: String, id: String?)?
         for line in lines {
             if let event = assembler.feed(line) {
                 XCTAssertNil(result, "一次只喂一个事件")
@@ -68,5 +68,40 @@ final class SSEEventAssemblerTests: XCTestCase {
         XCTAssertNil(assembler.feed(""))
         XCTAssertNil(assembler.feed("data: fresh"))
         XCTAssertEqual(assembler.feed("")?.data, "fresh")
+    }
+}
+
+// MARK: - 续传锚点（id:）
+
+extension SSEEventAssemblerTests {
+    func testEventIDIsAttachedToDispatchedEvent() {
+        let evt = feed(["id: 7", "event: message", "data: a", ""])
+        XCTAssertEqual(evt?.id, "7")
+        XCTAssertEqual(evt?.event, "message")
+    }
+
+    /// SSE 规范：最后一个事件 ID 跨事件保留（续传的断点就是它）
+    func testEventIDPersistsAcrossEvents() {
+        var assembler = SSEEventAssembler()
+        XCTAssertNil(assembler.feed("id: 1"))
+        XCTAssertNil(assembler.feed("data: a"))
+        XCTAssertEqual(assembler.feed("")?.id, "1")
+        XCTAssertNil(assembler.feed("data: b"))
+        XCTAssertEqual(assembler.feed("")?.id, "1", "没有新 id 的事件要沿用上一个")
+        XCTAssertNil(assembler.feed("id: 2"))
+        XCTAssertNil(assembler.feed("data: c"))
+        XCTAssertEqual(assembler.feed("")?.id, "2")
+    }
+
+    func testHeartbeatCommentDoesNotClearEventID() {
+        var assembler = SSEEventAssembler()
+        XCTAssertNil(assembler.feed("id: 9"))
+        XCTAssertNil(assembler.feed("event: message"))
+        XCTAssertNil(assembler.feed("data: a"))
+        XCTAssertEqual(assembler.feed("")?.id, "9")
+        XCTAssertNil(assembler.feed(": ping"))
+        XCTAssertNil(assembler.feed(""))
+        XCTAssertNil(assembler.feed("data: b"))
+        XCTAssertEqual(assembler.feed("")?.id, "9")
     }
 }

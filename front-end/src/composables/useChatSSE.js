@@ -234,6 +234,9 @@ export function useChatSSE() {
     const previous = abortController
     abortController = controller
     previous?.abort()
+    // 续流已接管：旧连接的迟到 rejection 会被代次守卫丢掉；此后（可视为前台的）断网要正常亮错，
+    // 否则 hiddenSinceSend 会一直把真实失败当「挂起期断流」，UI 卡在流式中。
+    hiddenSinceSend = false
     activeWatchdog?.stop()
     const watchdog = makeWatchdog(controller)
     activeWatchdog = watchdog

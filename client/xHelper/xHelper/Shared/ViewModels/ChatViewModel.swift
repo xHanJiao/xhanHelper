@@ -1002,6 +1002,7 @@ class ChatViewModel: ObservableObject {
         currentTurnID = ""
         pendingConversationID = ""
         handledClientToolCallIDs.removeAll()
+        isResumeInFlight = false // 上一轮续传若以「200 直接关闭」收尾，标志不许漏到新一轮
         thoughtMessage = nil
         thoughtDone = false
         subagentSessions = []

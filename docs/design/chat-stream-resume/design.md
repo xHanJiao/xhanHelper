@@ -455,4 +455,5 @@ macOS 多 tab：遍历 `chatTabManager` 中 `isStreaming` 的 tab 逐个 `resume
   7. **续传窗口内的 404/501 不当成会话已销毁**（Swift `isResumeInFlight`）：旧后端没有 `/api/chat/stream`，否则回一次前台就会关掉用户的 tab。
   8. **`done` 的 ctx 用事实判断**（`clientGone || ctx.Err() != nil`）：`events` 与 `requestDone` 同时就绪时 select 随机，标志可能还没置上。
   9. `lastSeq` 移到代次守卫之后推进（被丢弃的帧不能成为续传断点）；两处错误分类抽成 `classifyError`；`setDeadline` 抽成 `newDeadlineSetter`；`WriteSSE` 返回 error 并由调用方记日志。
+  10. `hiddenSinceSend` 在**续流接管时清零**：它只用来标记「本轮进过后台、还没被前台续传接管」，不清零会把回前台后的真实断网也当挂起期断流（不亮错、不结束流式 → UI 卡住）。Swift 的 `isResumeInFlight` 同时在每轮开始时重置，避免上一轮「200 直接关闭」把标志漏到新一轮。
   影响文件见 §10；测试：`go test ./...`、`npm test`、`swift test`（371 项）全绿，两个 target `swiftc -typecheck` 通过。

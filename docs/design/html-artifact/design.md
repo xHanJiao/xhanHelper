@@ -88,6 +88,7 @@ type Artifact struct {
 
 - 新建 `html.create` 必传 `tags`；改版不传＝沿用旧页标签，**旧页本来没有标签时这次必须补上**（必填规则上线前的存量老页靠这条补）。
 - `html.patch(tags=…)` 整套替换，传空串拒绝（至少留一个）；只改标签不动正文。
+- `html.patch(title=… / summary=…)`（2026-11-07 起）：不传＝不动，纯元数据修改不读、不写正文；与块编辑可同一次调用（见 `fine-grained-edit.md` §4.3）。
 - 灵阅标签与文档标签是**两套独立命名空间**：`html.list_tags` 只回灵阅用过的标签，不能拿 `document.list_tags` 的结果套用。
 - 存量老页不回填、也不会被自动打标签；`html.list` 的 `untagged` 只是提醒模型改到它们时补上。
 
@@ -97,7 +98,7 @@ type Artifact struct {
 - `html.list_tags` — 灵阅用过的标签（按频次降序），只为让模型复用已有标签、别造同义词。
 - `html.delete` — 软删 1–100 条（去重后）。越权/已删的 id 静默跳过，在 `missing` 里点名；灵阅无回收站，删了不可恢复。
 - `html.get` — 按 `view` 读取（默认 `outline`）：块清单（nid / 首 60 字 / hash）、单块全文、`<style>`、整页原文。读的是 `artifacts.source_html`（模型给的原文，图片仍是 `image:<id>` 引用），**不是** `html` 列——那列里图片已内联成几 MB 的 `data:`，整页塞回上下文不现实。整页读回上限 128KB。
-- `html.patch` — 按 nid / style 做局部修改，不重传整页（改文字、换图、改 CSS 走它，见 `fine-grained-edit.md`）。
+- `html.patch` — 按 nid / style / 元数据做局部修改，不重传整页（改文字、换图、改 CSS、改标题/摘要走它，见 `fine-grained-edit.md`）。
 
 工具描述写死改版动作：改文字/换图用 `get(view="outline")` + `patch(ops)`；加/删段落与图片用 `patch(insert / remove)`；改样式用 `get(view="style")` + `patch(style=…)`；只有重排版式、整页换结构才 `get(view="full")` + `create(artifact_id)`。`list` 找 id 这条是 2026-10-29 真机撞出来的：工具原先只有 `create` 一个写入口，换个窗口说「改一下刚才的灵阅」，模型既不知道是哪一页、也读不到旧 HTML，只能新建或反问。
 
@@ -213,7 +214,7 @@ type Artifact struct {
 
 ## 八、工具 v1
 
-名字：`html`。四个函数：`create`（写：`title` / `summary` / `html`，外加可选的 `artifact_id`）、`list`（读：最近 10 页的 id/标题/时间）、`get`（按 view 读：outline / block / style / full）、`patch`（局部改：nid / 图片 / CSS，见 `fine-grained-edit.md`）。
+名字：`html`（用户侧叫「灵阅」，工具目录与 `Description` 都写死这层对应关系）。四个函数：`create`（写：`title` / `summary` / `html`，外加可选的 `artifact_id`）、`list`（读：最近 10 页的 id/标题/时间）、`get`（按 view 读：outline / block / style / full）、`patch`（局部改：nid / 图片 / CSS / 标题 / 摘要 / 标签，见 `fine-grained-edit.md`）。
 
 ### 8.1 什么时候该用（工具描述里必须写死）
 
@@ -253,6 +254,8 @@ type Artifact struct {
 
 **改版时不要重写 `title` / `summary`**（2026-10-29 撞出来的）：它们描述的是「这一页是什么」，不是「这次改了什么」。`create` 带 `artifact_id` 时这两个字段**可选**，不传就沿用旧值——默认行为就是对的，不靠模型自觉。只有整页主题真的变了（三页变四页）才传，且仍必须是一句话的整页摘要。
 
+**只想改标题/摘要**（2026-11-07 起）：用 `html.patch(title=… / summary=…)`，不读、不重传正文。
+
 反例（真机出现过）：「同一页加回菜单照片并带点开放大，其余文字沿用上一版。」——灵阅列表会变成一串修改日志。
 
 ### 8.4 风格与宽度约束
@@ -275,7 +278,7 @@ type Artifact struct {
 | `list` 返回条数 | 默认 10，最多 30 |
 | `get` 读回上限 | 128KB（超过报错，不截断——截断的 HTML 改完会坏） |
 | 跨轮使用 | 历史回放按 `llm.max_tool_result_chars`（20000 字符）截断工具结果，所以读回的 HTML **只在当前轮算数**；下一轮要改就重新 `get`（工具描述已写死） |
-| 老页面（没有 `source_html`） | `get` 的非 full 视图与 `patch` 直接拒绝（只能重做）；`view="full"` 退回 `html` 列，带图的基本都会超 128KB |
+| 老页面（没有 `source_html`） | `get` 的非 full 视图与有正文改动的 `patch` 直接拒绝（只能重做）；`patch(title/summary/tags=…)` 仍可用；`view="full"` 退回 `html` 列，带图的基本都会超 128KB |
 | `patch` 单次上限 | 50 个块 / CSS 64KB；nid 与 hash 必须匹配（防错位） |
 
 ### 8.6 其他
@@ -748,3 +751,8 @@ Vue 侧也会收到 `artifacts` 字段，v1 最低要求是**不炸 + 能看**�
   - 决定：`ArtifactViewModel` 加 `keyword` + `search()`，`load` / `loadMore` 带上；列表态页头搜索框复用 `TransientSearchPanel`（不传 `fields`，不做字段多选），与标签筛选 AND；空态文案区分「暂无内容 / 未找到匹配的页面」。词云态仍是本地高亮标签（同一个搜索入口，按 `mode` 分流）。不做正文检索：灵阅没有 `content` 列，`summary` 是模型写的一句话，搜 HTML 需要新增纯文本列 + 回填，留到有真实需求再说。
   - 影响文件：`client/xHelper/xHelper/Shared/ViewModels/ArtifactViewModel.swift`（+`keyword` / `search` / 代际守卫，两处 `listArtifacts` 带 `keyword`）、`Views/BrowsePanelView.swift`（页头入口改为列表/词云都在、按 `mode` 分流面板与草稿）、`Views/ArtifactListView.swift`（空态文案）、`ViewModels/DocumentViewModel.swift`（同构的 load/loadMore 代际守卫）。
   - 副作用：查询串统一走新增的 `Extensions/String+URLQuery.swift`（`urlQueryEscaped` 减掉 `& = + ? ;`），替换 `APIClient` 里全部手写 `.urlQueryAllowed`；浏览器地址栏兜底搜索与 `AppBrowserWebView.searchURL` 一并收口（搜「A&B」不再被截断）。
+- **2026-11-07 · patch 支持改标题/摘要 + 工具与「灵阅」对齐**
+  - 起因：改一句摘要也得 `get(full)` + `create` 整页重传；且模型在工具目录里看不到 `html` 就是用户说的「灵阅」，对不上号。
+  - 决定：`patch` 加可选 `title` / `summary`（不传＝不动，空串/超 80·200 字拒绝）；纯元数据走单条 `UPDATE`，老页面也能改，与块编辑可合并成同一条 `UPDATE`。
+  - 决定：`Catalog().ShortDesc` 与 `Description` 写明「灵阅就是它」；`create` 描述补「只想改标题/摘要用 patch」。
+  - 影响文件：`tool/html_artifact.go`（patch 参数/校验/结果、`Catalog`/`Description`/`create` 描述）+测试、`service/artifact_repo.go`（`SetTags` → `SetMeta`、`UpdateIfSourceUnchanged` 加 title/summary）+测试、`fine-grained-edit.md`、本文件。

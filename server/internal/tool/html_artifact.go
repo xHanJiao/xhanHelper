@@ -76,11 +76,11 @@ func NewHTMLArtifactTool(repo *service.ArtifactRepo, images *service.ImageStore)
 func (t *HTMLArtifactTool) Name() string { return "html" }
 
 func (t *HTMLArtifactTool) Description() string {
-	return "生成、修改、读取、删除可在右栏（灵阅）打开的 HTML 页面，用来做排版本身承载信息的内容（对比表、时间线、一页纸总结、图文混排、仪表盘式汇总）。每页必须带 1–5 个标签，用于灵阅的词云与筛选。"
+	return "生成、修改、读取、删除可在右栏（灵阅）打开的 HTML 页面。**用户说的「灵阅」就是这个工具**（也叫他手账页/那张页/右栏那个页面），不是 document、note 或文件。用来做排版本身承载信息的内容（对比表、时间线、一页纸总结、图文混排、仪表盘式汇总）。每页必须带 1–5 个标签，用于灵阅的词云与筛选。"
 }
 
 func (t *HTMLArtifactTool) Catalog() (CatalogEntry, bool) {
-	return CatalogEntry{ShortDesc: "生成/改/读/删可打开的 HTML 页面（对比/时间线/总结），每页带 1–5 个标签", Funcs: []string{"create", "list", "get", "patch"}, Others: "删除页面、标签（list_tags）"}, true
+	return CatalogEntry{ShortDesc: "灵阅：生成/改/读/删右栏可打开的 HTML 页面（对比/时间线/总结），每页带 1–5 个标签", Funcs: []string{"create", "list", "get", "patch"}, Others: "删除页面、标签（list_tags）"}, true
 }
 
 // ReadOnlyFuncs — `list` / `get` / `list_tags` 只读，plan 模式也能用；`create` / `patch` / `delete` 写库。
@@ -93,14 +93,14 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 		Name:    "create",
 		Display: "生成页面",
 		Description: strings.Join([]string{
-			"生成一页 HTML 并存入会话，聊天里会显示一张可点开的卡片。",
+			"生成一页 HTML（即「灵阅」页面）并存入会话，聊天里会显示一张可点开的卡片。",
 			"只在「排版本身承载信息」时用：多列对比、时间线、一页纸总结、图文混排、仪表盘式汇总。",
 			"不要用：纯文字、代码、短列表、单张表、需要用户复制走的内容——这些直接用 markdown。内容少于 200 字不要用。",
 			"拿不准就不要用。一次只生成一张，需要多张先问用户。",
 			"调用之后，正文只写结论/推荐/下一步，不要再用 markdown 复述页面里的内容。",
 			"用户说「再改改 / 换版式 / 调一下样式」时，**不要新建**。改版按改动大小选动作：① 改文字/数字/换图 → html.get(view=\"outline\") 找 nid → html.patch；② 加/删段落与图片 → html.patch(insert / remove)；③ 改颜色/字体/间距 → html.get(view=\"style\") → html.patch(style=…)；④ 只有重排版式、整页换结构才 html.get(view=\"full\") 后带 artifact_id 调 create 整页覆盖。**不要为改一句话重传整页。**不知道是哪一页就先 html.list 找 id（换了窗口、上下文里没有都算）。只有在没有旧页、确实要做新的一页时才不传 artifact_id。",
 			"get 读回的 HTML 里图片是 `image:<id>` 引用，改完原样留着即可，服务端会重新内联。",
-			"**改版时不要传 title / summary**：它们描述的是「这一页是什么」，不是「这次改了什么」。不传会自动沿用旧页的标题和摘要。只有整页主题真的变了（比如三页变四页）才传，传了也必须是一句话的整页摘要，别写「本次修改/其余沿用上一版」这类修改记录。",
+			"**改版时不要顺手传 title / summary**：它们描述的是「这一页是什么」，不是「这次改了什么」。不传会自动沿用旧页的标题和摘要。只想改标题或摘要？用 html.patch(title=… / summary=…)，不用整页重传。只有整页主题真的变了（比如三页变四页）才在 create 里传，传了也必须是一句话的整页摘要，别写「本次修改/其余沿用上一版」这类修改记录。",
 			"页面要求：按 760px 宽设计、不要横向滚动。body 只放底色，内容放进自己的容器（如 .page{width:100%;max-width:760px;margin:0 auto;padding:...}）；不要给 body 写 width/max-width/margin——渲染器会在外层保留桌面底色，并把容器限制在 760px 内。可以内联 <style>，但不要写 script、iframe，也不要用外链图片或字体（会被删除）。",
 			fmt.Sprintf("放用户图片：先用 image.list_images 拿 id（scope=turn 看用户本轮发的图），或 image.search_images 按描述搜，再在 HTML 里写 <img src=\"image:<id>\" alt=\"...\">。服务端会把图片压到适合屏幕的尺寸（最长边 %d）再内联进页面，别自己写 base64、也不用担心原图多大。图片只能放 <img> 里，不能做 CSS 背景图（url(image:...) 会被拒绝）。单页最多 %d 张不同图片（同一张重复引用只算一张）且内联后的图片总量 ≤%dMB。", service.InlineMaxEdge, maxInlineImages, htmlsanitize.MaxInlineBytes>>20),
 			"观感参考（手账只是其中一种，别套模板、别固定风格）：手账风＝米色纸底 + 胶带/时间轴 + 手写感标题；对比页＝两栏并排 + 色块区分优劣；时间线＝左侧时间列 + 竖向连线；一页纸总结＝大标题 + 三块要点。留白充足、统一配色，别做满屏边框。",
@@ -189,12 +189,13 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 		Name:    "patch",
 		Display: "局部修改页面",
 		Description: strings.Join([]string{
-			"按块或样式做局部修改，不重传整页。改文字、数字、换图、改 CSS 必须用它。",
+			"按块、样式或元数据做局部修改，不重传整页。改文字、数字、换图、改 CSS、改标题/摘要都必须用它。",
 			"流程：html.get(view=\"outline\") 拿 nid + hash → patch。改样式：get(view=\"style\") 拿 css + hash → patch(style=…)；这页还没有 <style> 时 hash 为空，style_hash 留空即可新建。",
+			"改标题/摘要：直接传 title / summary（不传＝沿用旧页，传空串会被拒绝）；不用读整页。可以和 ops / style / tags 放在同一次调用里。",
 			"ops 每项：{nid, hash, text} 改文字；{nid, hash, image, alt} 换图。hash 必须原样带上（页面版本凭证）。",
 			"加一段 / 加一张图：insert [{after, hash, html}]，after 是锚点块 nid，html 给块级片段（图片写 <img src=\"image:<id>\">，并复用页面已有的 class），服务端会清洗并内联。",
 			"删一段 / 删一张图：remove [{nid, hash}]。删完会顺手收掉因此变空的容器（figure / div 相框、空表格骨架），不用自己再删壳；反过来，删掉某格/某卡里唯一的内容，那一格/那张卡也会一起消失。",
-			"ops / insert / remove / style 至少给一个；单次最多 50 op / 10 段插入 / 20 块删除。",
+			"ops / insert / remove / style / title / summary / tags 至少给一个；单次最多 50 op / 10 段插入 / 20 块删除。",
 			"报「页面已变」说明另一处改过（或你拿的是旧 hash）：重新 get 拿新 nid/hash，别拿旧值硬试。",
 			"rich=true 的块含高亮/链接等内联格式，patch 文字会压平格式，服务端会拒绝；这种块只能 get(view=\"full\") 后整页重写。",
 			"只有语义块（标题/段落/列表项/表格单元格/图注/引用）有 nid；div 里的文字不在清单里，改它请 get(view=\"full\") 整页重写，别拿不存在的 nid 反复试。",
@@ -260,6 +261,14 @@ func (t *HTMLArtifactTool) Functions() []FuncSchema {
 				"style_hash": map[string]interface{}{
 					"type":        "string",
 					"description": "get(view=\"style\") 返回的 hash，原样带上；页面还没有 <style> 时留空（会新建一段）",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": fmt.Sprintf("新的页面标题，≤%d 字。不传＝沿用旧标题；传空串会被拒绝", maxArtifactTitleLen),
+				},
+				"summary": map[string]interface{}{
+					"type":        "string",
+					"description": fmt.Sprintf("新的一句话摘要，≤%d 字。不传＝沿用旧摘要；传空串会被拒绝。别写「本次改了什么」", maxArtifactSumLen),
 				},
 				"tags": map[string]interface{}{
 					"type":        "string",
@@ -509,6 +518,8 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		} `json:"remove"`
 		Style     *string `json:"style"`
 		StyleHash string  `json:"style_hash"`
+		Title     *string `json:"title"`
+		Summary   *string `json:"summary"`
 		Tags      *string `json:"tags"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
@@ -518,8 +529,8 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	if id == "" {
 		return &Result{Success: false, Error: "artifact_id 必填（先用 html.list 查）"}
 	}
-	if len(req.Ops) == 0 && len(req.Insert) == 0 && len(req.Remove) == 0 && req.Style == nil && req.Tags == nil {
-		return &Result{Success: false, Error: "ops / insert / remove / style / tags 至少给一个"}
+	if len(req.Ops) == 0 && len(req.Insert) == 0 && len(req.Remove) == 0 && req.Style == nil && req.Title == nil && req.Summary == nil && req.Tags == nil {
+		return &Result{Success: false, Error: "ops / insert / remove / style / title / summary / tags 至少给一个"}
 	}
 	if len(req.Ops) > maxPatchOps {
 		return &Result{Success: false, Error: fmt.Sprintf("一次最多改 %d 个块（收到 %d 个）", maxPatchOps, len(req.Ops))}
@@ -532,6 +543,28 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	}
 	if req.Style != nil && len(*req.Style) > maxStyleBytes {
 		return &Result{Success: false, Error: fmt.Sprintf("样式太长（%d 字节，上限 %d）", len(*req.Style), maxStyleBytes)}
+	}
+	// 标题/摘要：不传＝沿用旧页；传空串不算「清空」（两列都不允许空），直接拒绝。
+	var titleParam, summaryParam *string
+	if req.Title != nil {
+		v := strings.TrimSpace(*req.Title)
+		if v == "" {
+			return &Result{Success: false, Error: "title 不能为空；不想改标题就别传 title"}
+		}
+		if utf8.RuneCountInString(v) > maxArtifactTitleLen {
+			return &Result{Success: false, Error: fmt.Sprintf("title 超过 %d 字", maxArtifactTitleLen)}
+		}
+		titleParam = &v
+	}
+	if req.Summary != nil {
+		v := strings.TrimSpace(*req.Summary)
+		if v == "" {
+			return &Result{Success: false, Error: "summary 不能为空；不想改摘要就别传 summary"}
+		}
+		if utf8.RuneCountInString(v) > maxArtifactSumLen {
+			return &Result{Success: false, Error: fmt.Sprintf("summary 超过 %d 字", maxArtifactSumLen)}
+		}
+		summaryParam = &v
 	}
 
 	a, err := t.repo.GetForRead(ec.Ctx, ec.UserID, id)
@@ -600,7 +633,15 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 			return &Result{Success: false, Error: patchErrorMessage(err)}
 		}
 	}
-	// 两处返回同一组字段（没有 tip 的幂等分支也不例外）
+	// 两处返回同一组字段（没有 tip 的幂等分支也不例外）；title/summary 取本次新值，
+	// 让客户端卡片就地更新。
+	titleOut, summaryOut := a.Title, a.Summary
+	if titleParam != nil {
+		titleOut = *titleParam
+	}
+	if summaryParam != nil {
+		summaryOut = *summaryParam
+	}
 	patchResult := func(tagsOut string, pageBytes int, changedNow bool, tip string) *Result {
 		inserted, removed := len(req.Insert), len(req.Remove)
 		updated := changed
@@ -609,8 +650,8 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		}
 		out := map[string]any{
 			"artifact_id":   id,
-			"title":         a.Title,
-			"summary":       a.Summary,
+			"title":         titleOut,
+			"summary":       summaryOut,
 			"tags":          tagsOut,
 			"updated":       updated,
 			"inserted":      inserted,
@@ -635,21 +676,30 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		tagsOut = v
 		tagsChanged = v != a.Tags
 	}
+	// 只有显式传了才写这一列；不传就完全不碰，避免把并发改的结果静默写回旧值。
+	var tagsArg *string
+	if req.Tags != nil {
+		tagsArg = &tagsOut
+	}
 
 	if newSrc == src {
-		if !tagsChanged {
+		if !tagsChanged && titleParam == nil && summaryParam == nil {
 			// 幂等重放（同一个 patch 又来一次）：内容没变，直接当成功
 			return patchResult(a.Tags, len(src), false, "")
 		}
-		ok, err := t.repo.SetTags(ec.Ctx, ec.UserID, id, tagsOut)
+		ok, err := t.repo.SetMeta(ec.Ctx, ec.UserID, id, titleParam, summaryParam, tagsArg)
 		if err != nil {
-			log.Printf("[html] patch tags id=%s user=%s: %v", id, ec.UserID, err)
-			return &Result{Success: false, Error: fmt.Sprintf("保存标签失败: %v", err)}
+			log.Printf("[html] patch meta id=%s user=%s: %v", id, ec.UserID, err)
+			return &Result{Success: false, Error: fmt.Sprintf("保存标题/摘要/标签失败: %v", err)}
 		}
 		if !ok {
 			return &Result{Success: false, Error: "页面已变（另一处删除了它），请重新 html.list 确认"}
 		}
-		return patchResult(tagsOut, len(src), false, "标签已更新")
+		tip := "标签已更新"
+		if titleParam != nil || summaryParam != nil {
+			tip = "已更新标题/摘要；正文不用重传"
+		}
+		return patchResult(tagsOut, len(src), false, tip)
 	}
 
 	// 重新清洗 + 内联：patch 改的是原文，成品也要跟着重算
@@ -661,13 +711,9 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		return &Result{Success: false, Error: err.Error()}
 	}
 
-	// 只有显式传了 tags 才把标签并进这次 UPDATE；不传就完全不碰 tags 列，
-	// 避免把并发「只改标签」的结果静默写回旧值。
-	var tagsParam *string
-	if req.Tags != nil {
-		tagsParam = &tagsOut
-	}
-	ok, err := t.repo.UpdateIfSourceUnchanged(ec.Ctx, ec.UserID, id, src, clean, newSrc, tagsParam)
+	// 只有显式传了才把元数据并进这次 UPDATE；不传就完全不碰那一列，
+	// 避免把并发「只改元数据」的结果静默写回旧值。
+	ok, err := t.repo.UpdateIfSourceUnchanged(ec.Ctx, ec.UserID, id, src, clean, newSrc, titleParam, summaryParam, tagsArg)
 	if err != nil {
 		log.Printf("[html] patch save id=%s user=%s: %v", id, ec.UserID, err)
 		return &Result{Success: false, Error: fmt.Sprintf("保存页面失败: %v", err)}

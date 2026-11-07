@@ -974,6 +974,132 @@ func TestHTMLArtifactPatchRequiresOpsOrStyle(t *testing.T) {
 	}
 }
 
+// 只改标题/摘要：不用读整页、不用传 html，正文与标签必须原样不动。
+func TestHTMLArtifactPatchMetaOnly(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-meta"}
+
+	res := tl.Execute(ec, "create", artArgs("旧标题", "旧摘要", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	before := mustLoad(t, db, id)
+
+	args, _ := json.Marshal(map[string]any{"artifact_id": id, "title": "新标题", "summary": "新摘要"})
+	pres := tl.Execute(ec, "patch", args)
+	if !pres.Success {
+		t.Fatalf("patch meta failed: %s", pres.Error)
+	}
+	var out struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(pres.Data, &out); err != nil {
+		t.Fatalf("decode patch result: %v", err)
+	}
+	if out.Title != "新标题" || out.Summary != "新摘要" {
+		t.Fatalf("结果应回新标题/摘要（客户端卡片靠它就地更新）: %+v", out)
+	}
+
+	got := mustLoad(t, db, id)
+	if got.Title != "新标题" || got.Summary != "新摘要" {
+		t.Fatalf("库里没更新: title=%q summary=%q", got.Title, got.Summary)
+	}
+	if got.SourceHTML != before.SourceHTML || got.HTML != before.HTML || got.Tags != before.Tags {
+		t.Fatal("只改元数据不该动正文/成品/标签")
+	}
+}
+
+// 摘要与正文同一次 patch：两条路径都要落库，不能只改一边。
+func TestHTMLArtifactPatchMetaWithContent(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-meta-content"}
+
+	res := tl.Execute(ec, "create", artArgs("旧标题", "旧摘要", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+	t1 := outlineByNID(t, getOutlineResult(t, tl, id), "t1")
+
+	args, _ := json.Marshal(map[string]any{
+		"artifact_id": id,
+		"summary":     "改完的摘要",
+		"ops":         []map[string]string{{"nid": "t1", "hash": t1.Hash, "text": "改过的标题"}},
+	})
+	if pres := tl.Execute(ec, "patch", args); !pres.Success {
+		t.Fatalf("patch 正文+摘要 failed: %s", pres.Error)
+	}
+
+	got := mustLoad(t, db, id)
+	if got.Summary != "改完的摘要" {
+		t.Fatalf("摘要没更新: %q", got.Summary)
+	}
+	if !strings.Contains(got.SourceHTML, "改过的标题") {
+		t.Fatal("正文没更新")
+	}
+	if got.Title != "旧标题" {
+		t.Fatalf("没传 title 就不该动它: %q", got.Title)
+	}
+}
+
+// 空串/超长直接拒绝，别把「想清空」写成空标题，也别写进库。
+func TestHTMLArtifactPatchMetaValidation(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1", ConvID: "c1", TurnID: "turn-meta-bad"}
+
+	res := tl.Execute(ec, "create", artArgs("旧标题", "旧摘要", samplePage))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	id := artifactIDFrom(t, res)
+
+	cases := []map[string]any{
+		{"artifact_id": id, "title": "   "},
+		{"artifact_id": id, "summary": ""},
+		{"artifact_id": id, "title": strings.Repeat("长", maxArtifactTitleLen+1)},
+		{"artifact_id": id, "summary": strings.Repeat("长", maxArtifactSumLen+1)},
+	}
+	for i, c := range cases {
+		args, _ := json.Marshal(c)
+		if pres := tl.Execute(ec, "patch", args); pres.Success {
+			t.Fatalf("case %d 应拒绝: %+v", i, c)
+		}
+	}
+	got := mustLoad(t, db, id)
+	if got.Title != "旧标题" || got.Summary != "旧摘要" {
+		t.Fatalf("被拒的 patch 不该动库: %q / %q", got.Title, got.Summary)
+	}
+}
+
+// 老页面（没有 source_html）改不了正文，但标题/摘要/标签不依赖原文，应该仍能改。
+func TestHTMLArtifactPatchMetaOnLegacyPage(t *testing.T) {
+	tl, db, _, cleanup := setupArtifactTool(t)
+	defer cleanup()
+
+	legacy := &model.Artifact{
+		ID: "legacy-meta", UserID: "u1", ConversationID: "c1",
+		Title: "旧页", Summary: "旧摘要", Tags: "手账", HTML: samplePage,
+	}
+	if err := db.Create(legacy).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]any{"artifact_id": "legacy-meta", "title": "新标题", "summary": "新摘要"})
+	pres := tl.Execute(&ExecuteContext{Ctx: context.Background(), UserID: "u1"}, "patch", args)
+	if !pres.Success {
+		t.Fatalf("老页面改元数据应成功: %s", pres.Error)
+	}
+	got := mustLoad(t, db, "legacy-meta")
+	if got.Title != "新标题" || got.Summary != "新摘要" || got.Tags != "手账" {
+		t.Fatalf("元数据没更新对: %+v", got)
+	}
+}
+
 // 换图：patch 图片块后，原文保留 image: 引用、成品重新内联成 data:。
 func TestHTMLArtifactPatchImage(t *testing.T) {
 	tl, db, images, cleanup := setupArtifactTool(t)

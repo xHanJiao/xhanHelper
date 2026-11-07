@@ -76,7 +76,7 @@ func NewHTMLArtifactTool(repo *service.ArtifactRepo, images *service.ImageStore)
 func (t *HTMLArtifactTool) Name() string { return "html" }
 
 func (t *HTMLArtifactTool) Description() string {
-	return "生成、修改、读取、删除可在右栏（灵阅）打开的 HTML 页面。**用户说的「灵阅」就是这个工具**（也叫他手账页/那张页/右栏那个页面），不是 document、note 或文件。用来做排版本身承载信息的内容（对比表、时间线、一页纸总结、图文混排、仪表盘式汇总）。每页必须带 1–5 个标签，用于灵阅的词云与筛选。"
+	return "生成、修改、读取、删除可在右栏（灵阅）打开的 HTML 页面。用户说的「灵阅」就是这个工具（也指手账页/那张页/右栏那个页面），不是 document、note 或文件。用来做排版本身承载信息的内容（对比表、时间线、一页纸总结、图文混排、仪表盘式汇总）。每页必须带 1–5 个标签，用于灵阅的词云与筛选。"
 }
 
 func (t *HTMLArtifactTool) Catalog() (CatalogEntry, bool) {
@@ -578,8 +578,8 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 	src := a.SourceHTML
 	hasStructure := len(req.Ops) > 0 || len(req.Insert) > 0 || len(req.Remove) > 0
 	if src == "" && (hasStructure || req.Style != nil) {
-		// 只有改标签不需要原文；改内容只能整页重建（create 带 artifact_id）
-		return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块改；改标签可以直接传 tags，改内容请整页重建"}
+		// 只有改元数据（title/summary/tags）不需要原文；改内容只能整页重建（create 带 artifact_id）
+		return &Result{Success: false, Error: "这页是早期格式（没有原文），没法按块改；改标签/标题/摘要可以直接传，改内容请整页重建"}
 	}
 	if req.Style != nil && strings.TrimSpace(req.StyleHash) == "" {
 		// 页面本来没有 <style> 时允许新建；有旧样式就必须带 hash，否则并发改会互相覆盖
@@ -695,9 +695,20 @@ func (t *HTMLArtifactTool) patch(ec *ExecuteContext, args json.RawMessage) *Resu
 		if !ok {
 			return &Result{Success: false, Error: "页面已变（另一处删除了它），请重新 html.list 确认"}
 		}
-		tip := "标签已更新"
+		// tip 按实际改了什么拼，别让同一次里的标签变更在提示语里消失
+		changedParts := make([]string, 0, 3)
+		if titleParam != nil {
+			changedParts = append(changedParts, "标题")
+		}
+		if summaryParam != nil {
+			changedParts = append(changedParts, "摘要")
+		}
+		if tagsChanged {
+			changedParts = append(changedParts, "标签")
+		}
+		tip := "已更新" + strings.Join(changedParts, "、")
 		if titleParam != nil || summaryParam != nil {
-			tip = "已更新标题/摘要；正文不用重传"
+			tip += "；正文不用重传"
 		}
 		return patchResult(tagsOut, len(src), false, tip)
 	}

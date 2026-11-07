@@ -427,6 +427,15 @@ func TestArtifactRepoTagsGraphAndHelpers(t *testing.T) {
 	if err != nil || a.Tags != "手账,旅行,日本" || a.Title != "a" {
 		t.Fatalf("只应改标签，实际 %+v err=%v", a, err)
 	}
+	// 只改标题/摘要：tags 传 nil 必须原样保留
+	newTitle, newSummary := "新标题", "新摘要"
+	if ok, err := repo.SetMeta(ctx, "u1", "g1", &newTitle, &newSummary, nil); err != nil || !ok {
+		t.Fatalf("SetMeta title/summary: ok=%v err=%v", ok, err)
+	}
+	a, err = repo.GetMeta(ctx, "u1", "g1")
+	if err != nil || a.Title != "新标题" || a.Summary != "新摘要" || a.Tags != "手账,旅行,日本" {
+		t.Fatalf("只应改标题/摘要、标签不动，实际 %+v err=%v", a, err)
+	}
 	badTags := "x"
 	if ok, err := repo.SetMeta(ctx, "u1", "g4", nil, nil, &badTags); err != nil || ok {
 		t.Fatalf("越权改标签应 false，ok=%v err=%v", ok, err)

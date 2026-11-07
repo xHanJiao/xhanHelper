@@ -1010,6 +1010,33 @@ func TestHTMLArtifactPatchMetaOnly(t *testing.T) {
 	if got.SourceHTML != before.SourceHTML || got.HTML != before.HTML || got.Tags != before.Tags {
 		t.Fatal("只改元数据不该动正文/成品/标签")
 	}
+
+	// 再单独改摘要（同一条 SetMeta 分支）：title 必须原样保留
+	args, _ = json.Marshal(map[string]any{"artifact_id": id, "summary": "只改摘要"})
+	if pres := tl.Execute(ec, "patch", args); !pres.Success {
+		t.Fatalf("只改摘要 failed: %s", pres.Error)
+	}
+	got = mustLoad(t, db, id)
+	if got.Title != "新标题" || got.Summary != "只改摘要" {
+		t.Fatalf("单列更新串了: title=%q summary=%q", got.Title, got.Summary)
+	}
+
+	// 同一次既改标题又改标签：tip 要把两项都说出来（模型主要读 tip）
+	args, _ = json.Marshal(map[string]any{"artifact_id": id, "title": "又一版", "tags": "旅行"})
+	pres = tl.Execute(ec, "patch", args)
+	if !pres.Success {
+		t.Fatalf("标题+标签 failed: %s", pres.Error)
+	}
+	var mixed struct {
+		Tip  string `json:"tip"`
+		Tags string `json:"tags"`
+	}
+	if err := json.Unmarshal(pres.Data, &mixed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if mixed.Tags != "旅行" || !strings.Contains(mixed.Tip, "标题") || !strings.Contains(mixed.Tip, "标签") {
+		t.Fatalf("tip 应同时提到标题与标签: %+v", mixed)
+	}
 }
 
 // 摘要与正文同一次 patch：两条路径都要落库，不能只改一边。

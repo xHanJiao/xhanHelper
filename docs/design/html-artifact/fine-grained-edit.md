@@ -141,7 +141,7 @@ columns(n, [blocks]) / tag / divider / footer
 
 - `html`：成品（模板 + 内容 + 图片已内联），给客户端/分享；
 - `source_html`：模型原文（图片是 `image:<id>`），细粒度编辑的唯一操作对象；
-- `title` / `summary`：工具可改，走 `patch(title=… / summary=…`（2026-11-07 起）：不传＝不动，纯元数据修改不碰正文；
+- `title` / `summary`：工具可改，走 `patch(title=… / summary=…)`（2026-11-07 起）：不传＝不动，纯元数据修改不重写正文；
 - `share_token` / `deleted_at`：不变。
 
 **新增列？没有。**
@@ -219,7 +219,7 @@ columns(n, [blocks]) / tag / divider / footer
 ```
 
 - `ops` / `insert` / `remove` / `style` / `title` / `summary` / `tags` 至少给一个；
-- `title` / `summary`（可选，2026-11-07）：只改元数据，不传＝沿用旧值；trim 后不允许空串或超过 80 / 200 字。可以和块编辑放在同一次请求里（同一条 UPDATE 落库，仍带 `source_html` 乐观锁）；只改元数据时完全不读、不写正文，**老页面（没有 `source_html`）也能改**；
+- `title` / `summary`（可选，2026-11-07）：只改元数据，不传＝沿用旧值；trim 后不允许空串或超过 80 / 200 字。可以和块编辑放在同一次请求里（同一条 UPDATE 落库，仍带 `source_html` 乐观锁）；只改元数据时不重写正文（仍会读一次页面行做归属校验、取旧值），**老页面（没有 `source_html`）也能改**；
 - `tags`（可选，2026-10-31）：整套替换标签，1–5 个，空串拒绝；不参与块编辑的 hash 校验，也不触发正文重新清洗（只改 `tags` 列）；
 - `insert`：插到 `after` 块的后面；`html` 是**块级片段**（figure/div/p/img…），图片写 `image:<id>`，服务端统一清洗 + 内联；单次 ≤10 段；
 - `remove`：删掉整块；单次 ≤20 块。删完从该块的父节点向上**收缩变空的容器**（判据见 §4.5「空容器」）：删图不留空相框 + 孤立图注，删光单元格不留 `<table>` 骨架；同一 figure 里还有别的图就不动；
@@ -494,6 +494,6 @@ patch
   - 影响文件：`tool/html_artifact.go`（patch 的 `tags` 参数、`validateArtifactTags`、`SetTags` 分支）+测试、`service/artifact_repo.go`（+`SetTags`）、`design.md`、本文件。
 - **2026-11-07 · patch 支持改标题/摘要（工具与灵阅对齐）**
   - 起因：`patch` 只有 `tags` 能单独改，标题/摘要想改一句也必须 `get(full)` + `create` 整页重传；灵阅只有 LLM 能写，等于这两列改起来代价极大。同时模型在工具目录里看不到 `html` 就是「灵阅」，用户说「改下灵阅那篇的摘要」时对不上号。
-  - 决定：`patch` 加可选 `title` / `summary`，不传＝不动，trim 后空串拒绝，长度沿用 80 / 200。与块编辑可同时给（同一条 `UPDATE` + `source_html` 乐观锁）；纯元数据走单条 `UPDATE`（`SetTags` 扩成 `SetMeta`），不读正文，老页面也能改。
+  - 决定：`patch` 加可选 `title` / `summary`，不传＝不动，trim 后空串拒绝，长度沿用 80 / 200。与块编辑可同时给（同一条 `UPDATE` + `source_html` 乐观锁）；纯元数据走单条 `UPDATE`（`SetTags` 扩成 `SetMeta`），不重写正文，老页面也能改。
   - 决定：`Catalog().ShortDesc` 与工具 `Description` 明确写「灵阅就是它」，`create` 描述补「只想改标题/摘要用 patch，不用整页重传」。
   - 影响文件：`tool/html_artifact.go`（`patch` 参数/校验/结果、`Catalog`/`Description`/`create` 描述）+测试、`service/artifact_repo.go`（`SetTags` → `SetMeta`、`UpdateIfSourceUnchanged` 加 title/summary）+测试、`design.md`、本文件。

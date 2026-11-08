@@ -728,10 +728,13 @@ struct VoiceConfigInfo: Codable {
     let speaker: String
     let language: String
     let maxSeconds: Int
+    /// C 模式单次会话上限（秒）；空闲收口由客户端判定
+    let sessionSeconds: Int
 
     enum CodingKeys: String, CodingKey {
         case enabled, ready, speaker, language
         case maxSeconds = "max_seconds"
+        case sessionSeconds = "session_seconds"
     }
 }
 

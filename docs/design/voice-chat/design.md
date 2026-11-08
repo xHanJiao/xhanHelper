@@ -178,7 +178,8 @@ voice:
     endpoint: wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
     resource_id: volc.seedasr.sauc.duration
     language: zh-CN
-    max_seconds: 60
+    max_seconds: 60    # A 模式单轮上限
+    session_seconds: 600 # C 模式单次会话上限（按音频时长计费，静音也计时）
     timeout_seconds: 30
     result_type: full   # A 模式；C 模式由服务端强制 single（增量，只带当前分句）
     end_window_size: 800 # 静音判停阈值 ms，范围 [300,5000]
@@ -203,6 +204,16 @@ C 模式说明：
 - `mode=continuous` 时服务端强制 `result_type=single`，**不再下发 `result`**，只下发 `sentence`，避免两套累计逻辑并存。
 - `sentence` 只在 `definite=true` 时发；重复文本去重；连接结束时的 `final` 只含最后一句，也会作为 `sentence` 补出残句。
 - 一条连接可连续识别多句（实测 83 秒 / 18 句不断），退出语音模式才发 `end`。
+
+### C1 连续对话（macOS）
+
+- 输入栏新增「连续对话」按钮（`waveform.circle`）：点一下开麦，之后一直收音频。
+- 每收到一条 `sentence` 就**直接提交一轮对话**（`speakReply=true`，回复自动朗读）；
+  上一轮还在跑时先 `stopStreaming()` + `stopSpeaking()`，避免两个 ReAct 循环交叉写库。
+- 会话上限取 `/api/voice/config` 的 `session_seconds`（默认 600 秒）：到点提示并收口。
+- 空闲收口：30 秒没有新分句（即没人说话）自动结束会话，避免占并发、白扣音频时长。
+- 结束/掉线都会发 `cancel` 或等负包结果后关连接；`limit` 后立即停采集（负包之后不能再发音频）。
+- `shortcut:` 连接意外断开不自动重连，10 分钟会话内掉线需用户再点一次；真机常掉再加重连。
 
 ## 客户端
 
@@ -299,3 +310,9 @@ location = /api/voice/asr {
   - `voice.asr` 新增 `result_type` / `end_window_size` 配置（默认 `full` / `800`），`cmd/voice-smoke`
     加 `-result-type` / `-max-seconds` / `-end-window` 三个 flag 用于参数实验。
   - 执行计划定为 C0 → C1（macOS 连续流）→ C2（全屏环两端）→ C3a（macOS 真打断）→ C3b（PWA 点击打断）。
+- 2026-11-08（C1，仅 macOS）：
+  - `voice.asr.session_seconds`（默认 600）/ `/api/voice/config.session_seconds`：C 模式单次会话上限；
+    `mode=continuous` 的连接上限直接取它，会话内不再因 `max_seconds` 断连。
+  - 客户端新增「连续对话」按钮：常开麦，每收到 `sentence` 直接提交一轮并朗读回复；
+    30 秒无新分句自动收口；到会话上限提示后收起。
+  - 连续模式提交前若上一轮仍在流式，先停生成再发新一句（与 C3 的 barge-in 不是同一件事）。

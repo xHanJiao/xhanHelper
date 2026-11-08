@@ -176,6 +176,15 @@ struct ChatView: View {
                 viewModel.pendingVoiceReply = true
                 inputFocused = true
             }
+            // C 模式：每句判停就直接提交一轮；上一轮还在跑就先停掉，避免两个 loop 交叉写库
+            voice.onSentence = { text in
+                if viewModel.isStreaming {
+                    voice.stopSpeaking()
+                    viewModel.stopStreaming()
+                }
+                viewModel.sendMessage(text, baseURL: baseURL, token: token,
+                                      agentId: selectedAgentID ?? agentId, speakReply: true)
+            }
             viewModel.onAssistantReplyDone = { text in
                 Task { await voice.speak(text: text, baseURL: baseURL, token: token) }
             }
@@ -646,9 +655,25 @@ struct ChatView: View {
             IconButton(
                 visibility: .always,
                 context: ctx,
+                symbol: voice.continuousActive ? "waveform.circle.fill" : "waveform.circle",
+                tint: voice.continuousActive ? .red : Color("appAccent"),
+                isEnabled: !voice.isBusy,
+                tooltip: voice.continuousActive ? "结束连续对话" : "连续对话",
+                pulsing: voice.state == .finishing,
+                action: {
+                    if voice.continuousActive {
+                        voice.stopContinuous()
+                    } else {
+                        Task { await voice.startContinuous(baseURL: baseURL, token: token) }
+                    }
+                }
+            )
+            IconButton(
+                visibility: .always,
+                context: ctx,
                 symbol: voice.isRecording ? "mic.fill" : "mic",
                 tint: voice.isRecording ? .red : Color("appAccent"),
-                isEnabled: !voice.isBusy,
+                isEnabled: !voice.isBusy && !voice.continuousActive,
                 tooltip: voice.isRecording ? "停止录音" : "语音输入",
                 pulsing: voice.state == .finishing,
                 action: {

@@ -29,7 +29,8 @@ type VoiceASRConfig struct {
 	Endpoint       string `yaml:"endpoint"`
 	ResourceID     string `yaml:"resource_id"`
 	Language       string `yaml:"language"`
-	MaxSeconds     int    `yaml:"max_seconds"` // 单条连接内的音频上限（按 16k/16bit 字节数折算）
+	MaxSeconds     int    `yaml:"max_seconds"`     // 单条连接内的音频上限（按 16k/16bit 字节数折算）
+	SessionSeconds int    `yaml:"session_seconds"` // C 模式（连续对话）单次会话上限；超过则客户端需重新开启
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	// 分句与返回方式：开启二遍识别后由服务端按静音判停，definite 分句才带最终文本。
 	ResultType    string `yaml:"result_type"`     // full=累计全量；single=增量（不返回之前分句）
@@ -76,6 +77,10 @@ func (v *VoiceConfig) ApplyDefaults() {
 	}
 	if v.ASR.MaxSeconds == 0 {
 		v.ASR.MaxSeconds = 60
+	}
+	// C 模式的会话上限：流式 ASR 按音频时长计费（静音也计时），不能无限开着麦
+	if v.ASR.SessionSeconds == 0 {
+		v.ASR.SessionSeconds = 600
 	}
 	if v.ASR.TimeoutSeconds == 0 {
 		v.ASR.TimeoutSeconds = 30
@@ -136,6 +141,9 @@ func mergeVoice(dst, src *VoiceConfig) {
 	}
 	if src.ASR.MaxSeconds != 0 {
 		dst.ASR.MaxSeconds = src.ASR.MaxSeconds
+	}
+	if src.ASR.SessionSeconds != 0 {
+		dst.ASR.SessionSeconds = src.ASR.SessionSeconds
 	}
 	if src.ASR.TimeoutSeconds != 0 {
 		dst.ASR.TimeoutSeconds = src.ASR.TimeoutSeconds

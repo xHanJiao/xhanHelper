@@ -20,18 +20,28 @@ final class VoiceChatService: ObservableObject {
 
     /// 识别出最终文本后回调（由 ChatView 填入输入框）。
     var onFinalTranscript: ((String) -> Void)?
+    /// C 模式：服务端下发一条已判停的分句，客户端直接提交一轮对话。
+    var onSentence: ((String) -> Void)?
 
     private var socket: URLSessionWebSocketTask?
     private var capture: VoiceAudioCapture?
     private var receiveTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var maxTimer: Task<Void, Never>?
+    private var sessionTask: Task<Void, Never>?
+    private var idleTask: Task<Void, Never>?
     private var player: AVAudioPlayer?
     /// start/cancel 竞态代次：cancel 或新 start 会让旧 start 的续体失效
     private var generation = 0
     /// TTS 请求代次：stopSpeaking 后迟到的合成结果不再播放
     private var speakEpoch = 0
     private var maxSeconds = 60
+    private var sessionSeconds = 600
+
+    /// C 模式（连续对话）会话进行中；state 为 .recording 表示正在收音频
+    @Published private(set) var continuousActive = false
+    /// 空闲多久没听到完整分句就结束会话（秒）
+    private let continuousIdleSeconds = 30
 
     var isRecording: Bool { state == .recording }
     var isBusy: Bool { state == .requestingPermission || state == .finishing }
@@ -48,6 +58,7 @@ final class VoiceChatService: ObservableObject {
             isAvailable = cfg.ready
             speaker = cfg.speaker
             maxSeconds = max(5, cfg.maxSeconds)
+            sessionSeconds = max(30, cfg.sessionSeconds)
         } catch {
             // 未配置/网络失败时静默隐藏按钮，不影响文字聊天
             isAvailable = false
@@ -58,7 +69,16 @@ final class VoiceChatService: ObservableObject {
     // MARK: 录音
 
     func start(baseURL: String, token: String) async {
-        guard state == .idle else { return }
+        await startSession(baseURL: baseURL, token: token, continuous: false)
+    }
+
+    /// C 模式：开麦后一直收音频，每收到一条已判停分句就通过 onSentence 提交一轮。
+    func startContinuous(baseURL: String, token: String) async {
+        await startSession(baseURL: baseURL, token: token, continuous: true)
+    }
+
+    private func startSession(baseURL: String, token: String, continuous: Bool) async {
+        guard state == .idle, !continuousActive else { return }
         guard !baseURL.isEmpty, !token.isEmpty else { return }
 
         generation += 1
@@ -79,12 +99,13 @@ final class VoiceChatService: ObservableObject {
             let api = APIClient(baseURL: baseURL, token: token)
             let ticket = try await api.createVoiceASRTicket().ticket
             guard gen == generation, state == .requestingPermission else { return }
-            guard let url = websocketURL(baseURL: baseURL, ticket: ticket) else {
+            guard let url = websocketURL(baseURL: baseURL, ticket: ticket, continuous: continuous) else {
                 fail("服务地址无效")
                 return
             }
             stopSpeaking()
             transcript = ""
+            continuousActive = continuous
             let task = URLSession.shared.webSocketTask(with: url)
             socket = task
             task.resume()
@@ -116,6 +137,11 @@ final class VoiceChatService: ObservableObject {
         do {
             try capture.start()
             state = .recording
+            if continuousActive {
+                armSessionLimit()
+                armIdleTimer()
+                return
+            }
             maxTimer?.cancel()
             maxTimer = Task { [weak self] in
                 guard let self else { return }
@@ -130,10 +156,24 @@ final class VoiceChatService: ObservableObject {
     }
 
     func stop() {
-        guard state == .recording else { return }
+        guard state == .recording, !continuousActive else { return }
         state = .finishing
         maxTimer?.cancel()
         maxTimer = nil
+        let tail = capture?.stop()
+        capture = nil
+        sendTailThenEnd(tail)
+        armFinishTimeout()
+    }
+
+    /// 结束 C 模式会话：先发负包，让服务端把最后一句吐完再随连接关闭一起收尾。
+    func stopContinuous() {
+        guard continuousActive, state == .recording else { return }
+        state = .finishing
+        sessionTask?.cancel()
+        sessionTask = nil
+        idleTask?.cancel()
+        idleTask = nil
         let tail = capture?.stop()
         capture = nil
         sendTailThenEnd(tail)
@@ -152,13 +192,62 @@ final class VoiceChatService: ObservableObject {
 
     func cancel() {
         generation += 1
+        continuousActive = false
+        cancelTimers()
         _ = capture?.stop()
         capture = nil
         sendControl("cancel")
         closeSocket()
+        state = .idle
+    }
+
+    // MARK: C 模式会话
+
+    /// 会话硬上限：按音频时长计费（静音也计时），到点必须收。
+    private func armSessionLimit() {
+        sessionTask?.cancel()
+        sessionTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.sessionSeconds))
+            guard !Task.isCancelled, self.continuousActive else { return }
+            self.stopContinuous()
+            ToastCenter.shared.show("语音会话已到上限（\(self.sessionSeconds / 60) 分钟），已结束")
+        }
+    }
+
+    /// 空闲收口：一直没人说话就别占着豆包并发、白扣音频时长。
+    private func armIdleTimer() {
+        idleTask?.cancel()
+        idleTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.continuousIdleSeconds))
+            guard !Task.isCancelled, self.continuousActive else { return }
+            self.stopContinuous()
+            ToastCenter.shared.show("\(self.continuousIdleSeconds) 秒没有听到说话，语音会话已结束")
+        }
+    }
+
+    private func cancelTimers() {
+        maxTimer?.cancel()
+        maxTimer = nil
+        sessionTask?.cancel()
+        sessionTask = nil
+        idleTask?.cancel()
+        idleTask = nil
         timeoutTask?.cancel()
         timeoutTask = nil
+    }
+
+    private func endContinuous(reason: String?) {
+        guard continuousActive else { return }
+        generation += 1
+        continuousActive = false
+        cancelTimers()
+        _ = capture?.stop()
+        capture = nil
+        closeSocket()
         state = .idle
+        if let reason { ToastCenter.shared.show(reason) }
     }
 
     // MARK: TTS
@@ -253,7 +342,10 @@ final class VoiceChatService: ObservableObject {
                     }
                 } catch {
                     guard let self else { return }
-                    if self.state != .idle {
+                    if self.continuousActive {
+                        // 用户停止/到上限时 state 已是 .finishing（正常收尾）；其余算掉线
+                        self.endContinuous(reason: self.state == .finishing ? nil : "语音会话已结束：连接断开")
+                    } else if self.state != .idle {
                         self.fail("语音识别连接断开：\(error.localizedDescription)")
                     }
                     return
@@ -268,15 +360,19 @@ final class VoiceChatService: ObservableObject {
             return
         }
         switch msg.type {
+        case "sentence":
+            guard continuousActive,
+                  let text = msg.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return }
+            armIdleTimer()
+            onSentence?(text)
         case "result":
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
         case "limit":
-            // 服务端到达录音上限后会 Finish；这里停止采集，等 final 回来
+            // 服务端到达上限后会 Finish：立刻停采集（负包之后不能再发音频），等它吐完最后一句
             if state == .recording {
                 state = .finishing
-                maxTimer?.cancel()
-                maxTimer = nil
                 _ = capture?.stop()
                 capture = nil
             }
@@ -305,9 +401,12 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        if continuousActive {
+            endContinuous(reason: message)
+            return
+        }
         generation += 1
-        timeoutTask?.cancel()
-        timeoutTask = nil
+        cancelTimers()
         _ = capture?.stop()
         capture = nil
         closeSocket()
@@ -324,13 +423,15 @@ final class VoiceChatService: ObservableObject {
         socket = nil
     }
 
-    private func websocketURL(baseURL: String, ticket: String) -> URL? {
+    private func websocketURL(baseURL: String, ticket: String, continuous: Bool) -> URL? {
         guard var comps = URLComponents(string: baseURL) else { return nil }
         comps.scheme = comps.scheme == "https" ? "wss" : "ws"
         var path = comps.path
         if path.hasSuffix("/") { path.removeLast() }
         comps.path = path + "/api/voice/asr"
-        comps.queryItems = [URLQueryItem(name: "ticket", value: ticket)]
+        var items = [URLQueryItem(name: "ticket", value: ticket)]
+        if continuous { items.append(URLQueryItem(name: "mode", value: "continuous")) }
+        comps.queryItems = items
         return comps.url
     }
 

@@ -206,7 +206,10 @@ voice:
     endpoint: wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
     resource_id: volc.seedasr.sauc.duration # 小时版；单用户不要选并发版
     language: zh-CN
-    max_seconds: 60
+    max_seconds: 60 # A 模式单轮上限
+    session_seconds: 600 # C 模式（连续对话）单次会话上限；按音频时长计费，静音也计时
+    result_type: full # A 模式；C 模式由服务端强制 single
+    end_window_size: 800 # 静音判停阈值 ms（范围 300-5000）
     timeout_seconds: 30
 
 global_default_role:

@@ -50,6 +50,8 @@ func (h *VoiceHandler) Status(c *gin.Context) {
 		"speaker":     h.cfg.TTS.Speaker,
 		"language":    h.cfg.ASR.Language,
 		"max_seconds": h.cfg.ASR.MaxSeconds,
+		// C 模式单次会话上限（客户端据此做硬收口；空闲收口由客户端判定）
+		"session_seconds": h.cfg.ASR.SessionSeconds,
 	})
 }
 
@@ -130,6 +132,8 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	asrCfg := h.cfg.ASR
 	if continuous {
 		asrCfg.ResultType = "single"
+		// 连续对话一条连接顶到整个会话上限；超时/断开由客户端重连
+		asrCfg.MaxSeconds = h.cfg.ASR.SessionSeconds
 	}
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, handshakeTimeout)
 	asr, err := voice.DialASR(handshakeCtx, asrCfg, h.cfg.APIKey, userID)
@@ -204,7 +208,7 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 		}
 	}()
 
-	readTimeout := time.Duration(h.cfg.ASR.MaxSeconds+30) * time.Second
+	readTimeout := time.Duration(asrCfg.MaxSeconds+30) * time.Second
 	readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
 	defer readCancel()
 	var committer voice.SentenceCommitter

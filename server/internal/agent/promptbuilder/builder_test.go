@@ -338,6 +338,45 @@ func TestBriefAnswerToggle(t *testing.T) {
 	}
 }
 
+// TestVoiceModeToggle — 语音轮注入「语音回答」且跳过 brief_answer 的长度约束；
+// 非语音轮输出逐字节不变（前缀缓存）。
+func TestVoiceModeToggle(t *testing.T) {
+	reg := tool.NewRegistry()
+	b := NewPromptBuilder("base", reg, nil, true)
+	ctx := context.Background()
+
+	base, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(base.Prompt, "语音回答") || strings.Contains(base.Prompt, "会被直接朗读") {
+		t.Error("默认不应注入语音回答约束")
+	}
+
+	voice, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork, VoiceMode: true, BriefAnswer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(voice.Prompt, "## 语音回答") || !strings.Contains(voice.Prompt, "会被直接朗读") {
+		t.Error("语音轮应注入语音回答章节")
+	}
+	if strings.Contains(voice.Prompt, "## 回答长度") || strings.Contains(voice.Prompt, "精简回答") {
+		t.Error("语音轮不应再注入 brief_answer 长度约束")
+	}
+	// 语音章节仍应在行为准则之后，不能截断编号列表
+	if strings.Index(voice.Prompt, "9. 用户信息深挖") > strings.Index(voice.Prompt, "## 语音回答") {
+		t.Error("语音回答章节插到了行为准则编号列表中间")
+	}
+
+	off, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork, VoiceMode: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Prompt != base.Prompt {
+		t.Fatal("VoiceMode=false 时输出应与默认完全一致")
+	}
+}
+
 // TestBriefAnswerOffIsByteIdentical — 关掉时与"没有这个 provider"完全一致（保前缀缓存）
 func TestBriefAnswerOffIsByteIdentical(t *testing.T) {
 	reg := tool.NewRegistry()

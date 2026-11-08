@@ -50,7 +50,7 @@ function websocketURL(ticket) {
   return url.toString()
 }
 
-export function useVoiceChat({ onFinalTranscript } = {}) {
+export function useVoiceChat({ onFinalTranscript, onError } = {}) {
   const available = ref(false)
   const recording = ref(false)
   const busy = ref(false)
@@ -66,12 +66,20 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
   let objectUrl = null
   let pending = new Int16Array(0)
   let stopTimer = null
+  let maxTimer = null
   let finished = false
+  let generation = 0
+  let speakEpoch = 0
+  let maxSeconds = 60
 
   async function refresh() {
     try {
       const cfg = await api.get('/api/voice/config')
-      available.value = !!(cfg?.enabled && cfg?.ready)
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      const hasCapture = !!navigator.mediaDevices?.getUserMedia &&
+        !!Ctx && 'audioWorklet' in Ctx.prototype
+      available.value = !!(cfg?.ready && hasCapture)
+      maxSeconds = Math.max(5, Number(cfg?.max_seconds) || 60)
     } catch {
       available.value = false
     }
@@ -124,6 +132,10 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
       clearTimeout(stopTimer)
       stopTimer = null
     }
+    if (maxTimer) {
+      clearTimeout(maxTimer)
+      maxTimer = null
+    }
     if (worklet) {
       worklet.port.onmessage = null
       worklet.disconnect()
@@ -152,7 +164,10 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
 
   function fail(message) {
     cleanup()
-    if (message) console.error('[voice]', message)
+    if (message) {
+      console.error('[voice]', message)
+      onError?.(message)
+    }
     return message || '语音识别失败'
   }
 
@@ -160,12 +175,29 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
     if (finished) return
     const text = transcript.value.trim()
     cleanup()
-    if (!text) return
+    if (!text) {
+      onError?.('没有识别到内容')
+      return
+    }
     onFinalTranscript?.(text)
+  }
+
+  function startCapture() {
+    if (finished || !audioCtx || !worklet || !sourceNode) return
+    sourceNode.connect(worklet)
+    recording.value = true
+    busy.value = false
+    if (maxTimer) clearTimeout(maxTimer)
+    maxTimer = setTimeout(() => {
+      if (recording.value) stop()
+    }, Math.max(1, maxSeconds - 2) * 1000)
   }
 
   async function start() {
     if (recording.value || busy.value) return
+    generation += 1
+    const gen = generation
+    const isCurrent = () => gen === generation
     busy.value = true
     finished = false
     transcript.value = ''
@@ -173,14 +205,18 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
     unlockAudio()
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+      if (!isCurrent()) { cleanup(); return }
       audioCtx = new (window.AudioContext || window.webkitAudioContext)()
       await audioCtx.resume()
+      if (!isCurrent()) { cleanup(); return }
       await audioCtx.audioWorklet.addModule('/voice-pcm-worklet.js')
+      if (!isCurrent()) { cleanup(); return }
       worklet = new AudioWorkletNode(audioCtx, 'voice-pcm')
       worklet.port.onmessage = (event) => handleWorkletMessage(event.data, audioCtx.sampleRate)
       sourceNode = audioCtx.createMediaStreamSource(mediaStream)
 
       const ticket = await api.post('/api/voice/asr-ticket', {})
+      if (!isCurrent()) { cleanup(); return }
       socket = new WebSocket(websocketURL(ticket.ticket))
       socket.binaryType = 'arraybuffer'
       socket.onmessage = (event) => {
@@ -190,9 +226,24 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
         } catch {
           return
         }
-        if (msg.type === 'result') {
+        if (msg.type === 'ready') {
+          startCapture()
+        } else if (msg.type === 'result') {
           if (msg.text) transcript.value = msg.text
           if (msg.final) finish()
+        } else if (msg.type === 'limit') {
+          // 服务端到上限后会 Finish；停止采集但不要发 end，等 final
+          recording.value = false
+          busy.value = true
+          if (maxTimer) {
+            clearTimeout(maxTimer)
+            maxTimer = null
+          }
+          if (sourceNode) { sourceNode.disconnect(); sourceNode = null }
+          if (mediaStream) {
+            mediaStream.getTracks().forEach(t => t.stop())
+            mediaStream = null
+          }
         } else if (msg.type === 'error') {
           fail(msg.error)
         }
@@ -201,16 +252,12 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
       socket.onclose = () => {
         if (!finished) fail('语音识别连接断开')
       }
-      socket.onopen = () => {
-        if (finished || !audioCtx || !sourceNode || !worklet) return
-        sourceNode.connect(worklet)
-        recording.value = true
-        busy.value = false
-      }
     } catch (err) {
-      busy.value = false
-      cleanup()
-      throw err
+      if (isCurrent()) {
+        busy.value = false
+        cleanup()
+        throw err
+      }
     }
   }
 
@@ -218,6 +265,10 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
     if (!recording.value) return
     busy.value = true
     recording.value = false
+    if (maxTimer) {
+      clearTimeout(maxTimer)
+      maxTimer = null
+    }
     if (sourceNode) {
       sourceNode.disconnect()
       sourceNode = null
@@ -242,6 +293,7 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
   }
 
   function cancel() {
+    generation += 1
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'cancel' }))
     }
@@ -249,10 +301,15 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
   }
 
   async function speak(text) {
+    if (!String(text || '').trim()) return
     const cleaned = cleanForSpeech(text)
-    if (!cleaned) return
+    const speech = cleaned || '这条回复主要是代码或表格，我放在屏幕上了。'
+    stopSpeaking()
+    speakEpoch += 1
+    const epoch = speakEpoch
     try {
-      const blob = await api.postBlob('/api/voice/tts', { text: cleaned })
+      const blob = await api.postBlob('/api/voice/tts', { text: speech })
+      if (epoch !== speakEpoch) return
       const el = ensureAudio()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
       objectUrl = URL.createObjectURL(blob)
@@ -260,10 +317,12 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
       await el.play()
     } catch (err) {
       console.error('[voice] tts failed', err)
+      onError?.('语音播放失败')
     }
   }
 
   function stopSpeaking() {
+    speakEpoch += 1
     if (!audioEl) return
     audioEl.pause()
     audioEl.currentTime = 0

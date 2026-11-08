@@ -25,7 +25,13 @@ final class VoiceChatService: ObservableObject {
     private var capture: VoiceAudioCapture?
     private var receiveTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
+    private var maxTimer: Task<Void, Never>?
     private var player: AVAudioPlayer?
+    /// start/cancel 竞态代次：cancel 或新 start 会让旧 start 的续体失效
+    private var generation = 0
+    /// TTS 请求代次：stopSpeaking 后迟到的合成结果不再播放
+    private var speakEpoch = 0
+    private var maxSeconds = 60
 
     var isRecording: Bool { state == .recording }
     var isBusy: Bool { state == .requestingPermission || state == .finishing }
@@ -39,8 +45,9 @@ final class VoiceChatService: ObservableObject {
         }
         do {
             let cfg = try await APIClient(baseURL: baseURL, token: token).getVoiceConfig()
-            isAvailable = cfg.enabled && cfg.ready
+            isAvailable = cfg.ready
             speaker = cfg.speaker
+            maxSeconds = max(5, cfg.maxSeconds)
         } catch {
             // 未配置/网络失败时静默隐藏按钮，不影响文字聊天
             isAvailable = false
@@ -54,11 +61,14 @@ final class VoiceChatService: ObservableObject {
         guard state == .idle else { return }
         guard !baseURL.isEmpty, !token.isEmpty else { return }
 
+        generation += 1
+        let gen = generation
         state = .requestingPermission
         guard await ensureMicrophonePermission() else {
-            fail("没有麦克风权限，请在系统设置中允许 xhanHelper 使用麦克风")
+            if gen == generation { fail("没有麦克风权限，请在系统设置中允许 xhanHelper 使用麦克风") }
             return
         }
+        guard gen == generation, state == .requestingPermission else { return }
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio,
                                                          options: [.defaultToSpeaker, .allowBluetooth])
@@ -68,6 +78,7 @@ final class VoiceChatService: ObservableObject {
         do {
             let api = APIClient(baseURL: baseURL, token: token)
             let ticket = try await api.createVoiceASRTicket().ticket
+            guard gen == generation, state == .requestingPermission else { return }
             guard let url = websocketURL(baseURL: baseURL, ticket: ticket) else {
                 fail("服务地址无效")
                 return
@@ -90,20 +101,40 @@ final class VoiceChatService: ObservableObject {
                     self?.fail("麦克风采集失败：\(message)")
                 }
             }
-            try capture.start()
             self.capture = capture
-            state = .recording
+            // 不在这里开采集：等服务端 ready（DialASR 可能还要几百毫秒）
         } catch {
-            fail("无法开始语音识别：\(error.localizedDescription)")
+            if gen == generation { fail("无法开始语音识别：\(error.localizedDescription)") }
+        }
+    }
+
+    /// 收到服务端 ready 后才真正开始推 PCM。
+    private func startCapture() {
+        guard state == .requestingPermission, let capture else { return }
+        do {
+            try capture.start()
+            state = .recording
+            maxTimer?.cancel()
+            maxTimer = Task { [weak self] in
+                guard let self else { return }
+                let seconds = max(1, self.maxSeconds - 2)
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled, self.state == .recording else { return }
+                self.stop()
+            }
+        } catch {
+            fail("麦克风采集失败：\(error.localizedDescription)")
         }
     }
 
     func stop() {
         guard state == .recording else { return }
         state = .finishing
-        capture?.stop()
+        maxTimer?.cancel()
+        maxTimer = nil
+        let tail = capture?.stop()
         capture = nil
-        sendControl("end")
+        sendTailThenEnd(tail)
         timeoutTask?.cancel()
         timeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
@@ -113,7 +144,8 @@ final class VoiceChatService: ObservableObject {
     }
 
     func cancel() {
-        capture?.stop()
+        generation += 1
+        _ = capture?.stop()
         capture = nil
         sendControl("cancel")
         closeSocket()
@@ -124,19 +156,25 @@ final class VoiceChatService: ObservableObject {
 
     // MARK: TTS
 
-    /// 朗读一段回复；空文本或纯代码/表格会跳过。
+    /// 朗读一段回复；纯代码/表格回复改播一句提示。
     func speak(text: String, baseURL: String, token: String) async {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !baseURL.isEmpty, !token.isEmpty else { return }
         let cleaned = Self.sanitizeForSpeech(text)
-        guard !cleaned.isEmpty, !baseURL.isEmpty, !token.isEmpty else { return }
+        let speech = cleaned.isEmpty ? "这条回复主要是代码或表格，我放在屏幕上了。" : cleaned
         stopSpeaking()
+        speakEpoch += 1
+        let epoch = speakEpoch
         do {
-            let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: cleaned)
+            let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
+            guard epoch == speakEpoch else { return }
             #if os(iOS)
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
             try? AVAudioSession.sharedInstance().setActive(true)
             #endif
             let player = try AVAudioPlayer(data: data)
             player.prepareToPlay()
+            guard epoch == speakEpoch else { return }
             guard player.play() else {
                 fail("语音播放失败")
                 return
@@ -149,6 +187,7 @@ final class VoiceChatService: ObservableObject {
     }
 
     func stopSpeaking() {
+        speakEpoch += 1
         player?.stop()
         player = nil
     }
@@ -156,8 +195,9 @@ final class VoiceChatService: ObservableObject {
     // MARK: 内部
 
     private func sendAudio(_ data: Data) {
-        // finishing 时也要放行：stop() 会先停采集、把最后不到 200ms 的尾巴冲出来，再发 end
-        guard state == .recording || state == .finishing else { return }
+        // 只接受 recording：stop() 之后的音频帧（含排队中的 Task）一律丢弃，
+        // 尾巴由 stop() 通过 sendTailThenEnd 保证排在 end 之前。
+        guard state == .recording else { return }
         socket?.send(.data(data)) { error in
             guard let error else { return }
             Task { @MainActor in
@@ -174,6 +214,23 @@ final class VoiceChatService: ObservableObject {
             Task { @MainActor in
                 LogBuffer.shared.error("voice asr control failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// 先发尾巴 PCM，在其 send 完成后再发 end，保证负包之前不会再有音频帧。
+    private func sendTailThenEnd(_ tail: Data?) {
+        guard let socket else { return }
+        if let tail, !tail.isEmpty {
+            socket.send(.data(tail)) { [weak self] error in
+                Task { @MainActor in
+                    if let error {
+                        LogBuffer.shared.error("voice asr tail send failed: \(error.localizedDescription)")
+                    }
+                    self?.sendControl("end")
+                }
+            }
+        } else {
+            sendControl("end")
         }
     }
 
@@ -205,10 +262,20 @@ final class VoiceChatService: ObservableObject {
         }
         switch msg.type {
         case "ready":
-            break
+            startCapture()
         case "result":
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
+        case "limit":
+            // 服务端到达录音上限后会 Finish；这里停止采集，等 final 回来
+            if state == .recording {
+                state = .finishing
+                maxTimer?.cancel()
+                maxTimer = nil
+                _ = capture?.stop()
+                capture = nil
+            }
+            ToastCenter.shared.show(msg.message ?? "录音达到上限，已按当前内容识别")
         case "error":
             fail(msg.error ?? "语音识别失败")
         default:
@@ -219,7 +286,7 @@ final class VoiceChatService: ObservableObject {
     private func finishTurn() {
         timeoutTask?.cancel()
         timeoutTask = nil
-        capture?.stop()
+        _ = capture?.stop()
         capture = nil
         closeSocket()
         state = .idle
@@ -232,9 +299,10 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        generation += 1
         timeoutTask?.cancel()
         timeoutTask = nil
-        capture?.stop()
+        _ = capture?.stop()
         capture = nil
         closeSocket()
         state = .idle
@@ -242,6 +310,8 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func closeSocket() {
+        maxTimer?.cancel()
+        maxTimer = nil
         receiveTask?.cancel()
         receiveTask = nil
         socket?.cancel(with: .normalClosure, reason: nil)
@@ -311,4 +381,5 @@ private struct VoiceSocketMessage: Decodable {
     let text: String?
     let final: Bool?
     let error: String?
+    let message: String?
 }

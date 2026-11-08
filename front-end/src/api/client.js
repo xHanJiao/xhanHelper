@@ -62,7 +62,9 @@ export const api = {
       let msg = `HTTP ${r.status}`
       try {
         const data = await r.json()
-        msg = data?.error || data?.message || msg
+        // 后端统一包装是 {status, errorCode, errMsg, data}
+        msg = data?.errMsg || data?.error || data?.message ||
+          (data?.errorCode ? `错误码 ${data.errorCode}` : msg)
       } catch {
         // 非 JSON 错误体：保留 HTTP 状态
       }

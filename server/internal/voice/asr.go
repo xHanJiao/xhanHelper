@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,6 +13,10 @@ import (
 
 	"xhan-helper/internal/config"
 )
+
+// ErrASRDurationLimit 表示本轮录音超过配置上限；调用方应 Finish 取回已识别结果，
+// 而不是直接取消连接。
+var ErrASRDurationLimit = errors.New("录音超过上限")
 
 // ASRResult — 一条识别结果（部分或最终）。
 type ASRResult struct {
@@ -48,7 +53,6 @@ type asrRequestOptions struct {
 	ModelName       string `json:"model_name"`
 	EnableITN       bool   `json:"enable_itn"`
 	EnablePunc      bool   `json:"enable_punc"`
-	EnableDDC       bool   `json:"enable_ddc"`
 	ShowUtterances  bool   `json:"show_utterances"`
 	ResultType      string `json:"result_type"`
 	EnableNonstream bool   `json:"enable_nonstream"`
@@ -73,7 +77,11 @@ func DialASR(ctx context.Context, cfg config.VoiceASRConfig, apiKey, uid string)
 		"X-Api-Request-Id":  {uuid.NewString()},
 		"X-Api-Connect-Id":  {uuid.NewString()},
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
+	handshake := time.Duration(cfg.TimeoutSeconds) * time.Second
+	if handshake <= 0 {
+		handshake = 15 * time.Second
+	}
+	dialer := websocket.Dialer{HandshakeTimeout: handshake}
 	conn, resp, err := dialer.DialContext(ctx, cfg.Endpoint, headers)
 	if err != nil {
 		if resp != nil {
@@ -96,7 +104,6 @@ func DialASR(ctx context.Context, cfg config.VoiceASRConfig, apiKey, uid string)
 			ModelName:       "bigmodel",
 			EnableITN:       true,
 			EnablePunc:      true,
-			EnableDDC:       false,
 			ShowUtterances:  true,
 			ResultType:      "full",
 			EnableNonstream: true,
@@ -133,7 +140,7 @@ func (c *ASRClient) SendAudio(pcm []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if c.written+len(pcm) > c.maxBytes {
-		return fmt.Errorf("录音超过上限（%d 秒）", c.maxBytes/32000)
+		return fmt.Errorf("%w（%d 秒）", ErrASRDurationLimit, c.maxBytes/32000)
 	}
 	frame, err := encodeFrame(msgAudioOnlyRequest, flagNone, serializationNone, compressionGzip, pcm)
 	if err != nil {
@@ -193,30 +200,37 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 		if f.Type != msgFullServerResponse {
 			continue
 		}
+		// 先判 final 再判空 payload：协议允许负包不带内容，不能因为空 payload 就永远等下去
+		final := f.Flags == flagLastNoSequence || f.Flags == flagLastSequence
 		if len(f.Payload) == 0 {
+			if final {
+				return nil
+			}
 			continue
 		}
 		var parsed asrResponse
 		if err := json.Unmarshal(f.Payload, &parsed); err != nil {
 			return fmt.Errorf("parse asr response: %w", err)
 		}
-		final := f.Flags == flagLastNoSequence || f.Flags == flagLastSequence
-		definite := final
+		if final {
+			definite := true
+			if onResult != nil {
+				onResult(ASRResult{Text: parsed.Result.Text, Definite: definite, Final: true})
+			}
+			return nil
+		}
+		definite := false
 		for _, u := range parsed.Result.Utterances {
 			if u.Definite {
 				definite = true
 				break
 			}
 		}
-		if onResult != nil && (parsed.Result.Text != "" || final) {
+		if onResult != nil && parsed.Result.Text != "" {
 			onResult(ASRResult{
 				Text:     parsed.Result.Text,
 				Definite: definite,
-				Final:    final,
 			})
-		}
-		if final {
-			return nil
 		}
 	}
 }

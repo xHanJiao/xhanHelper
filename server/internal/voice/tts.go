@@ -114,7 +114,10 @@ func (c *TTSClient) Synthesize(ctx context.Context, text string) ([]byte, int, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if readErr != nil {
+			return nil, 0, fmt.Errorf("tts: http %d (read error body: %w)", resp.StatusCode, readErr)
+		}
 		return nil, 0, fmt.Errorf("tts: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 

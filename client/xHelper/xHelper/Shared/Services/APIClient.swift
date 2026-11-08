@@ -727,6 +727,12 @@ struct VoiceConfigInfo: Codable {
     let ready: Bool
     let speaker: String
     let language: String
+    let maxSeconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, ready, speaker, language
+        case maxSeconds = "max_seconds"
+    }
 }
 
 struct VoiceTicketInfo: Codable {

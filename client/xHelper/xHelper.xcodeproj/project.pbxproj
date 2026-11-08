@@ -389,7 +389,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "需要访问本地网络以连接 xhanHelper 服务";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "使用麦克风进行语音输入；录音只发送到你自己的 xhanHelper 服务";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -424,7 +423,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "需要访问本地网络以连接 xhanHelper 服务";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "使用麦克风进行语音输入；录音只发送到你自己的 xhanHelper 服务";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

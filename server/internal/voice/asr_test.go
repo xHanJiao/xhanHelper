@@ -14,6 +14,48 @@ import (
 	"xhan-helper/internal/config"
 )
 
+func TestASRReadsEmptyFinalFrame(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		partial, _ := json.Marshal(map[string]any{"result": map[string]any{"text": "你好"}})
+		frame, _ := encodeFrame(msgFullServerResponse, flagNone, serializationJSON, compressionGzip, partial)
+		_ = conn.WriteMessage(websocket.BinaryMessage, frame)
+
+		// 负包允许不带内容：Read 必须据此结束，不能等到读超时
+		frame, _ = encodeFrame(msgFullServerResponse, flagLastNoSequence, serializationJSON, compressionGzip, nil)
+		_ = conn.WriteMessage(websocket.BinaryMessage, frame)
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := DialASR(ctx, config.VoiceASRConfig{
+		Endpoint: "ws" + strings.TrimPrefix(server.URL, "http"), ResourceID: "volc.seedasr.sauc.duration",
+		Language: "zh-CN", MaxSeconds: 10, TimeoutSeconds: 5,
+	}, "test-key", "u1")
+	if err != nil {
+		t.Fatalf("DialASR: %v", err)
+	}
+	defer client.Close()
+
+	var results []ASRResult
+	if err := client.Read(ctx, func(r ASRResult) { results = append(results, r) }); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(results) != 1 || results[0].Text != "你好" {
+		t.Fatalf("results = %+v", results)
+	}
+}
+
 func TestASRReadsPartialAndFinal(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

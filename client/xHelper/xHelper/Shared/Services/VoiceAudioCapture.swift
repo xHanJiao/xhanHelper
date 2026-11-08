@@ -47,8 +47,10 @@ final class VoiceAudioCapture: @unchecked Sendable {
         running = true
     }
 
-    func stop() {
-        guard running else { return }
+    /// 停止采集，返回不足 200ms 的尾巴；调用方负责在发 end 之前把它发出去。
+    @discardableResult
+    func stop() -> Data? {
+        guard running else { return nil }
         running = false
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -56,9 +58,7 @@ final class VoiceAudioCapture: @unchecked Sendable {
         let tail = pending
         pending = Data()
         lock.unlock()
-        if !tail.isEmpty {
-            onChunk?(tail)
-        }
+        return tail.isEmpty ? nil : tail
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {

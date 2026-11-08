@@ -113,7 +113,8 @@ const {
     inputValue.value = text
     voiceReplyPending.value = true
     nextTick(() => document.querySelector('.chat-input textarea')?.focus())
-  }
+  },
+  onError: (message) => nMessage.error(message)
 })
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()

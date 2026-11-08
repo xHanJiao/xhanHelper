@@ -120,7 +120,7 @@ func (p *answerLengthProvider) Render(ctx context.Context) string {
 
 // voiceModeNotice — 语音轮的回答约束：会被 TTS 朗读，所以不能有 markdown/列表/代码块。
 // 长度给具体数字（字符/词），只写「简短」约束力不够。
-const voiceModeNotice = `本轮是语音对话：你的回答会被直接朗读，不会显示在屏幕上。请用口语化、自然的中文（或与用户相同的语言）回答；不要使用 markdown、列表、表格、代码块、链接或表情符号。正文控制在 80–120 个汉字（英文约 30–45 词），先给结论，不要展开。`
+const voiceModeNotice = `本轮是语音对话：你的回答会被直接朗读。请用口语化、自然的中文（或与用户相同的语言）回答；不要使用 markdown、列表、表格、代码块、链接或表情符号。正文控制在 80–120 个汉字（英文约 30–45 词），先给结论，不要展开。`
 
 // voiceModeProvider — 仅语音轮注入；由 Build 按 opts.VoiceMode 决定是否渲染。
 type voiceModeProvider struct{}

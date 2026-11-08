@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -44,10 +45,11 @@ func NewVoiceHandler(cfg *config.VoiceConfig) *VoiceHandler {
 // Status GET /api/voice/config — 客户端据此决定是否显示麦克风按钮。
 func (h *VoiceHandler) Status(c *gin.Context) {
 	view.JSONOK(c, gin.H{
-		"enabled":  h.cfg.Enabled,
-		"ready":    h.cfg.Ready(),
-		"speaker":  h.cfg.TTS.Speaker,
-		"language": h.cfg.ASR.Language,
+		"enabled":     h.cfg.Enabled,
+		"ready":       h.cfg.Ready(),
+		"speaker":     h.cfg.TTS.Speaker,
+		"language":    h.cfg.ASR.Language,
+		"max_seconds": h.cfg.ASR.MaxSeconds,
 	})
 }
 
@@ -100,8 +102,9 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	}
 
 	upgrader := websocket.Upgrader{
-		ReadBufferSize:  16 << 10,
-		WriteBufferSize: 16 << 10,
+		HandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:   16 << 10,
+		WriteBufferSize:  16 << 10,
 		// 同源策略交由 token 保护；原生客户端不带 Origin，不能按 Origin 拒绝。
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -111,11 +114,17 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 		return
 	}
 	defer client.Close()
+	// 单帧上限：200ms PCM 只有 6.4KB，64KB 足够；防止有效 ticket 被用来塞大帧
+	client.SetReadLimit(64 << 10)
 
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 
-	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 15*time.Second)
+	handshakeTimeout := time.Duration(h.cfg.ASR.TimeoutSeconds) * time.Second
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = 15 * time.Second
+	}
+	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, handshakeTimeout)
 	asr, err := voice.DialASR(handshakeCtx, h.cfg.ASR, h.cfg.APIKey, userID)
 	handshakeCancel()
 	if err != nil {
@@ -149,6 +158,14 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 			switch mt {
 			case websocket.BinaryMessage:
 				if err := asr.SendAudio(data); err != nil {
+					if errors.Is(err, voice.ErrASRDurationLimit) {
+						// 到上限不要丢结果：先发提示，再 Finish 让服务端把已识别文本吐完
+						_ = send(gin.H{"type": "limit", "message": err.Error()})
+						if finishErr := asr.Finish(); finishErr != nil {
+							log.Printf("[voice] asr finish after limit failed (user=%s): %v", userID, finishErr)
+						}
+						return
+					}
 					log.Printf("[voice] asr send audio failed (user=%s): %v", userID, err)
 					_ = send(gin.H{"type": "error", "error": err.Error()})
 					cancel()

@@ -42,7 +42,6 @@ const (
 type asrFrame struct {
 	Type         byte
 	Flags        byte
-	Sequence     int32
 	Payload      []byte
 	ErrorCode    int32
 	ErrorMessage string
@@ -94,7 +93,7 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 		if len(data) < offset+4 {
 			return nil, fmt.Errorf("missing sequence number")
 		}
-		f.Sequence = int32(binary.BigEndian.Uint32(data[offset : offset+4]))
+		// 序号只用于协议完整性，调用方不需要；跳过 4 字节
 		offset += 4
 	}
 	if len(data) < offset+4 {
@@ -102,7 +101,7 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 	}
 	payloadSize := int(binary.BigEndian.Uint32(data[offset : offset+4]))
 	offset += 4
-	if payloadSize < 0 || len(data) < offset+payloadSize {
+	if len(data) < offset+payloadSize {
 		return nil, fmt.Errorf("payload size %d exceeds frame %d bytes", payloadSize, len(data))
 	}
 	payload := data[offset : offset+payloadSize]
@@ -113,7 +112,7 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 		}
 		f.ErrorCode = int32(binary.BigEndian.Uint32(payload[:4]))
 		msgSize := int(binary.BigEndian.Uint32(payload[4:8]))
-		if msgSize < 0 || len(payload) < 8+msgSize {
+		if len(payload) < 8+msgSize {
 			return nil, fmt.Errorf("error message size %d exceeds payload %d bytes", msgSize, len(payload))
 		}
 		f.ErrorMessage = string(payload[8 : 8+msgSize])

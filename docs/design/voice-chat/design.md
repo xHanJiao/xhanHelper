@@ -2,7 +2,7 @@
 
 > 状态：首版 A 已实现，待配置豆包 Key 后真机联调
 > 分支：`feat/voice-chat`
-> 实现：后端 `internal/voice` + `controller/voice.go`；macOS `VoiceAudioCapture` / `VoiceChatService`；PWA `useVoiceChat` + `public/voice-pcm-worklet.js`
+> 实现：后端 `internal/voice` + `controller/voice.go`；macOS `VoiceAudioEngine` / `VoiceChatService`；PWA `useVoiceChat` + `public/voice-pcm-worklet.js`
 
 ## 估算（定稿）
 
@@ -218,7 +218,7 @@ C 模式说明：
 ### C2 全屏语音环
 
 - macOS：`VoiceOrbView`（`Shared/Views/`）覆盖会话区（`.ultraThinMaterial` + 三层环），
-  状态优先级「说 > 想 > 听」；listen 态用 `VoiceAudioCapture.onLevel`（RMS×4，0...1）驱动核心缩放。
+  状态优先级「说 > 想 > 听」；listen 态用 `VoiceAudioEngine.onLevel`（RMS×4，0...1）驱动核心缩放。
 - PWA：`components/VoiceOrb.vue` 全屏浮层（`position: fixed`），监听态用 AudioWorklet 已有的 `level`，
   `speaking` 由 `<audio>` 的 `ended`/`pause` 事件维护。
 - 两端都能点「结束」收口：macOS 同时停生成与朗读；PWA `cancel()` + `stopSpeaking()`。

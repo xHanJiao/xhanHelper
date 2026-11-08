@@ -188,6 +188,27 @@ event_assembly:
   max_iterations: 6 # ReAct 总轮数（含强制收敛轮）
   batch_size: 40 # 单批新记忆条数；超出分批但仍全部处理
 
+# 语音聊天（豆包 TTS + 流式 ASR）。详见 docs/design/voice-chat/design.md。
+# 新版火山控制台只需要 API Key；开通「豆包语音合成模型2.0」和「豆包流式语音识别模型2.0」。
+voice:
+  enabled: false
+  api_key: ${DOUBAO_API_KEY}
+  tts:
+    endpoint: https://openspeech.bytedance.com/api/v3/tts/unidirectional
+    resource_id: seed-tts-2.0
+    speaker: zh_female_vv_uranus_bigtts # Vivi 2.0；可在控制台试听后改
+    format: mp3
+    sample_rate: 24000
+    speech_rate: 0
+    max_chars: 2000
+    timeout_seconds: 90
+  asr:
+    endpoint: wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
+    resource_id: volc.seedasr.sauc.duration # 小时版；单用户不要选并发版
+    language: zh-CN
+    max_seconds: 60
+    timeout_seconds: 30
+
 global_default_role:
   system_prompt: |
     你是闲谈伙伴，一个直接真诚、注重事实的聊天对象。

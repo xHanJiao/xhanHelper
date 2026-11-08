@@ -49,6 +49,7 @@ type RouterConfig struct {
 	EventHandler         *EventHandler
 	ImageHandler         *ImageHandler
 	ArtifactHandler      *ArtifactHandler
+	VoiceHandler         *VoiceHandler
 	ClientBridge         *agent.ClientToolBridge
 	Destroyer            *agent.EphemeralDestroyer
 	LlmCostRepo          *service.LlmCostRepo
@@ -198,6 +199,12 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/images", rc.ImageHandler.List)
 		auth.GET("/images/:id/file", rc.ImageHandler.ServePrivate)
 		auth.DELETE("/images/:id", rc.ImageHandler.Delete)
+
+		// 语音聊天：TTS 由服务端代打豆包；ASR 用一次性 ticket 连 WebSocket
+		auth.GET("/voice/config", rc.VoiceHandler.Status)
+		auth.POST("/voice/asr-ticket", rc.VoiceHandler.Ticket)
+		auth.POST("/voice/tts", rc.VoiceHandler.TTS)
+		r.GET("/api/voice/asr", rc.VoiceHandler.ASR)
 
 		// HTML 产物：正文出口（JSON / 裸 HTML + ETag；消息列表只带摘要，见 docs/design/html-artifact §4.1）
 		auth.GET("/artifacts", rc.ArtifactHandler.ListArtifacts)

@@ -133,6 +133,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			// 精简回答：本轮往 system prompt 注入输出长度约束（≤500 字），
 			// 用于「回答要短」的场景（不靠 max_tokens 硬截断）。会话级开关，用户可自行开。
 			BriefAnswer bool `json:"brief_answer"`
+			// 语音对话：本轮往 system prompt 注入口语化/短回答约束（回答会被朗读）。
+			VoiceMode bool `json:"voice_mode"`
 		}
 		// 允许只发图不写字：文字与附件至少要有一个
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -370,6 +372,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Mode:               convMode,
 			ModeNotice:         modeNotice,
 			BriefAnswer:        req.BriefAnswer,
+			VoiceMode:          req.VoiceMode,
 			VerifyEnabled:      req.VerifyEnabled,
 			HiddenRound:        req.HiddenRound,
 			UserImages:         userImages,

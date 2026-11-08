@@ -37,6 +37,8 @@ func NewPromptBuilder(
 	preRoleStatic = append(preRoleStatic, &artifactEditProvider{})
 	// answer_length 排在最后，仍按 opts.BriefAnswer 条件注入
 	preRoleStatic = append(preRoleStatic, &answerLengthProvider{})
+	// voice_mode 仅语音轮注入；语音轮跳过 answer_length（语音约束更严格）
+	preRoleStatic = append(preRoleStatic, &voiceModeProvider{})
 	// 主聊天只走原生 FC：常驻渐进式工具目录（完整函数定义随请求体 tools 下发）
 	postRoleStatic := []StaticProvider{&toolCatalogProvider{registry: registry}}
 	return &PromptBuilder{
@@ -62,8 +64,11 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 
 	// Layer 1: 行为准则
 	for _, sp := range b.preRoleStatic {
-		// 回答长度约束只在 brief_answer 轮注入；不注入时整段跳过，prompt 与平时逐字节相同
-		if sp.Name() == "answer_length" && !opts.BriefAnswer {
+		// 回答长度约束只在 brief_answer 轮注入；语音轮由 voice_mode 接管
+		if sp.Name() == "answer_length" && (!opts.BriefAnswer || opts.VoiceMode) {
+			continue
+		}
+		if sp.Name() == "voice_mode" && !opts.VoiceMode {
 			continue
 		}
 		if s := sp.Render(ctx); s != "" {

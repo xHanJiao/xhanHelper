@@ -64,6 +64,8 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
   const busy = ref(false)
   const transcript = ref('')
   const level = ref(0)
+  // TTS 正在播放（全屏语音环「说」态）
+  const speaking = ref(false)
 
   let socket = null
   let mediaStream = null
@@ -94,7 +96,12 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
   }
 
   function ensureAudio() {
-    if (!audioEl) audioEl = new Audio()
+    if (!audioEl) {
+      audioEl = new Audio()
+      // ended 正常收尾，pause 覆盖被 stopSpeaking 打断的情况
+      audioEl.addEventListener('ended', () => { speaking.value = false })
+      audioEl.addEventListener('pause', () => { speaking.value = false })
+    }
     return audioEl
   }
 
@@ -352,6 +359,7 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
       objectUrl = URL.createObjectURL(blob)
       el.src = objectUrl
       await el.play()
+      speaking.value = true
     } catch (err) {
       console.error('[voice] tts failed', err)
       onError?.('语音播放失败')
@@ -360,6 +368,7 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
 
   function stopSpeaking() {
     speakEpoch += 1
+    speaking.value = false
     if (!audioEl) return
     audioEl.pause()
     audioEl.currentTime = 0
@@ -371,6 +380,7 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
     busy,
     transcript,
     level,
+    speaking,
     refresh,
     start,
     stop,

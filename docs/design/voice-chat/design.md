@@ -215,6 +215,15 @@ C 模式说明：
 - 结束/掉线都会发 `cancel` 或等负包结果后关连接；`limit` 后立即停采集（负包之后不能再发音频）。
 - `shortcut:` 连接意外断开不自动重连，10 分钟会话内掉线需用户再点一次；真机常掉再加重连。
 
+### C2 全屏语音环
+
+- macOS：`VoiceOrbView`（`Shared/Views/`）覆盖会话区（`.ultraThinMaterial` + 三层环），
+  状态优先级「说 > 想 > 听」；listen 态用 `VoiceAudioCapture.onLevel`（RMS×4，0...1）驱动核心缩放。
+- PWA：`components/VoiceOrb.vue` 全屏浮层（`position: fixed`），监听态用 AudioWorklet 已有的 `level`，
+  `speaking` 由 `<audio>` 的 `ended`/`pause` 事件维护。
+- 两端都能点「结束」收口：macOS 同时停生成与朗读；PWA `cancel()` + `stopSpeaking()`。
+- 只是展示层，不改传输层与状态机。
+
 ## 客户端
 
 ### macOS
@@ -252,7 +261,7 @@ C 模式说明：
 |---|---|---|
 | **C0** | 后端 `mode=continuous` → `result_type=single` + `sentence` 分句下发 | 后端 |
 | **C1** | 连续流 + `sentence` 自动提交 + 会话上限（10 分钟硬上限 + 30 秒空闲自动收口） | macOS |
-| **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA |
+| **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA ✅ |
 | **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS |
 | **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA |
 
@@ -316,3 +325,7 @@ location = /api/voice/asr {
   - 客户端新增「连续对话」按钮：常开麦，每收到 `sentence` 直接提交一轮并朗读回复；
     30 秒无新分句自动收口；到会话上限提示后收起。
   - 连续模式提交前若上一轮仍在流式，先停生成再发新一句（与 C3 的 barge-in 不是同一件事）。
+- 2026-11-08（C2）：
+  - macOS 新增 `VoiceOrbView`：连续会话期间覆盖会话区，听/想/说三态 + 音量波纹，点「结束」收口。
+  - PWA 新增 `components/VoiceOrb.vue`：录音/识别/朗读期间全屏浮层；`useVoiceChat` 暴露 `speaking`。
+  - `VoiceAudioCapture` 新增 `onLevel`（RMS×4 归一化）供波纹使用，不影响 PCM 上行。

@@ -40,8 +40,13 @@ final class VoiceChatService: ObservableObject {
 
     /// C 模式（连续对话）会话进行中；state 为 .recording 表示正在收音频
     @Published private(set) var continuousActive = false
+    /// 麦克风音量 0...1（全屏语音环用）
+    @Published private(set) var level: Double = 0
+    /// TTS 正在播放（全屏语音环「说」态）
+    @Published private(set) var isSpeaking = false
     /// 空闲多久没听到完整分句就结束会话（秒）
     private let continuousIdleSeconds = 30
+    private var speakEndTask: Task<Void, Never>?
 
     var isRecording: Bool { state == .recording }
     var isBusy: Bool { state == .requestingPermission || state == .finishing }
@@ -122,6 +127,13 @@ final class VoiceChatService: ObservableObject {
                     self?.fail("麦克风采集失败：\(message)")
                 }
             }
+            capture.onLevel = { [weak self] value in
+                Task { @MainActor [weak self] in
+                    guard let self, self.state == .recording else { return }
+                    // 平滑一下，避免波纹抖成噪点
+                    self.level = self.level * 0.6 + Double(value) * 0.4
+                }
+            }
             self.capture = capture
             // 立刻开录：服务端要先连豆包（几百毫秒）才会 ready，等它会把开头吞掉；
             // 早于 ready 的帧由 socket 缓冲，服务端连上后照常读。
@@ -160,9 +172,7 @@ final class VoiceChatService: ObservableObject {
         state = .finishing
         maxTimer?.cancel()
         maxTimer = nil
-        let tail = capture?.stop()
-        capture = nil
-        sendTailThenEnd(tail)
+        sendTailThenEnd(detachCapture())
         armFinishTimeout()
     }
 
@@ -174,9 +184,7 @@ final class VoiceChatService: ObservableObject {
         sessionTask = nil
         idleTask?.cancel()
         idleTask = nil
-        let tail = capture?.stop()
-        capture = nil
-        sendTailThenEnd(tail)
+        sendTailThenEnd(detachCapture())
         armFinishTimeout()
     }
 
@@ -194,8 +202,7 @@ final class VoiceChatService: ObservableObject {
         generation += 1
         continuousActive = false
         cancelTimers()
-        _ = capture?.stop()
-        capture = nil
+        _ = detachCapture()
         sendControl("cancel")
         closeSocket()
         state = .idle
@@ -227,6 +234,14 @@ final class VoiceChatService: ObservableObject {
         }
     }
 
+    /// 停止采集，返回不足 200ms 的尾巴（调用方负责在 end 之前发出）。
+    private func detachCapture() -> Data? {
+        let tail = capture?.stop()
+        capture = nil
+        level = 0
+        return tail
+    }
+
     private func cancelTimers() {
         maxTimer?.cancel()
         maxTimer = nil
@@ -243,8 +258,7 @@ final class VoiceChatService: ObservableObject {
         generation += 1
         continuousActive = false
         cancelTimers()
-        _ = capture?.stop()
-        capture = nil
+        _ = detachCapture()
         closeSocket()
         state = .idle
         if let reason { ToastCenter.shared.show(reason) }
@@ -276,6 +290,15 @@ final class VoiceChatService: ObservableObject {
                 return
             }
             self.player = player
+            isSpeaking = true
+            // 用 mp3 时长做结束判定，避免为它再引入一个 delegate（stopSpeaking 会更早取消）
+            speakEndTask?.cancel()
+            let duration = player.duration
+            speakEndTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(max(0.3, duration)))
+                guard !Task.isCancelled, let self else { return }
+                self.isSpeaking = false
+            }
         } catch {
             LogBuffer.shared.error("voice tts failed: \(error.localizedDescription)")
             ToastCenter.shared.show("语音播放失败")
@@ -284,6 +307,9 @@ final class VoiceChatService: ObservableObject {
 
     func stopSpeaking() {
         speakEpoch += 1
+        speakEndTask?.cancel()
+        speakEndTask = nil
+        isSpeaking = false
         player?.stop()
         player = nil
     }
@@ -373,8 +399,7 @@ final class VoiceChatService: ObservableObject {
             // 服务端到达上限后会 Finish：立刻停采集（负包之后不能再发音频），等它吐完最后一句
             if state == .recording {
                 state = .finishing
-                _ = capture?.stop()
-                capture = nil
+                _ = detachCapture()
             }
             armFinishTimeout()
             ToastCenter.shared.show(msg.message ?? "录音达到上限，已按当前内容识别")
@@ -388,8 +413,7 @@ final class VoiceChatService: ObservableObject {
     private func finishTurn() {
         timeoutTask?.cancel()
         timeoutTask = nil
-        _ = capture?.stop()
-        capture = nil
+        _ = detachCapture()
         closeSocket()
         state = .idle
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -407,8 +431,7 @@ final class VoiceChatService: ObservableObject {
         }
         generation += 1
         cancelTimers()
-        _ = capture?.stop()
-        capture = nil
+        _ = detachCapture()
         closeSocket()
         state = .idle
         ToastCenter.shared.show(message)

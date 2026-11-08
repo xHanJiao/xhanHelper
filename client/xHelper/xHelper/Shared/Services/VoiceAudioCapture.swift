@@ -14,6 +14,8 @@ final class VoiceAudioCapture: @unchecked Sendable {
 
     /// 每约 200ms 的 PCM 分片（6400 字节）。
     var onChunk: (@Sendable (Data) -> Void)?
+    /// 每块音频的音量 0...1（供语音波纹使用）；在音频线程触发。
+    var onLevel: (@Sendable (Float) -> Void)?
     var onError: (@Sendable (String) -> Void)?
 
     func start() throws {
@@ -83,7 +85,19 @@ final class VoiceAudioCapture: @unchecked Sendable {
             return
         }
         guard out.frameLength > 0, let samples = out.int16ChannelData?[0] else { return }
-        let data = Data(bytes: samples, count: Int(out.frameLength) * MemoryLayout<Int16>.size)
+        let frameCount = Int(out.frameLength)
+        let data = Data(bytes: samples, count: frameCount * MemoryLayout<Int16>.size)
+
+        if let onLevel {
+            var sum = 0.0
+            for i in 0..<frameCount {
+                let v = Double(samples[i]) / 32768
+                sum += v * v
+            }
+            // 说话人的 RMS 通常在 0.02~0.2，×4 让波纹有可见幅度，上限 1
+            let rms = (sum / Double(frameCount)).squareRoot()
+            onLevel(Float(min(1, rms * 4)))
+        }
 
         lock.lock()
         pending.append(data)

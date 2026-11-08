@@ -83,6 +83,7 @@ import {
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
+import VoiceOrb from '@/components/VoiceOrb.vue'
 import ToolCallToast from '@/components/ToolCallToast.vue'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import AttachmentTray from '@/components/chat/AttachmentTray.vue'
@@ -103,6 +104,8 @@ const {
   available: voiceAvailable,
   recording: voiceRecording,
   busy: voiceBusy,
+  level: voiceLevel,
+  speaking: voiceSpeaking,
   refresh: refreshVoice,
   start: startVoice,
   stop: stopVoice,
@@ -117,6 +120,19 @@ const {
   },
   onError: (message) => nMessage.error(message)
 })
+
+// C2 全屏语音环：说 > 想 > 听；没有语音动作时不挂载
+const voiceOrbPhase = computed(() => {
+  if (voiceSpeaking.value) return 'speaking'
+  if (voiceBusy.value) return 'thinking'
+  if (voiceRecording.value) return 'listening'
+  return null
+})
+
+function closeVoiceOrb() {
+  cancelVoice()
+  stopSpeaking()
+}
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 
@@ -1044,6 +1060,12 @@ function handleContainerClick(e) {
 
 <template>
   <div class="chat-page">
+    <VoiceOrb
+      v-if="voiceOrbPhase"
+      :phase="voiceOrbPhase"
+      :level="voiceLevel"
+      @close="closeVoiceOrb"
+    />
     <PageTopBar
       show-conversation
       align-card

@@ -76,6 +76,19 @@ struct ChatView: View {
         }
 #else
         content
+            .overlay {
+                if voice.continuousActive {
+                    VoiceOrbView(
+                        phase: voiceOrbPhase,
+                        level: voice.level,
+                        onClose: {
+                            voice.stopContinuous()
+                            viewModel.stopStreaming()
+                            voice.stopSpeaking()
+                        }
+                    )
+                }
+            }
             .confirmationDialog("开启「完全信任」？", isPresented: $showTrustEnableConfirm) {
                 Button("开启完全信任", role: .destructive) {
                     trustStore.fullTrust = true
@@ -87,6 +100,15 @@ struct ChatView: View {
             }
 #endif
     }
+
+#if os(macOS)
+    /// 全屏语音环状态：说 > 想 > 听。
+    private var voiceOrbPhase: VoiceOrbView.Phase {
+        if voice.isSpeaking { return .speaking }
+        if viewModel.isStreaming { return .thinking }
+        return .listening
+    }
+#endif
 
     private var content: some View {
         // 消息列表铺满中栏整高；底部浮层栈经 safeAreaInset 悬浮其上（见 bottomComposer）。

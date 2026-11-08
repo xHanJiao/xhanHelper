@@ -151,7 +151,7 @@ partial / final 与耗时，用来排查「说完不出 final」「同一句重�
 | `GET /api/voice/config` | 能力探测 |
 | `POST /api/voice/asr-ticket` | 一次性 ticket |
 | `POST /api/voice/tts` | `{text}` → `audio/mpeg` |
-| `GET /api/voice/asr?ticket=` | WebSocket 音频流 |
+| `GET /api/voice/asr?ticket=[&mode=continuous]` | WebSocket 音频流；`mode=continuous` 走 C 模式分句下发 |
 
 限制：
 
@@ -180,6 +180,8 @@ voice:
     language: zh-CN
     max_seconds: 60
     timeout_seconds: 30
+    result_type: full   # A 模式；C 模式由服务端强制 single（增量，只带当前分句）
+    end_window_size: 800 # 静音判停阈值 ms，范围 [300,5000]
 ```
 
 - 新版火山控制台只需 API Key，不需要 AppID / AccessToken / Cluster。
@@ -191,9 +193,16 @@ voice:
 | type | 说明 |
 |---|---|
 | `ready` | 服务端已连上豆包、开始接收音频（仅作提示，客户端不等它） |
-| `result` | `{text, definite, final}`，增量覆盖 |
+| `result` | `{text, definite, final}`，增量覆盖（**A 模式**；`text` 是累计全文） |
+| `sentence` | `{text}`，一条已判停的分句（**仅 C 模式**）。`result_type=single`，`text` 只含本句，客户端据此提交一轮对话 |
 | `limit` | 到达 `asr.max_seconds`；服务端已 `Finish`，随后会吐 `final`。客户端应停止采集但**不要**再发 `end`，并 arm 一个兜底计时器 |
 | `error` | 识别失败 |
+
+C 模式说明：
+
+- `mode=continuous` 时服务端强制 `result_type=single`，**不再下发 `result`**，只下发 `sentence`，避免两套累计逻辑并存。
+- `sentence` 只在 `definite=true` 时发；重复文本去重；连接结束时的 `final` 只含最后一句，也会作为 `sentence` 补出残句。
+- 一条连接可连续识别多句（实测 83 秒 / 18 句不断），退出语音模式才发 `end`。
 
 ## 客户端
 
@@ -224,12 +233,27 @@ voice:
 - 仅语音轮注入；接受前缀缓存分叉（低频动作）。
 - 客户端只朗读最终回复；剥离 markdown/代码块；纯代码/表格回复改播一句提示。
 
-## 后续 C
+## 后续 C（连续对话）
 
-- AudioWorklet 已计算 RMS，接自适应噪声本底 + 1.2s 静音判停。
-- 600ms pre-roll 环形缓冲，打断时补进新录音。
-- 打断复用现有 `/api/chat/stop`（真取消）。
-- 全屏环用 SwiftUI / CSS 实现，不改传输层。
+按 C0 → C1 → C2 → C3a → C3b 顺序做，一个阶段一个提交。
+
+| 阶段 | 内容 | 范围 |
+|---|---|---|
+| **C0** | 后端 `mode=continuous` → `result_type=single` + `sentence` 分句下发 | 后端 |
+| **C1** | 连续流 + `sentence` 自动提交 + 会话上限（10 分钟硬上限 + 30 秒空闲自动收口） | macOS |
+| **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA |
+| **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS |
+| **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA |
+
+关键事实（`cmd/voice-smoke` 实测）：
+
+- VAD 判停由**服务端**做：`enable_nonstream=true` + `end_window_size`，句末静音 ~800ms 后约 1.1s 出 `definite`；客户端不写 RMS 判停。
+- `result_type=single` 每条结果只带当前分句；`final` 只含最后一句（退出时需补提交残句，服务端已代为下发 `sentence`）。
+- 一条连接连续跑 83 秒 / 18 分句未断，**不需要**每句重连。
+- `end_window_size=600` 比 800 快约 500ms，代价是自然停顿更易切句；A 保持 800，C 可降到 600。
+- 打断顺序必须严格：停本地播放 → `/api/chat/stop`（真取消生成）→ 新建 ASR 连接 → 冲入 600ms pre-roll。
+- AEC 只影响 C3：VPIO 需先接播放图再 `setVoiceProcessingEnabled(true)`，input/output 都开；TTS 必须走同一 engine 的 `AVAudioPlayerNode`；播放结束后仍要压 500–800ms 麦克风门。
+- C 会话计费按音频时长（大模型流式 ASR ≈ 4.4 元/小时，静音也计时），所以必须有会话上限与空闲收口。
 
 ## 验收
 
@@ -269,3 +293,9 @@ location = /api/voice/asr {
   - `voice.asr.timeout_seconds` 语义明确为 WS 握手超时。
   - 纯表格回复与纯代码一样改播「放在屏幕上了」提示。
   - 语音标记（`voice_mode` / `pendingVoiceReply`）在清空输入、新会话时复位，避免手打被当语音轮。
+- 2026-11-08（C0）：
+  - `/api/voice/asr` 新增 `mode=continuous`：服务端强制 `result_type=single`，只下发 `sentence`（`{text}`），
+    不再下发 `result`。`sentence` 由 `voice.SentenceCommitter` 去重，连接结束时的残句也会补出。
+  - `voice.asr` 新增 `result_type` / `end_window_size` 配置（默认 `full` / `800`），`cmd/voice-smoke`
+    加 `-result-type` / `-max-seconds` / `-end-window` 三个 flag 用于参数实验。
+  - 执行计划定为 C0 → C1（macOS 连续流）→ C2（全屏环两端）→ C3a（macOS 真打断）→ C3b（PWA 点击打断）。

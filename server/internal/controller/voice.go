@@ -124,8 +124,15 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = 15 * time.Second
 	}
+	// C 模式（连续对话）：一条连接连着送音频，按分句增量返回（result_type=single），
+	// 客户端每收到一条 sentence 就提交一轮对话，不再等服务端 ready→录音→end。
+	continuous := c.Query("mode") == "continuous"
+	asrCfg := h.cfg.ASR
+	if continuous {
+		asrCfg.ResultType = "single"
+	}
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, handshakeTimeout)
-	asr, err := voice.DialASR(handshakeCtx, h.cfg.ASR, h.cfg.APIKey, userID)
+	asr, err := voice.DialASR(handshakeCtx, asrCfg, h.cfg.APIKey, userID)
 	handshakeCancel()
 	if err != nil {
 		log.Printf("[voice] asr dial failed (user=%s): %v", userID, err)
@@ -200,7 +207,20 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	readTimeout := time.Duration(h.cfg.ASR.MaxSeconds+30) * time.Second
 	readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
 	defer readCancel()
+	var committer voice.SentenceCommitter
 	err = asr.Read(readCtx, func(result voice.ASRResult) {
+		if continuous {
+			// 只下发已判停的分句；客户端按 sentence 逐轮提交。
+			text := committer.Commit(result)
+			if text == "" {
+				return
+			}
+			if err := send(gin.H{"type": "sentence", "text": text}); err != nil {
+				log.Printf("[voice] asr send sentence failed (user=%s): %v", userID, err)
+				readCancel()
+			}
+			return
+		}
 		if err := send(gin.H{
 			"type":     "result",
 			"text":     result.Text,

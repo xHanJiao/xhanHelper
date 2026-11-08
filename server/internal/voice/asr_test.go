@@ -134,3 +134,25 @@ func TestASRDurationLimit(t *testing.T) {
 		t.Fatalf("err = %v, want ErrASRDurationLimit", err)
 	}
 }
+
+// TestSentenceCommitter — C 模式下只提交已判停的新分句；重复文本与未判停结果不提交，
+// 退出时 final（只含最后一句）能补出残句。
+func TestSentenceCommitter(t *testing.T) {
+	var c SentenceCommitter
+	cases := []struct {
+		in   ASRResult
+		want string
+	}{
+		{ASRResult{Text: "第一句"}, ""},
+		{ASRResult{Text: "第一句。", Definite: true}, "第一句。"},
+		{ASRResult{Text: "第二"}, ""},
+		{ASRResult{Text: "第一句。", Definite: true}, ""}, // 重复下发不重复提交
+		{ASRResult{Text: "第二句。", Definite: true}, "第二句。"},
+		{ASRResult{Text: "第二句。"}, ""},
+	}
+	for i, tc := range cases {
+		if got := c.Commit(tc.in); got != tc.want {
+			t.Errorf("case %d: Commit(%+v) = %q, want %q", i, tc.in, got, tc.want)
+		}
+	}
+}

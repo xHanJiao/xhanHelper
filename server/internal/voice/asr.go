@@ -27,6 +27,21 @@ type ASRResult struct {
 	Final    bool   `json:"final"`
 }
 
+// SentenceCommitter 把 continuous 模式（result_type=single）的结果流折算成"可提交的新分句"。
+// single 模式下每条结果的 Text 只含当前分句；退出时 final 只带最后一句，也需要补提交。
+type SentenceCommitter struct {
+	last string
+}
+
+// Commit 返回需要提交的新分句；空串表示这条结果不用提交（未判停 / 重复）。
+func (c *SentenceCommitter) Commit(r ASRResult) string {
+	if !r.Definite || r.Text == "" || r.Text == c.last {
+		return ""
+	}
+	c.last = r.Text
+	return r.Text
+}
+
 // ASRClient 是豆包流式语音识别模型 2.0 的客户端。
 // 它只负责「上行 PCM / 下行结果」，鉴权头与二进制协议都封在这里。
 type ASRClient struct {

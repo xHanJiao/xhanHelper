@@ -128,9 +128,9 @@ final class VoiceChatService: ObservableObject {
     func speak(text: String, baseURL: String, token: String) async {
         let cleaned = Self.sanitizeForSpeech(text)
         guard !cleaned.isEmpty, !baseURL.isEmpty, !token.isEmpty else { return }
+        stopSpeaking()
         do {
             let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: cleaned)
-            stopSpeaking()
             #if os(iOS)
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
             try? AVAudioSession.sharedInstance().setActive(true)

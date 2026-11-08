@@ -169,6 +169,7 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
     busy.value = true
     finished = false
     transcript.value = ''
+    stopSpeaking()
     unlockAudio()
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })

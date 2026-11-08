@@ -83,7 +83,7 @@ import {
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
-import VoiceOrb from '@/components/VoiceOrb.vue'
+import VoiceWaveLine from '@/components/VoiceWaveLine.vue'
 import ToolCallToast from '@/components/ToolCallToast.vue'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import AttachmentTray from '@/components/chat/AttachmentTray.vue'
@@ -106,6 +106,7 @@ const {
   calling: voiceCalling,
   level: voiceLevel,
   speaking: voiceSpeaking,
+  preparing: voicePreparing,
   refresh: refreshVoice,
   start: startVoice,
   stop: stopVoice,
@@ -119,33 +120,26 @@ const {
   isBusy: () => chat.isStreaming
 })
 
-// C2 全屏语音环：说 > 想 > 听；会话结束就卸载
-const voiceOrbPhase = computed(() => {
-  if (!voiceActive.value) return null
+// 音波条状态：说 > 想 > 听。「想」包含 TTS 合成期（preparing），
+// 否则回复流刚结束、音频还没到时会先闪回「听」。
+const voicePhase = computed(() => {
   if (voiceSpeaking.value) return 'speaking'
-  if (chat.isStreaming) return 'thinking'
+  if (chat.isStreaming || voicePreparing.value) return 'thinking'
   return 'listening'
 })
 
-// 连续会话里「打断」只停朗读/停生成，麦克风不断（PWA 不做自动打断，靠手点）
-const voiceOrbCloseLabel = computed(() => (voiceSpeaking.value ? '打断' : '结束对话'))
+// 连续会话里「打断」只停朗读/停生成，麦克风不断（PWA 不做自动打断，靠点音波条）
+function voiceInterrupt() {
+  // 打断的主场景是本轮已流完、TTS 正在念：这时发 stop 会误杀下一轮，只停朗读就够
+  stopSpeaking()
+  if (chat.isStreaming) handleStop()
+}
 
 // 结束语音会话 = 停采集 + 停朗读 + 停生成：只停采集的话，正在跑的回复会在会话结束后
 // 才朗读出来（onAssistantReply 还挂在那条流上）。
 function endVoiceSession() {
   stopVoice()
   if (chat.isStreaming) handleStop()
-}
-
-function voiceOrbClose() {
-  if (voiceSpeaking.value) {
-    // 打断通常发生在「本轮已流完、TTS 正在念」：这时发 stop 会误杀下一轮，
-    // 只停朗读就够；真还在生成才停流式。
-    stopSpeaking()
-    if (chat.isStreaming) handleStop()
-    return
-  }
-  endVoiceSession()
 }
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
@@ -1099,13 +1093,6 @@ function handleContainerClick(e) {
 
 <template>
   <div class="chat-page">
-    <VoiceOrb
-      v-if="voiceOrbPhase"
-      :phase="voiceOrbPhase"
-      :level="voiceLevel"
-      :close-label="voiceOrbCloseLabel"
-      @close="voiceOrbClose"
-    />
     <PageTopBar
       show-conversation
       align-card
@@ -1240,10 +1227,17 @@ function handleContainerClick(e) {
           @retry="retryDraft"
           @clear="clearDrafts"
         />
+        <VoiceWaveLine
+          v-if="voiceActive"
+          :phase="voicePhase"
+          :level="voiceLevel"
+          @interrupt="voiceInterrupt"
+        />
         <NInput
+          v-else
           v-model:value="inputValue"
           type="textarea"
-          :placeholder="voiceActive ? '正在听…（说完停顿一下就会提交）' : '发消息...'"
+          placeholder="发消息..."
           :disabled="chat.isStreaming"
           :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
           class="chat-input"

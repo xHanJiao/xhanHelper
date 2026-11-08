@@ -46,8 +46,11 @@ final class VoiceChatService: ObservableObject {
     @Published private(set) var continuousActive = false
     /// 麦克风音量 0...1（全屏语音环用）
     @Published private(set) var level: Double = 0
-    /// TTS 正在播放（全屏语音环「说」态）
+    /// TTS 正在播放（「说」态）
     @Published private(set) var isSpeaking = false
+    /// 回复已生成完、TTS 还在合成音频（还没开播）：界面据此停在「想」，
+    /// 不要在这段里先闪回「听」（听→想→听→说的那个多余「听」）。
+    @Published private(set) var isPreparingSpeech = false
     /// 空闲多久没听到完整分句就结束会话（秒）
     private let continuousIdleSeconds = 30
     private var speakEndTask: Task<Void, Never>?
@@ -442,6 +445,7 @@ final class VoiceChatService: ObservableObject {
         stopSpeaking()
         speakEpoch += 1
         let epoch = speakEpoch
+        isPreparingSpeech = true
         do {
             let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
             vlog("tts ok: bytes=\(data.count)")
@@ -458,6 +462,7 @@ final class VoiceChatService: ObservableObject {
             configureAudio()
             // 播报期间压住麦克风（AEC 只削掉大部分回声，尾音还会漏进来）
             beginMicGate()
+            isPreparingSpeech = false
             isSpeaking = true
             vlog("tts play begin")
             do {
@@ -470,10 +475,12 @@ final class VoiceChatService: ObservableObject {
             } catch {
                 vlog("tts play failed: \(error.localizedDescription)")
                 isSpeaking = false
+                isPreparingSpeech = false
                 endMicGate(flushPreroll: false)
                 throw error
             }
         } catch {
+            isPreparingSpeech = false
             LogBuffer.shared.error("voice tts failed: \(error.localizedDescription)")
             ToastCenter.shared.show("语音播放失败")
         }
@@ -515,6 +522,7 @@ final class VoiceChatService: ObservableObject {
         speakEndTask = nil
         let wasSpeaking = isSpeaking
         isSpeaking = false
+        isPreparingSpeech = false
         audio.stopPlayback()
         // 只要门还关着就开：仅在 wasSpeaking 时开会让「TTS 尾音门 600ms 窗口内启动新一轮」
         // 永久卡在门控里（一帧都不会发给 ASR，表现为麦克风亮着但毫无反应）

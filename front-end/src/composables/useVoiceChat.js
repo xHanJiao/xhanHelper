@@ -82,8 +82,11 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   // start 过渡中（按钮暂时禁用）
   const calling = ref(false)
   const level = ref(0)
-  // TTS 正在播放（浮层「说」态）
+  // TTS 正在播放（「说」态）
   const speaking = ref(false)
+  // 回复已生成完、TTS 还在合成音频（还没开播）：「想」态要把它算进去，
+  // 否则这段里会先闪回「听」（听→想→听→说）
+  const preparing = ref(false)
 
   let socket = null
   let mediaStream = null
@@ -485,6 +488,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     stopSpeaking()
     speakEpoch += 1
     const epoch = speakEpoch
+    preparing.value = true
     lastActivity = Date.now()
     return (async () => {
       try {
@@ -498,11 +502,13 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
         el.src = objectUrl
         // 播报期间不把麦克风里的声音（含外放回声）发给 ASR，但上行流不能空闲
         setGate(true)
+        preparing.value = false
         speaking.value = true
         await el.play()
       } catch (err) {
         if (epoch === speakEpoch) {
           console.error('[voice] tts failed', err)
+          preparing.value = false
           speaking.value = false
           setGate(false)
           onError?.('语音播放失败')
@@ -523,6 +529,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
 
   function stopSpeaking() {
     speakEpoch += 1
+    preparing.value = false
     speaking.value = false
     if (gateTailTimer) { clearTimeout(gateTailTimer); gateTailTimer = null }
     // 只要门还关着就开：只在 speaking 为真时才开，会卡在「播放结束到门关」这段里
@@ -538,6 +545,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     calling,
     level,
     speaking,
+    preparing,
     refresh,
     start,
     stop,

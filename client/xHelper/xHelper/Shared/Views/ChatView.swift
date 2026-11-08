@@ -76,15 +76,6 @@ struct ChatView: View {
         }
 #else
         content
-            .overlay {
-                if voice.continuousActive {
-                    VoiceOrbView(
-                        phase: voiceOrbPhase,
-                        level: voice.level,
-                        onClose: endContinuousVoice
-                    )
-                }
-            }
             .confirmationDialog("开启「完全信任」？", isPresented: $showTrustEnableConfirm) {
                 Button("开启完全信任", role: .destructive) {
                     trustStore.fullTrust = true
@@ -98,12 +89,22 @@ struct ChatView: View {
     }
 
 #if os(macOS)
-    /// 全屏语音环状态：说 > 想 > 听。
-    private var voiceOrbPhase: VoiceOrbView.Phase {
+    /// 音波条状态：说 > 想 > 听。「想」包含 TTS 合成期（`isPreparingSpeech`），
+    /// 否则回复流刚结束、音频还没到时会先闪回「听」。
+    private var voiceWavePhase: VoiceWaveLine.Phase {
         if voice.isSpeaking { return .speaking }
-        if viewModel.isStreaming { return .thinking }
+        if viewModel.isStreaming || voice.isPreparingSpeech { return .thinking }
         return .listening
     }
+
+    /// 语音会话期间顶替输入栏文本行的音波条（iOS 没有连续对话入口，恒为 nil）。
+    private var voiceStripSlot: AnyView? {
+        guard voice.continuousActive else { return nil }
+        return AnyView(VoiceWaveLine(phase: voiceWavePhase, level: voice.level,
+                                     onInterrupt: { voice.stopSpeaking() }))
+    }
+#else
+    private var voiceStripSlot: AnyView? { nil }
 #endif
 
     private var content: some View {
@@ -418,6 +419,7 @@ struct ChatView: View {
             onToggleMode: {
                 Task { await viewModel.cycleMode() }
             },
+            voiceStrip: voiceStripSlot,
             statusRow: inputBarStatusRow,
             statusRowExtras: inputBarExtrasRow,
             trailingActions: inputBarTrailingActions,

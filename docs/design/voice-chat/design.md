@@ -18,7 +18,7 @@
    回复自动朗读；原「语音输入 → 填输入框」入口已按用户要求删除）；PWA 同样是连续对话。
 2. TTS 走豆包语音合成模型 2.0，ASR 走豆包流式语音识别模型 2.0。
 3. API Key 只在服务端；客户端不接触豆包凭证。
-4. 为后续 C（静音自动提交 + 全屏环 + 打断）保留传输层与状态机接口。
+4. 为后续 C（静音自动提交 + 输入框音波线 + 打断）保留传输层与状态机接口。
 
 ## 非目标
 
@@ -221,17 +221,22 @@ C 模式说明：
 - 结束/掉线都会发 `cancel` 或等负包结果后关连接；`limit` 后立即停采集（负包之后不能再发音频）。
 - `shortcut:` 连接意外断开不自动重连，10 分钟会话内掉线需用户再点一次；真机常掉再加重连。
 
-### C2 全屏语音环
+### C2 输入框音波线
 
-- macOS：`VoiceOrbView`（`Shared/Views/`）覆盖会话区（`.ultraThinMaterial` + 三层环），
-  状态优先级「说 > 想 > 听」；listen 态用 `VoiceAudioEngine.onLevel`（RMS×4，0...1）驱动核心缩放。
-- PWA：`components/VoiceOrb.vue` 全屏浮层（`position: fixed`），监听态用 AudioWorklet 已有的 `level`，
-  `speaking` 由 `<audio>` 的 `ended`/`pause` 事件维护。
-  **全屏磨砂是刻意的免手模式**：会话期间不看聊天记录、不复选文本，要么说要么点「结束对话」
-  退回聊天（移动端单手场景下，留一半屏幕给一条随时会滚动的消息流反而更碍事）。
-- 两端都能点「结束」收口：macOS 与 PWA 都同时停生成与朗读（macOS 统一走 `endContinuousVoice()`）。
-  PWA 在「说」态按钮是「打断」——只停朗读与生成，会话与麦克风保留。
-- 只是展示层，不改传输层与状态机。
+- 会话期间**不再有全屏浮层**：聊天消息、滚动、右栏都不动，输入栏的文本行让位给一条 36pt 高的音波线
+  （草稿保留，结束会话后编辑器原样回来；底部走 `safeAreaInset`，消息不会重排）。
+- 形态是一根 1.6pt 正弦曲线，**相位锁定、原地呼吸**（只有振幅随声音变），以横轴中点做中心对称，
+  两端用 `sin(πx)^0.55` 收口。定稿参数：**幅度 0.8 / 响应 2.0 / 波包 1.15**（调参页 `mockup.html`）。
+  - 听：振幅 `(2 + 12·√(level/0.22)) × 0.8`，快起 15ms / 慢落 60ms；静息留 ±2px 的呼吸。
+  - 想：一道正弦波包从左穿到右（周期 `3.4/1.15 ≈ 3s`），走过恢复平静。**TTS 合成期**
+    （macOS `isPreparingSpeech` / PWA `preparing`）也算「想」，否则回复流刚结束、音频还没到时
+    会先闪回「听」（听→想→听→说里那个多余的「听」）。
+  - 说：振幅由两条不可通约正弦相乘的 cadence 驱动（重音疏密），青色 `accentSecondary` + 发光。
+- 状态字「听/想/说」固定占左端 22pt；「说」态行尾提示「点一下打断」，点整条 = 停朗读
+  （PWA 只在 `chat.isStreaming` 时再 `handleStop()`；macOS 有自动打断，点条只停朗读）。
+- macOS 实现在 `Shared/Views/VoiceOrbView.swift` 的 `VoiceWaveLine`（**文件名保留**，改名要动 Xcode 工程），
+  由 `InputBar` 的 `voiceStrip` 槽顶替编辑器；PWA 实现在 `components/VoiceWaveLine.vue`（canvas，同一套数学）。
+- `prefers-reduced-motion` / `accessibilityReduceMotion` 时冻结相位与波包，只保留振幅响应。
 
 ### C3a 回声消除与打断（macOS）
 
@@ -305,7 +310,7 @@ C 模式说明：
 |---|---|---|
 | **C0** | 后端 `mode=continuous` → `result_type=single` + `sentence` 分句下发 | 后端 |
 | **C1** | 连续流 + `sentence` 自动提交 + 会话上限（10 分钟硬上限 + 30 秒空闲自动收口） | macOS |
-| **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA ✅ |
+| **C2** | 输入框音波线（听 / 想 / 说 三态 + 振幅呼吸） | macOS + PWA ✅ |
 | **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS ✅ |
 | **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA ✅ |
 | **C4** | PWA 连续对话（麦克风按钮 = 开关）+ 播报期静音门控 + 空闲/上限收口 | PWA ✅ |
@@ -473,3 +478,14 @@ location = /api/voice/asr {
     PWA 同步接这个事件。
   - macOS 浮层「说」态提示改为「直接开口就能打断，点「结束」是收会话」；
     `session limit` / `idle limit` / `ws receive ended` / `config unavailable` 四处日志改走 `diag`。
+- 2026-11-08（C2 重做：全屏环 → 输入框音波线）：
+  - 用户明确不要全屏浮层（聊天消息要一直可见），也不要横向流动的波形；
+    改成**一根正弦曲线原地呼吸**，只有振幅随声音变。淘汰两版中间形态（单线波浪、
+    镜像尖峰波形带），调参页留在 `docs/design/voice-chat/mockup.html`。
+  - 定稿参数：幅度 0.8 / 响应 2.0（起 15ms、落 60ms）/ 波包 1.15；「说」态用 `accentSecondary` 青。
+  - 修状态机：新增 `isPreparingSpeech`（macOS）/ `preparing`（PWA），把「回复已生成完、TTS 还在合成」
+    并进「想」，消掉 听→想→**听**→说 里那个多余的「听」。
+  - macOS：删 `ChatView` 的 `VoiceOrbView` overlay，改由 `InputBar.voiceStrip` 顶替文本行
+    （`AnyView` 槽，避免再加泛型把调用表达式顶爆）；胶囊的「点空白聚焦」手势在语音期间关闭。
+  - PWA：删 `VoiceOrb.vue` 全屏浮层，新增 `VoiceWaveLine.vue`（canvas + rAF），
+    会话期间顶替 `<NInput>`；`useVoiceChat` 暴露 `preparing`。

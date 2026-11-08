@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="zh-CN" class="theme-light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音音波轨 · 示意</title>
+<style>
+  :root{
+    --accent:#2F7D63;
+    --accent-dim:#2F7D63;
+    --secondary:#41C9E2;
+    --bg:#F7EEDD;
+    --bg-deep:#EFE2C8;
+    --text:#3B2E1F;
+    --text-2:rgba(59,46,31,.55);
+    --capsule:rgba(255,255,255,.72);
+    --capsule-border:rgba(59,46,31,.07);
+    --bubble-ai:rgba(255,255,255,.55);
+    --shadow:rgba(59,46,31,.10);
+  }
+  html.theme-dark{
+    --accent:#92C8B4;
+    --accent-dim:#92C8B4;
+    --secondary:#41C9E2;
+    --bg:#1C1C1E;
+    --bg-deep:#141416;
+    --text:#FFFFFF;
+    --text-2:rgba(255,255,255,.52);
+    --capsule:rgba(44,46,45,.76);
+    --capsule-border:rgba(255,255,255,.10);
+    --bubble-ai:rgba(255,255,255,.06);
+    --shadow:rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%),
+      linear-gradient(180deg, var(--bg), var(--bg-deep));
+    color:var(--text);
+    font: 14px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:820px; margin:0 auto; padding:26px 24px 210px;}
+  .head{margin-bottom:18px;}
+  .head h1{font-size:15px; font-weight:600; margin:0 0 4px; letter-spacing:.2px;}
+  .head p{margin:0; font-size:12px; color:var(--text-2);}
+  .head p + p{margin-top:2px}
+
+  .chat{
+    border-radius:22px;
+    padding:18px 0 0;
+  }
+  .msg{max-width:78%; padding:9px 14px; border-radius:16px; margin-bottom:10px; font-size:13.5px; line-height:1.62;
+       background:var(--bubble-ai); border:.5px solid var(--capsule-border);}
+  .msg.me{margin-left:auto; color:#fff; background:color-mix(in srgb, var(--accent) 78%, #000 4%); border-color:transparent;}
+  html.theme-dark .msg.me{color:#141416;}
+  .msg .who{display:block; font-size:10px; opacity:.55; margin-bottom:2px}
+
+  .composer{
+    width:min(720px, 100%);
+    margin:22px auto 0;
+    background:var(--capsule);
+    border:.5px solid var(--capsule-border);
+    border-radius:20px;
+    padding:7px 14px;
+    box-shadow:0 10px 30px -6px var(--shadow);
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  }
+  .strip{
+    display:flex; align-items:center; gap:8px;
+    height:36px;
+  }
+  .word{
+    flex:0 0 22px; font-size:12px; color:var(--text-2);
+    transition:color .22s ease;
+  }
+  canvas{flex:1 1 auto; height:36px; display:block;}
+  .hint{
+    flex:0 0 auto; font-size:11px; color:var(--text-2); white-space:nowrap;
+    opacity:0; transition:opacity .22s ease;
+  }
+  .strip.is-speaking .hint{opacity:.62}
+
+  .btns{display:flex; align-items:center; gap:6px; height:34px; margin-top:2px;}
+  .sbtn{
+    width:26px; height:26px; padding:0; border-radius:8px;
+    border:.5px solid var(--capsule-border); background:transparent; color:var(--text-2);
+    display:grid; place-items:center; cursor:default;
+  }
+  .sbtn svg{width:14px; height:14px}
+  .sbtn.on{
+    color:#fff; border-color:transparent;
+    background:color-mix(in srgb, var(--accent) 88%, #000 2%);
+  }
+  html.theme-dark .sbtn.on{color:#141416;}
+  .spacer{flex:1}
+  .send{
+    width:26px; height:26px; border-radius:50%; border:none;
+    background:var(--accent); color:#fff; font-size:13px; display:grid; place-items:center;
+  }
+  html.theme-dark .send{color:#141416}
+
+  .note{
+    max-width:720px; margin:14px auto 0; font-size:11.5px; color:var(--text-2);
+  }
+
+  .ui{
+    position:fixed; left:0; right:0; bottom:0; z-index:50;
+    padding:10px 16px calc(12px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg) 82%, transparent) 24%);
+  }
+  .ui-card{
+    max-width:820px; margin:0 auto; padding:10px 14px;
+    background:var(--capsule); border:.5px solid var(--capsule-border); border-radius:16px;
+    box-shadow:0 10px 30px -8px var(--shadow);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px;
+  }
+  .phases{display:flex; gap:6px}
+  .pbtn{
+    padding:5px 11px; border-radius:999px; font-size:12px;
+    border:.5px solid var(--capsule-border); background:transparent; color:var(--text-2);
+    cursor:pointer; transition:all .15s ease;
+  }
+  .pbtn:hover{color:var(--text)}
+  .pbtn.on{background:var(--accent); border-color:transparent; color:#fff;}
+  html.theme-dark .pbtn.on{color:#141416}
+  .slider{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--text-2)}
+  .slider input[type=range]{width:92px}
+  .slider b{font-weight:500; color:var(--text); min-width:26px; text-align:right; font-variant-numeric:tabular-nums}
+  .ui-card .sep{width:1px; height:18px; background:var(--capsule-border)}
+  .toggle{
+    display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-2); cursor:pointer;
+  }
+  body.bare .ui, body.bare .head, body.bare .note{display:none}
+  body.bare .page{padding-bottom:60px}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <h1>语音音波轨 · 动效示意</h1>
+    <p>输入框的文本行被一条对称音波线替代；消息区不动。切换状态看四种运动。</p>
+    <p>已定稿：幅度 0.80 / 响应 2.00 / 波包 1.15（两端实现用的就是这组）。底栏仍可拖动对比。</p>
+  </div>
+
+  <div class="chat">
+    <div class="msg"><span class="who">你</span>帮我把这周的记账汇总一下</div>
+    <div class="msg"><span class="who">助手</span>这周一共 12 笔，餐饮 486 元、交通 132 元、其他 79 元。比上周少了 8%。</div>
+  </div>
+
+  <div class="composer">
+    <div class="strip" id="strip">
+      <span class="word" id="word">听</span>
+      <canvas id="wave"></canvas>
+      <span class="hint" id="hint">点一下打断</span>
+    </div>
+    <div class="btns">
+      <button class="sbtn on" title="语音会话（开）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+      </button>
+      <button class="sbtn" title="添加图片">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+      </button>
+      <button class="sbtn" title="计划模式">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg>
+      </button>
+      <button class="sbtn" title="更多操作">⋯</button>
+      <span class="spacer"></span>
+      <button class="send">↑</button>
+    </div>
+  </div>
+
+  <div class="note">
+    语音期间文本行让位（草稿保留），麦克风按钮红色 = 会话开着，再点一次结束。
+  </div>
+</div>
+
+<div class="ui">
+  <div class="ui-card">
+    <div class="phases">
+      <button class="pbtn on" data-phase="idle">听 · 静</button>
+      <button class="pbtn" data-phase="listen">听 · 说话</button>
+      <button class="pbtn" data-phase="thinking">想</button>
+      <button class="pbtn" data-phase="speaking">说</button>
+    </div>
+    <span class="sep"></span>
+    <label class="slider">幅度 <input id="amp" type="range" min="0.6" max="1.5" step="0.05" value="0.8"><b id="ampV">0.80</b></label>
+    <label class="slider">响应 <input id="speed" type="range" min="0.2" max="2" step="0.05" value="2"><b id="speedV">2.00</b></label>
+    <label class="slider">波包 <input id="packet" type="range" min="0.5" max="1.6" step="0.05" value="1.15"><b id="packetV">1.15</b></label>
+    <label class="slider">静息 <input id="wobble" type="range" min="0" max="2" step="0.1" value="1"><b id="wobbleV">1.0</b></label>
+    <span class="sep"></span>
+    <label class="toggle"><input id="glow" type="checkbox" checked> 说态发光</label>
+    <button class="pbtn on" id="styleBtn">正弦线</button>
+    <button class="pbtn" id="demoBtn">自动演示</button>
+    <button class="pbtn" id="themeBtn">切深色</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const qs = new URLSearchParams(location.search);
+  const body = document.body;
+  const strip = document.getElementById('strip');
+  const wordEl = document.getElementById('word');
+  const hintEl = document.getElementById('hint');
+  const canvas = document.getElementById('wave');
+  const ctx = canvas.getContext('2d');
+
+  const PHASES = {
+    idle:     { word: '听', hint: '', cls: '' },
+    listen:   { word: '听', hint: '', cls: 'is-listening' },
+    thinking: { word: '想', hint: '', cls: 'is-thinking' },
+    speaking: { word: '说', hint: '点一下打断', cls: 'is-speaking' }
+  };
+
+  const params = { amp: 0.8, speed: 2, packet: 1.15, wobble: 1 };
+  let phase = 'idle';
+  let dark = qs.get('theme') === 'dark';
+  let clock = 0;
+  let level = 0;
+  let ampSmooth = 0.8;
+  let glow = true;
+  let style = qs.get('style') === 'spike' ? 'spike' : 'sine';
+  let demo = false;
+  let demoClock = 0;
+  const DEMO_SEQ = [
+    { at: 0, phase: 'listen' },
+    { at: 3.6, phase: 'thinking' },
+    { at: 7.6, phase: 'speaking' },
+    { at: 13.6, phase: 'listen' }
+  ];
+  const freeze = qs.get('freeze') ? parseFloat(qs.get('freeze')) : null;
+  const forcedLevel = qs.get('level') ? parseFloat(qs.get('level')) : null;
+
+  if (dark) { document.documentElement.classList.add('theme-dark'); document.getElementById('themeBtn').textContent = '切浅色'; }
+  if (qs.get('bare') === '1') body.classList.add('bare');
+
+  function setPhase(p) {
+    if (!PHASES[p]) return;
+    if (p !== phase) {
+      prevPhase = phase;
+      phaseAt = freeze !== null ? -999 : clock;
+    }
+    phase = p;
+    wordEl.textContent = PHASES[p].word;
+    hintEl.textContent = PHASES[p].hint;
+    strip.className = 'strip ' + PHASES[p].cls;
+    document.querySelectorAll('.pbtn[data-phase]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.phase === p);
+    });
+  }
+
+  function color() {
+    if (phase === 'speaking') return '#41C9E2';
+    return dark ? '#92C8B4' : '#2F7D63';
+  }
+
+  function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+
+  // 「听 · 说话」的模拟电平：有停顿、有重音，接近真机 level 的起落
+  function simulateLevel() {
+    const c = clock % 7.6;
+    let target = 0;
+    if (c < 4.4) {
+      const e = Math.max(0, Math.sin(c * 3.4) * Math.sin(c * 1.27 + 0.6));
+      target = 0.03 + 0.24 * Math.pow(e, 0.8);
+      if (Math.sin(c * 9.1) > 0.84) target *= 0.18; // 词间停顿
+    }
+    level += (target - level) * 0.28;
+  }
+
+  function targetAmp() {
+    if (phase === 'idle') {
+      return (2.6 + 0.8 * params.wobble * Math.sin(clock * 0.7)) * params.amp;
+    }
+    if (phase === 'listen') {
+      const a = Math.sqrt(clamp(level / 0.22, 0, 1));
+      return (2 + 12 * a) * params.amp;
+    }
+    if (phase === 'speaking') {
+      const cad = (0.5 + 0.5 * Math.sin(clock * 2.7)) *
+                  (0.35 + 0.65 * Math.abs(Math.sin(clock * 1.13 + 0.7)));
+      return (5 + 9 * cad) * params.amp;
+    }
+    return 1;
+  }
+
+  // 对称波形：先算「半高」（恒 ≥ 0），再以中线为轴上下镜像，填充成一条有厚度的波形带。
+  // 三组不可通约频率叠加后取绝对值再锐化——比单条正弦更像真实音频包络，且有成片的「静音缝」。
+  let prevPhase = 'idle';
+  let phaseAt = -999;
+
+  function cadence(t) {
+    return (0.5 + 0.5 * Math.sin(t * 3.6)) *
+           (0.3 + 0.7 * Math.abs(Math.sin(t * 1.7 + 0.7)));
+  }
+
+  // 值噪声：平滑插值的随机序列，颗粒尺度约 6~15px，做出真实录音那种稀疏尖峰
+  function hash1(n, seed) {
+    const v = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  }
+  function vnoise(v, seed) {
+    const i = Math.floor(v), f = v - i;
+    const u = f * f * (3 - 2 * f);
+    return hash1(i, seed) * (1 - u) + hash1(i + 1, seed) * u;
+  }
+  function noise(x, t, seed) {
+    const a = vnoise(x * 70 + t, seed);
+    const b = vnoise(x * 190 - t * 0.9, seed + 7.3);
+    const n = Math.pow(0.7 * a + 0.3 * b, 2.0);
+    // 慢速的大尺度起伏：让刺成片地长起来、再塌下去，像一句话里的音节，而不是均匀的噪点
+    const swell = 0.55 + 0.45 * vnoise(x * 6 + t * 0.55, seed + 3);
+    return n * swell;
+  }
+
+  // 正弦线：一根平滑曲线，以横轴中点做点对称（f(0.5+d) = -f(0.5-d)），两端收口、形状不滚动
+  function sineProfile(p, x) {
+    const env = Math.pow(Math.sin(Math.PI * x), 0.55);
+    const k = Math.PI * 2 * 2.2;
+    if (p === 'thinking') {
+      const period = 3.4 / params.packet;
+      const pos = -0.16 + ((clock % period) / period) * 1.32;
+      const g = Math.exp(-Math.pow((x - pos) / 0.19, 2));
+      return 12.5 * params.amp * g * Math.sin((x - pos) * k - clock * 1.4 * params.speed);
+    }
+    // 相位锁死：线不横移，只靠振幅呼吸
+    return ampSmooth * env * Math.sin(k * (x - 0.5));
+  }
+
+  function profileFor(p, x) {
+    // 两端收口，但留出足够宽的可用区（^0.55 比 ^1.2 平缓）
+    const env = Math.pow(Math.sin(Math.PI * x), 0.55);
+    if (p === 'thinking') {
+      const period = 2.4 / params.packet;
+      const pos = -0.14 + ((clock % period) / period) * 1.28;
+      const g = Math.exp(-Math.pow((x - pos) / 0.16, 2));
+      const n = noise(x, clock * 3.6 * params.speed, 3.1);
+      return 12.5 * params.amp * g * (0.3 + 0.7 * n);
+    }
+    let sp;
+    if (p === 'idle') {
+      sp = 0.4;
+    } else if (p === 'listen') {
+      const a = Math.sqrt(clamp(level / 0.22, 0, 1));
+      sp = 1.4 + 3.2 * a;
+    } else {
+      sp = 2 + 3.5 * cadence(clock);
+    }
+    const n = noise(x, clock * sp * params.speed, p === 'speaking' ? 5.7 : 2.3);
+    return ampSmooth * env * (0.08 + 0.92 * n);
+  }
+
+  let dpr = window.devicePixelRatio || 1;
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(r.width * dpr));
+    canvas.height = Math.max(1, Math.round(r.height * dpr));
+  }
+  window.addEventListener('resize', resize);
+
+  function draw() {
+    const W = canvas.width / dpr;
+    const H = canvas.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    const padX = 10;
+    const mid = H / 2;
+    const N = 240;
+    // 状态切换时两套包络交叉淡化，避免公式硬切造成的跳变
+    const m = freeze !== null ? 1 : clamp((clock - phaseAt) / 0.22, 0, 1);
+    const ease = m < 0.5 ? 2 * m * m : 1 - Math.pow(-2 * m + 2, 2) / 2;
+    const c = color();
+
+    if (style === 'sine') {
+      const yAt = function (x) {
+        return sineProfile(prevPhase, x) * (1 - ease) + sineProfile(phase, x) * ease;
+      };
+      ctx.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const x = i / N;
+        const px = padX + x * (W - padX * 2);
+        const py = mid + clamp(yAt(x), -(mid - 1), mid - 1);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      if (phase === 'speaking' && glow) {
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = 'rgba(65,201,226,0.40)';
+      }
+      ctx.lineWidth = 1.6;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = c;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      return;
+    }
+
+    const half = function (x) {
+      const v = profileFor(prevPhase, x) * (1 - ease) + profileFor(phase, x) * ease;
+      return Math.min(Math.max(0.55, v), mid - 1);
+    };
+
+    // 上半边 → 下半边（镜像）→ 闭合，填充成对称波形带
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const x = i / N;
+      const px = padX + x * (W - padX * 2);
+      const py = mid - half(x);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    for (let i = N; i >= 0; i--) {
+      const x = i / N;
+      const px = padX + x * (W - padX * 2);
+      ctx.lineTo(px, mid + half(x));
+    }
+    ctx.closePath();
+
+    if (phase === 'speaking' && glow) {
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = 'rgba(65,201,226,0.40)';
+    }
+    ctx.fillStyle = c;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = c;
+    ctx.stroke();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (freeze === null) clock += dt; else clock = freeze;
+
+    if (demo) {
+      demoClock += dt;
+      const cycle = demoClock % 23.2;
+      let want = DEMO_SEQ[0].phase;
+      for (let i = 0; i < DEMO_SEQ.length; i++) if (cycle >= DEMO_SEQ[i].at) want = DEMO_SEQ[i].phase;
+      if (cycle > 19.6) want = 'idle';
+      if (want !== phase) setPhase(want);
+    }
+
+    if (forcedLevel !== null) level = forcedLevel;
+    else if (phase === 'listen') simulateLevel();
+    else level += (0 - level) * 0.2;
+
+    const target = targetAmp();
+    const tau = (target > ampSmooth ? 0.03 : 0.12) / params.speed; // 快起慢落
+    ampSmooth += (target - ampSmooth) * (1 - Math.exp(-dt / tau));
+
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  document.querySelectorAll('.pbtn[data-phase]').forEach(function (b) {
+    b.addEventListener('click', function () { setPhase(b.dataset.phase); });
+  });
+
+  function bindSlider(id, key) {
+    const el = document.getElementById(id);
+    const out = document.getElementById(id + 'V');
+    el.addEventListener('input', function () {
+      params[key] = parseFloat(el.value);
+      out.textContent = key === 'wobble' ? params[key].toFixed(1) : params[key].toFixed(2);
+    });
+  }
+  bindSlider('amp', 'amp');
+  bindSlider('speed', 'speed');
+  bindSlider('packet', 'packet');
+  bindSlider('wobble', 'wobble');
+
+  document.getElementById('glow').addEventListener('change', function (e) { glow = e.target.checked; });
+
+  const styleBtn = document.getElementById('styleBtn');
+  styleBtn.textContent = style === 'sine' ? '正弦线' : '刺状';
+  styleBtn.classList.toggle('on', style === 'sine');
+  styleBtn.addEventListener('click', function () {
+    style = style === 'sine' ? 'spike' : 'sine';
+    this.textContent = style === 'sine' ? '正弦线' : '刺状';
+    this.classList.toggle('on', style === 'sine');
+  });
+
+  document.getElementById('demoBtn').addEventListener('click', function () {
+    demo = !demo;
+    demoClock = 0;
+    this.classList.toggle('on', demo);
+    this.textContent = demo ? '停止演示' : '自动演示';
+    if (demo) setPhase('listen');
+  });
+
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    dark = !dark;
+    document.documentElement.classList.toggle('theme-dark', dark);
+    this.textContent = dark ? '切浅色' : '切深色';
+  });
+
+  const preset = qs.get('phase');
+  setPhase(preset && PHASES[preset] ? preset : 'idle');
+  resize();
+  if (freeze !== null) ampSmooth = targetAmp();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

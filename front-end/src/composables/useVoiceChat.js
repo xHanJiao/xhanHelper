@@ -58,6 +58,10 @@ function websocketURL(ticket) {
   return url.toString()
 }
 
+function log(...args) {
+  console.info('[voice]', ...args)
+}
+
 export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   const available = ref(false)
   const recording = ref(false)
@@ -81,6 +85,9 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   let generation = 0
   let speakEpoch = 0
   let maxSeconds = 60
+  let sentChunks = 0
+  let sentBytes = 0
+  let lastUpLog = 0
 
   async function refresh() {
     try {
@@ -116,6 +123,13 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   function sendPCM(buffer) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return
     socket.send(buffer)
+    sentChunks += 1
+    sentBytes += buffer.byteLength
+    const now = Date.now()
+    if (now - lastUpLog >= 5000) {
+      lastUpLog = now
+      log(`asr up chunks=${sentChunks} bytes=${sentBytes}`)
+    }
   }
 
   function pushSamples(int16) {
@@ -135,7 +149,8 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     if (!samples || !samples.length) return
     let sum = 0
     for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
-    level.value = Math.sqrt(sum / samples.length)
+    // 和 macOS 一致 ×4：原始 RMS 只有 0.02~0.2，不放大浮层几乎看不出动静
+    level.value = Math.min(1, Math.sqrt(sum / samples.length) * 4)
     pushSamples(resampleToInt16(samples, sampleRate))
   }
 
@@ -189,6 +204,7 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   function finish() {
     if (finished) return
     const text = transcript.value.trim()
+    log(`final: chars=${text.length} up=${sentBytes}B`)
     cleanup()
     if (!text) {
       onError?.('没有识别到内容')
@@ -210,12 +226,16 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
 
   async function start() {
     if (recording.value || busy.value) return
+    log('start requested')
     generation += 1
     const gen = generation
     const isCurrent = () => gen === generation
     busy.value = true
     finished = false
     transcript.value = ''
+    sentChunks = 0
+    sentBytes = 0
+    lastUpLog = 0
     stopSpeaking()
     unlockAudio()
 
@@ -237,17 +257,20 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+      log('mic ok')
       if (!isCurrent()) { discard(); return }
       ctx = new (window.AudioContext || window.webkitAudioContext)()
       await ctx.resume()
       if (!isCurrent()) { discard(); return }
       await ctx.audioWorklet.addModule('/voice-pcm-worklet.js')
+      log(`worklet loaded, ctx=${ctx.sampleRate}Hz`)
       if (!isCurrent()) { discard(); return }
       wk = new AudioWorkletNode(ctx, 'voice-pcm')
       wk.port.onmessage = (event) => handleWorkletMessage(event.data, ctx.sampleRate)
       src = ctx.createMediaStreamSource(stream)
 
       const ticket = await api.post('/api/voice/asr-ticket', {})
+      log('ticket ok')
       if (!isCurrent()) { discard(); return }
 
       // 到这里才交给共享状态，cleanup() 从此负责回收
@@ -267,10 +290,16 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
         } catch {
           return
         }
-        if (msg.type === 'result') {
+        if (msg.type === 'ready') {
+          log('ws ready')
+        } else if (msg.type === 'result') {
           if (msg.text) transcript.value = msg.text
+          if (msg.definite || msg.final) {
+            log(`result chars=${msg.text?.length || 0} definite=${!!msg.definite} final=${!!msg.final}`)
+          }
           if (msg.final) finish()
         } else if (msg.type === 'limit') {
+          log('ws limit', msg.message || '')
           // 服务端到上限后会 Finish；停止采集但不要发 end，等 final
           recording.value = false
           busy.value = true
@@ -287,12 +316,15 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
           onNotice?.(msg.message || '录音达到上限，已按当前内容识别')
           stopTimer = setTimeout(() => fail('语音识别超时'), 15000)
         } else if (msg.type === 'error') {
+          log('ws error', msg.error)
           fail(msg.error)
         }
       }
       ws.onerror = () => { if (socket === ws) fail('语音识别连接失败') }
-      ws.onclose = () => {
-        if (socket === ws && !finished) fail('语音识别连接断开')
+      ws.onclose = (event) => {
+        if (socket !== ws) return
+        log(`ws closed code=${event.code} finished=${finished}`)
+        if (!finished) fail('语音识别连接断开')
       }
       // 服务端要先连豆包（几百毫秒）才会 ready，采集不能等它：点完麦克风立刻开口的
       // 那几百毫秒由 socket 缓冲，服务端连上后照常读，等 ready 反而会吞掉开头。
@@ -307,7 +339,11 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   }
 
   function stop() {
-    if (!recording.value) return
+    if (!recording.value) {
+      log('stop ignored: not recording')
+      return
+    }
+    log(`stop requested, up=${sentBytes}B pending=${pending.length}`)
     busy.value = true
     recording.value = false
     if (maxTimer) {
@@ -338,6 +374,7 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   }
 
   function cancel() {
+    log(`cancel: recording=${recording.value} up=${sentBytes}B`)
     generation += 1
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'cancel' }))
@@ -353,8 +390,10 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     speakEpoch += 1
     const epoch = speakEpoch
     try {
+      log(`tts request chars=${speech.length}`)
       const blob = await api.postBlob('/api/voice/tts', { text: speech })
       if (epoch !== speakEpoch) return
+      log(`tts ok bytes=${blob.size}`)
       const el = ensureAudio()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
       objectUrl = URL.createObjectURL(blob)

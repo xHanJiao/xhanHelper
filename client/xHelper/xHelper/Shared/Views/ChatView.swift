@@ -200,10 +200,13 @@ struct ChatView: View {
             }
             // C3：播报期间用户开口 → 立刻停生成（朗读与门控已在 service 里处理）
             voice.onBargeIn = {
+                LogBuffer.shared.info("[voice] barge-in: stop streaming")
                 viewModel.stopStreaming()
             }
             // C 模式：每句判停就直接提交一轮；上一轮还在跑就先停掉，避免两个 loop 交叉写库
             voice.onSentence = { text in
+                LogBuffer.shared.info("[voice] submit sentence: chars=\(text.count) " +
+                                      "streaming=\(viewModel.isStreaming) cid=\(viewModel.conversationId ?? "-")")
                 if viewModel.isStreaming {
                     voice.stopSpeaking()
                     // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
@@ -215,6 +218,7 @@ struct ChatView: View {
             // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
             voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
             viewModel.onAssistantReplyDone = { text in
+                LogBuffer.shared.info("[voice] assistant reply done, tts chars=\(text.count)")
                 Task { await voice.speak(text: text, baseURL: baseURL, token: token) }
             }
             Task { await voice.refresh(baseURL: baseURL, token: token) }

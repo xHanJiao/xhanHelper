@@ -4,12 +4,13 @@ import { computed } from 'vue'
 // C2 全屏语音环：听 / 想 / 说 三态 + 麦克风音量。纯展示，动作由父组件处理。
 const props = defineProps({
   phase: { type: String, required: true }, // listening | thinking | speaking
-  level: { type: Number, default: 0 }
+  level: { type: Number, default: 0 },
+  closeLabel: { type: String, default: '' }
 })
 defineEmits(['close'])
 
 const PHASES = {
-  listening: { title: '听', hint: '说完停顿一下就会提交' },
+  listening: { title: '听', hint: '说完点「说完了」，识别结果会填进输入框' },
   thinking: { title: '想', hint: '正在整理听到的内容' },
   speaking: { title: '说', hint: '点「打断」可以随时插话' }
 }
@@ -40,7 +41,7 @@ const coreScale = computed(() => {
     <p class="voice-orb-title">{{ info.title }}</p>
     <p class="voice-orb-hint">{{ info.hint }}</p>
     <button class="voice-orb-close" type="button" @click="$emit('close')">
-      {{ phase === 'speaking' ? '打断' : '结束' }}
+      {{ closeLabel || (phase === 'speaking' ? '打断' : '结束') }}
     </button>
   </div>
 </template>

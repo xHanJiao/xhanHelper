@@ -224,13 +224,16 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 			return ctx.Err()
 		default:
 		}
-		_, data, err := c.conn.ReadMessage()
+		mt, data, err := c.conn.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("read asr frame: %w", err)
 		}
 		f, err := decodeFrame(data)
 		if err != nil {
-			return err
+			// 帧解析失败时带上 ws 消息类型和帧头：区分「服务端发了文本帧/事件帧」
+			// 与「真正的二进制帧字段错位」，只看错误字符串分不出来。
+			return fmt.Errorf("decode asr frame (ws_type=%d, len=%d, head=%x): %w",
+				mt, len(data), headHex(data, 32), err)
 		}
 		if f.Type == msgErrorResponse {
 			return fmt.Errorf("doubao asr error %d: %s", f.ErrorCode, f.ErrorMessage)
@@ -296,4 +299,12 @@ func lastDefiniteEndTime(utterances []struct {
 		}
 	}
 	return end
+}
+
+// headHex 取帧头前 n 字节的十六进制，用于解析失败的诊断日志。
+func headHex(data []byte, n int) []byte {
+	if len(data) > n {
+		return data[:n]
+	}
+	return data
 }

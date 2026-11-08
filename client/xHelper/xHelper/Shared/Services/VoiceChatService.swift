@@ -61,6 +61,22 @@ final class VoiceChatService: ObservableObject {
     /// 播报期间麦克风收到的残留回声本底（EMA）：判定阈值要比它高，避免自己打断自己
     private var echoBaseline: Double = 0
 
+    // 诊断（只记长度/次数，不记识别文本）
+    private var sentBytes = 0
+    private var sentChunks = 0
+    private var droppedChunks = 0
+    private var lastSendLog = Date.distantPast
+    private var lastLevelLog = Date.distantPast
+    private var peakLevel: Double = 0
+
+    private func vlog(_ message: String) {
+        LogBuffer.shared.info("[voice] \(message)")
+    }
+
+    private func fmt3(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+
     var isRecording: Bool { state == .recording }
     var isBusy: Bool { state == .requestingPermission || state == .finishing }
 
@@ -77,6 +93,7 @@ final class VoiceChatService: ObservableObject {
             speaker = cfg.speaker
             maxSeconds = max(5, cfg.maxSeconds)
             sessionSeconds = max(30, cfg.sessionSeconds ?? 600)
+            vlog("config ready=\(cfg.ready) max=\(maxSeconds)s session=\(sessionSeconds)s")
         } catch {
             // 未配置/网络失败时静默隐藏按钮，不影响文字聊天
             isAvailable = false
@@ -96,16 +113,25 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func startSession(baseURL: String, token: String, continuous: Bool) async {
-        guard state == .idle, !continuousActive else { return }
-        guard !baseURL.isEmpty, !token.isEmpty else { return }
+        vlog("start requested mode=\(continuous ? "continuous" : "single") state=\(state) active=\(continuousActive) base=\(baseURL)")
+        guard state == .idle, !continuousActive else {
+            vlog("start ignored: state=\(state) continuousActive=\(continuousActive)")
+            return
+        }
+        guard !baseURL.isEmpty, !token.isEmpty else {
+            vlog("start ignored: empty baseURL/token")
+            return
+        }
 
         generation += 1
         let gen = generation
         state = .requestingPermission
         guard await ensureMicrophonePermission() else {
+            vlog("microphone permission denied")
             if gen == generation { fail("没有麦克风权限，请在系统设置中允许 xhanHelper 使用麦克风") }
             return
         }
+        vlog("microphone permission ok")
         guard gen == generation, state == .requestingPermission else { return }
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio,
@@ -116,17 +142,33 @@ final class VoiceChatService: ObservableObject {
         do {
             let api = APIClient(baseURL: baseURL, token: token)
             let ticket = try await api.createVoiceASRTicket().ticket
-            guard gen == generation, state == .requestingPermission else { return }
+            vlog("ticket ok (len=\(ticket.count))")
+            guard gen == generation, state == .requestingPermission else {
+                vlog("start aborted after ticket: gen=\(gen)/\(generation) state=\(state)")
+                return
+            }
             guard let url = websocketURL(baseURL: baseURL, ticket: ticket, continuous: continuous) else {
                 fail("服务地址无效")
                 return
             }
             stopSpeaking()
+            // 兜底：上一轮的尾音门若因异常留在「关」的状态，新会话一帧都发不出去
+            if micGated {
+                vlog("sticky mic gate detected on start, forcing open")
+                endMicGate(flushPreroll: false)
+            }
             transcript = ""
             continuousActive = continuous
+            sentBytes = 0
+            sentChunks = 0
+            droppedChunks = 0
+            lastSendLog = .distantPast
+            lastLevelLog = .distantPast
+            peakLevel = 0
             let task = URLSession.shared.webSocketTask(with: url)
             socket = task
             task.resume()
+            vlog("ws resumed path=\(url.path) query=\(continuous ? "mode=continuous" : "-")")
             startReceiveLoop(task)
 
             configureAudio()
@@ -134,6 +176,7 @@ final class VoiceChatService: ObservableObject {
             // 早于 ready 的帧由 socket 缓冲，服务端连上后照常读。
             startCapture()
         } catch {
+            vlog("start failed: \(error.localizedDescription)")
             if gen == generation { fail("无法开始语音识别：\(error.localizedDescription)") }
         }
     }
@@ -157,6 +200,11 @@ final class VoiceChatService: ObservableObject {
                 self?.handleLevel(Double(value))
             }
         }
+        audio.onLog = { message in
+            Task { @MainActor in
+                LogBuffer.shared.info("[voice] \(message)")
+            }
+        }
     }
 
     /// 音量为波纹供数，同时做 C3 的打断判定（只在播报期间有效）。
@@ -164,6 +212,13 @@ final class VoiceChatService: ObservableObject {
         guard state == .recording else { return }
         // 平滑一下，避免波纹抖成噪点
         level = level * 0.6 + value * 0.4
+        peakLevel = max(peakLevel, value)
+        if Date().timeIntervalSince(lastLevelLog) >= 1 {
+            lastLevelLog = Date()
+            let threshold = max(bargeInLevel, echoBaseline * 1.8)
+            vlog("level raw=\(fmt3(value)) peak=\(fmt3(peakLevel)) gated=\(micGated ? "yes" : "no") threshold=\(fmt3(threshold))")
+            peakLevel = 0
+        }
         guard continuousActive, micGated else {
             loudFrames = 0
             echoBaseline = 0
@@ -179,6 +234,7 @@ final class VoiceChatService: ObservableObject {
         echoBaseline = echoBaseline * 0.95 + value * 0.05
         if loudFrames >= bargeInFrames {
             loudFrames = 0
+            vlog("barge-in triggered raw=\(fmt3(value)) threshold=\(fmt3(threshold)) baseline=\(fmt3(echoBaseline))")
             bargeIn()
         }
     }
@@ -192,10 +248,14 @@ final class VoiceChatService: ObservableObject {
 
     /// 开始推 PCM。
     private func startCapture() {
-        guard state == .requestingPermission else { return }
+        guard state == .requestingPermission else {
+            vlog("startCapture ignored: state=\(state)")
+            return
+        }
         do {
             try audio.startCapture()
             state = .recording
+            vlog("capture started state=\(state)")
             if continuousActive {
                 armSessionLimit()
                 armIdleTimer()
@@ -210,12 +270,17 @@ final class VoiceChatService: ObservableObject {
                 self.stop()
             }
         } catch {
+            vlog("capture failed: \(error.localizedDescription)")
             fail("麦克风采集失败：\(error.localizedDescription)")
         }
     }
 
     func stop() {
-        guard state == .recording, !continuousActive else { return }
+        guard state == .recording, !continuousActive else {
+            vlog("stop ignored: state=\(state) continuousActive=\(continuousActive)")
+            return
+        }
+        vlog("stop requested")
         state = .finishing
         maxTimer?.cancel()
         maxTimer = nil
@@ -225,6 +290,7 @@ final class VoiceChatService: ObservableObject {
 
     /// 结束 C 模式会话：先发负包，让服务端把最后一句吐完再随连接关闭一起收尾。
     func stopContinuous() {
+        vlog("stopContinuous requested state=\(state) active=\(continuousActive)")
         guard continuousActive else { return }
         // 还没开采集（socket 刚建/权限确认中）：直接收掉，不用等负包，也别卡 15 秒兜底
         if state == .requestingPermission {
@@ -252,6 +318,7 @@ final class VoiceChatService: ObservableObject {
     }
 
     func cancel() {
+        vlog("cancel: state=\(state) active=\(continuousActive) sent=\(sentBytes)B")
         generation += 1
         continuousActive = false
         cancelTimers()
@@ -275,6 +342,7 @@ final class VoiceChatService: ObservableObject {
                 self.armSessionLimit(grace: true)
                 return
             }
+            LogBuffer.shared.info("[voice] session limit reached (\(self.sessionSeconds)s)")
             self.stopContinuous()
             ToastCenter.shared.show("语音会话已到上限（\(self.sessionSeconds / 60) 分钟），已结束")
         }
@@ -292,6 +360,7 @@ final class VoiceChatService: ObservableObject {
                 self.armIdleTimer()
                 return
             }
+            LogBuffer.shared.info("[voice] idle limit reached (\(self.continuousIdleSeconds)s), stopping")
             self.stopContinuous()
             ToastCenter.shared.show("\(self.continuousIdleSeconds) 秒没有听到说话，语音会话已结束")
         }
@@ -318,6 +387,7 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func endContinuous(reason: String?) {
+        vlog("end continuous: reason=\(reason ?? "-") state=\(state) sent=\(sentBytes)B chunks=\(sentChunks) dropped=\(droppedChunks)")
         guard continuousActive else { return }
         generation += 1
         continuousActive = false
@@ -336,12 +406,17 @@ final class VoiceChatService: ObservableObject {
               !baseURL.isEmpty, !token.isEmpty else { return }
         let cleaned = Self.sanitizeForSpeech(text)
         let speech = cleaned.isEmpty ? "这条回复主要是代码或表格，我放在屏幕上了。" : cleaned
+        vlog("tts request: reply=\(text.count) chars speech=\(speech.count) chars")
         stopSpeaking()
         speakEpoch += 1
         let epoch = speakEpoch
         do {
             let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
-            guard epoch == speakEpoch else { return }
+            vlog("tts ok: bytes=\(data.count)")
+            guard epoch == speakEpoch else {
+                vlog("tts dropped: epoch \(epoch) != \(speakEpoch)")
+                return
+            }
             #if os(iOS)
             // AEC 场景必须用 .voiceChat；.spokenAudio 下系统不会给回声参考
             try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat,
@@ -352,6 +427,7 @@ final class VoiceChatService: ObservableObject {
             // 播报期间压住麦克风（AEC 只削掉大部分回声，尾音还会漏进来）
             beginMicGate()
             isSpeaking = true
+            vlog("tts play begin")
             do {
                 try audio.play(data) { [weak self] in
                     Task { @MainActor [weak self] in
@@ -360,6 +436,7 @@ final class VoiceChatService: ObservableObject {
                     }
                 }
             } catch {
+                vlog("tts play failed: \(error.localizedDescription)")
                 isSpeaking = false
                 endMicGate(flushPreroll: false)
                 throw error
@@ -372,6 +449,7 @@ final class VoiceChatService: ObservableObject {
 
     /// 播报正常结束：解除「说」态，再延后 600ms 解除麦克风门（收掉尾音）。
     private func finishSpeaking() {
+        vlog("tts play finished")
         isSpeaking = false
         speakEndTask?.cancel()
         speakEndTask = Task { [weak self] in
@@ -386,6 +464,7 @@ final class VoiceChatService: ObservableObject {
         gateTask = nil
         micGated = true
         echoBaseline = 0
+        vlog("mic gate on (tts speaking)")
         audio.setGated(true)
     }
 
@@ -393,6 +472,7 @@ final class VoiceChatService: ObservableObject {
         gateTask?.cancel()
         gateTask = nil
         micGated = false
+        vlog("mic gate off flush=\(flushPreroll)")
         audio.setGated(false, flushPreroll: flushPreroll)
     }
 
@@ -403,7 +483,9 @@ final class VoiceChatService: ObservableObject {
         let wasSpeaking = isSpeaking
         isSpeaking = false
         audio.stopPlayback()
-        if wasSpeaking { endMicGate(flushPreroll: false) }
+        // 只要门还关着就开：仅在 wasSpeaking 时开会让「TTS 尾音门 600ms 窗口内启动新一轮」
+        // 永久卡在门控里（一帧都不会发给 ASR，表现为麦克风亮着但毫无反应）
+        if wasSpeaking || micGated { endMicGate(flushPreroll: false) }
     }
 
     // MARK: 内部
@@ -411,8 +493,17 @@ final class VoiceChatService: ObservableObject {
     private func sendAudio(_ data: Data) {
         // 只接受 recording：stop() 之后的音频帧（含排队中的 Task）一律丢弃，
         // 尾巴由 stop() 通过 sendTailThenEnd 保证排在 end 之前。
-        guard state == .recording else { return }
-        socket?.send(.data(data)) { error in
+        guard state == .recording, let socket else {
+            droppedChunks += 1
+            return
+        }
+        sentChunks += 1
+        sentBytes += data.count
+        if Date().timeIntervalSince(lastSendLog) >= 5 {
+            lastSendLog = Date()
+            vlog("asr up: chunks=\(sentChunks) bytes=\(sentBytes) dropped=\(droppedChunks)")
+        }
+        socket.send(.data(data)) { error in
             guard let error else { return }
             Task { @MainActor in
                 LogBuffer.shared.error("voice asr send failed: \(error.localizedDescription)")
@@ -421,7 +512,11 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func sendControl(_ type: String) {
-        guard let socket else { return }
+        guard let socket else {
+            vlog("control \(type) skipped: no socket")
+            return
+        }
+        vlog("control send: \(type)")
         let text = "{\"type\":\"\(type)\"}"
         socket.send(.string(text)) { error in
             guard let error else { return }
@@ -460,6 +555,8 @@ final class VoiceChatService: ObservableObject {
                     }
                 } catch {
                     guard let self else { return }
+                    LogBuffer.shared.info("[voice] ws receive ended: \(error.localizedDescription) " +
+                                          "state=\(self.state) active=\(self.continuousActive)")
                     if self.continuousActive {
                         // 用户停止/到上限时 state 已是 .finishing（正常收尾）；其余算掉线
                         self.endContinuous(reason: self.state == .finishing ? nil : "语音会话已结束：连接断开")
@@ -475,20 +572,29 @@ final class VoiceChatService: ObservableObject {
     private func handleSocketText(_ text: String) {
         guard let data = text.data(using: .utf8),
               let msg = try? JSONDecoder().decode(VoiceSocketMessage.self, from: data) else {
+            vlog("ws frame undecodable: \(String(text.prefix(80)))")
             return
         }
         switch msg.type {
+        case "ready":
+            vlog("ws ready: server connected to ASR")
         case "sentence":
+            vlog("ws sentence: chars=\(msg.text?.count ?? 0) state=\(state) active=\(continuousActive)")
             // 只在还处于 .recording 时提交：结束/到上限后的残句不提交、不朗读
             guard continuousActive, state == .recording,
                   let text = msg.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else { return }
+                  !text.isEmpty else {
+                vlog("sentence dropped: active=\(continuousActive) state=\(state)")
+                return
+            }
             armIdleTimer()
             onSentence?(text)
         case "result":
+            vlog("ws result: chars=\(msg.text?.count ?? 0) definite=\(msg.definite == true) final=\(msg.final == true)")
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
         case "limit":
+            vlog("ws limit: \(msg.message ?? "-")")
             guard state == .recording || state == .finishing else { return }
             // 服务端到达上限后会 Finish：立刻停采集（负包之后不能再发音频），等它吐完最后一句
             if state == .recording {
@@ -498,9 +604,10 @@ final class VoiceChatService: ObservableObject {
             armFinishTimeout()
             ToastCenter.shared.show(msg.message ?? "录音达到上限，已按当前内容识别")
         case "error":
+            vlog("ws error: \(msg.error ?? "-")")
             fail(msg.error ?? "语音识别失败")
         default:
-            break
+            vlog("ws unknown frame: \(msg.type)")
         }
     }
 
@@ -511,6 +618,7 @@ final class VoiceChatService: ObservableObject {
         closeSocket()
         state = .idle
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        vlog("turn finished: chars=\(text.count)")
         if text.isEmpty {
             ToastCenter.shared.show("没有识别到内容")
             return
@@ -519,6 +627,7 @@ final class VoiceChatService: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        vlog("fail: \(message) state=\(state) active=\(continuousActive)")
         if continuousActive {
             endContinuous(reason: message)
             return
@@ -613,6 +722,7 @@ final class VoiceChatService: ObservableObject {
 private struct VoiceSocketMessage: Decodable {
     let type: String
     let text: String?
+    let definite: Bool?
     let final: Bool?
     let error: String?
     let message: String?

@@ -135,6 +135,7 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	// C 模式（连续对话）：一条连接连着送音频，按分句增量返回（result_type=single），
 	// 客户端每收到一条 sentence 就提交一轮对话，不再等服务端 ready→录音→end。
 	continuous := c.Query("mode") == "continuous"
+	log.Printf("[voice] asr ws opened (user=%s, continuous=%v)", userID, continuous)
 	if continuous {
 		if !h.acquireContinuous(userID) {
 			log.Printf("[voice] continuous session already active (user=%s)", userID)
@@ -149,6 +150,8 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 		// 连续对话一条连接顶到整个会话上限；超时/断开由客户端重连
 		asrCfg.MaxSeconds = h.cfg.ASR.SessionSeconds
 	}
+	log.Printf("[voice] asr dialing (user=%s, result_type=%s, end_window=%d, max_seconds=%d)",
+		userID, asrCfg.ResultType, asrCfg.EndWindowSize, asrCfg.MaxSeconds)
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, handshakeTimeout)
 	asr, err := voice.DialASR(handshakeCtx, asrCfg, h.cfg.APIKey, userID)
 	handshakeCancel()
@@ -169,9 +172,14 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 		log.Printf("[voice] asr send ready failed (user=%s): %v", userID, err)
 		return
 	}
+	log.Printf("[voice] asr ready sent (user=%s)", userID)
+	startedAt := time.Now()
 
 	// 客户端下行：二进制 PCM / 文本控制帧（end、cancel）。
 	go func() {
+		var audioBytes int
+		var firstAudioLogged bool
+		var lastAudioLog = time.Now()
 		for {
 			mt, data, err := client.ReadMessage()
 			if err != nil {
@@ -182,6 +190,16 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 			}
 			switch mt {
 			case websocket.BinaryMessage:
+				if !firstAudioLogged {
+					firstAudioLogged = true
+					log.Printf("[voice] asr first audio frame (user=%s, bytes=%d)", userID, len(data))
+				}
+				audioBytes += len(data)
+				if time.Since(lastAudioLog) >= 5*time.Second {
+					lastAudioLog = time.Now()
+					log.Printf("[voice] asr upstream (user=%s, audio=%.1fs, bytes=%d)",
+						userID, float64(audioBytes)/32000, audioBytes)
+				}
 				if err := asr.SendAudio(data); err != nil {
 					if errors.Is(err, voice.ErrASRDurationLimit) {
 						// 到上限不要丢结果：先发提示，再 Finish 让服务端把已识别文本吐完
@@ -207,6 +225,7 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 				}
 				switch msg.Type {
 				case "end":
+					log.Printf("[voice] asr end received (user=%s, bytes=%d)", userID, audioBytes)
 					if err := asr.Finish(); err != nil {
 						log.Printf("[voice] asr finish failed (user=%s): %v", userID, err)
 						_ = send(gin.H{"type": "error", "error": "结束录音失败"})
@@ -214,6 +233,7 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 						_ = asr.Close()
 					}
 				case "cancel":
+					log.Printf("[voice] asr cancel received (user=%s, bytes=%d)", userID, audioBytes)
 					cancel()
 					_ = asr.Close()
 					return
@@ -226,13 +246,22 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
 	defer readCancel()
 	var committer voice.SentenceCommitter
+	var resultCount int
 	err = asr.Read(readCtx, func(result voice.ASRResult) {
+		resultCount++
+		// 识别文本本身不进日志（设计约束）：只记长度、是否判停、时间戳
+		if result.Definite || result.Final || resultCount%20 == 1 {
+			log.Printf("[voice] asr result #%d (user=%s, chars=%d, definite=%v, final=%v, end_time=%d)",
+				resultCount, userID, len([]rune(result.Text)), result.Definite, result.Final, result.EndTime)
+		}
 		if continuous {
 			// 只下发已判停的分句；客户端按 sentence 逐轮提交。
 			text := committer.Commit(result)
 			if text == "" {
 				return
 			}
+			log.Printf("[voice] asr sentence out (user=%s, chars=%d, end_time=%d)",
+				userID, len([]rune(text)), result.EndTime)
 			if err := send(gin.H{"type": "sentence", "text": text}); err != nil {
 				log.Printf("[voice] asr send sentence failed (user=%s): %v", userID, err)
 				readCancel()
@@ -249,9 +278,13 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 			readCancel()
 		}
 	})
+	elapsed := time.Since(startedAt).Round(time.Second)
 	if err != nil && ctx.Err() == nil {
-		log.Printf("[voice] asr read failed (user=%s): %v", userID, err)
+		log.Printf("[voice] asr read failed (user=%s, elapsed=%s): %v", userID, elapsed, err)
 		_ = send(gin.H{"type": "error", "error": "语音识别失败"})
+	} else {
+		log.Printf("[voice] asr session closed (user=%s, continuous=%v, results=%d, elapsed=%s)",
+			userID, continuous, resultCount, elapsed)
 	}
 }
 

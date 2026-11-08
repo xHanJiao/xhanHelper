@@ -135,6 +135,22 @@ function interruptVoice() {
   handleStop()
   cancelVoice()
 }
+
+// 录音中浮层的「说完了」必须走 stop（发 end，等服务端吐 final）；
+// 走 cancel 会把已经识别出来的文本整段丢掉（20:38 那次就是这个）。
+function finishVoice() {
+  stopVoice()
+}
+
+const voiceOrbCloseLabel = computed(() => (voiceRecording.value ? '说完了' : '打断'))
+
+function voiceOrbClose() {
+  if (voiceRecording.value) {
+    finishVoice()
+    return
+  }
+  interruptVoice()
+}
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 
@@ -1070,7 +1086,8 @@ function handleContainerClick(e) {
       v-if="voiceOrbPhase"
       :phase="voiceOrbPhase"
       :level="voiceLevel"
-      @close="interruptVoice"
+      :close-label="voiceOrbCloseLabel"
+      @close="voiceOrbClose"
     />
     <PageTopBar
       show-conversation

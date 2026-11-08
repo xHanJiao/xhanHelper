@@ -383,3 +383,21 @@ location = /api/voice/asr {
     控制脚本在 `APP_ENV=prod` 下校验（此前会用默认 dev 环境误判）。
   - `SentenceCommitter` 处理「先到无 end_time、后到带 end_time」的同文重复。
   - 连续会话在 `.requestingPermission` 阶段点结束直接收口，不等 15 秒兜底。
+- 2026-11-08（C3a 修复：VPIO 多声道）：
+  - VPIO 会把输入节点格式变成输出设备的格式（本机 48k/**5ch**），`AVAudioConverter` 5ch→mono
+    **不报错但产出全零** → A/C 两种模式都「识别不到内容」，语音环不动且无日志。
+  - 采集改为：多声道先 `downmixToMono()` 混成原始采样率的 mono，再由转换器做 mono→16k/16bit。
+  - 诊断工具：`client/xHelper/scripts/voice-capture-probe.swift`（`vpio` / `plain` / `vpio-raw` 三档），
+    参见 `docs/bugs/048-voice-vpio-multichannel-silence.md`。
+  - 日志：客户端 `[voice]` 前缀覆盖开始/授权/ticket/WS 帧/上行字节/音量峰值/门控/TTS/计时器；
+    服务端 `[voice]` 覆盖 ws 打开、首帧音频、每 5s 累计时长、definite/final 结果（只记长度与时间戳，
+    不记识别文本）、sentence 下发、end/退出原因。
+  - `stopSpeaking()` 在 `micGated` 为真时一律解门控（TTS 尾音门 600ms 窗口内启动会永久卡死）。
+- 2026-11-08（PWA 修复）：
+  - 全屏语音环的按钮按状态分流：录音中 =「说完了」→ `stopVoice()`（发 `end` 等 `final`）；
+    想/说 =「打断」→ `interruptVoice()`。此前录音中也走 `cancelVoice()`，已识别文本会被整段丢掉
+    （见 `docs/bugs/049-pwa-voice-orb-cancel-discards-transcript.md`）。
+  - PWA 补 `[voice]` 控制台日志（start/mic/worklet/ticket/ws ready/result/up 字节/final/stop/cancel/tts）。
+  - PWA 音量 ×4 与 macOS 对齐，浮层「听」态的圆环才会跟着声音动。
+  - 服务端 `decodeFrame` 失败时带上 ws 消息类型与帧头十六进制（区分文本帧/事件帧/字段错位）。
+    用 `voice-smoke -result-type single` 连发 81 秒未复现 20:39 那次 `payload size ... exceeds frame`。

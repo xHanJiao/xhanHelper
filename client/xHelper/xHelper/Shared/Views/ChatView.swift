@@ -8,6 +8,7 @@ import AppKit
 
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @StateObject private var voice = VoiceChatService()
     @State private var isEditing = false
     @State private var dismissKeyboardToken: UUID?
     @State private var scrollPosition = ScrollPosition(edge: .top)
@@ -170,6 +171,19 @@ struct ChatView: View {
 #if os(macOS)
             Task { await reloadAgentPicker() }
 #endif
+            voice.onFinalTranscript = { text in
+                viewModel.draftText = text
+                viewModel.pendingVoiceReply = true
+                inputFocused = true
+            }
+            viewModel.onAssistantReplyDone = { text in
+                Task { await voice.speak(text: text, baseURL: baseURL, token: token) }
+            }
+            Task { await voice.refresh(baseURL: baseURL, token: token) }
+        }
+        .onDisappear {
+            voice.cancel()
+            voice.stopSpeaking()
         }
         .onChange(of: viewModel.conversationId) { _, _ in
 #if os(macOS)
@@ -280,6 +294,8 @@ struct ChatView: View {
         let attachments = viewModel.draftAttachments
         let hasText = !text.trimmingCharacters(in: .whitespaces).isEmpty
         guard hasText || !attachments.isEmpty else { return }
+        let speakReply = viewModel.pendingVoiceReply
+        viewModel.pendingVoiceReply = false
 
         dismissKeyboardToken = UUID()
         viewModel.draftText = ""
@@ -289,7 +305,7 @@ struct ChatView: View {
         }
 
         guard !attachments.isEmpty else {
-            viewModel.sendMessage(text, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+            viewModel.sendMessage(text, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId, speakReply: speakReply)
             return
         }
 
@@ -322,7 +338,8 @@ struct ChatView: View {
                 token: token,
                 agentId: selectedAgentID ?? agentId,
                 attachmentIds: ids,
-                localImages: attachments.map(\.image)
+                localImages: attachments.map(\.image),
+                speakReply: speakReply
             )
         }
     }
@@ -350,6 +367,7 @@ struct ChatView: View {
             },
             onSend: sendDraft,
             onStop: {
+                voice.stopSpeaking()
                 viewModel.stopStreaming()
             },
             onToggleMode: {
@@ -622,12 +640,31 @@ struct ChatView: View {
     private func inputBarTrailingActions(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
         // 仅发送/停止常驻；附件已收进「更多操作」展开行。
+        if voice.isAvailable {
+            IconButton(
+                visibility: .always,
+                context: ctx,
+                symbol: voice.isRecording ? "mic.fill" : "mic",
+                tint: voice.isRecording ? .red : Color("appAccent"),
+                isEnabled: !voice.isBusy,
+                tooltip: voice.isRecording ? "停止录音" : "语音输入",
+                pulsing: voice.state == .finishing,
+                action: {
+                    if voice.isRecording {
+                        voice.stop()
+                    } else {
+                        Task { await voice.start(baseURL: baseURL, token: token) }
+                    }
+                }
+            )
+        }
         SendStopButton(
             context: ctx,
             isStreaming: viewModel.isStreaming,
             canSend: ctx.canSend && !viewModel.isUploadingAttachments,
             onSend: sendDraft,
             onStop: {
+                voice.stopSpeaking()
                 viewModel.stopStreaming()
             }
         )

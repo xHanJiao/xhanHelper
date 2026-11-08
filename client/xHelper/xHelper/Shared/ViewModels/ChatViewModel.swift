@@ -174,6 +174,12 @@ class ChatViewModel: ObservableObject {
     /// 精炼回答开关，会话级：默认关。开=服务端往 system prompt 注入「≤500 字」输出约束，
     /// 用于让回答短到能整段存进文档批注。不走 max_tokens（那是静默硬截断）。
     @Published var briefAnswer = false
+    /// 语音输入识别完成后置位：下一次发送携带 speakReply=true（朗读回复）
+    var pendingVoiceReply = false
+    /// 本轮是否为语音来源（发送时快照，done 后消费）
+    private var speakReplyForCurrentTurn = false
+    /// 本轮正常完成时回调回复正文（语音模式用于 TTS）
+    var onAssistantReplyDone: ((String) -> Void)?
 
     // MARK: 无痕（ephemeral）
 
@@ -991,7 +997,8 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = []) {
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = [], speakReply: Bool = false) {
+        speakReplyForCurrentTurn = speakReply
         let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "", imageIds: attachmentIds, localImages: localImages)
         messages.append(userMsg)
 
@@ -1383,7 +1390,13 @@ class ChatViewModel: ObservableObject {
             // 久等后回复完成提示音：判定必须在 finishStreaming 清空 streamStartedAt 之前
             let replyElapsed = streamStartedAt.map { Date().timeIntervalSince($0) } ?? 0
             let hasReplyContent = !streamingContent.isEmpty
+            let replyText = streamingContent
+            let shouldSpeak = speakReplyForCurrentTurn && doneError == nil && hasReplyContent
+            speakReplyForCurrentTurn = false
             finishStreaming()
+            if shouldSpeak {
+                onAssistantReplyDone?(replyText)
+            }
             // 仅正常完成才响：done 带 error 说明这轮有异常，不报喜；无内容（空回复/被截断）也不响
             if hasReplyContent, doneError == nil, replyElapsed >= Self.longReplyAlertThreshold() {
                 playLongReplyAlert()

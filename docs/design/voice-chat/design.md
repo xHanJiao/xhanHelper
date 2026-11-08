@@ -59,7 +59,8 @@ macOS / PWA
 
 ### 前置检查
 
-`GET /api/voice/config` 返回 `enabled/ready/speaker/language`；未配置时客户端隐藏麦克风按钮。
+`GET /api/voice/config` 返回 `enabled/ready/speaker/language/max_seconds`（`ready = enabled && api_key 非空`）；
+`ready=false` 时客户端隐藏麦克风按钮。`max_seconds` 下发给客户端做录音上限。
 
 ## 豆包接口（已核对官方文档）
 
@@ -139,6 +140,10 @@ payload（gzip）
 | `asr.go` | WebSocket 连接、发送 PCM、读取结果 |
 | `tts.go` | HTTP Chunked 解析、base64 拼 mp3 |
 
+联调工具 `cmd/voice-smoke`：把一个 16k/16bit/mono wav 按 200ms 节拍喂给真实 ASR，逐条打印
+partial / final 与耗时，用来排查「说完不出 final」「同一句重复下发」这类协议问题；
+不加载完整配置，只需 `DOUBAO_VOICE_API_KEY`。
+
 新增 `controller/voice.go`：
 
 | 路由 | 说明 |
@@ -159,7 +164,7 @@ payload（gzip）
 ```yaml
 voice:
   enabled: false
-  api_key: ${DOUBAO_API_KEY}
+  api_key: ${DOUBAO_VOICE_API_KEY}
   tts:
     endpoint: https://openspeech.bytedance.com/api/v3/tts/unidirectional
     resource_id: seed-tts-2.0
@@ -179,6 +184,16 @@ voice:
 
 - 新版火山控制台只需 API Key，不需要 AppID / AccessToken / Cluster。
 - 开通产品：豆包语音合成模型 2.0、豆包流式语音识别模型 2.0（小时版）。
+- `asr.timeout_seconds` 用作 **WS 握手超时**（连豆包），不是整轮录音超时。
+
+## WebSocket 下行消息
+
+| type | 说明 |
+|---|---|
+| `ready` | 服务端已连上豆包、开始接收音频（仅作提示，客户端不等它） |
+| `result` | `{text, definite, final}`，增量覆盖 |
+| `limit` | 到达 `asr.max_seconds`；服务端已 `Finish`，随后会吐 `final`。客户端应停止采集但**不要**再发 `end`，并 arm 一个兜底计时器 |
+| `error` | 识别失败 |
 
 ## 客户端
 
@@ -187,6 +202,7 @@ voice:
 - 输入栏麦克风按钮。
 - `AVAudioEngine` 采集 → `AVAudioConverter` 转 16k/16bit/mono。
 - `URLSessionWebSocketTask` 连自家后端，二进制发 PCM，文本发 `{"type":"end"}`。
+- WS 一打开就开始采集（不等 `ready`），早于 `ready` 的帧由 socket 缓冲；`max_seconds-2` 自动收口。
 - 识别文本填输入框（不自动发送）。
 - 回复 `done` 后请求 TTS，`AVAudioPlayer` 播放；停止按钮同时停朗读。
 - 补 `NSMicrophoneUsageDescription`。
@@ -195,6 +211,7 @@ voice:
 
 - `getUserMedia` + AudioWorklet 采集，重采样 16k/Int16。
 - WebSocket 连自家后端。
+- WS 打开即采集（不等 `ready`），`max_seconds-2` 自动收口；`limit` 后停止采集等 `final`。
 - 识别文本填输入框（不自动发送）。
 - 回复完成后 `<audio>` 播放 mp3；首次点击麦克风时解锁音频元素。
 - 不支持麦克风的浏览器隐藏按钮。
@@ -240,3 +257,15 @@ location = /api/voice/asr {
 
 仓库模板已更新 `server/nginx-helper.conf` 与 `docs/front-end/plan.md`；上线前需同步到
 `/etc/nginx/sites-enabled/` 并 reload。
+
+## 后续变更
+
+- 2026-11-08：API Key 环境变量由 `DOUBAO_API_KEY` 改为 `DOUBAO_VOICE_API_KEY`（避免与其它豆包用途撞名）；
+  `voice.enabled` 默认开启；新增 `cmd/voice-smoke` 联调工具。真实 key 下 TTS 与 ASR 已跑通。
+- 2026-11-08（第二轮复审后）：
+  - `/api/voice/config` 增加 `max_seconds`；客户端按 `max_seconds-2` 自动收口。
+  - 采集起点改回「WS 打开即录」，不再等 `ready`（等会吞掉开头几百毫秒）；`ready` 仅作提示。
+  - 新增下行 `{"type":"limit"}`：到上限先提示、服务端 `Finish` 取回结果，客户端停止采集并 arm 兜底计时器。
+  - `voice.asr.timeout_seconds` 语义明确为 WS 握手超时。
+  - 纯表格回复与纯代码一样改播「放在屏幕上了」提示。
+  - 语音标记（`voice_mode` / `pendingVoiceReply`）在清空输入、新会话时复位，避免手打被当语音轮。

@@ -102,13 +102,15 @@ final class VoiceChatService: ObservableObject {
                 }
             }
             self.capture = capture
-            // 不在这里开采集：等服务端 ready（DialASR 可能还要几百毫秒）
+            // 立刻开录：服务端要先连豆包（几百毫秒）才会 ready，等它会把开头吞掉；
+            // 早于 ready 的帧由 socket 缓冲，服务端连上后照常读。
+            startCapture()
         } catch {
             if gen == generation { fail("无法开始语音识别：\(error.localizedDescription)") }
         }
     }
 
-    /// 收到服务端 ready 后才真正开始推 PCM。
+    /// 开始推 PCM。
     private func startCapture() {
         guard state == .requestingPermission, let capture else { return }
         do {
@@ -135,6 +137,11 @@ final class VoiceChatService: ObservableObject {
         let tail = capture?.stop()
         capture = nil
         sendTailThenEnd(tail)
+        armFinishTimeout()
+    }
+
+    /// 结束录音后等 final 的兜底：负包没吐结果时不至于一直卡在 finishing。
+    private func armFinishTimeout() {
         timeoutTask?.cancel()
         timeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
@@ -261,8 +268,6 @@ final class VoiceChatService: ObservableObject {
             return
         }
         switch msg.type {
-        case "ready":
-            startCapture()
         case "result":
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
@@ -275,6 +280,7 @@ final class VoiceChatService: ObservableObject {
                 _ = capture?.stop()
                 capture = nil
             }
+            armFinishTimeout()
             ToastCenter.shared.show(msg.message ?? "录音达到上限，已按当前内容识别")
         case "error":
             fail(msg.error ?? "语音识别失败")
@@ -359,8 +365,9 @@ final class VoiceChatService: ObservableObject {
         #endif
     }
 
-    /// 去掉 markdown/代码块后再朗读；纯代码/表格回复会被清空（跳过朗读）。
+    /// 去掉 markdown/代码块后再朗读；纯代码/纯表格回复会被清空（改为播放一句提示）。
     static func sanitizeForSpeech(_ text: String) -> String {
+        if isTableOnly(text) { return "" }
         var s = text
         s = s.replacingOccurrences(of: "```[\\s\\S]*?```", with: " ", options: .regularExpression)
         s = s.replacingOccurrences(of: "`[^`]*`", with: " ", options: .regularExpression)
@@ -373,6 +380,15 @@ final class VoiceChatService: ObservableObject {
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard s.count >= 2 else { return "" }
         return String(s.prefix(2000))
+    }
+
+    /// 纯表格（每行都是 |...|）逐格念出来没意义，当占位处理。
+    static func isTableOnly(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard lines.count >= 2 else { return false }
+        return lines.allSatisfy { $0.hasPrefix("|") && $0.hasSuffix("|") }
     }
 }
 

@@ -364,6 +364,8 @@ struct ChatView: View {
             onClearAll: {
                 viewModel.draftText = ""
                 viewModel.draftAttachments.removeAll()
+                // 语音标记跟着那句识别文本走：清空输入后手打的第一条不能还按语音轮处理
+                viewModel.pendingVoiceReply = false
             },
             onSend: sendDraft,
             onStop: {

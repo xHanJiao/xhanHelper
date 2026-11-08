@@ -364,8 +364,10 @@ func TestVoiceModeToggle(t *testing.T) {
 		t.Error("语音轮不应再注入 brief_answer 长度约束")
 	}
 	// 语音章节仍应在行为准则之后，不能截断编号列表
-	if strings.Index(voice.Prompt, "9. 用户信息深挖") > strings.Index(voice.Prompt, "## 语音回答") {
-		t.Error("语音回答章节插到了行为准则编号列表中间")
+	anchor := strings.Index(voice.Prompt, "9. 用户信息深挖")
+	section := strings.Index(voice.Prompt, "## 语音回答")
+	if anchor < 0 || section < 0 || anchor > section {
+		t.Errorf("语音回答章节位置不对（anchor=%d, section=%d）", anchor, section)
 	}
 
 	off, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork, VoiceMode: false})

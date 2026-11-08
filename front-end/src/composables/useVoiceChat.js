@@ -28,7 +28,15 @@ function resampleToInt16(input, inputRate) {
   return out
 }
 
+// 纯表格（每行都是 |...|）逐格念出来没意义，当占位处理
+function isTableOnly(text) {
+  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean)
+  if (lines.length < 2) return false
+  return lines.every(l => l.startsWith('|') && l.endsWith('|'))
+}
+
 function cleanForSpeech(text) {
+  if (isTableOnly(text)) return ''
   let s = String(text || '')
   s = s.replace(/```[\s\S]*?```/g, ' ')
   s = s.replace(/`[^`]*`/g, ' ')
@@ -203,32 +211,56 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
     transcript.value = ''
     stopSpeaking()
     unlockAudio()
+
+    // 登记到共享状态之前，资源只归本代次所有：连点/快速重启时用共享 cleanup()
+    // 会把后来那一轮的东西一起拆掉。
+    let stream = null
+    let ctx = null
+    let wk = null
+    let src = null
+    const discard = () => {
+      if (wk) {
+        wk.port.onmessage = null
+        wk.disconnect()
+      }
+      if (src) src.disconnect()
+      if (stream) stream.getTracks().forEach(t => t.stop())
+      if (ctx) ctx.close().catch(() => {})
+    }
+
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
-      if (!isCurrent()) { cleanup(); return }
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-      await audioCtx.resume()
-      if (!isCurrent()) { cleanup(); return }
-      await audioCtx.audioWorklet.addModule('/voice-pcm-worklet.js')
-      if (!isCurrent()) { cleanup(); return }
-      worklet = new AudioWorkletNode(audioCtx, 'voice-pcm')
-      worklet.port.onmessage = (event) => handleWorkletMessage(event.data, audioCtx.sampleRate)
-      sourceNode = audioCtx.createMediaStreamSource(mediaStream)
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+      if (!isCurrent()) { discard(); return }
+      ctx = new (window.AudioContext || window.webkitAudioContext)()
+      await ctx.resume()
+      if (!isCurrent()) { discard(); return }
+      await ctx.audioWorklet.addModule('/voice-pcm-worklet.js')
+      if (!isCurrent()) { discard(); return }
+      wk = new AudioWorkletNode(ctx, 'voice-pcm')
+      wk.port.onmessage = (event) => handleWorkletMessage(event.data, ctx.sampleRate)
+      src = ctx.createMediaStreamSource(stream)
 
       const ticket = await api.post('/api/voice/asr-ticket', {})
-      if (!isCurrent()) { cleanup(); return }
-      socket = new WebSocket(websocketURL(ticket.ticket))
-      socket.binaryType = 'arraybuffer'
-      socket.onmessage = (event) => {
+      if (!isCurrent()) { discard(); return }
+
+      // 到这里才交给共享状态，cleanup() 从此负责回收
+      mediaStream = stream
+      audioCtx = ctx
+      worklet = wk
+      sourceNode = src
+
+      const ws = new WebSocket(websocketURL(ticket.ticket))
+      ws.binaryType = 'arraybuffer'
+      socket = ws
+      ws.onmessage = (event) => {
+        if (socket !== ws) return
         let msg
         try {
           msg = JSON.parse(event.data)
         } catch {
           return
         }
-        if (msg.type === 'ready') {
-          startCapture()
-        } else if (msg.type === 'result') {
+        if (msg.type === 'result') {
           if (msg.text) transcript.value = msg.text
           if (msg.final) finish()
         } else if (msg.type === 'limit') {
@@ -244,14 +276,19 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
             mediaStream.getTracks().forEach(t => t.stop())
             mediaStream = null
           }
+          onError?.(msg.message || '录音达到上限，已按当前内容识别')
+          stopTimer = setTimeout(() => fail('语音识别超时'), 15000)
         } else if (msg.type === 'error') {
           fail(msg.error)
         }
       }
-      socket.onerror = () => fail('语音识别连接失败')
-      socket.onclose = () => {
-        if (!finished) fail('语音识别连接断开')
+      ws.onerror = () => { if (socket === ws) fail('语音识别连接失败') }
+      ws.onclose = () => {
+        if (socket === ws && !finished) fail('语音识别连接断开')
       }
+      // 服务端要先连豆包（几百毫秒）才会 ready，采集不能等它：点完麦克风立刻开口的
+      // 那几百毫秒由 socket 缓冲，服务端连上后照常读，等 ready 反而会吞掉开头。
+      ws.onopen = () => { if (socket === ws) startCapture() }
     } catch (err) {
       if (isCurrent()) {
         busy.value = false

@@ -60,6 +60,7 @@ let coldStartPending = true
  * ── 七、输入框收起 ──────────────────────────────────────────────────────────
  *   toggleInput()          → 手机上 ⌄ 按钮收起/展开整张输入卡（收起要同时 blur 退键盘）
  *   watch(inputVisible)    → nextTick + 触发 textarea input 事件（自适应高度）
+ *   watch(inputValue)      → 清空时复位 voiceReplyPending（避免手打被当成语音轮）
  *
  * ── 八、页面卸载 ─────────────────────────────────────────────────────────────
  *   onBeforeUnmount (L446): cancel() 中断正在进行的 SSE 流
@@ -243,6 +244,12 @@ watch(inputVisible, async (val) => {
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     }
   }
+})
+
+// 语音标记只对「识别出来的那句话」有效：输入被清空就复位，
+// 否则用户清空改写后手打的第一条仍会按语音轮处理（短答 + 自动朗读）。
+watch(inputValue, (val) => {
+  if (!String(val || '').trim()) voiceReplyPending.value = false
 })
 
 function toggleInput() {

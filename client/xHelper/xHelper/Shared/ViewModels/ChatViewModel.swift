@@ -992,6 +992,7 @@ class ChatViewModel: ObservableObject {
         loadMoreError = nil
         draftText = ""
         draftAttachments = []
+        pendingVoiceReply = false // 否则新会话里手打的第一条会被当成语音轮（短答 + 自动朗读）
         streamingContent = ""
     }
 

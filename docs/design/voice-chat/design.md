@@ -238,6 +238,14 @@ C 模式说明：
 - 代价：AEC 只是信号相减，耳机场景最稳；外放时阈值抬高，可能需要说大声一点。
 - iOS 若将来接语音，audio session 必须用 `.voiceChat`（`.spokenAudio` 下系统不给回声参考）。
 
+### C3b PWA 点击打断
+
+- 浏览器里不做自动 barge-in：Chrome 的 AEC 默认只覆盖 WebRTC 通路，`<audio>` 播放的漏音
+  会直接把识别带偏；Safari 参数不生效，更没法可靠判断「用户在说」。
+- 全屏环在「说」态把按钮改成「打断」：点一下 = `handleStop()`（停朗读 + 断 SSE + `/api/chat/stop`）
+  再 `cancelVoice()`。
+- 播报期间绕开浮层点麦克风同样先走 `handleStop()`，避免把 AI 自己的声音录进去。
+
 ## 客户端
 
 ### macOS
@@ -277,7 +285,7 @@ C 模式说明：
 | **C1** | 连续流 + `sentence` 自动提交 + 会话上限（10 分钟硬上限 + 30 秒空闲自动收口） | macOS |
 | **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA ✅ |
 | **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS ✅ |
-| **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA |
+| **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA ✅ |
 
 关键事实（`cmd/voice-smoke` 实测）：
 
@@ -349,3 +357,7 @@ location = /api/voice/asr {
   - 播报期间麦克风门 + 600ms 尾音门；门控期只攒 600ms pre-roll，打断时冲回 ASR，开头不丢。
   - 打断判定：音量 > max(0.32, 残响本底×1.8) 连续 3 帧 → 停朗读 + `onBargeIn` 停生成。
   - 门控期间不向 ASR 发送音频（不补静音）：流式 ASR 允许中途静默，避免把回声送进去。
+- 2026-11-08（C3b，PWA）：
+  - 不做自动 barge-in（浏览器 AEC 不可靠）；「说」态的全屏环按钮改为「打断」，
+    点击 = 停朗读 + 断 SSE + `/api/chat/stop` + `cancelVoice()`。
+  - 播报期间点麦克风同样先 `handleStop()`，防止把 TTS 声音录进识别。

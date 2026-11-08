@@ -11,7 +11,7 @@ defineEmits(['close'])
 const PHASES = {
   listening: { title: '听', hint: '说完停顿一下就会提交' },
   thinking: { title: '想', hint: '正在整理回答' },
-  speaking: { title: '说', hint: '点「结束」可以打断朗读' }
+  speaking: { title: '说', hint: '点「打断」可以随时插话' }
 }
 const info = computed(() => PHASES[props.phase] || PHASES.listening)
 const coreScale = computed(() => {
@@ -39,7 +39,9 @@ const coreScale = computed(() => {
     </div>
     <p class="voice-orb-title">{{ info.title }}</p>
     <p class="voice-orb-hint">{{ info.hint }}</p>
-    <button class="voice-orb-close" type="button" @click="$emit('close')">结束</button>
+    <button class="voice-orb-close" type="button" @click="$emit('close')">
+      {{ phase === 'speaking' ? '打断' : '结束' }}
+    </button>
   </div>
 </template>
 

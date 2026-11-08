@@ -129,9 +129,10 @@ const voiceOrbPhase = computed(() => {
   return null
 })
 
-function closeVoiceOrb() {
+// C3b：PWA 不做自动打断（浏览器 AEC 盖不住 <audio> 播放），由用户点一下
+function interruptVoice() {
+  handleStop()
   cancelVoice()
-  stopSpeaking()
 }
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
@@ -818,6 +819,8 @@ async function toggleVoice() {
     return
   }
   if (voiceBusy.value || chat.isStreaming) return
+  // 播报中再点麦克风 = 点击打断：先停朗读（顺带停掉可能还在跑的生成），再开录
+  if (voiceSpeaking.value) handleStop()
   try {
     await startVoice()
   } catch (err) {
@@ -1064,7 +1067,7 @@ function handleContainerClick(e) {
       v-if="voiceOrbPhase"
       :phase="voiceOrbPhase"
       :level="voiceLevel"
-      @close="closeVoiceOrb"
+      @close="interruptVoice"
     />
     <PageTopBar
       show-conversation

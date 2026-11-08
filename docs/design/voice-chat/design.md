@@ -14,7 +14,8 @@
 
 ## 目标
 
-1. macOS 客户端与 Vue/PWA 都能「点麦克风说话 → 识别 → 填入输入框 → 发送 → 回复自动朗读」。
+1. macOS 客户端与 Vue/PWA 都能语音对话：macOS 只留「连续对话」一个入口（点开即开麦、判停自动提交、
+   回复自动朗读；原「语音输入 → 填输入框」入口已按用户要求删除）；PWA 同样是连续对话。
 2. TTS 走豆包语音合成模型 2.0，ASR 走豆包流式语音识别模型 2.0。
 3. API Key 只在服务端；客户端不接触豆包凭证。
 4. 为后续 C（静音自动提交 + 全屏环 + 打断）保留传输层与状态机接口。
@@ -223,7 +224,10 @@ C 模式说明：
   状态优先级「说 > 想 > 听」；listen 态用 `VoiceAudioEngine.onLevel`（RMS×4，0...1）驱动核心缩放。
 - PWA：`components/VoiceOrb.vue` 全屏浮层（`position: fixed`），监听态用 AudioWorklet 已有的 `level`，
   `speaking` 由 `<audio>` 的 `ended`/`pause` 事件维护。
-- 两端都能点「结束」收口：macOS 同时停生成与朗读；PWA `cancel()` + `stopSpeaking()`。
+  **全屏磨砂是刻意的免手模式**：会话期间不看聊天记录、不复选文本，要么说要么点「结束对话」
+  退回聊天（移动端单手场景下，留一半屏幕给一条随时会滚动的消息流反而更碍事）。
+- 两端都能点「结束」收口：macOS 与 PWA 都同时停生成与朗读（macOS 统一走 `endContinuousVoice()`）。
+  PWA 在「说」态按钮是「打断」——只停朗读与生成，会话与麦克风保留。
 - 只是展示层，不改传输层与状态机。
 
 ### C3a 回声消除与打断（macOS）
@@ -234,19 +238,23 @@ C 模式说明：
   顺序反了 AEC 会静默失效，不报错。
 - 麦克风门：播报开始即 `setGated(true)`，分片不发 ASR，只留最近 600ms 到 pre-roll；
   播报结束再压 600ms 收尾音。
-- 打断：门控期间 `onLevel` 仍工作；音量超过 `max(0.32, 残响本底 × 1.8)` 连续 3 帧（约 120ms）
+- 打断：门控期间 `onLevel` 仍工作；音量超过 `max(0.10, 残响本底 × 1.8)` 连续 3 帧（约 120ms）
   即判为用户开口 → 冲回 pre-roll → 停朗读 → `onBargeIn` → ChatView 调 `stopStreaming()`。
-  残响本底用 EMA 跟随自身播放的漏音，避免「自己打断自己」。
-- 代价：AEC 只是信号相减，耳机场景最稳；外放时阈值抬高，可能需要说大声一点。
+  残响本底用 EMA 跟随自身播放的漏音，避免「自己打断自己」；门刚打开 250ms 内不判定（播放起始爆音）。
+- 阈值 0.10 的来历：`onLevel` 是 RMS×4 的刻度，真机日志里播报期间用户说话在 0.08~0.28
+  而 AEC 残留回声只有 0.00~0.02；原来写 0.32 时外放条件下永远够不着，macOS 的打断等于没生效。
+- 代价：AEC 只是信号相减，耳机场景最稳；外放时靠残响本底自动抬阈值。
 - iOS 若将来接语音，audio session 必须用 `.voiceChat`（`.spokenAudio` 下系统不给回声参考）。
 
 ### C3b PWA 点击打断
 
 - 浏览器里不做自动 barge-in：Chrome 的 AEC 默认只覆盖 WebRTC 通路，`<audio>` 播放的漏音
   会直接把识别带偏；Safari 参数不生效，更没法可靠判断「用户在说」。
-- 全屏环在「说」态把按钮改成「打断」：点一下 = `handleStop()`（停朗读 + 断 SSE + `/api/chat/stop`）
-  再 `cancelVoice()`。
-- 播报期间绕开浮层点麦克风同样先走 `handleStop()`，避免把 AI 自己的声音录进去。
+- 改用**播报期门控**：`speak()` 一开始就把上行换成等长静音（保活，防 45000081），
+  `<audio>` 播完再压 600ms 才恢复真实音频——AI 自己的声音根本进不了 ASR。
+  代价是播报期间开口不算数，打断只能手点（这正是「不做 auto barge-in」的落点）。
+- 全屏环在「说」态按钮是「打断」：点一下 = `handleStop()`（停朗读 + 断 SSE + `/api/chat/stop`），
+  **会话与麦克风保留**；其余状态是「结束对话」→ `stopVoice()`（发 `end`，等连接正常收尾）。
 
 ## 客户端
 
@@ -288,6 +296,7 @@ C 模式说明：
 | **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA ✅ |
 | **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS ✅ |
 | **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA ✅ |
+| **C4** | PWA 连续对话（麦克风按钮 = 开关）+ 播报期静音门控 + 空闲/上限收口 | PWA ✅ |
 
 关键事实（`cmd/voice-smoke` 实测）：
 
@@ -361,6 +370,8 @@ location = /api/voice/asr {
   - 播报期间麦克风门 + 600ms 尾音门；门控期只攒 600ms pre-roll，打断时冲回 ASR，开头不丢。
   - 打断判定：音量 > max(0.32, 残响本底×1.8) 连续 3 帧 → 停朗读 + `onBargeIn` 停生成。
   - 门控期间不向 ASR 发送音频（不补静音）：流式 ASR 允许中途静默，避免把回声送进去。
+    > **已推翻**：豆包 8 秒收不到音频包会断会话（45000081），现改为按原节拍发等长静音保活，
+    > 见 2026-11-08「修复：8 秒等包超时 + 麦克风不释放」。
 - 2026-11-08（C3b，PWA）：
   - 不做自动 barge-in（浏览器 AEC 不可靠）；「说」态的全屏环按钮改为「打断」，
     点击 = 停朗读 + 断 SSE + `/api/chat/stop` + `cancelVoice()`。
@@ -410,3 +421,32 @@ location = /api/voice/asr {
   - `VoiceAudioEngine` 用 `playbackActive` 判断播放状态（`player.isPlaying` 播完仍为 true），
     播放结束即释放 engine，修掉退出语音模式后菜单栏麦克风占用不消失。
   - `cmd/voice-smoke` 新增 `-gap-at / -gap-seconds / -gap-silence`，可直接复现与验证这个问题。
+- 2026-11-08（第六轮复审修复 + PWA 连续对话）：
+  - 服务端错误帧按 compression 位解 gzip（错误码与 payload size 是明文，只有 JSON payload 压缩）。
+  - 客户端 `[voice]` 诊断全部改走 `LogBuffer.diag`：`info` 整段在 `#if DEBUG` 里，Release 构建会一片空白。
+  - `VoiceAudioEngine` 的播放完成回调绑定 `playGeneration`：`player.stop()` 触发的旧回调
+    不会再清掉新一轮的 `playbackActive`、把 TTS 掐断。
+  - 采集诊断计数改用 `statsLock`（音频线程写、主线程读/清零），`downmixToMono` 失败也计入 `empty`。
+  - macOS 输入栏：删掉「语音输入（麦克风）」按钮，「连续对话」挪到「更多操作」左侧；
+    退出连续会话统一走 `endContinuousVoice()`（停采集 + 停生成 + 停朗读），
+    修掉「从输入栏结束、回复继续念完、麦克风占用到播完才释放」。
+  - **PWA 改为连续对话**（原 A 模式移除）：麦克风按钮 = 会话开关，`mode=continuous`、
+    按 `sentence` 逐轮提交、回复自动朗读；播报期间上行改发等长静音保活；
+    30 秒无分句收口、`session_seconds` 到点收口（回答/朗读中给一次 15 秒宽限）；
+    浮层「打断」只停朗读与生成，「结束对话」才收会话。
+  - PWA 打字发送不再带 `voice_mode`（`voiceReplyPending` 一并删除）：只有语音轮会朗读回复。
+- 2026-11-08（第七轮复核，6 条 P3）：
+  - macOS `endContinuousVoice()` 只在 `viewModel.isStreaming` 时才 `stopStreaming()`：否则会白 POST
+    一次 `/api/chat/stop` 并 `ShellProcessRegistry.killAll()`，刚结束语音马上发下一条时迟到的 stop 会误杀新轮。
+  - 两端「新分句到来时」都**无条件**停朗读（原来只在流式中停）：上一轮已流完但 TTS 还在念时，
+    门还关着，不停就会把这句也吞掉。
+  - PWA：WS 还没 OPEN 就点「结束」时直接 `cleanup()`，不再发不出去的 `end` + 白等 15 秒兜底。
+  - PWA / macOS 都忽略收尾阶段的 `error` 帧（已点结束或到上限后，服务端补发的 45000081 等包超时不再弹错）。
+  - PWA `cleanup()` 一并 `stopSpeaking()`：出错/硬收口时朗读不会继续念、`speaking` 不会挂成 true。
+  - 全屏环的免手取舍写进 C2（见上）。
+  - macOS `VoiceChatService.start()`（A 模式）加注释说明已无入口，仅保留代码。
+- 2026-11-08（修 macOS 打断失效 + 空闲收口误杀）：
+  - 打断阈值 0.32 → 0.10（`max(0.10, 残响本底 × 1.8)`），并加「门打开后 250ms 内不判定」。
+    真机日志：播报期间用户说话电平 0.08~0.28，原阈值高于它 → 门控期说的话全被吞、会话看着像卡死。
+  - 空闲收口看「最近一次听到用户出声」（`lastVoiceAt`，电平 > 0.08 即刷新），
+    不再只看 `sentence`：长句没有判停时不会被 30 秒计时器收掉。

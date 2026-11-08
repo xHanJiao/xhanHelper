@@ -1403,7 +1403,7 @@ class ChatViewModel: ObservableObject {
             let hasReplyContent = !streamingContent.isEmpty
             let replyText = streamingContent
             let shouldSpeak = speakReplyForCurrentTurn && doneError == nil && hasReplyContent
-            LogBuffer.shared.info("[voice] done: speakReply=\(speakReplyForCurrentTurn) " +
+            LogBuffer.shared.diag("[voice] done: speakReply=\(speakReplyForCurrentTurn) " +
                                   "hasContent=\(hasReplyContent) error=\(doneError ?? "-") shouldSpeak=\(shouldSpeak)")
             speakReplyForCurrentTurn = false
             finishStreaming()

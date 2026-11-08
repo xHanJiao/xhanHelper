@@ -111,8 +111,12 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 		if len(data) < offset+payloadSize {
 			return nil, fmt.Errorf("error payload size %d exceeds frame %d bytes", payloadSize, len(data))
 		}
-		f.ErrorMessage = strings.TrimSpace(string(data[offset : offset+payloadSize]))
-		f.Payload = data[offset : offset+payloadSize]
+		body, err := decompress(data[offset:offset+payloadSize], compression)
+		if err != nil {
+			return nil, fmt.Errorf("error frame payload: %w", err)
+		}
+		f.Payload = body
+		f.ErrorMessage = strings.TrimSpace(string(body))
 		return f, nil
 	}
 
@@ -124,23 +128,31 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 	if len(data) < offset+payloadSize {
 		return nil, fmt.Errorf("payload size %d exceeds frame %d bytes", payloadSize, len(data))
 	}
-	payload := data[offset : offset+payloadSize]
-
-	if compression == compressionGzip {
-		zr, err := gzip.NewReader(bytes.NewReader(payload))
-		if err != nil {
-			return nil, fmt.Errorf("open gzip payload: %w", err)
-		}
-		raw, err := io.ReadAll(zr)
-		closeErr := zr.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read gzip payload: %w", err)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close gzip payload: %w", closeErr)
-		}
-		payload = raw
+	payload, err := decompress(data[offset:offset+payloadSize], compression)
+	if err != nil {
+		return nil, err
 	}
 	f.Payload = payload
 	return f, nil
+}
+
+// decompress 按帧头的 compression 位解压 payload。
+// 错误帧同样带这个位：此前错误分支直接当字符串转，gzip 化成乱码。
+func decompress(payload []byte, compression byte) ([]byte, error) {
+	if compression != compressionGzip {
+		return payload, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("open gzip payload: %w", err)
+	}
+	raw, err := io.ReadAll(zr)
+	closeErr := zr.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read gzip payload: %w", err)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close gzip payload: %w", closeErr)
+	}
+	return raw, nil
 }

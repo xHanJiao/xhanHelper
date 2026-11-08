@@ -1,6 +1,8 @@
 package voice
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
 	"testing"
@@ -81,5 +83,33 @@ func TestASRRequestJSONUsesPCM16k(t *testing.T) {
 	audio := got["audio"].(map[string]any)
 	if audio["format"] != "pcm" || audio["rate"].(float64) != 16000 || audio["bits"].(float64) != 16 {
 		t.Fatalf("unexpected audio config: %v", audio)
+	}
+}
+
+func TestDecodeGzippedErrorFrame(t *testing.T) {
+	// 压缩位只作用于 JSON payload：错误码与 payload size 是明文，payload 才是 gzip。
+	msg := []byte(`{"error":"等包超时"}`)
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(msg); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	gz := buf.Bytes()
+	frame := make([]byte, 12+len(gz))
+	frame[0] = protocolVersion1<<4 | headerSize4
+	frame[1] = msgErrorResponse<<4 | flagNone
+	frame[2] = serializationJSON<<4 | compressionGzip
+	binary.BigEndian.PutUint32(frame[4:8], 45000081)
+	binary.BigEndian.PutUint32(frame[8:12], uint32(len(gz)))
+	copy(frame[12:], gz)
+	got, err := decodeFrame(frame)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ErrorCode != 45000081 || got.ErrorMessage != string(msg) {
+		t.Fatalf("unexpected error frame: code=%d msg=%q", got.ErrorCode, got.ErrorMessage)
 	}
 }

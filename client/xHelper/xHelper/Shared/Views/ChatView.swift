@@ -81,11 +81,7 @@ struct ChatView: View {
                     VoiceOrbView(
                         phase: voiceOrbPhase,
                         level: voice.level,
-                        onClose: {
-                            voice.stopContinuous()
-                            viewModel.stopStreaming()
-                            voice.stopSpeaking()
-                        }
+                        onClose: endContinuousVoice
                     )
                 }
             }
@@ -200,15 +196,16 @@ struct ChatView: View {
             }
             // C3：播报期间用户开口 → 立刻停生成（朗读与门控已在 service 里处理）
             voice.onBargeIn = {
-                LogBuffer.shared.info("[voice] barge-in: stop streaming")
+                LogBuffer.shared.diag("[voice] barge-in: stop streaming")
                 viewModel.stopStreaming()
             }
             // C 模式：每句判停就直接提交一轮；上一轮还在跑就先停掉，避免两个 loop 交叉写库
             voice.onSentence = { text in
-                LogBuffer.shared.info("[voice] submit sentence: chars=\(text.count) " +
+                LogBuffer.shared.diag("[voice] submit sentence: chars=\(text.count) " +
                                       "streaming=\(viewModel.isStreaming) cid=\(viewModel.conversationId ?? "-")")
+                // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
+                voice.stopSpeaking()
                 if viewModel.isStreaming {
-                    voice.stopSpeaking()
                     // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
                     viewModel.stopStreaming(notifyServer: false)
                 }
@@ -218,7 +215,7 @@ struct ChatView: View {
             // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
             voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
             viewModel.onAssistantReplyDone = { text in
-                LogBuffer.shared.info("[voice] assistant reply done, tts chars=\(text.count)")
+                LogBuffer.shared.diag("[voice] assistant reply done, tts chars=\(text.count)")
                 Task { await voice.speak(text: text, baseURL: baseURL, token: token) }
             }
             Task { await voice.refresh(baseURL: baseURL, token: token) }
@@ -436,6 +433,10 @@ struct ChatView: View {
         HStack(spacing: 4) {
             ForEach(InputBarButtonID.allCases.filter { !inputBarLayout.isCollapsed($0) || isPinnedInStatusRow($0) }, id: \.self) { id in
                 inputBarButton(id, ctx: ctx)
+            }
+            // 连续对话紧挨「更多操作」左侧（原「语音输入」按钮已按用户要求删除）
+            if voice.isAvailable {
+                voiceContinuousButton(ctx)
             }
             // 更多操作：有按钮被收起时才提供 chevron（否则全常驻，无展开行）。
             if !collapsedInExtras.isEmpty {
@@ -683,41 +684,7 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarTrailingActions(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        // 仅发送/停止常驻；附件已收进「更多操作」展开行。
-        if voice.isAvailable {
-            IconButton(
-                visibility: .always,
-                context: ctx,
-                symbol: voice.continuousActive ? "waveform.circle.fill" : "waveform.circle",
-                tint: voice.continuousActive ? .red : Color("appAccent"),
-                isEnabled: !voice.isBusy,
-                tooltip: voice.continuousActive ? "结束连续对话" : "连续对话",
-                pulsing: voice.state == .finishing,
-                action: {
-                    if voice.continuousActive {
-                        voice.stopContinuous()
-                    } else {
-                        Task { await voice.startContinuous(baseURL: baseURL, token: token) }
-                    }
-                }
-            )
-            IconButton(
-                visibility: .always,
-                context: ctx,
-                symbol: voice.isRecording ? "mic.fill" : "mic",
-                tint: voice.isRecording ? .red : Color("appAccent"),
-                isEnabled: !voice.isBusy && !voice.continuousActive,
-                tooltip: voice.isRecording ? "停止录音" : "语音输入",
-                pulsing: voice.state == .finishing,
-                action: {
-                    if voice.isRecording {
-                        voice.stop()
-                    } else {
-                        Task { await voice.start(baseURL: baseURL, token: token) }
-                    }
-                }
-            )
-        }
+        // 只留发送/停止；语音（连续对话）在状态行挨着「更多操作」。
         SendStopButton(
             context: ctx,
             isStreaming: viewModel.isStreaming,
@@ -750,6 +717,39 @@ struct ChatView: View {
             )
         }
         #endif
+    }
+
+    /// 连续对话开关：原先和「语音输入」并排，现在合成一个按钮，放在「更多操作」左侧。
+    @ViewBuilder
+    private func voiceContinuousButton(_ ctx: InputBarContext) -> some View {
+        IconButton(
+            visibility: .always,
+            context: ctx,
+            symbol: voice.continuousActive ? "waveform.circle.fill" : "waveform.circle",
+            tint: voice.continuousActive ? .red : Color("appAccent"),
+            isEnabled: !voice.isBusy,
+            tooltip: voice.continuousActive ? "结束连续对话" : "连续对话",
+            pulsing: voice.state == .finishing,
+            action: {
+                if voice.continuousActive {
+                    endContinuousVoice()
+                } else {
+                    Task { await voice.startContinuous(baseURL: baseURL, token: token) }
+                }
+            }
+        )
+    }
+
+    /// 结束连续语音会话：停采集、停生成、停朗读。
+    /// 输入栏按钮和浮层「结束」必须走同一条路径——只调 stopContinuous 会让正在播的回复继续念完。
+    private func endContinuousVoice() {
+        voice.stopContinuous()
+        // 没在流式时不要碰 stopStreaming：它会 POST /api/chat/stop 并杀掉本地 shell 进程组，
+        // 刚结束语音马上发下一条时，迟到的 stop 会把新轮一起停掉。
+        if viewModel.isStreaming {
+            viewModel.stopStreaming()
+        }
+        voice.stopSpeaking()
     }
 
     /// 读取用户选中的图片文件（macOS 原生文件选择器）

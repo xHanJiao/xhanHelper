@@ -4,6 +4,10 @@ import { api } from '@/api/client'
 // 首次点击麦克风时用它解锁 <audio>（浏览器自动播放策略）
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
 const CHUNK_SAMPLES = 3200 // 200ms @ 16k mono int16 = 6400 bytes
+// 一直没人说话就收口：一条连续会话按音频时长计费（静音也计），别白占着豆包并发
+const IDLE_STOP_MS = 30_000
+// 播报结束后再压 600ms 麦克风门：收掉外放尾音
+const GATE_TAIL_MS = 600
 
 function resampleToInt16(input, inputRate) {
   if (inputRate === 16000) {
@@ -55,6 +59,8 @@ function websocketURL(ticket) {
   const url = new URL('/api/voice/asr', base)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   url.searchParams.set('ticket', ticket)
+  // 连续对话：一条连接连着送音频，服务端按判停分句下发 sentence
+  url.searchParams.set('mode', 'continuous')
   return url.toString()
 }
 
@@ -62,13 +68,21 @@ function log(...args) {
   console.info('[voice]', ...args)
 }
 
-export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
+/**
+ * 连续语音对话：点一下开麦，之后判停一句就提交一轮，回复自动朗读。
+ *
+ * 难点是回声：浏览器没有 macOS 那样的可靠 AEC，所以播报期间不把真实音频发给 ASR
+ * （门控），而是按原节拍发等长静音保活——豆包 8 秒收不到音频包会断会话（45000081）。
+ * 代价是播报时听不到你开口，打断只能点按钮（PWA 不做自动打断）。
+ */
+export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   const available = ref(false)
-  const recording = ref(false)
-  const busy = ref(false)
-  const transcript = ref('')
+  // 会话开着（连 WS、录音、等回答、朗读都算）；浮层与按钮状态都看它
+  const active = ref(false)
+  // start 过渡中（按钮暂时禁用）
+  const calling = ref(false)
   const level = ref(0)
-  // TTS 正在播放（全屏语音环「说」态）
+  // TTS 正在播放（浮层「说」态）
   const speaking = ref(false)
 
   let socket = null
@@ -79,12 +93,19 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   let audioEl = null
   let objectUrl = null
   let pending = new Int16Array(0)
-  let stopTimer = null
-  let maxTimer = null
-  let finished = false
   let generation = 0
   let speakEpoch = 0
-  let maxSeconds = 60
+  let sessionSeconds = 600
+  let maxTimer = null
+  let idleTimer = null
+  let endTimer = null
+  let gateTailTimer = null
+  let finished = true
+  // 用户已点结束/服务端到上限：不再提交残句，等连接关掉
+  let finishing = false
+  // 播报期间压住上行（改发静音保活）
+  let gated = false
+  let lastActivity = 0
   let sentChunks = 0
   let sentBytes = 0
   let lastUpLog = 0
@@ -96,7 +117,7 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
       const hasCapture = !!navigator.mediaDevices?.getUserMedia &&
         !!Ctx && 'audioWorklet' in Ctx.prototype
       available.value = !!(cfg?.ready && hasCapture)
-      maxSeconds = Math.max(5, Number(cfg?.max_seconds) || 60)
+      sessionSeconds = Math.max(30, Number(cfg?.session_seconds) || 600)
     } catch {
       available.value = false
     }
@@ -106,8 +127,8 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     if (!audioEl) {
       audioEl = new Audio()
       // ended 正常收尾，pause 覆盖被 stopSpeaking 打断的情况
-      audioEl.addEventListener('ended', () => { speaking.value = false })
-      audioEl.addEventListener('pause', () => { speaking.value = false })
+      audioEl.addEventListener('ended', onPlaybackEnd)
+      audioEl.addEventListener('pause', onPlaybackEnd)
     }
     return audioEl
   }
@@ -118,6 +139,18 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     el.src = SILENT_WAV
     el.play().catch(() => {})
     el.dataset.unlocked = '1'
+  }
+
+  function setGate(value) {
+    if (gated === value) return
+    gated = value
+    log(`mic gate ${value ? 'on' : 'off'}`)
+  }
+
+  function sendControl(type) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type }))
+    }
   }
 
   function sendPCM(buffer) {
@@ -151,21 +184,27 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
     // 和 macOS 一致 ×4：原始 RMS 只有 0.02~0.2，不放大浮层几乎看不出动静
     level.value = Math.min(1, Math.sqrt(sum / samples.length) * 4)
-    pushSamples(resampleToInt16(samples, sampleRate))
+    let pcm = resampleToInt16(samples, sampleRate)
+    // 门控：真实音频不进 ASR（否则会把自己念的再识别一遍），但上行流不能空闲
+    if (gated) pcm = new Int16Array(pcm.length)
+    pushSamples(pcm)
+  }
+
+  function clearTimers() {
+    if (maxTimer) { clearTimeout(maxTimer); maxTimer = null }
+    if (endTimer) { clearTimeout(endTimer); endTimer = null }
+    if (gateTailTimer) { clearTimeout(gateTailTimer); gateTailTimer = null }
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null }
   }
 
   function cleanup() {
+    // 出错/硬收口时朗读可能还在播：一并停掉，别让 speaking 挂成 true、声音继续出
+    stopSpeaking()
     finished = true
-    recording.value = false
-    busy.value = false
-    if (stopTimer) {
-      clearTimeout(stopTimer)
-      stopTimer = null
-    }
-    if (maxTimer) {
-      clearTimeout(maxTimer)
-      maxTimer = null
-    }
+    finishing = false
+    active.value = false
+    calling.value = false
+    clearTimers()
     if (worklet) {
       worklet.port.onmessage = null
       worklet.disconnect()
@@ -190,52 +229,38 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     }
     pending = new Int16Array(0)
     level.value = 0
+    gated = false
   }
 
   function fail(message) {
+    log(`fail: ${message || '-'} active=${active.value}`)
     cleanup()
     if (message) {
       console.error('[voice]', message)
       onError?.(message)
     }
-    return message || '语音识别失败'
-  }
-
-  function finish() {
-    if (finished) return
-    const text = transcript.value.trim()
-    log(`final: chars=${text.length} up=${sentBytes}B`)
-    cleanup()
-    if (!text) {
-      onError?.('没有识别到内容')
-      return
-    }
-    onFinalTranscript?.(text)
-  }
-
-  function startCapture() {
-    if (finished || !audioCtx || !worklet || !sourceNode) return
-    sourceNode.connect(worklet)
-    recording.value = true
-    busy.value = false
-    if (maxTimer) clearTimeout(maxTimer)
-    maxTimer = setTimeout(() => {
-      if (recording.value) stop()
-    }, Math.max(1, maxSeconds - 2) * 1000)
   }
 
   async function start() {
-    if (recording.value || busy.value) return
-    log('start requested')
+    if (active.value || calling.value) return
+    log('start requested (continuous)')
     generation += 1
     const gen = generation
     const isCurrent = () => gen === generation
-    busy.value = true
+    calling.value = true
+    // 上一轮可能还在收尾（已发 end、等连接关）：直接拆掉，别让它的兜底计时器打到新会话
+    clearTimers()
+    if (socket) {
+      const stale = socket
+      socket = null
+      try { stale.close() } catch { /* 已关闭 */ }
+    }
     finished = false
-    transcript.value = ''
+    finishing = false
     sentChunks = 0
     sentBytes = 0
     lastUpLog = 0
+    lastActivity = Date.now()
     stopSpeaking()
     unlockAudio()
 
@@ -292,68 +317,73 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
         }
         if (msg.type === 'ready') {
           log('ws ready')
-        } else if (msg.type === 'result') {
-          if (msg.text) transcript.value = msg.text
-          if (msg.definite || msg.final) {
-            log(`result chars=${msg.text?.length || 0} definite=${!!msg.definite} final=${!!msg.final}`)
+        } else if (msg.type === 'sentence') {
+          if (!active.value || finishing) {
+            log('sentence dropped (session ending)')
+            return
           }
-          if (msg.final) finish()
+          const text = String(msg.text || '').trim()
+          if (!text) return
+          log(`sentence chars=${text.length}`)
+          lastActivity = Date.now()
+          onSentence?.(text)
         } else if (msg.type === 'limit') {
           log('ws limit', msg.message || '')
-          // 服务端到上限后会 Finish；停止采集但不要发 end，等 final
-          recording.value = false
-          busy.value = true
-          if (maxTimer) {
-            clearTimeout(maxTimer)
-            maxTimer = null
+          onNotice?.(msg.message || '语音会话已到上限')
+          // 服务端已 Finish：停采集但不要再发 end，等它吐完最后一句并关连接
+          if (active.value) {
+            active.value = false
+            finishing = true
+            detachCapture()
+            armEndTimeout()
           }
-          if (sourceNode) { sourceNode.disconnect(); sourceNode = null }
-          if (mediaStream) {
-            mediaStream.getTracks().forEach(t => t.stop())
-            mediaStream = null
-          }
-          // 到上限是提示，不是错误（红色 toast 会让人以为识别失败了）
-          onNotice?.(msg.message || '录音达到上限，已按当前内容识别')
-          stopTimer = setTimeout(() => fail('语音识别超时'), 15000)
         } else if (msg.type === 'error') {
+          // 已点结束/到上限属收尾阶段：这时补发的错误帧（如 45000081 等包超时）不再弹红
+          if (!active.value || finishing) {
+            log('ws error ignored (session ending)', msg.error)
+            return
+          }
           log('ws error', msg.error)
-          fail(msg.error)
+          fail(msg.error || '语音识别失败')
         }
       }
-      ws.onerror = () => { if (socket === ws) fail('语音识别连接失败') }
+      ws.onerror = () => { if (socket === ws && active.value) fail('语音识别连接失败') }
       ws.onclose = (event) => {
         if (socket !== ws) return
-        log(`ws closed code=${event.code} finished=${finished}`)
-        if (!finished) fail('语音识别连接断开')
+        log(`ws closed code=${event.code} finishing=${finishing}`)
+        if (finishing || !active.value) {
+          cleanup()
+          return
+        }
+        fail('语音识别连接断开')
       }
+
+      active.value = true
+      armSessionLimit()
+      startIdleWatch()
       // 服务端要先连豆包（几百毫秒）才会 ready，采集不能等它：点完麦克风立刻开口的
       // 那几百毫秒由 socket 缓冲，服务端连上后照常读，等 ready 反而会吞掉开头。
       ws.onopen = () => { if (socket === ws) startCapture() }
     } catch (err) {
       if (isCurrent()) {
-        busy.value = false
         cleanup()
         throw err
       }
+    } finally {
+      if (isCurrent()) calling.value = false
     }
   }
 
-  function stop() {
-    if (!recording.value) {
-      log('stop ignored: not recording')
-      return
-    }
-    log(`stop requested, up=${sentBytes}B pending=${pending.length}`)
-    busy.value = true
-    recording.value = false
-    if (maxTimer) {
-      clearTimeout(maxTimer)
-      maxTimer = null
-    }
-    if (sourceNode) {
-      sourceNode.disconnect()
-      sourceNode = null
-    }
+  function startCapture() {
+    if (finished || !audioCtx || !worklet || !sourceNode) return
+    sourceNode.connect(worklet)
+    log('capture started')
+  }
+
+  /** 停采集，返回不足 200ms 的尾巴（调用方决定发不发）。 */
+  function detachCapture() {
+    if (maxTimer) { clearTimeout(maxTimer); maxTimer = null }
+    if (sourceNode) { sourceNode.disconnect(); sourceNode = null }
     if (mediaStream) {
       mediaStream.getTracks().forEach(t => t.stop())
       mediaStream = null
@@ -363,52 +393,137 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
       worklet.disconnect()
       worklet = null
     }
-    if (pending.length) {
-      sendPCM(pending.buffer)
-      pending = new Int16Array(0)
-    }
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'end' }))
-    }
-    stopTimer = setTimeout(() => fail('语音识别超时'), 15000)
+    const tail = pending
+    pending = new Int16Array(0)
+    return tail
   }
 
-  function cancel() {
-    log(`cancel: recording=${recording.value} up=${sentBytes}B`)
-    generation += 1
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'cancel' }))
+  /** 结束会话（用户点麦克风）：发完尾巴和 end，等服务端收尾后关连接。 */
+  function stop() {
+    if (!active.value) {
+      log('stop ignored: not active')
+      return
     }
+    // 连接还没开（服务端还在连豆包）：end 发不出去、采集也还没开始，直接拆，别白等 15 秒兜底
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      log('stop before ws open, cleanup directly')
+      cleanup()
+      return
+    }
+    log(`stop requested up=${sentBytes}B pending=${pending.length}`)
+    active.value = false
+    finishing = true
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null }
+    stopSpeaking()
+    const tail = detachCapture()
+    if (tail.length) sendPCM(tail.buffer)
+    sendControl('end')
+    armEndTimeout()
+  }
+
+  /** 硬收口（组件卸载/出错）：不发 end，直接拆连接与麦克风。 */
+  function cancel() {
+    log(`cancel: active=${active.value} up=${sentBytes}B`)
+    generation += 1
+    stopSpeaking()
     cleanup()
   }
 
-  async function speak(text) {
-    if (!String(text || '').trim()) return
+  function armEndTimeout() {
+    if (endTimer) clearTimeout(endTimer)
+    endTimer = setTimeout(() => {
+      if (finished) return
+      log('end timeout, forcing cleanup')
+      cleanup()
+    }, 15000)
+  }
+
+  /** 会话硬上限：按音频时长计费（静音也计时），到点必须收。 */
+  function armSessionLimit() {
+    if (maxTimer) clearTimeout(maxTimer)
+    maxTimer = setTimeout(() => {
+      if (!active.value) return
+      const limitText = `语音会话已到上限（${Math.round(sessionSeconds / 60)} 分钟），已结束`
+      // 正在回答/朗读时别硬切：给一次 15 秒宽限
+      if (speaking.value || isBusy?.()) {
+        maxTimer = setTimeout(() => {
+          if (!active.value) return
+          onNotice?.(limitText)
+          stop()
+        }, 15000)
+        return
+      }
+      onNotice?.(limitText)
+      stop()
+    }, sessionSeconds * 1000)
+  }
+
+  /** 空闲收口：一直没人说话就结束会话，别白占并发与音频时长。 */
+  function startIdleWatch() {
+    if (idleTimer) clearInterval(idleTimer)
+    idleTimer = setInterval(() => {
+      if (!active.value) return
+      // AI 正在回答/朗读也算会话仍在进行，顺延而不是收口
+      if (speaking.value || isBusy?.()) {
+        lastActivity = Date.now()
+        return
+      }
+      if (Date.now() - lastActivity < IDLE_STOP_MS) return
+      log('idle limit reached, stopping')
+      onNotice?.('30 秒没有听到说话，语音会话已结束')
+      stop()
+    }, 5000)
+  }
+
+  function speak(text) {
+    if (!String(text || '').trim()) return null
     const cleaned = cleanForSpeech(text)
     const speech = cleaned || '这条回复主要是代码或表格，我放在屏幕上了。'
     stopSpeaking()
     speakEpoch += 1
     const epoch = speakEpoch
-    try {
-      log(`tts request chars=${speech.length}`)
-      const blob = await api.postBlob('/api/voice/tts', { text: speech })
-      if (epoch !== speakEpoch) return
-      log(`tts ok bytes=${blob.size}`)
-      const el = ensureAudio()
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-      objectUrl = URL.createObjectURL(blob)
-      el.src = objectUrl
-      await el.play()
-      speaking.value = true
-    } catch (err) {
-      console.error('[voice] tts failed', err)
-      onError?.('语音播放失败')
-    }
+    lastActivity = Date.now()
+    return (async () => {
+      try {
+        log(`tts request chars=${speech.length}`)
+        const blob = await api.postBlob('/api/voice/tts', { text: speech })
+        if (epoch !== speakEpoch) return
+        log(`tts ok bytes=${blob.size}`)
+        const el = ensureAudio()
+        if (objectUrl) URL.revokeObjectURL(objectUrl)
+        objectUrl = URL.createObjectURL(blob)
+        el.src = objectUrl
+        // 播报期间不把麦克风里的声音（含外放回声）发给 ASR，但上行流不能空闲
+        setGate(true)
+        speaking.value = true
+        await el.play()
+      } catch (err) {
+        if (epoch === speakEpoch) {
+          console.error('[voice] tts failed', err)
+          speaking.value = false
+          setGate(false)
+          onError?.('语音播放失败')
+        }
+      }
+    })()
+  }
+
+  function onPlaybackEnd() {
+    if (!speaking.value) return
+    speaking.value = false
+    if (gateTailTimer) clearTimeout(gateTailTimer)
+    gateTailTimer = setTimeout(() => {
+      gateTailTimer = null
+      if (!speaking.value) setGate(false)
+    }, GATE_TAIL_MS)
   }
 
   function stopSpeaking() {
     speakEpoch += 1
     speaking.value = false
+    if (gateTailTimer) { clearTimeout(gateTailTimer); gateTailTimer = null }
+    // 只要门还关着就开：只在 speaking 为真时才开，会卡在「播放结束到门关」这段里
+    setGate(false)
     if (!audioEl) return
     audioEl.pause()
     audioEl.currentTime = 0
@@ -416,9 +531,8 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
 
   return {
     available,
-    recording,
-    busy,
-    transcript,
+    active,
+    calling,
     level,
     speaking,
     refresh,
@@ -426,7 +540,6 @@ export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
     stop,
     cancel,
     speak,
-    stopSpeaking,
-    unlockAudio
+    stopSpeaking
   }
 }

@@ -60,7 +60,7 @@ let coldStartPending = true
  * ── 七、输入框收起 ──────────────────────────────────────────────────────────
  *   toggleInput()          → 手机上 ⌄ 按钮收起/展开整张输入卡（收起要同时 blur 退键盘）
  *   watch(inputVisible)    → nextTick + 触发 textarea input 事件（自适应高度）
- *   watch(inputValue)      → 清空时复位 voiceReplyPending（避免手打被当成语音轮）
+ *   语音连续对话：麦克风按钮开关会话，判停一句自动提交一轮；浮层「打断」只停朗读
  *
  * ── 八、页面卸载 ─────────────────────────────────────────────────────────────
  *   onBeforeUnmount (L446): cancel() 中断正在进行的 SSE 流
@@ -98,12 +98,12 @@ const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream } = useChatSSE()
 const nMessage = useMessage()
-// 语音：识别完成后填入输入框，手动确认发送；发送时带 voice_mode，done 后朗读回复
-const voiceReplyPending = ref(false)
+// 语音：连续对话。点麦克风开一条连续会话，判停一句就提交一轮、回复自动朗读；
+// 浮层「打断」只停朗读（会话保留），「结束对话」才收会话。
 const {
   available: voiceAvailable,
-  recording: voiceRecording,
-  busy: voiceBusy,
+  active: voiceActive,
+  calling: voiceCalling,
   level: voiceLevel,
   speaking: voiceSpeaking,
   refresh: refreshVoice,
@@ -113,43 +113,36 @@ const {
   speak: speakVoice,
   stopSpeaking
 } = useVoiceChat({
-  onFinalTranscript: (text) => {
-    inputValue.value = text
-    voiceReplyPending.value = true
-    nextTick(() => document.querySelector('.chat-input textarea')?.focus())
-  },
+  onSentence: submitVoiceSentence,
   onError: (message) => nMessage.error(message),
-  onNotice: (message) => nMessage.info(message)
+  onNotice: (message) => nMessage.info(message),
+  isBusy: () => chat.isStreaming
 })
 
-// C2 全屏语音环：说 > 想 > 听；没有语音动作时不挂载
+// C2 全屏语音环：说 > 想 > 听；会话结束就卸载
 const voiceOrbPhase = computed(() => {
+  if (!voiceActive.value) return null
   if (voiceSpeaking.value) return 'speaking'
-  if (voiceBusy.value) return 'thinking'
-  if (voiceRecording.value) return 'listening'
-  return null
+  if (chat.isStreaming) return 'thinking'
+  return 'listening'
 })
 
-// C3b：PWA 不做自动打断（浏览器 AEC 盖不住 <audio> 播放），由用户点一下
-function interruptVoice() {
-  handleStop()
-  cancelVoice()
-}
+// 连续会话里「打断」只停朗读/停生成，麦克风不断（PWA 不做自动打断，靠手点）
+const voiceOrbCloseLabel = computed(() => (voiceSpeaking.value ? '打断' : '结束对话'))
 
-// 录音中浮层的「说完了」必须走 stop（发 end，等服务端吐 final）；
-// 走 cancel 会把已经识别出来的文本整段丢掉（20:38 那次就是这个）。
-function finishVoice() {
+// 结束语音会话 = 停采集 + 停朗读 + 停生成：只停采集的话，正在跑的回复会在会话结束后
+// 才朗读出来（onAssistantReply 还挂在那条流上）。
+function endVoiceSession() {
   stopVoice()
+  if (chat.isStreaming) handleStop()
 }
-
-const voiceOrbCloseLabel = computed(() => (voiceRecording.value ? '说完了' : '打断'))
 
 function voiceOrbClose() {
-  if (voiceRecording.value) {
-    finishVoice()
+  if (voiceSpeaking.value) {
+    handleStop()
     return
   }
-  interruptVoice()
+  endVoiceSession()
 }
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
@@ -278,12 +271,6 @@ watch(inputVisible, async (val) => {
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     }
   }
-})
-
-// 语音标记只对「识别出来的那句话」有效：输入被清空就复位，
-// 否则用户清空改写后手打的第一条仍会按语音轮处理（短答 + 自动朗读）。
-watch(inputValue, (val) => {
-  if (!String(val || '').trim()) voiceReplyPending.value = false
 })
 
 function toggleInput() {
@@ -815,50 +802,77 @@ async function handleSend() {
     })
   })
 
-  // 先快照再清空输入框：watch(inputValue) 会在清空后复位语音标记
-  const voiceMode = voiceReplyPending.value
-  const opts = {
+  // 打字发送不朗读（语音轮才带 voice_mode + onAssistantReply）
+  await sendMessage(content, {
     conversationId: chat.conversationId,
     agentId: chat.agentId,
     attachments: imageIds,
     // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
     initMode: chat.conversationId ? undefined : chat.mode,
-    ephemeral: chat.conversationId ? false : chat.ephemeral,
-    // 语音来源：服务端注入短回答约束；done 后自动朗读
-    voiceMode,
-    onAssistantReply: (text) => speakVoice(text)
-  }
-  voiceReplyPending.value = false
-  await sendMessage(content, opts)
+    ephemeral: chat.conversationId ? false : chat.ephemeral
+  })
 }
 
+// 麦克风按钮 = 连续对话开关。会话中再点是「结束」（发 end，让最后一句识别完），
+// 不是 cancel：cancel 会把已经识别出来的文本整段丢掉（见 docs/bugs/049）。
 async function toggleVoice() {
-  if (voiceRecording.value) {
-    stopVoice()
+  if (voiceActive.value) {
+    endVoiceSession()
     return
   }
-  if (voiceBusy.value || chat.isStreaming) return
-  // 播报中再点麦克风 = 点击打断：先停朗读（顺带停掉可能还在跑的生成），再开录
-  if (voiceSpeaking.value) handleStop()
+  if (voiceCalling.value) return
+  if (voiceSpeaking.value) stopSpeaking()
   try {
     await startVoice()
   } catch (err) {
-    nMessage.error(`无法开始录音：${err?.message || '麦克风不可用'}`)
+    nMessage.error(`无法开始语音对话：${err?.message || '麦克风不可用'}`)
   }
 }
 
-function handleStop() {
-  const convId = chat.conversationId
-  stopSpeaking()
-  if (voiceRecording.value) cancelVoice()
-  // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
-  // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
-  // 服务端会照常跑完；等 done 回传 id 后才有服务端停止能力。
+/// 停掉本地 SSE 流，保留已经生成的部分。
+/// 不发 /api/chat/stop：下一轮 sendMessage 会顶掉服务端的旧 loop，迟到的 stop 会误杀新轮。
+function stopLocalStream() {
   const partial = chat.streamingMessage
   cancel()
   if (partial && (partial.content || partial.reasoning)) {
     chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
   }
+}
+
+// 连续对话：一条判停分句 = 一轮。上一轮还在跑就先停本地流，避免两个 loop 交叉写库。
+async function submitVoiceSentence(text) {
+  const content = String(text || '').trim()
+  if (!content) return
+  // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
+  stopSpeaking()
+  if (chat.isStreaming) stopLocalStream()
+  chat.addMessage({
+    id: `voice-${Date.now()}`,
+    role: 'user',
+    content,
+    imageIds: [],
+    created_at: new Date().toISOString()
+  })
+  await sendMessage(content, {
+    conversationId: chat.conversationId,
+    agentId: chat.agentId,
+    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+    initMode: chat.conversationId ? undefined : chat.mode,
+    ephemeral: chat.conversationId ? false : chat.ephemeral,
+    // 语音来源：服务端注入短回答约束；done 后自动朗读
+    voiceMode: true,
+    onAssistantReply: (reply) => speakVoice(reply)
+  })
+}
+
+function handleStop() {
+  const convId = chat.conversationId
+  stopSpeaking()
+  // 语音会话不在这里收：停生成后麦克风还要继续听（用户可能接着说）
+  // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
+  // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
+  // 服务端会照常跑完；等 done 回传 id 后才有服务端停止能力。
+  stopLocalStream()
   if (!convId) return
   api.post('/api/chat/stop', { conversation_id: convId }).catch(err => {
     console.error('Stop chat failed', err)
@@ -1226,7 +1240,7 @@ function handleContainerClick(e) {
         <NInput
           v-model:value="inputValue"
           type="textarea"
-          :placeholder="voiceRecording ? '正在听…（再点麦克风结束）' : '发消息...'"
+          :placeholder="voiceActive ? '正在听…（说完停顿一下就会提交）' : '发消息...'"
           :disabled="chat.isStreaming"
           :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
           class="chat-input"
@@ -1238,15 +1252,15 @@ function handleContainerClick(e) {
           <div class="composer-left">
             <NTooltip v-if="voiceAvailable" :disabled="isMobile" placement="top">
               <template #trigger>
-                <button class="icon-pill" :class="{ on: voiceRecording }" type="button"
-                  :aria-label="voiceRecording ? '停止录音' : '语音输入'"
-                  :aria-pressed="voiceRecording"
-                  :disabled="voiceBusy || chat.isStreaming"
+                <button class="icon-pill" :class="{ on: voiceActive }" type="button"
+                  :aria-label="voiceActive ? '结束语音对话' : '语音对话'"
+                  :aria-pressed="voiceActive"
+                  :disabled="voiceCalling"
                   @click="toggleVoice">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
                 </button>
               </template>
-              {{ voiceRecording ? '停止录音' : '语音输入' }}
+              {{ voiceActive ? '结束语音对话' : '语音对话（连续对话）' }}
             </NTooltip>
             <NTooltip :disabled="isMobile" placement="top">
               <template #trigger>

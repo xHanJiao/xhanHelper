@@ -56,10 +56,19 @@ final class VoiceChatService: ObservableObject {
     private var micGated = false
     /// 打断判定：连续几帧超过阈值才算真的开口（约 120ms）
     private var loudFrames = 0
-    private let bargeInLevel: Double = 0.32
+    /// 这是 `onLevel` 的刻度（RMS×4），不是原始振幅。
+    /// 真机日志：播报时用户说话的帧在 0.08~0.28，而 AEC 残留回声只有 0.00~0.02；
+    /// 原来定 0.32 高于外放（VPIO 会压输入）时用户的实际电平，导致 macOS 永远打不断。
+    private let bargeInLevel: Double = 0.10
     private let bargeInFrames = 3
+    /// 判定「用户在说话」的电平（比打断阈值再低一点，只用于推后空闲收口）
+    private let voiceActivityLevel: Double = 0.08
     /// 播报期间麦克风收到的残留回声本底（EMA）：判定阈值要比它高，避免自己打断自己
     private var echoBaseline: Double = 0
+    /// 门刚打开的一小段先不听：播放起始的爆音不算打断
+    private var gateStartedAt = Date.distantPast
+    /// 最近一次听到用户出声的时间：空闲收口看它，别在人家说话中途把会话收掉
+    private var lastVoiceAt = Date()
 
     // 诊断（只记长度/次数，不记识别文本）
     private var sentBytes = 0
@@ -69,8 +78,9 @@ final class VoiceChatService: ObservableObject {
     private var lastLevelLog = Date.distantPast
     private var peakLevel: Double = 0
 
+    /// 语音链路诊断：走 `diag`（恒编译），`info` 在 Release 里是空操作，真机抓日志会一片空白。
     private func vlog(_ message: String) {
-        LogBuffer.shared.info("[voice] \(message)")
+        LogBuffer.shared.diag("[voice] \(message)")
     }
 
     private func fmt3(_ value: Double) -> String {
@@ -103,6 +113,8 @@ final class VoiceChatService: ObservableObject {
 
     // MARK: 录音
 
+    /// A 模式（识别 → 填输入框 → 手动发送）：macOS 已无入口（用户只留「连续对话」），
+    /// 代码保留；真要用记得把入口接回来，别以为它在跑。
     func start(baseURL: String, token: String) async {
         await startSession(baseURL: baseURL, token: token, continuous: false)
     }
@@ -202,7 +214,7 @@ final class VoiceChatService: ObservableObject {
         }
         audio.onLog = { message in
             Task { @MainActor in
-                LogBuffer.shared.info("[voice] \(message)")
+                LogBuffer.shared.diag("[voice] \(message)")
             }
         }
     }
@@ -210,6 +222,7 @@ final class VoiceChatService: ObservableObject {
     /// 音量为波纹供数，同时做 C3 的打断判定（只在播报期间有效）。
     private func handleLevel(_ value: Double) {
         guard state == .recording else { return }
+        if value > voiceActivityLevel { lastVoiceAt = Date() }
         // 平滑一下，避免波纹抖成噪点
         level = level * 0.6 + value * 0.4
         peakLevel = max(peakLevel, value)
@@ -219,7 +232,7 @@ final class VoiceChatService: ObservableObject {
             vlog("level raw=\(fmt3(value)) peak=\(fmt3(peakLevel)) gated=\(micGated ? "yes" : "no") threshold=\(fmt3(threshold))")
             peakLevel = 0
         }
-        guard continuousActive, micGated else {
+        guard continuousActive, micGated, Date().timeIntervalSince(gateStartedAt) >= 0.25 else {
             loudFrames = 0
             echoBaseline = 0
             return
@@ -255,6 +268,7 @@ final class VoiceChatService: ObservableObject {
         do {
             try audio.startCapture()
             state = .recording
+            lastVoiceAt = Date()
             vlog("capture started state=\(state)")
             if continuousActive {
                 armSessionLimit()
@@ -355,8 +369,9 @@ final class VoiceChatService: ObservableObject {
             guard let self else { return }
             try? await Task.sleep(for: .seconds(self.continuousIdleSeconds))
             guard !Task.isCancelled, self.continuousActive else { return }
-            // AI 正在回答/朗读也算「会话仍在进行」，顺延而不是收口
-            if self.isSpeaking || (self.isChatBusy?() ?? false) {
+            // AI 正在回答/朗读、或刚刚还在说话（长句没判停）也算「会话仍在进行」，顺延而不是收口
+            if self.isSpeaking || (self.isChatBusy?() ?? false)
+                || Date().timeIntervalSince(self.lastVoiceAt) < TimeInterval(self.continuousIdleSeconds) {
                 self.armIdleTimer()
                 return
             }
@@ -464,6 +479,7 @@ final class VoiceChatService: ObservableObject {
         gateTask = nil
         micGated = true
         echoBaseline = 0
+        gateStartedAt = Date()
         vlog("mic gate on (tts speaking)")
         audio.setGated(true)
     }
@@ -605,6 +621,8 @@ final class VoiceChatService: ObservableObject {
             ToastCenter.shared.show(msg.message ?? "录音达到上限，已按当前内容识别")
         case "error":
             vlog("ws error: \(msg.error ?? "-")")
+            // 已点结束/到上限属收尾阶段：这时补发的错误帧（如 45000081 等包超时）不再打扰用户
+            guard state == .recording else { return }
             fail(msg.error ?? "语音识别失败")
         default:
             vlog("ws unknown frame: \(msg.type)")

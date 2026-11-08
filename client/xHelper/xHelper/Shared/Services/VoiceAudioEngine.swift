@@ -29,6 +29,9 @@ final class VoiceAudioEngine: @unchecked Sendable {
     /// 不能用 `player.isPlaying` 判断：buffer 播完后它仍是 true，engine 会永远不停，
     /// 麦克风占用也就一直不退（菜单栏一直显示麦克风模式）。
     private var playbackActive = false
+    /// 播放代次：`player.stop()` 会触发上一个 buffer 的完成回调，靠它把迟到的回调丢掉，
+    /// 否则旧回调会把新一轮的 playbackActive 清成 false 并把 engine 停掉。
+    private var playGeneration = 0
     private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
 
     /// 每约 200ms 的 PCM 分片（6400 字节）；门控期间发的是等长静音。
@@ -39,12 +42,22 @@ final class VoiceAudioEngine: @unchecked Sendable {
     /// 诊断日志（音频线程触发，调用方自行切主线程）。
     var onLog: (@Sendable (String) -> Void)?
 
-    // 诊断计数（只在音频线程/启动停止时读写，仅用于日志）
-    private var bufferCount = 0
-    private var framesOut = 0
-    private var chunkCount = 0
-    private var emptyOutCount = 0
-    private var lastStatLog = Date.distantPast
+    // 诊断计数：音频线程写、主线程清零与读，统一走 statsLock（只用于日志）
+    private struct CaptureStats {
+        var buffers = 0
+        var framesOut = 0
+        var chunks = 0
+        var emptyOut = 0
+        var lastLog = Date.distantPast
+    }
+    private let statsLock = NSLock()
+    private var stats = CaptureStats()
+
+    private func withStats<T>(_ body: (inout CaptureStats) -> T) -> T {
+        statsLock.lock()
+        defer { statsLock.unlock() }
+        return body(&stats)
+    }
 
     func startCapture() throws {
         try ensureGraph()
@@ -83,11 +96,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
         preroll = Data()
         gated = false
         lock.unlock()
-        bufferCount = 0
-        framesOut = 0
-        chunkCount = 0
-        emptyOutCount = 0
-        lastStatLog = .distantPast
+        withStats { $0 = CaptureStats() }
 
         input.installTap(onBus: 0, bufferSize: 3200, format: inputFormat) { [weak self] buffer, _ in
             self?.handle(buffer)
@@ -103,7 +112,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
         log("capture started: engineRunning=\(engine.isRunning) tapFormat=\(fmt(input.inputFormat(forBus: 0)))")
         // 看门狗：2 秒内 tap 一次都没回调 = 麦克风/引擎没出帧（VPIO 配置失败最常见）
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            guard let self, self.capturing, self.bufferCount == 0 else { return }
+            guard let self, self.capturing, self.withStats({ $0.buffers }) == 0 else { return }
             self.log("capture watchdog: 2s 内 tap 未回调任何 buffer（没有音频帧进来）")
         }
     }
@@ -120,7 +129,8 @@ final class VoiceAudioEngine: @unchecked Sendable {
         preroll = Data()
         lock.unlock()
         stopEngineIfIdle()
-        log("capture stop: buffers=\(bufferCount) frames_out=\(framesOut) chunks=\(chunkCount) " +
+        let (buffers, framesOut, chunks) = withStats { ($0.buffers, $0.framesOut, $0.chunks) }
+        log("capture stop: buffers=\(buffers) frames_out=\(framesOut) chunks=\(chunks) " +
             "tail=\(tail.count)B engineRunning=\(engine.isRunning)")
         return tail.isEmpty ? nil : tail
     }
@@ -156,10 +166,13 @@ final class VoiceAudioEngine: @unchecked Sendable {
         let buffer = try Self.readBuffer(file: file, target: playbackFormat)
         try startEngineIfNeeded()
         player.stop()
+        playGeneration += 1
+        let generation = playGeneration
         playbackActive = true
         player.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
             Task { @MainActor in
-                self?.markPlaybackFinished()
+                guard let self, generation == self.playGeneration else { return }
+                self.markPlaybackFinished()
                 completion()
             }
         }
@@ -177,6 +190,8 @@ final class VoiceAudioEngine: @unchecked Sendable {
     func stopPlayback() {
         let wasPlaying = playbackActive
         playbackActive = false
+        // 这一代的完成回调随 stop 触发，代次一加就作废（状态已在这里收拾完）
+        playGeneration += 1
         player.stop()
         stopEngineIfIdle()
         if wasPlaying { log("play stop: engineRunning=\(engine.isRunning)") }
@@ -224,10 +239,15 @@ final class VoiceAudioEngine: @unchecked Sendable {
 
     private func handle(_ buffer: AVAudioPCMBuffer) {
         guard let converter, let outFormat, let monoFormat else { return }
-        bufferCount += 1
+        let bufferIndex = withStats { s -> Int in
+            s.buffers += 1
+            return s.buffers
+        }
         let source: AVAudioPCMBuffer
         if buffer.format.channelCount > 1 {
             guard let mono = Self.downmixToMono(buffer, format: monoFormat) else {
+                // 混 mono 失败也要记 empty，否则统计会显示「有 buffer、empty=0、chunks 不涨」
+                withStats { $0.emptyOut += 1 }
                 statsLog(level: nil, gated: nil)
                 return
             }
@@ -238,6 +258,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
         let ratio = outFormat.sampleRate / source.format.sampleRate
         let capacity = AVAudioFrameCount(Double(source.frameLength) * ratio) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
+            withStats { $0.emptyOut += 1 }
             statsLog(level: nil, gated: nil)
             return
         }
@@ -255,20 +276,20 @@ final class VoiceAudioEngine: @unchecked Sendable {
         }
         if status == .error {
             if let error {
-                log("convert error: \(error.localizedDescription) (buffers=\(bufferCount))")
+                log("convert error: \(error.localizedDescription) (buffers=\(bufferIndex))")
                 onError?(error.localizedDescription)
             }
             statsLog(level: nil, gated: nil)
             return
         }
         guard out.frameLength > 0, let samples = out.int16ChannelData?[0] else {
-            emptyOutCount += 1
+            withStats { $0.emptyOut += 1 }
             statsLog(level: nil, gated: nil)
             return
         }
 
         let frameCount = Int(out.frameLength)
-        framesOut += frameCount
+        withStats { $0.framesOut += frameCount }
         let data = Data(bytes: samples, count: frameCount * MemoryLayout<Int16>.size)
 
         var levelValue: Float = 0
@@ -303,7 +324,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
             pending.removeFirst(6400)
         }
         lock.unlock()
-        chunkCount += chunks.count
+        withStats { $0.chunks += chunks.count }
         for chunk in chunks { onChunk?(chunk) }
         statsLog(level: levelValue, gated: isGated)
     }
@@ -340,12 +361,15 @@ final class VoiceAudioEngine: @unchecked Sendable {
     /// 每 2 秒一行采集统计：区分「tap 没回调」「转换出 0 帧」「门控把帧吃了」。
     private func statsLog(level: Float?, gated: Bool?) {
         let now = Date()
-        guard now.timeIntervalSince(lastStatLog) >= 2 else { return }
-        lastStatLog = now
-        let levelText = level.map { String(format: "%.3f", $0) } ?? "-"
-        let gatedText = gated.map(String.init) ?? "-"
-        log("capture stats: buffers=\(bufferCount) frames_out=\(framesOut) chunks=\(chunkCount) " +
-            "empty=\(emptyOutCount) level=\(levelText) gated=\(gatedText)")
+        let line: String? = withStats { s in
+            guard now.timeIntervalSince(s.lastLog) >= 2 else { return nil }
+            s.lastLog = now
+            let levelText = level.map { String(format: "%.3f", $0) } ?? "-"
+            let gatedText = gated.map(String.init) ?? "-"
+            return "capture stats: buffers=\(s.buffers) frames_out=\(s.framesOut) chunks=\(s.chunks) " +
+                "empty=\(s.emptyOut) level=\(levelText) gated=\(gatedText)"
+        }
+        if let line { log(line) }
     }
 
     private func log(_ message: String) {

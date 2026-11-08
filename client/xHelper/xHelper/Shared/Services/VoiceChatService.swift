@@ -3,7 +3,7 @@ import Combine
 import Foundation
 
 /// 语音聊天客户端：麦克风采集 → 自家后端 WebSocket → 豆包流式 ASR；
-/// 回复文本 → 自家后端 TTS → AVAudioPlayer 播放。
+/// 回复文本 → 自家后端 TTS → 同一个 AVAudioEngine（VPIO 回声消除）播放。
 @MainActor
 final class VoiceChatService: ObservableObject {
     enum State: Equatable {
@@ -22,15 +22,17 @@ final class VoiceChatService: ObservableObject {
     var onFinalTranscript: ((String) -> Void)?
     /// C 模式：服务端下发一条已判停的分句，客户端直接提交一轮对话。
     var onSentence: ((String) -> Void)?
+    /// C3：播报期间用户开口，立即停生成（由 ChatView 接 /api/chat/stop）。
+    var onBargeIn: (() -> Void)?
 
     private var socket: URLSessionWebSocketTask?
-    private var capture: VoiceAudioCapture?
+    private let audio = VoiceAudioEngine()
+    private var audioConfigured = false
     private var receiveTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var maxTimer: Task<Void, Never>?
     private var sessionTask: Task<Void, Never>?
     private var idleTask: Task<Void, Never>?
-    private var player: AVAudioPlayer?
     /// start/cancel 竞态代次：cancel 或新 start 会让旧 start 的续体失效
     private var generation = 0
     /// TTS 请求代次：stopSpeaking 后迟到的合成结果不再播放
@@ -47,6 +49,15 @@ final class VoiceChatService: ObservableObject {
     /// 空闲多久没听到完整分句就结束会话（秒）
     private let continuousIdleSeconds = 30
     private var speakEndTask: Task<Void, Never>?
+    private var gateTask: Task<Void, Never>?
+    /// 麦克风门是否生效（播报期间 + 播报结束后的 600ms 尾音窗口）
+    private var micGated = false
+    /// 打断判定：连续几帧超过阈值才算真的开口（约 120ms）
+    private var loudFrames = 0
+    private let bargeInLevel: Double = 0.32
+    private let bargeInFrames = 3
+    /// 播报期间麦克风收到的残留回声本底（EMA）：判定阈值要比它高，避免自己打断自己
+    private var echoBaseline: Double = 0
 
     var isRecording: Bool { state == .recording }
     var isBusy: Bool { state == .requestingPermission || state == .finishing }
@@ -116,25 +127,7 @@ final class VoiceChatService: ObservableObject {
             task.resume()
             startReceiveLoop(task)
 
-            let capture = VoiceAudioCapture()
-            capture.onChunk = { [weak self] data in
-                Task { @MainActor [weak self] in
-                    self?.sendAudio(data)
-                }
-            }
-            capture.onError = { [weak self] message in
-                Task { @MainActor [weak self] in
-                    self?.fail("麦克风采集失败：\(message)")
-                }
-            }
-            capture.onLevel = { [weak self] value in
-                Task { @MainActor [weak self] in
-                    guard let self, self.state == .recording else { return }
-                    // 平滑一下，避免波纹抖成噪点
-                    self.level = self.level * 0.6 + Double(value) * 0.4
-                }
-            }
-            self.capture = capture
+            configureAudio()
             // 立刻开录：服务端要先连豆包（几百毫秒）才会 ready，等它会把开头吞掉；
             // 早于 ready 的帧由 socket 缓冲，服务端连上后照常读。
             startCapture()
@@ -143,11 +136,63 @@ final class VoiceChatService: ObservableObject {
         }
     }
 
+    /// 音频引擎回调只接一次：采集分片直接进 ASR，音量用于波纹与打断判定。
+    private func configureAudio() {
+        guard !audioConfigured else { return }
+        audioConfigured = true
+        audio.onChunk = { [weak self] data in
+            Task { @MainActor [weak self] in
+                self?.sendAudio(data)
+            }
+        }
+        audio.onError = { [weak self] message in
+            Task { @MainActor [weak self] in
+                self?.fail("麦克风采集失败：\(message)")
+            }
+        }
+        audio.onLevel = { [weak self] value in
+            Task { @MainActor [weak self] in
+                self?.handleLevel(Double(value))
+            }
+        }
+    }
+
+    /// 音量为波纹供数，同时做 C3 的打断判定（只在播报期间有效）。
+    private func handleLevel(_ value: Double) {
+        guard state == .recording else { return }
+        // 平滑一下，避免波纹抖成噪点
+        level = level * 0.6 + value * 0.4
+        guard continuousActive, micGated else {
+            loudFrames = 0
+            echoBaseline = 0
+            return
+        }
+        // VPIO 只做信号相减，外放时仍有残留；本底跟着残响走，用户要明显高于它才算开口
+        let threshold = max(bargeInLevel, echoBaseline * 1.8)
+        if value > threshold {
+            loudFrames += 1
+        } else {
+            loudFrames = 0
+        }
+        echoBaseline = echoBaseline * 0.95 + value * 0.05
+        if loudFrames >= bargeInFrames {
+            loudFrames = 0
+            bargeIn()
+        }
+    }
+
+    /// 用户开口打断：立刻停朗读、停生成，把门控期间攒下的音频冲回去继续识别。
+    private func bargeIn() {
+        endMicGate(flushPreroll: true)
+        stopSpeaking()
+        onBargeIn?()
+    }
+
     /// 开始推 PCM。
     private func startCapture() {
-        guard state == .requestingPermission, let capture else { return }
+        guard state == .requestingPermission else { return }
         do {
-            try capture.start()
+            try audio.startCapture()
             state = .recording
             if continuousActive {
                 armSessionLimit()
@@ -236,8 +281,9 @@ final class VoiceChatService: ObservableObject {
 
     /// 停止采集，返回不足 200ms 的尾巴（调用方负责在 end 之前发出）。
     private func detachCapture() -> Data? {
-        let tail = capture?.stop()
-        capture = nil
+        micGated = false
+        audio.setGated(false)
+        let tail = audio.stopCapture()
         level = 0
         return tail
     }
@@ -279,25 +325,26 @@ final class VoiceChatService: ObservableObject {
             let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
             guard epoch == speakEpoch else { return }
             #if os(iOS)
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+            // AEC 场景必须用 .voiceChat；.spokenAudio 下系统不会给回声参考
+            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat,
+                                                             options: [.defaultToSpeaker, .allowBluetooth])
             try? AVAudioSession.sharedInstance().setActive(true)
             #endif
-            let player = try AVAudioPlayer(data: data)
-            player.prepareToPlay()
-            guard epoch == speakEpoch else { return }
-            guard player.play() else {
-                fail("语音播放失败")
-                return
-            }
-            self.player = player
+            configureAudio()
+            // 播报期间压住麦克风（AEC 只削掉大部分回声，尾音还会漏进来）
+            beginMicGate()
             isSpeaking = true
-            // 用 mp3 时长做结束判定，避免为它再引入一个 delegate（stopSpeaking 会更早取消）
-            speakEndTask?.cancel()
-            let duration = player.duration
-            speakEndTask = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(max(0.3, duration)))
-                guard !Task.isCancelled, let self else { return }
-                self.isSpeaking = false
+            do {
+                try audio.play(data) { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self, epoch == self.speakEpoch else { return }
+                        self.finishSpeaking()
+                    }
+                }
+            } catch {
+                isSpeaking = false
+                endMicGate(flushPreroll: false)
+                throw error
             }
         } catch {
             LogBuffer.shared.error("voice tts failed: \(error.localizedDescription)")
@@ -305,13 +352,40 @@ final class VoiceChatService: ObservableObject {
         }
     }
 
+    /// 播报正常结束：解除「说」态，再延后 600ms 解除麦克风门（收掉尾音）。
+    private func finishSpeaking() {
+        isSpeaking = false
+        speakEndTask?.cancel()
+        speakEndTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled, let self, !self.isSpeaking else { return }
+            self.endMicGate(flushPreroll: false)
+        }
+    }
+
+    private func beginMicGate() {
+        gateTask?.cancel()
+        gateTask = nil
+        micGated = true
+        echoBaseline = 0
+        audio.setGated(true)
+    }
+
+    private func endMicGate(flushPreroll: Bool) {
+        gateTask?.cancel()
+        gateTask = nil
+        micGated = false
+        audio.setGated(false, flushPreroll: flushPreroll)
+    }
+
     func stopSpeaking() {
         speakEpoch += 1
         speakEndTask?.cancel()
         speakEndTask = nil
+        let wasSpeaking = isSpeaking
         isSpeaking = false
-        player?.stop()
-        player = nil
+        audio.stopPlayback()
+        if wasSpeaking { endMicGate(flushPreroll: false) }
     }
 
     // MARK: 内部

@@ -224,6 +224,20 @@ C 模式说明：
 - 两端都能点「结束」收口：macOS 同时停生成与朗读；PWA `cancel()` + `stopSpeaking()`。
 - 只是展示层，不改传输层与状态机。
 
+### C3a 回声消除与打断（macOS）
+
+- `Shared/Services/VoiceAudioEngine.swift`：采集与播放共用一个 `AVAudioEngine`；
+  TTS 走挂在其上的 `AVAudioPlayerNode`，VPIO 才有回声参考信号。
+- 初始化顺序固定：接播放图 → `setVoiceProcessingEnabled(true)`（input + output）→ 装采集 tap → start。
+  顺序反了 AEC 会静默失效，不报错。
+- 麦克风门：播报开始即 `setGated(true)`，分片不发 ASR，只留最近 600ms 到 pre-roll；
+  播报结束再压 600ms 收尾音。
+- 打断：门控期间 `onLevel` 仍工作；音量超过 `max(0.32, 残响本底 × 1.8)` 连续 3 帧（约 120ms）
+  即判为用户开口 → 冲回 pre-roll → 停朗读 → `onBargeIn` → ChatView 调 `stopStreaming()`。
+  残响本底用 EMA 跟随自身播放的漏音，避免「自己打断自己」。
+- 代价：AEC 只是信号相减，耳机场景最稳；外放时阈值抬高，可能需要说大声一点。
+- iOS 若将来接语音，audio session 必须用 `.voiceChat`（`.spokenAudio` 下系统不给回声参考）。
+
 ## 客户端
 
 ### macOS
@@ -262,7 +276,7 @@ C 模式说明：
 | **C0** | 后端 `mode=continuous` → `result_type=single` + `sentence` 分句下发 | 后端 |
 | **C1** | 连续流 + `sentence` 自动提交 + 会话上限（10 分钟硬上限 + 30 秒空闲自动收口） | macOS |
 | **C2** | 全屏环（听 / 想 / 说 三态 + 音量） | macOS + PWA ✅ |
-| **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS |
+| **C3a** | TTS 搬进 `AVAudioEngine`（`AVAudioPlayerNode`）+ VPIO + 播放后麦克风门 + 说话打断 | macOS ✅ |
 | **C3b** | 点击打断（不做 auto barge-in，浏览器 AEC 不可靠） | PWA |
 
 关键事实（`cmd/voice-smoke` 实测）：
@@ -329,3 +343,9 @@ location = /api/voice/asr {
   - macOS 新增 `VoiceOrbView`：连续会话期间覆盖会话区，听/想/说三态 + 音量波纹，点「结束」收口。
   - PWA 新增 `components/VoiceOrb.vue`：录音/识别/朗读期间全屏浮层；`useVoiceChat` 暴露 `speaking`。
   - `VoiceAudioCapture` 新增 `onLevel`（RMS×4 归一化）供波纹使用，不影响 PCM 上行。
+- 2026-11-08（C3a，仅 macOS）：
+  - 新增 `VoiceAudioEngine`：采集与 TTS 播放共用一个 `AVAudioEngine`，VPIO（input+output）+
+    固定初始化顺序；替换 `VoiceAudioCapture` 与 `AVAudioPlayer`。
+  - 播报期间麦克风门 + 600ms 尾音门；门控期只攒 600ms pre-roll，打断时冲回 ASR，开头不丢。
+  - 打断判定：音量 > max(0.32, 残响本底×1.8) 连续 3 帧 → 停朗读 + `onBargeIn` 停生成。
+  - 门控期间不向 ASR 发送音频（不补静音）：流式 ASR 允许中途静默，避免把回声送进去。

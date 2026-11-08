@@ -106,7 +106,6 @@ func (c *TTSClient) Synthesize(ctx context.Context, text string) ([]byte, int, e
 	req.Header.Set("X-Api-Request-Id", uuid.NewString())
 	req.Header.Set("X-Control-Require-Usage-Tokens-Return", "*")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Connection", "keep-alive")
 
 	resp, err := c.http.Do(req)
 	if err != nil {

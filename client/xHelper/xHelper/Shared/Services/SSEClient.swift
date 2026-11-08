@@ -29,7 +29,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, voiceMode: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {
         // 上一轮未断开时先取消；cancel() 只是尽力而为，已入队的回调仍会执行，
         // 由下面三个 delegate 里的 task 身份守卫拦掉
         disconnect()
@@ -58,6 +58,8 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         // 精炼回答：开则服务端往 system prompt 注入「≤500 字」的输出约束（不走 max_tokens 硬截断）。
         // 会话级开关、每轮随请求发，与 verify_enabled 同族。
         if briefAnswer { body["brief_answer"] = true }
+        // 语音轮：服务端注入短回答/无 markdown 约束（回答会被朗读）
+        if voiceMode { body["voice_mode"] = true }
         // 隐藏轮（接力等控制轮）：本轮消息落库为隐藏状态，不进对话记录/LLM 上下文/检索/后处理
         if hiddenRound { body["hidden_round"] = true }
         // 附件图片：先经 POST /api/images/upload 上传拿到 image_id，这里只传 id 列表

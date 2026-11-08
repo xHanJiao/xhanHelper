@@ -164,6 +164,17 @@ server {
         proxy_buffering off;
     }
 
+    # 语音 ASR WebSocket：必须单独升级，不能沿用上面的 Connection ""
+    location = /api/voice/asr {
+        proxy_pass http://xhan_helper_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
     # 图床公开读：必须反代到 Go，否则落 SPA fallback 回吐首页（见 docs/bugs/031）
     location /images/ {
         proxy_pass http://xhan_helper_backend;

@@ -193,6 +193,9 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 		if f.Type != msgFullServerResponse {
 			continue
 		}
+		if len(f.Payload) == 0 {
+			continue
+		}
 		var parsed asrResponse
 		if err := json.Unmarshal(f.Payload, &parsed); err != nil {
 			return fmt.Errorf("parse asr response: %w", err)

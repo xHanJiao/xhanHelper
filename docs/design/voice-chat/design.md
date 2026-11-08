@@ -1,7 +1,8 @@
 # 语音聊天（豆包 TTS + 流式 ASR）设计
 
-> 状态：实施中（首版 A：点按说话 + 自动朗读）
+> 状态：首版 A 已实现，待配置豆包 Key 后真机联调
 > 分支：`feat/voice-chat`
+> 实现：后端 `internal/voice` + `controller/voice.go`；macOS `VoiceAudioCapture` / `VoiceChatService`；PWA `useVoiceChat` + `public/voice-pcm-worklet.js`
 
 ## 估算（定稿）
 
@@ -219,3 +220,23 @@ voice:
 - macOS：`swiftc -typecheck` 通过，真机麦克风权限、中文识别、TTS 播放。
 - PWA：`vite build` 通过，Chrome/Safari 真机麦克风与播放；iOS PWA 单独验证。
 - 未配置 Key 时：客户端隐藏麦克风，接口返回 503，不影响文字聊天。
+
+## 部署注意
+
+云端 PWA 经 nginx 访问时，`/api/voice/asr` 必须单独配 WebSocket 升级头，不能沿用
+`location /api/` 的 `proxy_set_header Connection ""`：
+
+```nginx
+location = /api/voice/asr {
+    proxy_pass http://xhan_helper_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 300s;
+    proxy_buffering off;
+}
+```
+
+仓库模板已更新 `server/nginx-helper.conf` 与 `docs/front-end/plan.md`；上线前需同步到
+`/etc/nginx/sites-enabled/` 并 reload。

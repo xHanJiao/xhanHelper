@@ -201,7 +201,7 @@ export function useVoiceChat({ onFinalTranscript } = {}) {
         if (!finished) fail('语音识别连接断开')
       }
       socket.onopen = () => {
-        if (finished || !audioCtx) return
+        if (finished || !audioCtx || !sourceNode || !worklet) return
         sourceNode.connect(worklet)
         recording.value = true
         busy.value = false

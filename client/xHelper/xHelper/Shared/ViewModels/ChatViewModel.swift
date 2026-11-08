@@ -1141,7 +1141,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
     func stopStreaming() {

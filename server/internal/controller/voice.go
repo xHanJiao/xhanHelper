@@ -142,6 +142,8 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 			mt, data, err := client.ReadMessage()
 			if err != nil {
 				cancel()
+				// 关闭豆包连接，否则主 goroutine 的 Read 会一直阻塞到读超时
+				_ = asr.Close()
 				return
 			}
 			switch mt {
@@ -150,6 +152,7 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 					log.Printf("[voice] asr send audio failed (user=%s): %v", userID, err)
 					_ = send(gin.H{"type": "error", "error": err.Error()})
 					cancel()
+					_ = asr.Close()
 					return
 				}
 			case websocket.TextMessage:
@@ -166,9 +169,11 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 						log.Printf("[voice] asr finish failed (user=%s): %v", userID, err)
 						_ = send(gin.H{"type": "error", "error": "结束录音失败"})
 						cancel()
+						_ = asr.Close()
 					}
 				case "cancel":
 					cancel()
+					_ = asr.Close()
 					return
 				}
 			}

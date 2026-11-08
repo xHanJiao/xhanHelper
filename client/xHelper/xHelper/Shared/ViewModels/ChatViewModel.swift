@@ -827,6 +827,7 @@ class ChatViewModel: ObservableObject {
         sseClient.disconnect()
         isStreaming = false
         conversationId = id
+        pendingConversationID = "" // 切会话后不能再用上一轮 meta 给的 id
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
         // 2026-10：模型切换按钮已从输入栏下架 → 恒为快速模型，不再从会话键恢复
@@ -962,6 +963,9 @@ class ChatViewModel: ObservableObject {
         statusMessage = nil
         errorMessage = nil
         conversationId = ""
+        // 必须一起清：sendMessage 会在 conversationId 为空时回退到 pendingConversationID，
+        // 留着它会让「新对话」的第一条消息发进上一个会话
+        pendingConversationID = ""
         conversationTitle = nil
         ephemeralIntent = false
         conversationEphemeral = false

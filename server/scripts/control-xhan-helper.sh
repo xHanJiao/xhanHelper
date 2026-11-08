@@ -11,10 +11,21 @@ LOG_DIR="$APP_PATH/logs"
 LOG_FILE="$LOG_DIR/xhan-helper-$(date +%Y-%m-%d).log"
 ENV="prod"
 
-# 启动前预检：配置引用的环境变量缺了会 fail-fast，先拦住——别把还在服务的旧进程杀掉
-if grep -q 'DOUBAO_VOICE_API_KEY' "$APP_PATH/conf/config.yaml" 2>/dev/null && [ -z "$DOUBAO_VOICE_API_KEY" ]; then
-    echo "❌ DOUBAO_VOICE_API_KEY 未设置，配置要求该变量；拒绝重启（旧进程保持运行）"
-    exit 1
+cd "$APP_PATH" || { echo "无法进入目录 $APP_PATH"; exit 1; }
+export APP_ENV=$ENV
+
+# 启动前预检：用新二进制自己的配置加载器校验（Key 缺失、YAML 写错都能拦住），
+# 别把还在服务的旧进程杀掉。base config 里永远有 DOUBAO_VOICE_API_KEY 占位符，
+# 所以不能靠 grep 变量名判断——enabled:false 的环境不需要 Key。
+if ! CHECK_OUT=$("./$APP_NAME" -check-config 2>&1); then
+    if echo "$CHECK_OUT" | grep -q 'flag provided but not defined'; then
+        # 旧二进制没有这个 flag（首次升级到带预检的版本）：跳过，别把人挡在门外
+        echo "⚠️ 当前二进制不支持 -check-config，跳过配置预检"
+    else
+        echo "$CHECK_OUT"
+        echo "❌ 配置校验失败，拒绝重启（旧进程保持运行）"
+        exit 1
+    fi
 fi
 
 mkdir -p "$LOG_DIR"
@@ -45,8 +56,6 @@ fi
 
 # 启动新进程
 echo "启动 $APP_NAME (环境: $ENV)..."
-cd "$APP_PATH" || { echo "无法进入目录 $APP_PATH"; exit 1; }
-export APP_ENV=$ENV
 nohup ./$APP_NAME >> "$LOG_FILE" 2>&1 &
 
 sleep 2

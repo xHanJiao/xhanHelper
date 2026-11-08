@@ -42,13 +42,15 @@ func (c *SentenceCommitter) Commit(r ASRResult) string {
 	if !r.Definite || r.Text == "" {
 		return ""
 	}
-	if r.EndTime > 0 {
-		if r.EndTime == c.lastEnd {
+	if r.Text == c.last {
+		// 同一句：任一路缺时间戳时只能按文本判重（会吞掉一模一样的连续两句，属已知退化），
+		// 并把后到的时间戳补记下来，避免下一帧又当成新分句。
+		if r.EndTime == 0 || c.lastEnd == 0 || r.EndTime == c.lastEnd {
+			if c.lastEnd == 0 {
+				c.lastEnd = r.EndTime
+			}
 			return ""
 		}
-	} else if r.Text == c.last {
-		// 拿不到时间戳时退回文本判重（会吞掉一模一样的连续两句，属已知退化）
-		return ""
 	}
 	c.last, c.lastEnd = r.Text, r.EndTime
 	return r.Text

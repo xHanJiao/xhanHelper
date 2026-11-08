@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log"
 	"path/filepath"
 	"time"
@@ -26,9 +28,18 @@ import (
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
+	// 部署/重启前预检：只加载并校验配置，不碰 DB、不启动服务。
+	// 控制脚本靠它在 kill 旧进程之前拦住「新配置起不来」的情况。
+	checkOnly := flag.Bool("check-config", false, "只校验配置后退出（成功 0，失败 1）")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("load config:", err)
+	}
+	if *checkOnly {
+		fmt.Println("config ok")
+		return
 	}
 
 	if err := idgen.Init(cfg.Snowflake.NodeID); err != nil {

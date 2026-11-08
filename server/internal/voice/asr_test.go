@@ -167,4 +167,19 @@ func TestSentenceCommitter(t *testing.T) {
 	if got := timed.Commit(ASRResult{Text: "对。", Definite: true, EndTime: 2500}); got != "对。" {
 		t.Fatalf("second 对 = %q, want 对。", got)
 	}
+
+	// 先来没时间戳的同文结果、再来带时间戳的重复：不能提交两次
+	var mixed SentenceCommitter
+	if got := mixed.Commit(ASRResult{Text: "好。", Definite: true}); got != "好。" {
+		t.Fatalf("first 好 = %q", got)
+	}
+	if got := mixed.Commit(ASRResult{Text: "好。", Definite: true, EndTime: 1200}); got != "" {
+		t.Fatalf("mixed duplicate 好 = %q, want empty", got)
+	}
+	if got := mixed.Commit(ASRResult{Text: "好。", Definite: true, EndTime: 1200}); got != "" {
+		t.Fatalf("timed duplicate 好 = %q, want empty", got)
+	}
+	if got := mixed.Commit(ASRResult{Text: "好。", Definite: true, EndTime: 2600}); got != "好。" {
+		t.Fatalf("second timed 好 = %q, want 好。", got)
+	}
 }

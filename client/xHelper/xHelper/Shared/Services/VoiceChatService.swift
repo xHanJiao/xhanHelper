@@ -225,8 +225,13 @@ final class VoiceChatService: ObservableObject {
 
     /// 结束 C 模式会话：先发负包，让服务端把最后一句吐完再随连接关闭一起收尾。
     func stopContinuous() {
-        // requestingPermission 阶段（已置 continuousActive、还没开采集）也要能取消
-        guard continuousActive, state == .recording || state == .requestingPermission else { return }
+        guard continuousActive else { return }
+        // 还没开采集（socket 刚建/权限确认中）：直接收掉，不用等负包，也别卡 15 秒兜底
+        if state == .requestingPermission {
+            endContinuous(reason: nil)
+            return
+        }
+        guard state == .recording else { return }
         state = .finishing
         sessionTask?.cancel()
         sessionTask = nil

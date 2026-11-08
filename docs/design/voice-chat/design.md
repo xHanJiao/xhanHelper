@@ -376,3 +376,10 @@ location = /api/voice/asr {
   - 分句去重改用 `utterances[].end_time`（文本判重会吞掉连着说的两句一样的话）。
   - `mode=continuous` 按用户限制一条并发连接。
   - `voice/config.session_seconds` 在客户端改为可选（灰度回滚连旧后端不会解码失败）。
+- 2026-11-08（第四轮复审）：
+  - `resetForNewChat()` / `loadConversation()` 清 `pendingConversationID`：否则「新对话」第一条消息
+    会因 `effectiveConversationID` 回退而发进上一个会话。
+  - 部署预检改用 `xhan-helper -check-config`（真正加载配置），并在 `mv` 之前校验 tmp 二进制；
+    控制脚本在 `APP_ENV=prod` 下校验（此前会用默认 dev 环境误判）。
+  - `SentenceCommitter` 处理「先到无 end_time、后到带 end_time」的同文重复。
+  - 连续会话在 `.requestingPermission` 阶段点结束直接收口，不等 15 秒兜底。

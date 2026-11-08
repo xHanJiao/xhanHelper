@@ -489,3 +489,12 @@ location = /api/voice/asr {
     （`AnyView` 槽，避免再加泛型把调用表达式顶爆）；胶囊的「点空白聚焦」手势在语音期间关闭。
   - PWA：删 `VoiceOrb.vue` 全屏浮层，新增 `VoiceWaveLine.vue`（canvas + rAF），
     会话期间顶替 `<NInput>`；`useVoiceChat` 暴露 `preparing`。
+- 2026-11-08（音波线跟手感）：真机反馈「震颤太慢，一个字应该抖一次」。
+  - 根因是 `handleLevel` 里的 EMA（`level = level*0.6 + value*0.4`，时间常数 ≈130ms），
+    把 4~5Hz 的音节抹平了。波形改用独立的 `waveLevel`（**不做 EMA**、**非 @Published**，
+    由 Canvas 每帧自取），15Hz 的采集帧直接驱动振幅。
+  - 振幅映射拉开动态范围：听态 `(0.8 + 13·√(level/0.22)) × 0.8`（原来有 2pt 的地板，
+    安静和说话只差 40%）；静息呼吸降到 ±0.4pt。
+  - 试过把 tap 子块拆成 ~16ms 发 60Hz 电平，**放弃**：主线程任务按 66ms 一批涌进来，
+    Canvas 只取到最后一块，等于白拆；要真提高采样率得改 tap buffer 尺寸，
+    会同时改掉打断判定的帧时长（3 帧≈200ms），不值当。

@@ -75,7 +75,7 @@ function targetAmp(t) {
     return (5 + 9 * cadence) * AMP
   }
   const a = Math.sqrt(Math.min(1, Math.max(0, props.level / 0.22)))
-  return (2 + 12 * a) * AMP + 0.5 * Math.sin(t * 0.7)
+  return (0.8 + 13 * a) * AMP + 0.4 * Math.sin(t * 0.7)
 }
 
 function draw(t) {

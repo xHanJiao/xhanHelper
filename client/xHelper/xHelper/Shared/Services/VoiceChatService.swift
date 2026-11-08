@@ -44,8 +44,9 @@ final class VoiceChatService: ObservableObject {
 
     /// C 模式（连续对话）会话进行中；state 为 .recording 表示正在收音频
     @Published private(set) var continuousActive = false
-    /// 麦克风音量 0...1（全屏语音环用）
-    @Published private(set) var level: Double = 0
+    /// 波形用的瞬时音量 0...1（≈60Hz 更新）。
+    /// **刻意不是 @Published**：Canvas 每帧自己读它，不必让整棵 ChatView 跟着刷新。
+    private(set) var waveLevel: Double = 0
     /// TTS 正在播放（「说」态）
     @Published private(set) var isSpeaking = false
     /// 回复已生成完、TTS 还在合成音频（还没开播）：界面据此停在「想」，
@@ -226,8 +227,9 @@ final class VoiceChatService: ObservableObject {
     /// 音量为波纹供数，同时做 C3 的打断判定（只在播报期间有效）。
     private func handleLevel(_ value: Double) {
         guard state == .recording else { return }
-        // 平滑一下，避免波纹抖成噪点
-        level = level * 0.6 + value * 0.4
+        // 波形直接用这一帧的原始值（不做 EMA）：抖动留给波形自己的 15ms 起 / 60ms 落，
+        // 否则 4~5Hz 的音节会被平滑成一条慢慢鼓起来的线
+        waveLevel = value
         peakLevel = max(peakLevel, value)
 
         if !(continuousActive && micGated) {
@@ -406,7 +408,7 @@ final class VoiceChatService: ObservableObject {
         micGated = false
         audio.setGated(false)
         let tail = audio.stopCapture()
-        level = 0
+        waveLevel = 0
         return tail
     }
 

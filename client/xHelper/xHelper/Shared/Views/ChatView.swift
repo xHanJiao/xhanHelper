@@ -100,7 +100,7 @@ struct ChatView: View {
     /// 语音会话期间顶替输入栏文本行的音波条（iOS 没有连续对话入口，恒为 nil）。
     private var voiceStripSlot: AnyView? {
         guard voice.continuousActive else { return nil }
-        return AnyView(VoiceWaveLine(phase: voiceWavePhase, level: voice.level,
+        return AnyView(VoiceWaveLine(phase: voiceWavePhase, level: { voice.waveLevel },
                                      onInterrupt: { voice.stopSpeaking() }))
     }
 #else

@@ -35,8 +35,9 @@ struct VoiceWaveLine: View {
     private static let lineWidth = 1.6
 
     let phase: Phase
-    /// 麦克风电平（`onLevel` 的刻度：RMS×4，0...1）
-    let level: Double
+    /// 麦克风瞬时电平（`onWaveLevel` 的刻度：RMS×4，0...1）。
+    /// 传闭包是为了每帧取最新值，又不把 60Hz 的电平当成 @Published 去刷新整个聊天页。
+    let level: () -> Double
     var onInterrupt: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -125,8 +126,8 @@ struct VoiceWaveLine: View {
             let cadence = (0.5 + 0.5 * sin(t * 3.6)) * (0.3 + 0.7 * abs(sin(t * 1.7 + 0.7)))
             return (5 + 9 * cadence) * Self.ampScale
         case .listening:
-            let a = sqrt(min(1, max(0, level / 0.22)))
-            return (2 + 12 * a) * Self.ampScale + 0.5 * sin(t * 0.7)
+            let a = sqrt(min(1, max(0, level() / 0.22)))
+            return (0.8 + 13 * a) * Self.ampScale + 0.4 * sin(t * 0.7)
         }
     }
 
@@ -144,25 +145,25 @@ struct VoiceWaveLine: View {
 }
 
 #Preview("听 · 静") {
-    VoiceWaveLine(phase: .listening, level: 0)
+    VoiceWaveLine(phase: .listening, level: { 0 })
         .padding()
         .background(Color("chatBackground"))
 }
 
 #Preview("听 · 说话") {
-    VoiceWaveLine(phase: .listening, level: 0.18)
+    VoiceWaveLine(phase: .listening, level: { 0.18 })
         .padding()
         .background(Color("chatBackground"))
 }
 
 #Preview("想") {
-    VoiceWaveLine(phase: .thinking, level: 0)
+    VoiceWaveLine(phase: .thinking, level: { 0 })
         .padding()
         .background(Color("chatBackground"))
 }
 
 #Preview("说") {
-    VoiceWaveLine(phase: .speaking, level: 0)
+    VoiceWaveLine(phase: .speaking, level: { 0 })
         .padding()
         .background(Color("chatBackground"))
 }

@@ -139,7 +139,10 @@ function endVoiceSession() {
 
 function voiceOrbClose() {
   if (voiceSpeaking.value) {
-    handleStop()
+    // 打断通常发生在「本轮已流完、TTS 正在念」：这时发 stop 会误杀下一轮，
+    // 只停朗读就够；真还在生成才停流式。
+    stopSpeaking()
+    if (chat.isStreaming) handleStop()
     return
   }
   endVoiceSession()

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -247,6 +248,9 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	defer readCancel()
 	var committer voice.SentenceCommitter
 	var resultCount int
+	// 上一条发过的「有人在说话」文本：豆包会对同一句重复吐结果（SentenceCommitter
+	// 就是为此去重），不去重会让静音期的重复结果一直给空闲收口续命。
+	var lastVoiceText string
 	err = asr.Read(readCtx, func(result voice.ASRResult) {
 		resultCount++
 		// 识别文本本身不进日志（设计约束）：只记长度、是否判停、时间戳
@@ -256,6 +260,16 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 		}
 		if continuous {
 			// 只下发已判停的分句；客户端按 sentence 逐轮提交。
+			// 但「ASR 听到人声」要单独告诉客户端（不带文本）：空闲收口靠它顺延，
+			// 客户端用麦克风电平猜会被环境噪声骗（详见 051）。
+			// 文本有变化才发（partial 会随说话增长，长句不受影响）：重复结果不能一直续命。
+			if text := strings.TrimSpace(result.Text); text != "" && text != lastVoiceText {
+				lastVoiceText = text
+				if err := send(gin.H{"type": "voice"}); err != nil {
+					log.Printf("[voice] asr send voice failed (user=%s): %v", userID, err)
+					readCancel()
+				}
+			}
 			text := committer.Commit(result)
 			if text == "" {
 				return

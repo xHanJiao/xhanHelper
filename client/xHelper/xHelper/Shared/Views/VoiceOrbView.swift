@@ -21,7 +21,7 @@ struct VoiceOrbView: View {
             switch self {
             case .listening: return "说完停顿一下就会提交"
             case .thinking: return "正在整理回答"
-            case .speaking: return "点「结束」可以打断朗读"
+            case .speaking: return "直接开口就能打断，点「结束」是收会话"
             }
         }
 

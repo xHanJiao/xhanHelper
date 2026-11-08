@@ -327,6 +327,9 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
           log(`sentence chars=${text.length}`)
           lastActivity = Date.now()
           onSentence?.(text)
+        } else if (msg.type === 'voice') {
+          // 服务端听到非空识别结果（含未判停的 partial）：空闲收口据此顺延
+          lastActivity = Date.now()
         } else if (msg.type === 'limit') {
           log('ws limit', msg.message || '')
           onNotice?.(msg.message || '语音会话已到上限')

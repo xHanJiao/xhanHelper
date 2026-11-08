@@ -54,20 +54,21 @@ final class VoiceChatService: ObservableObject {
     private var gateTask: Task<Void, Never>?
     /// 麦克风门是否生效（播报期间 + 播报结束后的 600ms 尾音窗口）
     private var micGated = false
-    /// 打断判定：连续几帧超过阈值才算真的开口（约 120ms）
+    /// 打断判定：连续 3 帧（tap 3200 帧 @48k，约 200ms）超过阈值才算真的开口
     private var loudFrames = 0
-    /// 这是 `onLevel` 的刻度（RMS×4），不是原始振幅。
-    /// 真机日志：播报时用户说话的帧在 0.08~0.28，而 AEC 残留回声只有 0.00~0.02；
-    /// 原来定 0.32 高于外放（VPIO 会压输入）时用户的实际电平，导致 macOS 永远打不断。
-    private let bargeInLevel: Double = 0.10
     private let bargeInFrames = 3
-    /// 判定「用户在说话」的电平（比打断阈值再低一点，只用于推后空闲收口）
-    private let voiceActivityLevel: Double = 0.08
-    /// 播报期间麦克风收到的残留回声本底（EMA）：判定阈值要比它高，避免自己打断自己
-    private var echoBaseline: Double = 0
+    /// 打断判定的绝对地板（`onLevel` 是 RMS×4 的刻度）：真静音时的数字噪声不该触发
+    private let bargeInFloor: Double = 0.03
+    /// 用户要明显高于「残响本底」才算开口。远场（0.5~1m）说话只有 0.04~0.08，钉死绝对
+    /// 阈值就永远打不断（051 的教训），所以阈值跟着本机残响走：漏音大的音箱自己抬阈值。
+    private let bargeInRatio: Double = 2.2
+    /// 播报期间门控电平的最近若干帧：p20 当残响本底，短暂人声抬不动它
+    private var levelWindow: [Double] = []
+    private let levelWindowSize = 30
     /// 门刚打开的一小段先不听：播放起始的爆音不算打断
     private var gateStartedAt = Date.distantPast
-    /// 最近一次听到用户出声的时间：空闲收口看它，别在人家说话中途把会话收掉
+    /// 最近一次确认用户在说话的时间（服务端 `voice` 事件 / 新分句）：空闲收口看它，
+    /// 别在人家说话中途把会话收掉
     private var lastVoiceAt = Date()
 
     // 诊断（只记长度/次数，不记识别文本）
@@ -107,7 +108,7 @@ final class VoiceChatService: ObservableObject {
         } catch {
             // 未配置/网络失败时静默隐藏按钮，不影响文字聊天
             isAvailable = false
-            LogBuffer.shared.info("voice config unavailable: \(error.localizedDescription)")
+            LogBuffer.shared.diag("voice config unavailable: \(error.localizedDescription)")
         }
     }
 
@@ -222,34 +223,50 @@ final class VoiceChatService: ObservableObject {
     /// 音量为波纹供数，同时做 C3 的打断判定（只在播报期间有效）。
     private func handleLevel(_ value: Double) {
         guard state == .recording else { return }
-        if value > voiceActivityLevel { lastVoiceAt = Date() }
         // 平滑一下，避免波纹抖成噪点
         level = level * 0.6 + value * 0.4
         peakLevel = max(peakLevel, value)
+
+        if !(continuousActive && micGated) {
+            loudFrames = 0
+            levelWindow.removeAll(keepingCapacity: true)
+        } else {
+            // 门刚开也照样采样：预热期只听不判，本底不能从 0 开始长（否则开头 1 秒只剩硬地板）
+            levelWindow.append(value)
+            if levelWindow.count > levelWindowSize { levelWindow.removeFirst() }
+        }
+
+        let threshold = max(bargeInFloor, residualBaseline * bargeInRatio)
         if Date().timeIntervalSince(lastLevelLog) >= 1 {
             lastLevelLog = Date()
-            let threshold = max(bargeInLevel, echoBaseline * 1.8)
-            vlog("level raw=\(fmt3(value)) peak=\(fmt3(peakLevel)) gated=\(micGated ? "yes" : "no") threshold=\(fmt3(threshold))")
+            vlog("level raw=\(fmt3(value)) peak=\(fmt3(peakLevel)) gated=\(micGated ? "yes" : "no") " +
+                 "p20=\(fmt3(residualBaseline)) threshold=\(fmt3(threshold))")
             peakLevel = 0
         }
+
+        // 门刚打开的一小段先不听：播放起始的爆音不算打断
         guard continuousActive, micGated, Date().timeIntervalSince(gateStartedAt) >= 0.25 else {
             loudFrames = 0
-            echoBaseline = 0
             return
         }
-        // VPIO 只做信号相减，外放时仍有残留；本底跟着残响走，用户要明显高于它才算开口
-        let threshold = max(bargeInLevel, echoBaseline * 1.8)
         if value > threshold {
             loudFrames += 1
         } else {
             loudFrames = 0
         }
-        echoBaseline = echoBaseline * 0.95 + value * 0.05
         if loudFrames >= bargeInFrames {
             loudFrames = 0
-            vlog("barge-in triggered raw=\(fmt3(value)) threshold=\(fmt3(threshold)) baseline=\(fmt3(echoBaseline))")
+            vlog("barge-in triggered raw=\(fmt3(value)) threshold=\(fmt3(threshold)) " +
+                 "p20=\(fmt3(residualBaseline))")
             bargeIn()
         }
+    }
+
+    /// 门控电平的 p20：残响的短时抖动抬不高它，用户开口的那几帧也抬不动它。
+    private var residualBaseline: Double {
+        guard !levelWindow.isEmpty else { return 0 }
+        let sorted = levelWindow.sorted()
+        return sorted[(sorted.count - 1) / 5]
     }
 
     /// 用户开口打断：立刻停朗读、停生成，把门控期间攒下的音频冲回去继续识别。
@@ -356,7 +373,7 @@ final class VoiceChatService: ObservableObject {
                 self.armSessionLimit(grace: true)
                 return
             }
-            LogBuffer.shared.info("[voice] session limit reached (\(self.sessionSeconds)s)")
+            LogBuffer.shared.diag("[voice] session limit reached (\(self.sessionSeconds)s)")
             self.stopContinuous()
             ToastCenter.shared.show("语音会话已到上限（\(self.sessionSeconds / 60) 分钟），已结束")
         }
@@ -375,7 +392,7 @@ final class VoiceChatService: ObservableObject {
                 self.armIdleTimer()
                 return
             }
-            LogBuffer.shared.info("[voice] idle limit reached (\(self.continuousIdleSeconds)s), stopping")
+            LogBuffer.shared.diag("[voice] idle limit reached (\(self.continuousIdleSeconds)s), stopping")
             self.stopContinuous()
             ToastCenter.shared.show("\(self.continuousIdleSeconds) 秒没有听到说话，语音会话已结束")
         }
@@ -478,7 +495,7 @@ final class VoiceChatService: ObservableObject {
         gateTask?.cancel()
         gateTask = nil
         micGated = true
-        echoBaseline = 0
+        levelWindow.removeAll(keepingCapacity: true)
         gateStartedAt = Date()
         vlog("mic gate on (tts speaking)")
         audio.setGated(true)
@@ -571,7 +588,7 @@ final class VoiceChatService: ObservableObject {
                     }
                 } catch {
                     guard let self else { return }
-                    LogBuffer.shared.info("[voice] ws receive ended: \(error.localizedDescription) " +
+                    LogBuffer.shared.diag("[voice] ws receive ended: \(error.localizedDescription) " +
                                           "state=\(self.state) active=\(self.continuousActive)")
                     if self.continuousActive {
                         // 用户停止/到上限时 state 已是 .finishing（正常收尾）；其余算掉线
@@ -609,6 +626,10 @@ final class VoiceChatService: ObservableObject {
             vlog("ws result: chars=\(msg.text?.count ?? 0) definite=\(msg.definite == true) final=\(msg.final == true)")
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
+        case "voice":
+            // 服务端听到非空识别结果（含未判停的 partial）才发这个：空闲收口据此顺延。
+            // 不用麦克风电平猜——环境噪声会一直续命，远场长句又会被误收。
+            lastVoiceAt = Date()
         case "limit":
             vlog("ws limit: \(msg.message ?? "-")")
             guard state == .recording || state == .finishing else { return }

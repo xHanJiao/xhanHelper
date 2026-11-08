@@ -196,8 +196,12 @@ struct ChatView: View {
             }
             // C3：播报期间用户开口 → 立刻停生成（朗读与门控已在 service 里处理）
             voice.onBargeIn = {
-                LogBuffer.shared.diag("[voice] barge-in: stop streaming")
-                viewModel.stopStreaming()
+                // 打断的主场景是「本轮已流完、TTS 正在念」：这时发 stop 会误杀下一轮刚注册的
+                // stop channel（还会 killAll 本地 shell），交给 stopSpeaking 停朗读就够
+                LogBuffer.shared.diag("[voice] barge-in: stop streaming=\(viewModel.isStreaming)")
+                if viewModel.isStreaming {
+                    viewModel.stopStreaming()
+                }
             }
             // C 模式：每句判停就直接提交一轮；上一轮还在跑就先停掉，避免两个 loop 交叉写库
             voice.onSentence = { text in

@@ -155,4 +155,16 @@ func TestSentenceCommitter(t *testing.T) {
 			t.Errorf("case %d: Commit(%+v) = %q, want %q", i, tc.in, got, tc.want)
 		}
 	}
+
+	// 有 end_time 时按时间判重：连着说两句一模一样的话不能被吞
+	var timed SentenceCommitter
+	if got := timed.Commit(ASRResult{Text: "对。", Definite: true, EndTime: 1000}); got != "对。" {
+		t.Fatalf("first 对 = %q", got)
+	}
+	if got := timed.Commit(ASRResult{Text: "对。", Definite: true, EndTime: 1000}); got != "" {
+		t.Fatalf("duplicate 对 = %q, want empty", got)
+	}
+	if got := timed.Commit(ASRResult{Text: "对。", Definite: true, EndTime: 2500}); got != "对。" {
+		t.Fatalf("second 对 = %q, want 对。", got)
+	}
 }

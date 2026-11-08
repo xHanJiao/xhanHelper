@@ -21,3 +21,7 @@ activity:
   db_path: data/events.db        # events.db 是自包含 SQLite，与主库 MySQL 无关
   day_timezone: Asia/Shanghai    # 云端主机多为 UTC，显式指定避免派生日期边界错 8 小时
   watermark_mode: segment        # 不依赖客户端时钟，适合服务端/客户端分离
+
+# 语音聊天（豆包 TTS + 流式 ASR）：云端必须设置 DOUBAO_VOICE_API_KEY
+voice:
+  enabled: true

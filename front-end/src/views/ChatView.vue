@@ -118,7 +118,8 @@ const {
     voiceReplyPending.value = true
     nextTick(() => document.querySelector('.chat-input textarea')?.focus())
   },
-  onError: (message) => nMessage.error(message)
+  onError: (message) => nMessage.error(message),
+  onNotice: (message) => nMessage.info(message)
 })
 
 // C2 全屏语音环：说 > 想 > 听；没有语音动作时不挂载
@@ -798,6 +799,8 @@ async function handleSend() {
     })
   })
 
+  // 先快照再清空输入框：watch(inputValue) 会在清空后复位语音标记
+  const voiceMode = voiceReplyPending.value
   const opts = {
     conversationId: chat.conversationId,
     agentId: chat.agentId,
@@ -806,7 +809,7 @@ async function handleSend() {
     initMode: chat.conversationId ? undefined : chat.mode,
     ephemeral: chat.conversationId ? false : chat.ephemeral,
     // 语音来源：服务端注入短回答约束；done 后自动朗读
-    voiceMode: voiceReplyPending.value,
+    voiceMode,
     onAssistantReply: (text) => speakVoice(text)
   }
   voiceReplyPending.value = false

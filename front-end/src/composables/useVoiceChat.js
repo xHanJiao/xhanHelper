@@ -58,7 +58,7 @@ function websocketURL(ticket) {
   return url.toString()
 }
 
-export function useVoiceChat({ onFinalTranscript, onError } = {}) {
+export function useVoiceChat({ onFinalTranscript, onError, onNotice } = {}) {
   const available = ref(false)
   const recording = ref(false)
   const busy = ref(false)
@@ -283,7 +283,8 @@ export function useVoiceChat({ onFinalTranscript, onError } = {}) {
             mediaStream.getTracks().forEach(t => t.stop())
             mediaStream = null
           }
-          onError?.(msg.message || '录音达到上限，已按当前内容识别')
+          // 到上限是提示，不是错误（红色 toast 会让人以为识别失败了）
+          onNotice?.(msg.message || '录音达到上限，已按当前内容识别')
           stopTimer = setTimeout(() => fail('语音识别超时'), 15000)
         } else if (msg.type === 'error') {
           fail(msg.error)

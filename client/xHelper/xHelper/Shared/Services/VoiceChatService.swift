@@ -24,6 +24,8 @@ final class VoiceChatService: ObservableObject {
     var onSentence: ((String) -> Void)?
     /// C3：播报期间用户开口，立即停生成（由 ChatView 接 /api/chat/stop）。
     var onBargeIn: (() -> Void)?
+    /// 正在流式回答（C 模式的空闲计时器据此顺延，别在 AI 说话时把会话收掉）。
+    var isChatBusy: (() -> Bool)?
 
     private var socket: URLSessionWebSocketTask?
     private let audio = VoiceAudioEngine()
@@ -74,7 +76,7 @@ final class VoiceChatService: ObservableObject {
             isAvailable = cfg.ready
             speaker = cfg.speaker
             maxSeconds = max(5, cfg.maxSeconds)
-            sessionSeconds = max(30, cfg.sessionSeconds)
+            sessionSeconds = max(30, cfg.sessionSeconds ?? 600)
         } catch {
             // 未配置/网络失败时静默隐藏按钮，不影响文字聊天
             isAvailable = false
@@ -223,7 +225,8 @@ final class VoiceChatService: ObservableObject {
 
     /// 结束 C 模式会话：先发负包，让服务端把最后一句吐完再随连接关闭一起收尾。
     func stopContinuous() {
-        guard continuousActive, state == .recording else { return }
+        // requestingPermission 阶段（已置 continuousActive、还没开采集）也要能取消
+        guard continuousActive, state == .recording || state == .requestingPermission else { return }
         state = .finishing
         sessionTask?.cancel()
         sessionTask = nil
@@ -256,12 +259,17 @@ final class VoiceChatService: ObservableObject {
     // MARK: C 模式会话
 
     /// 会话硬上限：按音频时长计费（静音也计时），到点必须收。
-    private func armSessionLimit() {
+    private func armSessionLimit(grace: Bool = false) {
         sessionTask?.cancel()
         sessionTask = Task { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: .seconds(self.sessionSeconds))
+            try? await Task.sleep(for: .seconds(grace ? 15 : self.sessionSeconds))
             guard !Task.isCancelled, self.continuousActive else { return }
+            // 正在回答/朗读时别硬切：给 15 秒宽限，宽限到了再收
+            if !grace, self.isSpeaking || (self.isChatBusy?() ?? false) {
+                self.armSessionLimit(grace: true)
+                return
+            }
             self.stopContinuous()
             ToastCenter.shared.show("语音会话已到上限（\(self.sessionSeconds / 60) 分钟），已结束")
         }
@@ -274,6 +282,11 @@ final class VoiceChatService: ObservableObject {
             guard let self else { return }
             try? await Task.sleep(for: .seconds(self.continuousIdleSeconds))
             guard !Task.isCancelled, self.continuousActive else { return }
+            // AI 正在回答/朗读也算「会话仍在进行」，顺延而不是收口
+            if self.isSpeaking || (self.isChatBusy?() ?? false) {
+                self.armIdleTimer()
+                return
+            }
             self.stopContinuous()
             ToastCenter.shared.show("\(self.continuousIdleSeconds) 秒没有听到说话，语音会话已结束")
         }
@@ -461,7 +474,8 @@ final class VoiceChatService: ObservableObject {
         }
         switch msg.type {
         case "sentence":
-            guard continuousActive,
+            // 只在还处于 .recording 时提交：结束/到上限后的残句不提交、不朗读
+            guard continuousActive, state == .recording,
                   let text = msg.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else { return }
             armIdleTimer()
@@ -470,6 +484,7 @@ final class VoiceChatService: ObservableObject {
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
         case "limit":
+            guard state == .recording || state == .finishing else { return }
             // 服务端到达上限后会 Finish：立刻停采集（负包之后不能再发音频），等它吐完最后一句
             if state == .recording {
                 state = .finishing
@@ -583,7 +598,7 @@ final class VoiceChatService: ObservableObject {
     /// 纯表格（每行都是 |...|）逐格念出来没意义，当占位处理。
     static func isTableOnly(_ text: String) -> Bool {
         let lines = text.split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard lines.count >= 2 else { return false }
         return lines.allSatisfy { $0.hasPrefix("|") && $0.hasSuffix("|") }

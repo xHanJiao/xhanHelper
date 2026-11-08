@@ -206,11 +206,14 @@ struct ChatView: View {
             voice.onSentence = { text in
                 if viewModel.isStreaming {
                     voice.stopSpeaking()
-                    viewModel.stopStreaming()
+                    // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
+                    viewModel.stopStreaming(notifyServer: false)
                 }
                 viewModel.sendMessage(text, baseURL: baseURL, token: token,
                                       agentId: selectedAgentID ?? agentId, speakReply: true)
             }
+            // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
+            voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
             viewModel.onAssistantReplyDone = { text in
                 Task { await voice.speak(text: text, baseURL: baseURL, token: token) }
             }

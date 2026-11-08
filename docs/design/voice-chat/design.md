@@ -162,6 +162,8 @@ partial / final 与耗时，用来排查「说完不出 final」「同一句重�
 ## 配置
 
 ```yaml
+# base config 里 voice.enabled=false；dev / prod 各自打开，
+# 这样 fail-fast 只在明确启用了语音的环境生效（CI / go test 不需要 Key）
 voice:
   enabled: false
   api_key: ${DOUBAO_VOICE_API_KEY}
@@ -196,7 +198,7 @@ voice:
 | `ready` | 服务端已连上豆包、开始接收音频（仅作提示，客户端不等它） |
 | `result` | `{text, definite, final}`，增量覆盖（**A 模式**；`text` 是累计全文） |
 | `sentence` | `{text}`，一条已判停的分句（**仅 C 模式**）。`result_type=single`，`text` 只含本句，客户端据此提交一轮对话 |
-| `limit` | 到达 `asr.max_seconds`；服务端已 `Finish`，随后会吐 `final`。客户端应停止采集但**不要**再发 `end`，并 arm 一个兜底计时器 |
+| `limit` | 到达单连接上限；服务端已 `Finish`，随后会吐 `final`（A 模式）或 `sentence`（C 模式）。客户端应停止采集但**不要**再发 `end`，并 arm 一个兜底计时器 |
 | `error` | 识别失败 |
 
 C 模式说明：
@@ -255,7 +257,7 @@ C 模式说明：
 - `URLSessionWebSocketTask` 连自家后端，二进制发 PCM，文本发 `{"type":"end"}`。
 - WS 一打开就开始采集（不等 `ready`），早于 `ready` 的帧由 socket 缓冲；`max_seconds-2` 自动收口。
 - 识别文本填输入框（不自动发送）。
-- 回复 `done` 后请求 TTS，`AVAudioPlayer` 播放；停止按钮同时停朗读。
+- 回复 `done` 后请求 TTS，由 `VoiceAudioEngine`（`AVAudioPlayerNode` + VPIO）播放；停止按钮同时停朗读。
 - 补 `NSMicrophoneUsageDescription`。
 
 ### PWA（Vue）
@@ -302,7 +304,9 @@ C 模式说明：
 - 后端：`go build ./... && go test ./...`，新增 TTS/ASR 单测。
 - macOS：`swiftc -typecheck` 通过，真机麦克风权限、中文识别、TTS 播放。
 - PWA：`vite build` 通过，Chrome/Safari 真机麦克风与播放；iOS PWA 单独验证。
-- 未配置 Key 时：客户端隐藏麦克风，接口返回 503，不影响文字聊天。
+- 未配置 Key 时：客户端隐藏麦克风，接口返回 503。
+- **服务端**：base config `voice.enabled=false`，dev / prod 打开后缺 Key 会**启动即失败**（fail-fast）；
+  CI / `go test` 不启用语音，不需要 Key。
 
 ## 部署注意
 
@@ -361,3 +365,14 @@ location = /api/voice/asr {
   - 不做自动 barge-in（浏览器 AEC 不可靠）；「说」态的全屏环按钮改为「打断」，
     点击 = 停朗读 + 断 SSE + `/api/chat/stop` + `cancelVoice()`。
   - 播报期间点麦克风同样先 `handleStop()`，防止把 TTS 声音录进识别。
+- 2026-11-08（第三轮复审）：
+  - 配置分层：base `voice.enabled=false`，dev / prod 各自打开；CI 与 `go test` 不再需要 Key。
+    `scripts/control-xhan-helper.sh` 增加启动前预检，缺 `DOUBAO_VOICE_API_KEY` 时拒绝重启（不杀旧进程）。
+  - `make deploy*` 统一执行 `scripts/control-xhan-helper.sh`（此前 deploy 跑根目录那份，改脚本容易漏）。
+  - 新会话首轮未 `done` 时插话：`sendMessage` 用 `effectiveConversationID`（meta 帧的 pending id）落回同一会话，
+    不再另起一个会话；插话路径 `stopStreaming(notifyServer: false)`，避免迟到的 `/api/chat/stop` 误杀新轮。
+  - C 模式空闲/会话计时器在「正在回答 / 正在朗读」时顺延（会话上限只给一次 15 秒宽限）。
+  - 结束/到上限后的残句不再提交、不再朗读（`sentence` 要求 `state == .recording`）。
+  - 分句去重改用 `utterances[].end_time`（文本判重会吞掉连着说的两句一样的话）。
+  - `mode=continuous` 按用户限制一条并发连接。
+  - `voice/config.session_seconds` 在客户端改为可选（灰度回滚连旧后端不会解码失败）。

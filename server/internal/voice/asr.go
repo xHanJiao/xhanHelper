@@ -25,20 +25,32 @@ type ASRResult struct {
 	Text     string `json:"text"`
 	Definite bool   `json:"definite"`
 	Final    bool   `json:"final"`
+	// EndTime 分句结束时间（ms），用于去重：enable_nonstream 会把同一句重复下发，
+	// 但「对。对。」这种连着两句一样的话 end_time 不同，不能按文本判重。
+	EndTime int64 `json:"end_time,omitempty"`
 }
 
 // SentenceCommitter 把 continuous 模式（result_type=single）的结果流折算成"可提交的新分句"。
 // single 模式下每条结果的 Text 只含当前分句；退出时 final 只带最后一句，也需要补提交。
 type SentenceCommitter struct {
-	last string
+	last    string
+	lastEnd int64
 }
 
 // Commit 返回需要提交的新分句；空串表示这条结果不用提交（未判停 / 重复）。
 func (c *SentenceCommitter) Commit(r ASRResult) string {
-	if !r.Definite || r.Text == "" || r.Text == c.last {
+	if !r.Definite || r.Text == "" {
 		return ""
 	}
-	c.last = r.Text
+	if r.EndTime > 0 {
+		if r.EndTime == c.lastEnd {
+			return ""
+		}
+	} else if r.Text == c.last {
+		// 拿不到时间戳时退回文本判重（会吞掉一模一样的连续两句，属已知退化）
+		return ""
+	}
+	c.last, c.lastEnd = r.Text, r.EndTime
 	return r.Text
 }
 
@@ -82,6 +94,7 @@ type asrResponse struct {
 		Utterances []struct {
 			Text     string `json:"text"`
 			Definite bool   `json:"definite"`
+			EndTime  int64  `json:"end_time"`
 		} `json:"utterances"`
 	} `json:"result"`
 }
@@ -238,7 +251,8 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 		if final {
 			definite := true
 			if onResult != nil {
-				onResult(ASRResult{Text: parsed.Result.Text, Definite: definite, Final: true})
+				onResult(ASRResult{Text: parsed.Result.Text, Definite: definite, Final: true,
+					EndTime: lastDefiniteEndTime(parsed.Result.Utterances)})
 			}
 			return nil
 		}
@@ -253,6 +267,7 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 			onResult(ASRResult{
 				Text:     parsed.Result.Text,
 				Definite: definite,
+				EndTime:  lastDefiniteEndTime(parsed.Result.Utterances),
 			})
 		}
 	}
@@ -264,4 +279,19 @@ func (c *ASRClient) Close() error {
 		return nil
 	}
 	return c.conn.Close()
+}
+
+// lastDefiniteEndTime 取最后一条已判停分句的结束时间；拿不到返回 0。
+func lastDefiniteEndTime(utterances []struct {
+	Text     string `json:"text"`
+	Definite bool   `json:"definite"`
+	EndTime  int64  `json:"end_time"`
+}) int64 {
+	var end int64
+	for _, u := range utterances {
+		if u.Definite && u.EndTime > end {
+			end = u.EndTime
+		}
+	}
+	return end
 }

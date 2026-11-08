@@ -10,7 +10,7 @@ defineEmits(['close'])
 
 const PHASES = {
   listening: { title: '听', hint: '说完停顿一下就会提交' },
-  thinking: { title: '想', hint: '正在整理回答' },
+  thinking: { title: '想', hint: '正在整理听到的内容' },
   speaking: { title: '说', hint: '点「打断」可以随时插话' }
 }
 const info = computed(() => PHASES[props.phase] || PHASES.listening)

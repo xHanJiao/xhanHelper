@@ -28,6 +28,11 @@ type VoiceHandler struct {
 	cfg     *config.VoiceConfig
 	tts     *voice.TTSClient
 	tickets *voiceTicketStore
+
+	// C 模式一条连接能占满整个会话（默认 10 分钟），按用户限流，
+	// 防止重复开连接把豆包并发和音频时长一起放大。
+	continuousMu sync.Mutex
+	continuous   map[string]bool
 }
 
 // NewVoiceHandler 创建 VoiceHandler。
@@ -36,9 +41,10 @@ func NewVoiceHandler(cfg *config.VoiceConfig) *VoiceHandler {
 		panic("voice handler: nil config (wiring bug)")
 	}
 	return &VoiceHandler{
-		cfg:     cfg,
-		tts:     voice.NewTTSClient(cfg.APIKey, cfg.TTS),
-		tickets: newVoiceTicketStore(60 * time.Second),
+		cfg:        cfg,
+		tts:        voice.NewTTSClient(cfg.APIKey, cfg.TTS),
+		tickets:    newVoiceTicketStore(60 * time.Second),
+		continuous: map[string]bool{},
 	}
 }
 
@@ -129,6 +135,14 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	// C 模式（连续对话）：一条连接连着送音频，按分句增量返回（result_type=single），
 	// 客户端每收到一条 sentence 就提交一轮对话，不再等服务端 ready→录音→end。
 	continuous := c.Query("mode") == "continuous"
+	if continuous {
+		if !h.acquireContinuous(userID) {
+			log.Printf("[voice] continuous session already active (user=%s)", userID)
+			_ = client.WriteJSON(gin.H{"type": "error", "error": "已有进行中的语音会话"})
+			return
+		}
+		defer h.releaseContinuous(userID)
+	}
 	asrCfg := h.cfg.ASR
 	if continuous {
 		asrCfg.ResultType = "single"
@@ -291,4 +305,21 @@ func (s *voiceTicketStore) consume(ticket string) (string, bool) {
 		return "", false
 	}
 	return item.userID, true
+}
+
+// acquireContinuous 抢占用户的连续对话槽位；同一用户只允许一条。
+func (h *VoiceHandler) acquireContinuous(userID string) bool {
+	h.continuousMu.Lock()
+	defer h.continuousMu.Unlock()
+	if h.continuous[userID] {
+		return false
+	}
+	h.continuous[userID] = true
+	return true
+}
+
+func (h *VoiceHandler) releaseContinuous(userID string) {
+	h.continuousMu.Lock()
+	defer h.continuousMu.Unlock()
+	delete(h.continuous, userID)
 }

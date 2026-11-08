@@ -40,3 +40,7 @@ chat:
 subagent:
   explore_max_iterations: 3 # dev 测试：调小轮数便于触发预算耗尽/超时，验证 task_id 续跑
   user_context_enabled: true # 与 base config.yaml 一致
+
+# 语音聊天（豆包 TTS + 流式 ASR）：终端环境已配置 DOUBAO_VOICE_API_KEY
+voice:
+  enabled: true

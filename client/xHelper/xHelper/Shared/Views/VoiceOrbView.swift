@@ -41,8 +41,10 @@ struct VoiceOrbView: View {
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
+            // 不用 .ultraThinMaterial：非不透明窗 + 右侧 WKWebView 逐帧重合成会偶发灰闪
+            // （同 docs/bugs/030）。这里用接近不透明的底色，观感稳定且仍能看到背景轮廓。
+            Color("chatBackground")
+                .opacity(0.97)
                 .ignoresSafeArea()
 
             VStack(spacing: 24) {

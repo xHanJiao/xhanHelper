@@ -11,6 +11,12 @@ LOG_DIR="$APP_PATH/logs"
 LOG_FILE="$LOG_DIR/xhan-helper-$(date +%Y-%m-%d).log"
 ENV="prod"
 
+# 启动前预检：配置引用的环境变量缺了会 fail-fast，先拦住——别把还在服务的旧进程杀掉
+if grep -q 'DOUBAO_VOICE_API_KEY' "$APP_PATH/conf/config.yaml" 2>/dev/null && [ -z "$DOUBAO_VOICE_API_KEY" ]; then
+    echo "❌ DOUBAO_VOICE_API_KEY 未设置，配置要求该变量；拒绝重启（旧进程保持运行）"
+    exit 1
+fi
+
 mkdir -p "$LOG_DIR"
 
 # 清理 30 天前的旧日志

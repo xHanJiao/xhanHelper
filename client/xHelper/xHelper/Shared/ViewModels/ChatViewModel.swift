@@ -1000,7 +1000,10 @@ class ChatViewModel: ObservableObject {
 
     func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = [], speakReply: Bool = false) {
         speakReplyForCurrentTurn = speakReply
-        let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "", imageIds: attachmentIds, localImages: localImages)
+        // 新会话第一轮还没 done 时插话：meta 帧已经给了 id，这一轮必须落回同一会话，
+        // 否则会另起一个会话、第一轮还在后台继续跑（连续对话最常见的路径）。
+        let turnConversationID = effectiveConversationID
+        let userMsg = Message.localUser(text: text, conversationId: turnConversationID ?? "", imageIds: attachmentIds, localImages: localImages)
         messages.append(userMsg)
 
         isStreaming = true
@@ -1028,11 +1031,11 @@ class ChatViewModel: ObservableObject {
         roundDocRefMessageID = [:]
         verifyStatus = nil
 
-        messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
+        messages.append(.streamingAssistant(conversationId: turnConversationID ?? ""))
 
         Task { @MainActor in
             let clientTools = await Self.collectClientTools()
-            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds)
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds, conversationOverride: turnConversationID)
         }
         #if os(iOS)
         beginBackgroundTask()
@@ -1098,7 +1101,7 @@ class ChatViewModel: ObservableObject {
         """
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = []) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], conversationOverride: String? = nil) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -1140,18 +1143,22 @@ class ChatViewModel: ObservableObject {
                 self?.detachStreamingMessage()
             }
         }
-        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
-        let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
+        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）。
+        // 已有 pending id 说明会话正在创建/已创建，不能再下发 init_mode。
+        let targetConversationID = conversationOverride ?? effectiveConversationID
+        let initMode: String? = targetConversationID == nil ? mode : nil
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: targetConversationID, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
-    func stopStreaming() {
+    /// `notifyServer=false` 用于「同一会话立刻发下一句」：服务端 Register 本来就会取消旧 loop，
+    /// 再发 stop 有可能赶在新一轮注册之后到达，把新轮停掉。
+    func stopStreaming(notifyServer: Bool = true) {
         // 先立即断开 SSE + UI 收尾（思考框消失），再后台通知服务端显式终止 ReAct。
         // 顺序保证：UI 即时响应，stopChat 失败/慢速不影响停止体验。
         handoffActive = false
         capturedHandoffDoc = nil
         let api = apiClient
-        let cid = conversationId
+        let cid = effectiveConversationID
         sseClient.disconnect()
         #if os(macOS)
         // 杀掉本地 shell 进程组（stopStreaming 原本只断 SSE + 通知服务端，杀不掉本地命令）
@@ -1160,13 +1167,12 @@ class ChatViewModel: ObservableObject {
         finishStreaming()
         detachStreamingMessage()
         Task {
-            if let cid, !cid.isEmpty {
-                do {
-                    let stopped = try await api.stopChat(conversationId: cid)
-                    LogBuffer.shared.info("stopChat: stopped=\(stopped)")
-                } catch {
-                    LogBuffer.shared.error("stopChat failed: \(error)")
-                }
+            guard notifyServer, let cid, !cid.isEmpty else { return }
+            do {
+                let stopped = try await api.stopChat(conversationId: cid)
+                LogBuffer.shared.info("stopChat: stopped=\(stopped)")
+            } catch {
+                LogBuffer.shared.error("stopChat failed: \(error)")
             }
         }
     }

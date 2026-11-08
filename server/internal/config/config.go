@@ -854,7 +854,7 @@ func validate(cfg *Config) error {
 	// Voice 默认值；启用时必须有 API Key，否则启动即失败（别等到第一次说话才发现）
 	cfg.Voice.ApplyDefaults()
 	if cfg.Voice.Enabled && cfg.Voice.APIKey == "" {
-		return fmt.Errorf("voice.enabled=true 但 voice.api_key 为空（设置 DOUBAO_API_KEY）")
+		return fmt.Errorf("voice.enabled=true 但 voice.api_key 为空（设置 DOUBAO_VOICE_API_KEY）")
 	}
 	// Snowflake 默认值
 	if cfg.Snowflake.NodeID == 0 {

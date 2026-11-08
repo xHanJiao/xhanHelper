@@ -29,8 +29,11 @@ type VoiceASRConfig struct {
 	Endpoint       string `yaml:"endpoint"`
 	ResourceID     string `yaml:"resource_id"`
 	Language       string `yaml:"language"`
-	MaxSeconds     int    `yaml:"max_seconds"` // 单轮录音上限（按 16k/16bit 字节数折算）
+	MaxSeconds     int    `yaml:"max_seconds"` // 单条连接内的音频上限（按 16k/16bit 字节数折算）
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	// 分句与返回方式：开启二遍识别后由服务端按静音判停，definite 分句才带最终文本。
+	ResultType    string `yaml:"result_type"`     // full=累计全量；single=增量（不返回之前分句）
+	EndWindowSize int    `yaml:"end_window_size"` // 静音判停阈值 ms，范围 [300,5000]
 }
 
 // ApplyDefaults 填充语音配置默认值（仅零值）。
@@ -64,6 +67,12 @@ func (v *VoiceConfig) ApplyDefaults() {
 	}
 	if v.ASR.Language == "" {
 		v.ASR.Language = "zh-CN"
+	}
+	if v.ASR.ResultType == "" {
+		v.ASR.ResultType = "full"
+	}
+	if v.ASR.EndWindowSize == 0 {
+		v.ASR.EndWindowSize = 800
 	}
 	if v.ASR.MaxSeconds == 0 {
 		v.ASR.MaxSeconds = 60
@@ -118,6 +127,12 @@ func mergeVoice(dst, src *VoiceConfig) {
 	}
 	if src.ASR.Language != "" {
 		dst.ASR.Language = src.ASR.Language
+	}
+	if src.ASR.ResultType != "" {
+		dst.ASR.ResultType = src.ASR.ResultType
+	}
+	if src.ASR.EndWindowSize != 0 {
+		dst.ASR.EndWindowSize = src.ASR.EndWindowSize
 	}
 	if src.ASR.MaxSeconds != 0 {
 		dst.ASR.MaxSeconds = src.ASR.MaxSeconds

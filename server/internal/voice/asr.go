@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,7 +87,13 @@ func DialASR(ctx context.Context, cfg config.VoiceASRConfig, apiKey, uid string)
 	conn, resp, err := dialer.DialContext(ctx, cfg.Endpoint, headers)
 	if err != nil {
 		if resp != nil {
-			return nil, fmt.Errorf("dial doubao asr: %w (http %d)", err, resp.StatusCode)
+			// 401/403 的真实原因（资源未开通 / resource id 不对）只在响应体里，别吞掉
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			if readErr != nil {
+				return nil, fmt.Errorf("dial doubao asr: %w (http %d, read body: %v)", err, resp.StatusCode, readErr)
+			}
+			return nil, fmt.Errorf("dial doubao asr: %w (http %d: %s)", err, resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 		return nil, fmt.Errorf("dial doubao asr: %w", err)
 	}
@@ -105,9 +113,9 @@ func DialASR(ctx context.Context, cfg config.VoiceASRConfig, apiKey, uid string)
 			EnableITN:       true,
 			EnablePunc:      true,
 			ShowUtterances:  true,
-			ResultType:      "full",
+			ResultType:      cfg.ResultType,
 			EnableNonstream: true,
-			EndWindowSize:   800,
+			EndWindowSize:   cfg.EndWindowSize,
 		},
 	}
 	payload, err := json.Marshal(req)

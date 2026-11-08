@@ -191,8 +191,8 @@ event_assembly:
 # 语音聊天（豆包 TTS + 流式 ASR）。详见 docs/design/voice-chat/design.md。
 # 新版火山控制台只需要 API Key；开通「豆包语音合成模型2.0」和「豆包流式语音识别模型2.0」。
 voice:
-  enabled: false
-  api_key: ${DOUBAO_API_KEY}
+  enabled: true
+  api_key: ${DOUBAO_VOICE_API_KEY}
   tts:
     endpoint: https://openspeech.bytedance.com/api/v3/tts/unidirectional
     resource_id: seed-tts-2.0

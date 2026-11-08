@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,5 +122,15 @@ func TestASRReadsPartialAndFinal(t *testing.T) {
 	}
 	if results[1].Text != "你好世界" || !results[1].Final {
 		t.Fatalf("final = %+v", results[1])
+	}
+}
+
+// TestASRDurationLimit — 超上限必须回 ErrASRDurationLimit，调用方据此 Finish 取回结果
+// 而不是把已识别文本一起丢掉。
+func TestASRDurationLimit(t *testing.T) {
+	c := &ASRClient{maxBytes: 10}
+	err := c.SendAudio(make([]byte, 11))
+	if !errors.Is(err, ErrASRDurationLimit) {
+		t.Fatalf("err = %v, want ErrASRDurationLimit", err)
 	}
 }

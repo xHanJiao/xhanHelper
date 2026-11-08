@@ -52,6 +52,24 @@ export const api = {
   },
   // 取二进制（图床私有读要 Bearer，不能直接给 <img src>）
   blob: (path) => request(path).then(r => r.blob()),
+  // POST 取二进制（语音 TTS）：失败时把服务端错误 JSON 变成可读错误
+  postBlob: (path, body) => request(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(async (r) => {
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`
+      try {
+        const data = await r.json()
+        msg = data?.error || data?.message || msg
+      } catch {
+        // 非 JSON 错误体：保留 HTTP 状态
+      }
+      throw new Error(msg)
+    }
+    return r.blob()
+  }),
   patch: (path, body) => request(path, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

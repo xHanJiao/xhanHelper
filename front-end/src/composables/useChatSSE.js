@@ -64,6 +64,9 @@ export function useChatSSE() {
   // 新会话（懒创建）在 meta 帧就先拿到 id；模式/无痕用发送那一刻的快照
   let streamMode = 'work'
   let streamEphemeral = false
+  // 本轮是否语音来源（done 后朗读回复）；resume 续传沿用
+  let streamVoiceMode = false
+  let streamReplyHandler = null
   // failStream 本次收尾的消息 id：done 只认它，避免把真实 id/灵阅卡片
   // 补到上一轮「停止」遗留的 local- 消息上（那条永远不会有真实 id）。
   let failedLocalId = null
@@ -78,6 +81,8 @@ export function useChatSSE() {
     const partial = chat.streamingMessage
     failedLocalId = null
     lastErrorKind = kind || 'server'
+    streamVoiceMode = false
+    streamReplyHandler = null
     if (partial?.content || partial?.reasoning) {
       failedLocalId = `local-${Date.now()}`
       chat.addMessage({ ...partial, id: failedLocalId, toolCalls: [] })
@@ -95,6 +100,8 @@ export function useChatSSE() {
     chat.isStreaming = false
     chat.streamingMessage = null
     chat.statusMessage = null
+    streamVoiceMode = false
+    streamReplyHandler = null
   }
 
   function makeWatchdog(controller) {
@@ -127,12 +134,14 @@ export function useChatSSE() {
     })
   }
 
-  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral } = {}) {
+  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral, voiceMode, onAssistantReply } = {}) {
     if (chat.isStreaming) return
 
     // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再点开关不该改写已落库的值）
     streamMode = initMode || 'work'
     streamEphemeral = !!ephemeral
+    streamVoiceMode = !!voiceMode
+    streamReplyHandler = onAssistantReply || null
     lastSeq = null
     lastTurnId = ''
     streamOutcome = null
@@ -183,6 +192,7 @@ export function useChatSSE() {
       if (thinking !== undefined && thinking !== null) {
         body.thinking = thinking
       }
+      if (voiceMode) body.voice_mode = true
       const res = await api.stream('/api/chat', body, controller.signal)
 
       if (!res.ok) {
@@ -400,6 +410,8 @@ export function useChatSSE() {
       case 'done': {
         const d = JSON.parse(rawData)
         streamOutcome = 'done'
+        // 语音朗读只读最终正文：必须在清空 streamingMessage 之前抓下来
+        const replyText = chat.streamingMessage?.content || ''
         // 服务端可能「先 error 再 done」（收尾轮未收敛 / 另一台设备停止），
         // failStream 已经把半截消息收尾了；这时只更新元数据，别再推一条空消息。
         if (chat.streamingMessage) {
@@ -451,6 +463,12 @@ export function useChatSSE() {
         if (d.error) {
           chat.error = d.error
           lastErrorKind = 'server'
+        }
+        if (streamVoiceMode && !d.error && replyText.trim()) {
+          const handler = streamReplyHandler
+          streamVoiceMode = false
+          streamReplyHandler = null
+          handler?.(replyText)
         }
         break
       }

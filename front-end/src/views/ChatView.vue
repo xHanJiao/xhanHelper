@@ -71,6 +71,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
+import { useVoiceChat } from '@/composables/useVoiceChat'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
 import { api } from '@/api/client'
@@ -95,11 +96,31 @@ const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream } = useChatSSE()
 const nMessage = useMessage()
+// 语音：识别完成后填入输入框，手动确认发送；发送时带 voice_mode，done 后朗读回复
+const voiceReplyPending = ref(false)
+const {
+  available: voiceAvailable,
+  recording: voiceRecording,
+  busy: voiceBusy,
+  refresh: refreshVoice,
+  start: startVoice,
+  stop: stopVoice,
+  cancel: cancelVoice,
+  speak: speakVoice,
+  stopSpeaking
+} = useVoiceChat({
+  onFinalTranscript: (text) => {
+    inputValue.value = text
+    voiceReplyPending.value = true
+    nextTick(() => document.querySelector('.chat-input textarea')?.focus())
+  }
+})
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 
 onMounted(() => {
   fetchAgents()
+  refreshVoice()
   document.addEventListener('visibilitychange', onVisibilityChange)
   // 输入区高度变化（收起/展开/挂图）时重算「↓」的位置
   if (mobileInputRef.value) {
@@ -697,6 +718,8 @@ onBeforeUnmount(() => {
   composerObserver?.disconnect()
   window.removeEventListener('resize', onLayoutResize)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  cancelVoice()
+  stopSpeaking()
   if (chat.isStreaming) cancel()
 })
 
@@ -756,13 +779,32 @@ async function handleSend() {
     attachments: imageIds,
     // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
     initMode: chat.conversationId ? undefined : chat.mode,
-    ephemeral: chat.conversationId ? false : chat.ephemeral
+    ephemeral: chat.conversationId ? false : chat.ephemeral,
+    // 语音来源：服务端注入短回答约束；done 后自动朗读
+    voiceMode: voiceReplyPending.value,
+    onAssistantReply: (text) => speakVoice(text)
   }
+  voiceReplyPending.value = false
   await sendMessage(content, opts)
+}
+
+async function toggleVoice() {
+  if (voiceRecording.value) {
+    stopVoice()
+    return
+  }
+  if (voiceBusy.value || chat.isStreaming) return
+  try {
+    await startVoice()
+  } catch (err) {
+    nMessage.error(`无法开始录音：${err?.message || '麦克风不可用'}`)
+  }
 }
 
 function handleStop() {
   const convId = chat.conversationId
+  stopSpeaking()
+  if (voiceRecording.value) cancelVoice()
   // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
   // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
   // 服务端会照常跑完；等 done 回传 id 后才有服务端停止能力。
@@ -1131,7 +1173,7 @@ function handleContainerClick(e) {
         <NInput
           v-model:value="inputValue"
           type="textarea"
-          placeholder="发消息..."
+          :placeholder="voiceRecording ? '正在听…（再点麦克风结束）' : '发消息...'"
           :disabled="chat.isStreaming"
           :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
           class="chat-input"
@@ -1141,6 +1183,18 @@ function handleContainerClick(e) {
         />
         <div class="composer-row">
           <div class="composer-left">
+            <NTooltip v-if="voiceAvailable" :disabled="isMobile" placement="top">
+              <template #trigger>
+                <button class="icon-pill" :class="{ on: voiceRecording }" type="button"
+                  :aria-label="voiceRecording ? '停止录音' : '语音输入'"
+                  :aria-pressed="voiceRecording"
+                  :disabled="voiceBusy || chat.isStreaming"
+                  @click="toggleVoice">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+                </button>
+              </template>
+              {{ voiceRecording ? '停止录音' : '语音输入' }}
+            </NTooltip>
             <NTooltip :disabled="isMobile" placement="top">
               <template #trigger>
                 <button class="icon-pill" type="button" aria-label="添加图片" :disabled="chat.isStreaming" @click="pickImages">

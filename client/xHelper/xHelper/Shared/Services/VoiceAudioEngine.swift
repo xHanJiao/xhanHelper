@@ -7,8 +7,9 @@ import Foundation
 /// 搬到了挂在这个 engine 上的 `AVAudioPlayerNode`。初始化顺序是硬要求：
 /// 接播放图 → 开 VPIO（input + output）→ 装采集 tap → start；顺序反了 AEC 会静默失效。
 ///
-/// 麦克风门：播放期间分片不发给 ASR（否则会把自己念的再识别一遍），只保留最近 600ms
-/// 到 pre-roll；检测到用户打断时把 pre-roll 冲回去，开头不会丢。
+/// 麦克风门：播放期间不把真实音频发给 ASR（否则会把自己念的再识别一遍），只保留最近 600ms
+/// 到 pre-roll；但上行流不能空闲——豆包 8 秒收不到音频包会断会话（45000081），所以门控期间
+/// 按原节拍补等长静音保活。检测到用户打断时把 pre-roll 冲回去，开头不会丢。
 final class VoiceAudioEngine: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -24,9 +25,13 @@ final class VoiceAudioEngine: @unchecked Sendable {
     private var graphReady = false
     private var capturing = false
     private var gated = false
+    /// TTS 是否在播。只在主线程读写（play / completion / stopPlayback / stopCapture）。
+    /// 不能用 `player.isPlaying` 判断：buffer 播完后它仍是 true，engine 会永远不停，
+    /// 麦克风占用也就一直不退（菜单栏一直显示麦克风模式）。
+    private var playbackActive = false
     private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
 
-    /// 每约 200ms 的 PCM 分片（6400 字节）；门控期间不触发。
+    /// 每约 200ms 的 PCM 分片（6400 字节）；门控期间发的是等长静音。
     var onChunk: (@Sendable (Data) -> Void)?
     /// 每块音频的音量 0...1（门控期间仍触发，打断检测靠它）。
     var onLevel: (@Sendable (Float) -> Void)?
@@ -151,15 +156,27 @@ final class VoiceAudioEngine: @unchecked Sendable {
         let buffer = try Self.readBuffer(file: file, target: playbackFormat)
         try startEngineIfNeeded()
         player.stop()
-        player.scheduleBuffer(buffer, at: nil, options: []) {
-            Task { @MainActor in completion() }
+        playbackActive = true
+        player.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
+            Task { @MainActor in
+                self?.markPlaybackFinished()
+                completion()
+            }
         }
         player.play()
         log("play start: mp3=\(data.count)B frames=\(buffer.frameLength) engineRunning=\(engine.isRunning)")
     }
 
+    /// 播完一个 buffer：清播放标志并释放 engine（采集还开着时保持运行）。
+    /// 不在这里调 `player.stop()`：stop 会再次触发完成回调，造成递归。
+    private func markPlaybackFinished() {
+        playbackActive = false
+        stopEngineIfIdle()
+    }
+
     func stopPlayback() {
-        let wasPlaying = player.isPlaying
+        let wasPlaying = playbackActive
+        playbackActive = false
         player.stop()
         stopEngineIfIdle()
         if wasPlaying { log("play stop: engineRunning=\(engine.isRunning)") }
@@ -200,7 +217,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
     }
 
     private func stopEngineIfIdle() {
-        guard !capturing, !player.isPlaying, engine.isRunning else { return }
+        guard !capturing, !playbackActive, engine.isRunning else { return }
         engine.stop()
         log("engine stopped")
     }
@@ -274,11 +291,12 @@ final class VoiceAudioEngine: @unchecked Sendable {
             if preroll.count > prerollLimit {
                 preroll.removeFirst(preroll.count - prerollLimit)
             }
-            lock.unlock()
-            statsLog(level: levelValue, gated: isGated)
-            return
+            // 门控期不能断流：豆包 8 秒收不到音频包会主动断开（错误码 45000081），
+            // 表现为播报到一半「识别失败」。这里按原节拍补等长静音保活。
+            pending.append(Data(count: data.count))
+        } else {
+            pending.append(data)
         }
-        pending.append(data)
         var chunks: [Data] = []
         while pending.count >= 6400 {
             chunks.append(Data(pending.prefix(6400)))

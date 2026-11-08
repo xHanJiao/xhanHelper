@@ -401,3 +401,12 @@ location = /api/voice/asr {
   - PWA 音量 ×4 与 macOS 对齐，浮层「听」态的圆环才会跟着声音动。
   - 服务端 `decodeFrame` 失败时带上 ws 消息类型与帧头十六进制（区分文本帧/事件帧/字段错位）。
     用 `voice-smoke -result-type single` 连发 81 秒未复现 20:39 那次 `payload size ... exceeds frame`。
+- 2026-11-08（修复：8 秒等包超时 + 麦克风不释放）：
+  - **推翻** C3a 那条「门控期间不向 ASR 发送音频（不补静音）」：豆包对「8 秒内没收到下一个音频包」
+    会主动断会话（错误码 45000081），长回复播到一半必现「识别失败」。现在门控期按 200ms 节拍
+    补等长全 0 静音，pre-roll 逻辑不变（打断时仍冲回真实音频）。
+  - `decodeFrame` 的错误帧按官方布局解析：`header(4) + 错误码(4) + payload size(4) + JSON`。
+    此前把错误码（如 45000081）读成 payload size，真实错误被掩盖成「语音识别失败」。
+  - `VoiceAudioEngine` 用 `playbackActive` 判断播放状态（`player.isPlaying` 播完仍为 true），
+    播放结束即释放 engine，修掉退出语音模式后菜单栏麦克风占用不消失。
+  - `cmd/voice-smoke` 新增 `-gap-at / -gap-seconds / -gap-silence`，可直接复现与验证这个问题。

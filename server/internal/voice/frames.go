@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // 豆包流式 ASR 的 WebSocket 二进制协议（官方文档：大模型流式语音识别API）。
@@ -96,6 +97,25 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 		// 序号只用于协议完整性，调用方不需要；跳过 4 字节
 		offset += 4
 	}
+	// 错误响应比普通帧多一个 4 字节错误码，且错误码在 payload size **之前**：
+	//   header(4) + 错误码(4) + payload size(4) + payload(JSON)
+	// 按普通帧解析会把错误码当成 payload size（如 45000081 → 「payload 超过帧长」）。
+	if f.Type == msgErrorResponse {
+		if len(data) < offset+8 {
+			return nil, fmt.Errorf("error frame too short: %d bytes", len(data))
+		}
+		f.ErrorCode = int32(binary.BigEndian.Uint32(data[offset : offset+4]))
+		offset += 4
+		payloadSize := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		offset += 4
+		if len(data) < offset+payloadSize {
+			return nil, fmt.Errorf("error payload size %d exceeds frame %d bytes", payloadSize, len(data))
+		}
+		f.ErrorMessage = strings.TrimSpace(string(data[offset : offset+payloadSize]))
+		f.Payload = data[offset : offset+payloadSize]
+		return f, nil
+	}
+
 	if len(data) < offset+4 {
 		return nil, fmt.Errorf("missing payload size")
 	}
@@ -105,19 +125,6 @@ func decodeFrame(data []byte) (*asrFrame, error) {
 		return nil, fmt.Errorf("payload size %d exceeds frame %d bytes", payloadSize, len(data))
 	}
 	payload := data[offset : offset+payloadSize]
-
-	if f.Type == msgErrorResponse {
-		if len(payload) < 8 {
-			return nil, fmt.Errorf("error frame too short: %d bytes", len(payload))
-		}
-		f.ErrorCode = int32(binary.BigEndian.Uint32(payload[:4]))
-		msgSize := int(binary.BigEndian.Uint32(payload[4:8]))
-		if len(payload) < 8+msgSize {
-			return nil, fmt.Errorf("error message size %d exceeds payload %d bytes", msgSize, len(payload))
-		}
-		f.ErrorMessage = string(payload[8 : 8+msgSize])
-		return f, nil
-	}
 
 	if compression == compressionGzip {
 		zr, err := gzip.NewReader(bytes.NewReader(payload))

@@ -39,20 +39,21 @@ func TestFrameLastFlag(t *testing.T) {
 }
 
 func TestDecodeErrorFrame(t *testing.T) {
-	msg := []byte("bad request")
-	body := make([]byte, 8+len(msg))
-	binary.BigEndian.PutUint32(body[:4], 45000001)
-	binary.BigEndian.PutUint32(body[4:8], uint32(len(msg)))
-	copy(body[8:], msg)
-	frame, err := encodeFrame(msgErrorResponse, flagNone, serializationJSON, compressionNone, body)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
+	// 官方错误帧布局：header(4) + 错误码(4) + payload size(4) + JSON
+	msg := []byte(`{"message":"等包超时"}`)
+	frame := make([]byte, 4+4+4+len(msg))
+	frame[0] = protocolVersion1<<4 | headerSize4
+	frame[1] = msgErrorResponse<<4 | flagNone
+	frame[2] = serializationJSON<<4 | compressionNone
+	binary.BigEndian.PutUint32(frame[4:8], 45000081)
+	binary.BigEndian.PutUint32(frame[8:12], uint32(len(msg)))
+	copy(frame[12:], msg)
+
 	got, err := decodeFrame(frame)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.ErrorCode != 45000001 || got.ErrorMessage != "bad request" {
+	if got.ErrorCode != 45000081 || got.ErrorMessage != string(msg) {
 		t.Fatalf("unexpected error frame: %+v", got)
 	}
 }

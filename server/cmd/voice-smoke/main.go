@@ -32,6 +32,9 @@ func main() {
 	resultType := flag.String("result-type", "", "full（累计全量，默认）| single（增量，不返回之前分句）")
 	maxSeconds := flag.Int("max-seconds", 0, "单条连接的音频上限秒数，0=默认 60")
 	endWindow := flag.Int("end-window", 0, "静音判停阈值 ms，0=默认 800（范围 300-5000）")
+	gapAt := flag.Int("gap-at", 0, "发送 N 秒后暂停发音频（模拟客户端 TTS 期间的麦克风门控）")
+	gapSeconds := flag.Int("gap-seconds", 0, "暂停多少秒后继续（验证豆包 8 秒等包超时）")
+	gapSilence := flag.Bool("gap-silence", false, "门控期间改发等长静音（验证保活方案）")
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, `voice-smoke — 豆包流式 ASR 联调
 
@@ -92,13 +95,47 @@ Flags:
 	defer asr.Close()
 	fmt.Printf("[+%5dms] 已连接，开始推送 PCM\n", time.Since(start).Milliseconds())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(),
+		time.Duration(90+*gapSeconds+10)*time.Second)
 	defer cancel()
 
 	// 上行与接收并行：否则看不到流式 partial，也测不出 final 的时延。
 	sendErr := make(chan error, 1)
 	go func() {
+		gapStart := start.Add(time.Duration(*gapAt) * time.Second)
+		gapEnd := gapStart.Add(time.Duration(*gapSeconds) * time.Second)
+		gapAnnounced, gapResumed := false, false
 		for i := 0; i < len(pcm); i += chunkBytes {
+			// 模拟 app 在 TTS 播放期间的麦克风门控：这段时间一帧都不发。
+			// 豆包在 8 秒收不到音频包时会回错误码 45000081 并断开。
+			if *gapSeconds > 0 {
+				now := time.Now()
+				if now.Before(gapStart) {
+					// 还没到门控点
+				} else if now.Before(gapEnd) {
+					if !gapAnnounced {
+						gapAnnounced = true
+						if *gapSilence {
+							fmt.Printf("[+%5dms] 门控 %ds：改发静音保活\n",
+								time.Since(start).Milliseconds(), *gapSeconds)
+						} else {
+							fmt.Printf("[+%5dms] 暂停发送音频 %ds（模拟门控，预期 8s 后触发 45000081）\n",
+								time.Since(start).Milliseconds(), *gapSeconds)
+						}
+					}
+					if *gapSilence {
+						if err := asr.SendAudio(make([]byte, chunkBytes)); err != nil {
+							sendErr <- fmt.Errorf("门控静音: %w", err)
+							return
+						}
+					}
+					time.Sleep(200 * time.Millisecond)
+					continue
+				} else if gapAnnounced && !gapResumed {
+					gapResumed = true
+					fmt.Printf("[+%5dms] 恢复发送音频\n", time.Since(start).Milliseconds())
+				}
+			}
 			end := i + chunkBytes
 			if end > len(pcm) {
 				end = len(pcm)

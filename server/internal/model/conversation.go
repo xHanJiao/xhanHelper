@@ -62,10 +62,10 @@ type ConversationExtra struct {
 	SubAgentType   string          `json:"subagent_type,omitempty"`    // 子会话类型（"web_explore"/"file_explore"），空=普通会话
 	SubAgentResult *SubAgentResult `json:"sub_agent_result,omitempty"` // 子任务最近一次执行结果（Admin 子任务列表展示），空=未记录（改动前旧数据）
 	ToolExposure   *ToolExposure   `json:"tool_exposure,omitempty"`    // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
-	EventFocus     *EventFocus     `json:"event_focus,omitempty"`      // 用户 event.enable 钉住的事件（跨窗口保留）
+	EventFocus     *EventFocus     `json:"event_focus,omitempty"`      // 用户 event.enable 关注的事件（跨窗口保留）
 }
 
-// EventFocus — 会话级事件钉住（设计 §6.6）。
+// EventFocus — 会话级事件关注（设计 §6.6）。
 // 权威来源：EventSource 只读这里，不消费上一轮 XML 里的 pinned 标签。
 type EventFocus struct {
 	Enabled []string `json:"enabled,omitempty"`

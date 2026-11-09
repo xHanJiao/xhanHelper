@@ -15,12 +15,12 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// eventPinnedMaxDefault — 钉住上限的兜底值（配置 quota_event_pinned 优先）。
+// eventPinnedMaxDefault — 关注上限的兜底值（配置 quota_event_pinned 优先）。
 const eventPinnedMaxDefault = 3
 
 // EventTool — 事件管理工具组（设计 §7.1）。
 //
-// 事件由后台拼装自动生长；本工具只在用户明确要求时介入（查看/钉住/改名/删除/合并）。
+// 事件由后台拼装自动生长；本工具只在用户明确要求时介入（查看/关注/改名/删除/合并）。
 type EventTool struct {
 	eventRepo *service.EventRepo
 	memRepo   *service.UserMemoryRepo
@@ -55,14 +55,14 @@ func (t *EventTool) Name() string { return "event" }
 
 func (t *EventTool) Description() string {
 	return "管理由记忆自动聚合出的「事件」（现实里持续在跟进的一件事，如「回西安准备」「驾照考取」）。" +
-		"只在用户明确要求查看、钉住、改名、删除或合并事件时使用；不要主动创建事件（后台拼装会自动生长）。"
+		"只在用户明确要求查看、关注、改名、删除或合并事件时使用；不要主动创建事件（后台拼装会自动生长）。"
 }
 
 func (t *EventTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "事件管理。查事件全文、钉住、改名、删除、合并重复事件。",
+		ShortDesc: "事件管理。查事件全文、关注、改名、删除、合并重复事件。",
 		Funcs:     []string{"list", "get", "search", "enable"},
-		Others:    "取消钉住、改名/改摘要、删除、合并 等",
+		Others:    "取消关注、改名/改摘要、删除、合并 等",
 	}, true
 }
 
@@ -107,8 +107,8 @@ func (t *EventTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "enable",
-			Display:     "钉住事件",
-			Description: "钉住事件（最多 3 个）：工具结果直接返回完整事件，之后每轮自动 full 注入，跨窗口保留。",
+			Display:     "关注事件",
+			Description: "关注事件（最多 3 个）：工具结果直接返回完整事件，之后每轮自动带上完整进展，跨窗口保留。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -119,8 +119,8 @@ func (t *EventTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "disable",
-			Display:     "取消钉住",
-			Description: "取消钉住事件，之后按普通检索决定是否注入。",
+			Display:     "取消关注",
+			Description: "取消关注事件，之后按普通检索决定是否注入。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -176,7 +176,7 @@ func (t *EventTool) Functions() []FuncSchema {
 	}
 }
 
-// ReadOnlyFuncs — 查询类只读；钉住/改名/删除/合并是写操作（plan 模式拦截）。
+// ReadOnlyFuncs — 查询类只读；关注/改名/删除/合并是写操作（plan 模式拦截）。
 func (t *EventTool) ReadOnlyFuncs() map[string]bool {
 	return map[string]bool{"list": true, "get": true, "search": true}
 }
@@ -362,7 +362,7 @@ func (t *EventTool) search(ec *ExecuteContext, args json.RawMessage) *Result {
 	return &Result{Success: true, Data: data}
 }
 
-// ==================== 钉住 ====================
+// ==================== 关注 ====================
 
 func (t *EventTool) enable(ec *ExecuteContext, args json.RawMessage) *Result {
 	var a eventRefArgs
@@ -374,13 +374,13 @@ func (t *EventTool) enable(ec *ExecuteContext, args json.RawMessage) *Result {
 		return &Result{Success: false, Error: err.Error()}
 	}
 	if e.IsDeleted {
-		return &Result{Success: false, Error: "事件已删除，无法钉住"}
+		return &Result{Success: false, Error: "事件已删除，无法关注"}
 	}
 	if ec.ConvID == "" {
-		return &Result{Success: false, Error: "当前上下文没有会话，无法钉住事件"}
+		return &Result{Success: false, Error: "当前上下文没有会话，无法关注事件"}
 	}
 
-	// 钉住列表里的旧 ID（事件已删/已合并）会白占名额：写入前顺手剔除。
+	// 关注列表里的旧 ID（事件已删/已合并）会白占名额：写入前顺手剔除。
 	activeEvents, err := listAllEvents(ec.Ctx, t.eventRepo, ec.UserID, false)
 	if err != nil {
 		log.Printf("[event] enable list active error: %v", err)
@@ -405,14 +405,14 @@ func (t *EventTool) enable(ec *ExecuteContext, args json.RawMessage) *Result {
 			return
 		}
 		if len(ids) >= t.maxPinned {
-			capErr = fmt.Errorf("最多同时钉住 %d 个事件，请先 disable 一个", t.maxPinned)
+			capErr = fmt.Errorf("最多同时关注 %d 个事件，请先取消关注一个", t.maxPinned)
 			return
 		}
 		extra.EventFocus.Enabled = append(ids, e.ID)
 	})
 	if err != nil {
 		log.Printf("[event] enable update extra error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("保存钉住状态失败: %v", err)}
+		return &Result{Success: false, Error: fmt.Sprintf("保存关注状态失败: %v", err)}
 	}
 	if capErr != nil {
 		return &Result{Success: false, Error: capErr.Error()}
@@ -421,7 +421,7 @@ func (t *EventTool) enable(ec *ExecuteContext, args json.RawMessage) *Result {
 	detail, err := t.eventDetail(ec.Ctx, ec.UserID, e)
 	if err != nil {
 		log.Printf("[event] enable detail error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("钉住成功但读取事件失败: %v", err)}
+		return &Result{Success: false, Error: fmt.Sprintf("关注成功但读取事件失败: %v", err)}
 	}
 	data, _ := json.Marshal(map[string]interface{}{"status": "enabled", "event": detail})
 	return &Result{Success: true, Data: data}
@@ -437,7 +437,7 @@ func (t *EventTool) disable(ec *ExecuteContext, args json.RawMessage) *Result {
 		return &Result{Success: false, Error: err.Error()}
 	}
 	if ec.ConvID == "" {
-		return &Result{Success: false, Error: "当前上下文没有会话，无法取消钉住"}
+		return &Result{Success: false, Error: "当前上下文没有会话，无法取消关注"}
 	}
 	err = t.convRepo.UpdateExtraField(ec.Ctx, ec.ConvID, func(extra *model.ConversationExtra) {
 		if extra.EventFocus == nil {
@@ -449,7 +449,7 @@ func (t *EventTool) disable(ec *ExecuteContext, args json.RawMessage) *Result {
 	})
 	if err != nil {
 		log.Printf("[event] disable update extra error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("保存钉住状态失败: %v", err)}
+		return &Result{Success: false, Error: fmt.Sprintf("保存关注状态失败: %v", err)}
 	}
 	data, _ := json.Marshal(map[string]interface{}{"status": "disabled", "event_id": e.ID})
 	return &Result{Success: true, Data: data}

@@ -441,6 +441,8 @@ pinned（≤3，full）
 
 ### 6.6 pinned：LLM 主动钉住
 
+> 术语（2026-11-09）：用户可见用词由「钉住」改为「关注」（`关注事件` / `取消关注`），代码标识符（`enable`/`disable`、`EventFocus`、`pinned`）与 XML 协议不变。
+
 ```mermaid
 sequenceDiagram
     participant U as 用户

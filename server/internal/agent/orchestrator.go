@@ -82,7 +82,7 @@ type RunRequest struct {
 	// PrevZonePackets 在 Run 内从 Window.PrevEventXML 解析一次，供资源区复用（避免同一条 XML 解析两遍）。
 	PrevZonePackets []retrieval.ContextPacket
 
-	// PinnedEventIDs — 用户 event.enable 钉住的事件（Conversation.Extra.EventFocus.Enabled）。
+	// PinnedEventIDs — 用户 event.enable 关注的事件（Conversation.Extra.EventFocus.Enabled）。
 	// 每轮无条件 full 注入；权威来源只在这里，不从上一轮 XML 推断。
 	PinnedEventIDs []string
 

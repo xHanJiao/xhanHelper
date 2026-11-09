@@ -336,7 +336,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		}()
 
-		// 事件钉住：权威来源是 Conversation.Extra.EventFocus（event.enable 写入）。
+		// 事件关注：权威来源是 Conversation.Extra.EventFocus（event.enable 写入）。
 		pinnedEventIDs := pinnedEventIDsFromExtra(conv.Extra)
 
 		// 本轮事件留档：原连接照旧直接写，另存一份给回前台的续传连接按 seq 补发。
@@ -681,8 +681,8 @@ func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMax
 	return resp
 }
 
-// pinnedEventIDsFromExtra 解析 Conversation.Extra 里的钉住事件。
-// extra 损坏时降级为「没有钉住」并记录，不影响本轮对话。
+// pinnedEventIDsFromExtra 解析 Conversation.Extra 里的关注事件。
+// extra 损坏时降级为「没有关注」并记录，不影响本轮对话。
 func pinnedEventIDsFromExtra(extraJSON string) []string {
 	if extraJSON == "" || extraJSON == "{}" {
 		return nil

@@ -14,9 +14,9 @@ const (
 	DescNotes = "大模型在对话过程中记录的值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等。" +
 		"本条通过双路向量检索（分块级+全文级）按实体去重后拼接。"
 	DescEvents = "用户现实里持续在跟进的全部事件（未删除）。最近有活动的带当前状态 summary 和少量最近记忆；" +
-		"更早的只有标题（mode=index），需要细节用 event.get 查，正在深入谈这件事就 event.enable 钉住。" +
+		"更早的只有标题（mode=index），需要细节用 event.get 查，正在深入谈这件事就 event.enable 关注。" +
 		"mode=hit 是本次对话命中的事件，附带命中的记忆；" +
-		"mode=full 是用户钉住的事件，附带最近 20 条记忆。"
+		"mode=full 是用户关注的事件，附带最近 20 条记忆。"
 	DescHistory = "之前的聊天记录，以 round 的方式组织，一个 round 代表了用户一次发送的消息和接收到的返回内容。" +
 		"本条通过单路向量检索召回后，扩展为完整对话轮次。"
 	DescMessages = "用户历史聊天记录中的发言内容，通过语义或关键词检索召回。仅返回用户自己发送的消息原文，不附带对话轮的上下文和 AI 回复。"
@@ -83,7 +83,7 @@ type SearchOptions struct {
 	// 事件注入：EventsAll=true 时返回全量事件列表（主对话资源区）；
 	// false 时只返回命中事件（unified_search 语义检索）。
 	EventsAll      bool
-	PinnedEventIDs []string // 用户 event.enable 钉住的事件
+	PinnedEventIDs []string // 用户 event.enable 关注的事件
 
 	// 排除已在当前消息列表中的消息 ID（避免系统提示词与历史消息重复）
 	ExcludeMsgIDs map[string]bool

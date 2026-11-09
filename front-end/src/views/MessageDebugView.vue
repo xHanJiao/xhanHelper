@@ -362,9 +362,9 @@ function blockHeaderBg(type) {
   return themeStore.isDark ? `rgba(${rgb},0.12)` : `rgba(${rgb},0.06)`
 }
 
-// 事件注入形态（full=用户钉住 / hit=本轮命中 / summary=窗口内 / index=只有标题）
+// 事件注入形态（full=全貌 / hit=本轮命中 / summary=窗口内 / index=只有标题）
 const EVENT_MODE_META = {
-  full: { label: '钉住 full', color: '#7c3aed' },
+  full: { label: '全貌 full', color: '#7c3aed' },
   hit: { label: '命中 hit', color: '#d97706' },
   summary: { label: '摘要 summary', color: '#0d9488' },
   index: { label: '索引 index', color: '#64748b' },
@@ -913,7 +913,7 @@ onMounted(loadRound)
                           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px;">
                             <span style="font-size: 13px; font-weight: 600; color: var(--color-text);">{{ item.title || item.id }}</span>
                             <span v-if="item.mode" :style="eventModeStyle(item.mode)">{{ eventModeLabel(item.mode) }}</span>
-                            <span v-if="item.pinned" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-primary); color: #fff; font-weight: 500;">钉住</span>
+                            <span v-if="item.pinned" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-primary); color: #fff; font-weight: 500;">关注</span>
                             <span v-if="item.updated" style="font-size: 11px; color: var(--color-text-muted);">{{ item.updated }}</span>
                             <span v-if="item.memoryCount" style="font-size: 11px; color: var(--color-text-muted);">记忆 {{ item.memoryCount }}</span>
                             <span v-if="item.score" style="font-size: 11px; color: var(--color-text-muted); margin-left: auto;">{{ scorePercent(item.score) }}%</span>

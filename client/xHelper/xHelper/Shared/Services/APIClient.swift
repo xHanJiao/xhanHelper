@@ -92,6 +92,38 @@ class APIClient {
         return resp.stopped
     }
 
+    // MARK: Voice
+
+    func getVoiceConfig() async throws -> VoiceConfigInfo {
+        try await get("/api/voice/config")
+    }
+
+    /// 浏览器 WebSocket 不能带 Authorization，先换一次性 ticket。
+    func createVoiceASRTicket() async throws -> VoiceTicketInfo {
+        try await post("/api/voice/asr-ticket", body: [:])
+    }
+
+    /// 整段回复转 mp3；失败时服务端返回统一错误包装，这里只取原始音频。
+    /// speaker 为空时不传，服务端用配置默认音色。
+    func synthesizeSpeech(text: String, speaker: String = "") async throws -> Data {
+        var req = URLRequest(url: try requestURL("/api/voice/tts"))
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 120
+        var body: [String: Any] = ["text": text]
+        if !speaker.isEmpty { body["speaker"] = speaker }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+        guard statusCode == 200 else {
+            let msg = String(data: data, encoding: .utf8) ?? "unknown"
+            throw NSError(domain: "APIClient", code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "语音合成失败（HTTP \(statusCode)）：\(msg.prefix(200))"])
+        }
+        return data
+    }
+
     // MARK: LLM Config
 
     func getLLMConfig(agentId: String? = nil) async throws -> LlmConfig {
@@ -689,6 +721,42 @@ private struct APIResponse<T: Decodable>: Decodable {
     let errorCode: Int
     let errMsg: String
     let data: T?
+}
+
+// MARK: Voice
+
+struct VoiceConfigInfo: Codable {
+    let enabled: Bool
+    let ready: Bool
+    let speaker: String
+    let language: String
+    let maxSeconds: Int
+    /// C 模式单次会话上限（秒）；空闲收口由客户端判定。
+    /// 可选：灰度/回滚时连旧后端没有这个字段，不能让整份配置解码失败。
+    let sessionSeconds: Int?
+    /// 可选同理：旧后端没有音色列表。
+    let speakers: [VoiceSpeaker]?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, ready, speaker, language, speakers
+        case maxSeconds = "max_seconds"
+        case sessionSeconds = "session_seconds"
+    }
+}
+
+struct VoiceSpeaker: Codable, Identifiable {
+    let id: String
+    let name: String
+}
+
+struct VoiceTicketInfo: Codable {
+    let ticket: String
+    let expiresIn: Int
+
+    enum CodingKeys: String, CodingKey {
+        case ticket
+        case expiresIn = "expires_in"
+    }
 }
 
 /// 用于只关心包装层校验、忽略 data 具体结构的请求

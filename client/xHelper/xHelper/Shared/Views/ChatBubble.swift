@@ -112,6 +112,13 @@ private struct PulsingText: View {
     }
 }
 
+/// 句级朗读进度：由 VoiceChatService 的流水线给出。
+/// `sentences` 必须能拼回原文，否则退回 markdown（切分规则不一致时别丢字）。
+struct SpeechProgress: Equatable {
+    var sentences: [String]
+    var index: Int
+}
+
 struct ChatBubble: View {
     let text: String
     let isUser: Bool
@@ -119,6 +126,8 @@ struct ChatBubble: View {
     var createdAt: String? = nil
     var showTime: Bool = false
     var onTapToShowTime: (() -> Void)? = nil
+    /// 正在朗读时按句上色：已播正常 / 当前高亮加粗 / 未播淡显
+    var speech: SpeechProgress? = nil
     @EnvironmentObject var fontSizeManager: FontSizeManager
 
     private var chatFont: Font {
@@ -151,6 +160,15 @@ struct ChatBubble: View {
                         }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 12)
+                } else if let progress = speech,
+                          messageId == "__streaming__" || progress.sentences.joined() == text {
+                    // 流式气泡的正文比流水线慢一拍（ViewModel 100ms 节流），以流水线文本为准
+                    speechText(progress)
+                        .font(chatFont)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .macosTextSelection()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     let isStreaming = messageId == "__streaming__"
                     let segments = isStreaming ? [] : MermaidUtility.splitContent(text)
@@ -207,6 +225,21 @@ struct ChatBubble: View {
             onTapToShowTime?()
         })
         #endif
+    }
+
+    private func speechText(_ progress: SpeechProgress) -> Text {
+        let base = Color("assistantText")
+        return progress.sentences.enumerated().reduce(Text("")) { acc, item in
+            var run = Text(item.element)
+            if item.offset < progress.index {
+                run = run.foregroundColor(base)
+            } else if item.offset == progress.index {
+                run = run.bold().foregroundColor(base)
+            } else {
+                run = run.foregroundColor(base.opacity(0.45))
+            }
+            return acc + run
+        }
     }
 
     @ViewBuilder

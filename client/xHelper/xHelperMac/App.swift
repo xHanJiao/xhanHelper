@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import WebKit
+import AVFoundation
 
 extension Notification.Name {
     static let holdToQuitChanged = Notification.Name("HoldToQuitChanged")
@@ -928,6 +929,110 @@ struct MacSettingsView: View {
     @State private var showHardBlockedAlert = false
     @State private var hardBlockedPath = ""
 
+    // 语音音色：服务端下发白名单，选择存本地（空 = 默认）。
+    @AppStorage(VoicePreference.speakerKey) private var storedSpeaker = ""
+    @State private var voiceConfig: VoiceConfigInfo?
+    @State private var voiceSpeaker = ""
+    @State private var voiceNotice: String?
+    @State private var previewPlayer: AVAudioPlayer?
+    @State private var previewLoading = false
+    @State private var previewRequest: Task<Void, Never>?
+    @State private var previewTask: Task<Void, Never>?
+
+    private static let previewText = "你好，我是你的聊天助手，今天过得怎么样？"
+
+    private var voiceReady: Bool {
+        guard let cfg = voiceConfig, cfg.ready, let list = cfg.speakers, !list.isEmpty else { return false }
+        return true
+    }
+
+    private var voiceSpeakers: [VoiceSpeaker] { voiceConfig?.speakers ?? [] }
+
+    private var speakerBinding: Binding<String> {
+        Binding(
+            get: { voiceSpeaker },
+            set: { newValue in
+                voiceSpeaker = newValue
+                storedSpeaker = newValue
+                voiceNotice = nil
+                stopVoicePreview()
+            }
+        )
+    }
+
+    private func loadVoiceConfig() async {
+        let token = deviceManager.token ?? ""
+        guard !deviceManager.baseURL.isEmpty, !token.isEmpty else { return }
+        do {
+            let cfg = try await apiClient.getVoiceConfig()
+            voiceConfig = cfg
+            guard cfg.ready, let list = cfg.speakers, !list.isEmpty else { return }
+            if !storedSpeaker.isEmpty, !list.contains(where: { $0.id == storedSpeaker }) {
+                let fallbackName = list.first(where: { $0.id == cfg.speaker })?.name ?? cfg.speaker
+                voiceNotice = "已选音色不可用，已切回 \(fallbackName)"
+                storedSpeaker = ""
+                voiceSpeaker = cfg.speaker
+            } else {
+                voiceSpeaker = storedSpeaker.isEmpty ? cfg.speaker : storedSpeaker
+            }
+        } catch {
+            // 未启用 / 网络失败：整组不渲染，记一条日志即可。
+            LogBuffer.shared.diag("voice config unavailable: \(error.localizedDescription)")
+            voiceConfig = nil
+        }
+    }
+
+    private func toggleVoicePreview() {
+        if previewPlayer != nil {
+            stopVoicePreview()
+            return
+        }
+        guard !previewLoading, voiceReady else { return }
+        // 聊天窗可能正在朗读：先让它停。
+        NotificationCenter.default.post(name: .voicePreviewWillStart, object: nil)
+        previewLoading = true
+        let speaker = voiceSpeaker
+        previewRequest?.cancel()
+        previewRequest = Task {
+            do {
+                let data = try await apiClient.synthesizeSpeech(text: Self.previewText, speaker: speaker)
+                // 关闭设置窗 / 切换音色会取消请求：别再出声。
+                guard !Task.isCancelled else { return }
+                previewLoading = false
+                let player = try AVAudioPlayer(data: data)
+                previewPlayer = player
+                player.play()
+                watchPreviewEnd()
+            } catch {
+                guard !Task.isCancelled else { return }
+                previewLoading = false
+                LogBuffer.shared.error("voice preview failed: \(error.localizedDescription)")
+                ToastCenter.shared.show("试听失败")
+            }
+        }
+    }
+
+    private func watchPreviewEnd() {
+        previewTask?.cancel()
+        previewTask = Task {
+            while let player = previewPlayer, player.isPlaying {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            guard !Task.isCancelled else { return }
+            stopVoicePreview()
+        }
+    }
+
+    private func stopVoicePreview() {
+        previewRequest?.cancel()
+        previewRequest = nil
+        previewTask?.cancel()
+        previewTask = nil
+        previewLoading = false
+        previewPlayer?.stop()
+        previewPlayer = nil
+    }
+
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
     }
@@ -962,6 +1067,43 @@ struct MacSettingsView: View {
                     Label("背景图片…", systemImage: "photo.on.rectangle.angled")
                 }
                 .buttonStyle(.borderless)
+            }
+
+            if voiceReady {
+                Section("语音") {
+                    HStack {
+                        Text("音色")
+                        Spacer()
+                        Picker("", selection: speakerBinding) {
+                            ForEach(voiceSpeakers) { speaker in
+                                Text(speaker.name).tag(speaker.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        Button {
+                            toggleVoicePreview()
+                        } label: {
+                            if previewLoading {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: previewPlayer != nil ? "stop.fill" : "play.fill")
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(previewLoading)
+                        .help(previewPlayer != nil ? "停止试听" : "试听当前音色")
+                    }
+                    if let voiceNotice {
+                        Text(voiceNotice)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    Text("只影响语音回复的朗读；切换后下一句生效。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("提醒") {
@@ -1236,6 +1378,8 @@ struct MacSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .task { await loadVoiceConfig() }
+        .onDisappear { stopVoicePreview() }
         // 让窗口底图（AppBackdrop）透出内容区；设置窗标题栏仍为系统原生（D9）。
         .scrollContentBackground(.hidden)
         .tint(Color("appAccent"))

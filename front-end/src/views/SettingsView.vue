@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NInput, NModal, useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
@@ -8,6 +8,7 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useMobile } from '@/composables/useMobile'
 import { api } from '@/api/client'
 import { CHAT_FONT_OPTIONS, readChatFont, setChatFont } from '@/utils/chatFont'
+import { readVoiceSpeaker, setVoiceSpeaker } from '@/utils/voicePref'
 import { isMacEmbedded } from '@/utils/embed'
 import PageHeader from '@/components/PageHeader.vue'
 
@@ -35,6 +36,107 @@ const oldPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const saving = ref(false)
+
+// 语音音色：只存本地；服务端下发白名单与默认值。
+const voiceConfig = ref(null)
+const voiceSpeaker = ref(readVoiceSpeaker())
+const voiceNotice = ref('')
+const previewState = ref('idle') // idle | loading | playing
+const PREVIEW_TEXT = '你好，我是你的聊天助手，今天过得怎么样？'
+// iOS Safari 自动播放策略：点击手势内先播静音源解锁，拿到 mp3 后换 src 再播。
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
+let previewAudio = null
+let previewURL = ''
+let previewToken = 0
+
+const voiceSpeakers = computed(() => voiceConfig.value?.speakers || [])
+const voiceReady = computed(() => voiceConfig.value?.ready === true && voiceSpeakers.value.length > 0)
+
+async function loadVoiceConfig() {
+  try {
+    const cfg = await api.get('/api/voice/config')
+    voiceConfig.value = cfg
+    if (!cfg?.ready) return
+    const list = cfg.speakers || []
+    if (!list.length) return
+    const stored = readVoiceSpeaker()
+    if (stored && !list.some(s => s.id === stored)) {
+      // 本地音色已下架：回落默认并清掉，本次进页给一行说明。
+      const fallbackName = list.find(s => s.id === cfg.speaker)?.name || cfg.speaker
+      voiceNotice.value = `已选音色不可用，已切回 ${fallbackName}`
+      setVoiceSpeaker('')
+      voiceSpeaker.value = cfg.speaker || list[0]?.id || ''
+    } else {
+      voiceSpeaker.value = stored || cfg.speaker || list[0]?.id || ''
+    }
+  } catch (e) {
+    // 未启用或网络失败：整组不渲染，不影响其他设置。
+    console.error('Failed to load voice config', e)
+    voiceConfig.value = null
+  }
+}
+
+function chooseSpeaker(e) {
+  const id = e.target.value
+  voiceSpeaker.value = id
+  setVoiceSpeaker(id)
+  voiceNotice.value = ''
+  stopPreview()
+}
+
+function stopPreview() {
+  previewToken += 1
+  if (previewAudio) {
+    previewAudio.pause()
+    previewAudio.src = ''
+    previewAudio = null
+  }
+  if (previewURL) {
+    URL.revokeObjectURL(previewURL)
+    previewURL = ''
+  }
+  previewState.value = 'idle'
+}
+
+async function togglePreview() {
+  if (previewState.value === 'playing') {
+    stopPreview()
+    return
+  }
+  if (previewState.value === 'loading') return
+  stopPreview()
+  const token = previewToken
+  previewState.value = 'loading'
+  // 先在手势内解锁音频元素，网络回来后才允许出声。
+  const audio = new Audio(SILENT_WAV)
+  previewAudio = audio
+  audio.play().catch(() => {})
+  try {
+    const speaker = voiceSpeaker.value
+    const blob = await api.postBlob('/api/voice/tts',
+      speaker ? { text: PREVIEW_TEXT, speaker } : { text: PREVIEW_TEXT })
+    if (token !== previewToken) return
+    previewURL = URL.createObjectURL(blob)
+    audio.onended = () => { if (previewAudio === audio) stopPreview() }
+    audio.onerror = () => {
+      if (previewAudio !== audio) return
+      message.error('试听失败')
+      stopPreview()
+    }
+    audio.src = previewURL
+    audio.load()
+    await audio.play()
+    if (token !== previewToken) return
+    previewState.value = 'playing'
+  } catch (e) {
+    if (token !== previewToken) return
+    console.error('Voice preview failed', e)
+    message.error(e?.message || '试听失败')
+    stopPreview()
+  }
+}
+
+onBeforeUnmount(stopPreview)
 
 const archived = ref([])
 const archivedTotal = ref(0)
@@ -124,7 +226,10 @@ async function logout() {
   router.push('/login')
 }
 
-onMounted(loadArchived)
+onMounted(() => {
+  loadArchived()
+  loadVoiceConfig()
+})
 </script>
 
 <template>
@@ -158,6 +263,32 @@ onMounted(loadArchived)
           </div>
         </div>
         <div class="note">字号只作用于聊天气泡；文档阅读器的字号在阅读页单独调。</div>
+      </div>
+
+      <div v-if="voiceReady" class="group">
+        <div class="group-title">语音</div>
+        <div class="card">
+          <div class="row">
+            <span class="label">音色</span>
+            <select class="voice-select" :value="voiceSpeaker" @change="chooseSpeaker">
+              <option v-for="s in voiceSpeakers" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </select>
+          </div>
+          <button class="row row-btn" type="button" :disabled="previewState === 'loading'" @click="togglePreview">
+            <span class="label">试听当前音色</span>
+            <span v-if="previewState === 'loading'" class="voice-preview">
+              <span class="voice-spinner"></span>合成中…
+            </span>
+            <span v-else-if="previewState === 'playing'" class="voice-preview">
+              <span class="voice-eq"><i></i><i></i><i></i><i></i></span>停止
+            </span>
+            <span v-else class="voice-preview">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>播放
+            </span>
+          </button>
+        </div>
+        <div v-if="voiceNotice" class="note warn">{{ voiceNotice }}</div>
+        <div class="note">只影响语音回复的朗读；切换后下一句生效。</div>
       </div>
 
       <div class="group">
@@ -249,6 +380,34 @@ onMounted(loadArchived)
 [data-theme="dark"] .seg button.on { color: #10221B; }
 .seg button:disabled { opacity: 0.45; cursor: default; }
 .note { font-size: 10.5px; color: var(--color-text-muted); padding: 8px 4px 0; line-height: 1.5; }
+.note.warn { color: var(--color-warning); }
+.voice-select {
+  max-width: 58%;
+  min-width: 118px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-input);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+}
+.voice-preview { display: inline-flex; align-items: center; gap: 6px; color: var(--color-primary); font-size: 12.5px; font-weight: 500; }
+.voice-preview svg { width: 15px; height: 15px; }
+.voice-spinner {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1.8px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  border-top-color: var(--color-primary);
+  animation: voice-spin .7s linear infinite;
+}
+@keyframes voice-spin { to { transform: rotate(360deg); } }
+.voice-eq { display: flex; gap: 2px; align-items: flex-end; height: 14px; }
+.voice-eq i { width: 2.5px; border-radius: 2px; background: var(--color-primary); animation: voice-eq .9s ease-in-out infinite; }
+.voice-eq i:nth-child(1) { height: 6px; animation-delay: 0s; }
+.voice-eq i:nth-child(2) { height: 12px; animation-delay: .12s; }
+.voice-eq i:nth-child(3) { height: 8px; animation-delay: .24s; }
+.voice-eq i:nth-child(4) { height: 13px; animation-delay: .36s; }
+@keyframes voice-eq { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
 .archived-empty { font-size: 11.5px; color: var(--color-text-muted); padding: 12px 13px; }
 .archived-row { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-top: 0.5px solid var(--color-border); font-size: 12.5px; }
 .archived-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

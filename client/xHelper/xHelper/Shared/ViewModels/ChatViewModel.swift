@@ -174,6 +174,16 @@ class ChatViewModel: ObservableObject {
     /// 精炼回答开关，会话级：默认关。开=服务端往 system prompt 注入「≤500 字」输出约束，
     /// 用于让回答短到能整段存进文档批注。不走 max_tokens（那是静默硬截断）。
     @Published var briefAnswer = false
+    /// 语音输入识别完成后置位：下一次发送携带 speakReply=true（朗读回复）
+    var pendingVoiceReply = false
+    /// 本轮是否为语音来源（发送时快照，done 后消费）
+    private var speakReplyForCurrentTurn = false
+    /// 本轮正常完成时回调回复正文（语音模式用于 TTS）
+    var onAssistantReplyDone: ((String) -> Void)?
+    /// 语音轮：正文增量（累积全文），供句级 TTS 在流式期间就开始合成
+    var onAssistantReplyDelta: ((String) -> Void)?
+    /// 语音轮异常收尾（停止/出错/空回复）：已开始的朗读流水线要停掉
+    var onAssistantReplyAborted: (() -> Void)?
 
     // MARK: 无痕（ephemeral）
 
@@ -821,6 +831,7 @@ class ChatViewModel: ObservableObject {
         sseClient.disconnect()
         isStreaming = false
         conversationId = id
+        pendingConversationID = "" // 切会话后不能再用上一轮 meta 给的 id
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
         // 2026-10：模型切换按钮已从输入栏下架 → 恒为快速模型，不再从会话键恢复
@@ -956,6 +967,9 @@ class ChatViewModel: ObservableObject {
         statusMessage = nil
         errorMessage = nil
         conversationId = ""
+        // 必须一起清：sendMessage 会在 conversationId 为空时回退到 pendingConversationID，
+        // 留着它会让「新对话」的第一条消息发进上一个会话
+        pendingConversationID = ""
         conversationTitle = nil
         ephemeralIntent = false
         conversationEphemeral = false
@@ -986,13 +1000,18 @@ class ChatViewModel: ObservableObject {
         loadMoreError = nil
         draftText = ""
         draftAttachments = []
+        pendingVoiceReply = false // 否则新会话里手打的第一条会被当成语音轮（短答 + 自动朗读）
         streamingContent = ""
     }
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = []) {
-        let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "", imageIds: attachmentIds, localImages: localImages)
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = [], speakReply: Bool = false) {
+        speakReplyForCurrentTurn = speakReply
+        // 新会话第一轮还没 done 时插话：meta 帧已经给了 id，这一轮必须落回同一会话，
+        // 否则会另起一个会话、第一轮还在后台继续跑（连续对话最常见的路径）。
+        let turnConversationID = sendConversationID
+        let userMsg = Message.localUser(text: text, conversationId: turnConversationID ?? "", imageIds: attachmentIds, localImages: localImages)
         messages.append(userMsg)
 
         isStreaming = true
@@ -1020,11 +1039,11 @@ class ChatViewModel: ObservableObject {
         roundDocRefMessageID = [:]
         verifyStatus = nil
 
-        messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
+        messages.append(.streamingAssistant(conversationId: turnConversationID ?? ""))
 
         Task { @MainActor in
             let clientTools = await Self.collectClientTools()
-            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds)
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds, conversationOverride: turnConversationID)
         }
         #if os(iOS)
         beginBackgroundTask()
@@ -1090,7 +1109,7 @@ class ChatViewModel: ObservableObject {
         """
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = []) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], conversationOverride: String? = nil) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -1132,18 +1151,23 @@ class ChatViewModel: ObservableObject {
                 self?.detachStreamingMessage()
             }
         }
-        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
-        let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
+        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）。
+        // 已有 pending id 说明会话正在创建/已创建，不能再下发 init_mode。
+        let targetConversationID = conversationOverride ?? sendConversationID
+        // 空串也是「空 tab」：会话要新建，init_mode 必须带上
+        let initMode: String? = (targetConversationID ?? "").isEmpty ? mode : nil
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: targetConversationID, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
-    func stopStreaming() {
+    /// `notifyServer=false` 用于「同一会话立刻发下一句」：服务端 Register 本来就会取消旧 loop，
+    /// 再发 stop 有可能赶在新一轮注册之后到达，把新轮停掉。
+    func stopStreaming(notifyServer: Bool = true) {
         // 先立即断开 SSE + UI 收尾（思考框消失），再后台通知服务端显式终止 ReAct。
         // 顺序保证：UI 即时响应，stopChat 失败/慢速不影响停止体验。
         handoffActive = false
         capturedHandoffDoc = nil
         let api = apiClient
-        let cid = conversationId
+        let cid = effectiveConversationID
         sseClient.disconnect()
         #if os(macOS)
         // 杀掉本地 shell 进程组（stopStreaming 原本只断 SSE + 通知服务端，杀不掉本地命令）
@@ -1152,13 +1176,12 @@ class ChatViewModel: ObservableObject {
         finishStreaming()
         detachStreamingMessage()
         Task {
-            if let cid, !cid.isEmpty {
-                do {
-                    let stopped = try await api.stopChat(conversationId: cid)
-                    LogBuffer.shared.info("stopChat: stopped=\(stopped)")
-                } catch {
-                    LogBuffer.shared.error("stopChat failed: \(error)")
-                }
+            guard notifyServer, let cid, !cid.isEmpty else { return }
+            do {
+                let stopped = try await api.stopChat(conversationId: cid)
+                LogBuffer.shared.info("stopChat: stopped=\(stopped)")
+            } catch {
+                LogBuffer.shared.error("stopChat failed: \(error)")
             }
         }
     }
@@ -1173,6 +1196,14 @@ class ChatViewModel: ObservableObject {
     private var effectiveConversationID: String? {
         if let cid = conversationId, !cid.isEmpty { return cid }
         return pendingConversationID.isEmpty ? nil : pendingConversationID
+    }
+
+    /// 发新轮用的会话 id：空白 tab 必须发空串，后端据此创建**非默认**会话；
+    /// 发 nil 会被当成老客户端、落进「默认对话」（见 server/controller/chat.go 的
+    /// `req.ConversationID == nil` 分支）。续传仍用 effectiveConversationID（要真实 id）。
+    private var sendConversationID: String? {
+        if let cid = conversationId { return cid }
+        return pendingConversationID.isEmpty ? "" : pendingConversationID
     }
 
     /// 回前台续传：带 turn + from 重连，补发断点后的帧并继续跟流。
@@ -1274,6 +1305,9 @@ class ChatViewModel: ObservableObject {
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
                 throttleFlush()
+                if speakReplyForCurrentTurn {
+                    onAssistantReplyDelta?(streamingContent)
+                }
                 let now = Date()
                 if now.timeIntervalSince(lastHapticTime) >= 0.15 {
                     #if os(iOS)
@@ -1383,7 +1417,18 @@ class ChatViewModel: ObservableObject {
             // 久等后回复完成提示音：判定必须在 finishStreaming 清空 streamStartedAt 之前
             let replyElapsed = streamStartedAt.map { Date().timeIntervalSince($0) } ?? 0
             let hasReplyContent = !streamingContent.isEmpty
+            let replyText = streamingContent
+            let voiceTurn = speakReplyForCurrentTurn
+            let shouldSpeak = voiceTurn && doneError == nil && hasReplyContent
+            LogBuffer.shared.diag("[voice] done: speakReply=\(voiceTurn) " +
+                                  "hasContent=\(hasReplyContent) error=\(doneError ?? "-") shouldSpeak=\(shouldSpeak)")
+            speakReplyForCurrentTurn = false
             finishStreaming()
+            if shouldSpeak {
+                onAssistantReplyDone?(replyText)
+            } else if voiceTurn {
+                onAssistantReplyAborted?()
+            }
             // 仅正常完成才响：done 带 error 说明这轮有异常，不报喜；无内容（空回复/被截断）也不响
             if hasReplyContent, doneError == nil, replyElapsed >= Self.longReplyAlertThreshold() {
                 playLongReplyAlert()
@@ -1490,6 +1535,11 @@ class ChatViewModel: ObservableObject {
         // done 路径由 .done handler 清（此处清了 timer 永远没机会跑）
         pendingToolCalls = []
         verifyStatus = nil
+        // 停止/出错路径：语音轮已经开始的朗读流水线不能一直等下去
+        if speakReplyForCurrentTurn {
+            speakReplyForCurrentTurn = false
+            onAssistantReplyAborted?()
+        }
         #if os(iOS)
         endBackgroundTask()
         #endif

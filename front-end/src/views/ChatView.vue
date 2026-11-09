@@ -60,6 +60,7 @@ let coldStartPending = true
  * ── 七、输入框收起 ──────────────────────────────────────────────────────────
  *   toggleInput()          → 手机上 ⌄ 按钮收起/展开整张输入卡（收起要同时 blur 退键盘）
  *   watch(inputVisible)    → nextTick + 触发 textarea input 事件（自适应高度）
+ *   语音连续对话：麦克风按钮开关会话，判停一句自动提交一轮；浮层「打断」只停朗读
  *
  * ── 八、页面卸载 ─────────────────────────────────────────────────────────────
  *   onBeforeUnmount (L446): cancel() 中断正在进行的 SSE 流
@@ -71,6 +72,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
+import { useVoiceChat } from '@/composables/useVoiceChat'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
 import { api } from '@/api/client'
@@ -81,6 +83,7 @@ import {
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
+import VoiceWaveLine from '@/components/VoiceWaveLine.vue'
 import ToolCallToast from '@/components/ToolCallToast.vue'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import AttachmentTray from '@/components/chat/AttachmentTray.vue'
@@ -95,11 +98,114 @@ const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream } = useChatSSE()
 const nMessage = useMessage()
+// 语音：连续对话。点麦克风开一条连续会话，判停一句就提交一轮、回复自动朗读；
+// 浮层「打断」只停朗读（会话保留），「结束对话」才收会话。
+const {
+  available: voiceAvailable,
+  active: voiceActive,
+  calling: voiceCalling,
+  level: voiceLevel,
+  speaking: voiceSpeaking,
+  preparing: voicePreparing,
+  refresh: refreshVoice,
+  start: startVoice,
+  stop: stopVoice,
+  cancel: cancelVoice,
+  speechSentences: voiceSpeechSentences,
+  speechIndex: voiceSpeechIndex,
+  holding: voiceHolding,
+  hasHeld: voiceHasHeld,
+  startHold: startVoiceHold,
+  endHold: endVoiceHold,
+  appendReplyDelta: appendVoiceReply,
+  endReplyStream: endVoiceReply,
+  stopSpeaking
+} = useVoiceChat({
+  onSentence: submitVoiceSentence,
+  onError: (message) => nMessage.error(message),
+  onNotice: (message) => nMessage.info(message),
+  isBusy: () => chat.isStreaming
+})
+
+// 音波条状态：说 > 想 > 听。「想」包含 TTS 合成期（preparing），
+// 否则回复流刚结束、音频还没到时会先闪回「听」。
+const voicePhase = computed(() => {
+  if (voiceSpeaking.value) return 'speaking'
+  if (chat.isStreaming || voicePreparing.value) return 'thinking'
+  return 'listening'
+})
+
+// 连续会话里「打断」只停朗读/停生成，麦克风不断（PWA 不做自动打断，靠点音波条）
+function voiceInterrupt() {
+  // 打断的主场景是本轮已流完、TTS 正在念：这时发 stop 会误杀下一轮，只停朗读就够
+  stopSpeaking()
+  if (chat.isStreaming) handleStop()
+}
+
+// 结束语音会话 = 停采集 + 停朗读 + 停生成：只停采集的话，正在跑的回复会在会话结束后
+// 才朗读出来（onAssistantReply 还挂在那条流上）。
+// 退出语音时 flush 出来的新一轮按普通消息提交：不朗读、也不随后被停掉
+let voiceExitFlush = false
+
+// 退出语音 = 停采集 + 停朗读 + 停生成。先停旧轮，再 flush 暂存（否则会把刚提交的新轮一起停掉）；
+// flush 期间用 voiceExitFlush 标记，让提交走非语音路径（不挂 TTS 回调）。
+function endVoiceSession() {
+  if (chat.isStreaming) {
+    // 有暂存要 flush 时不发 /api/chat/stop：迟到的 stop 会误杀刚提交的新轮，
+    // 交给服务端 Register 顶掉旧 loop（与 submitVoiceSentence 同一策略）
+    if (voiceHasHeld()) stopLocalStream()
+    else handleStop()
+  }
+  voiceExitFlush = true
+  stopVoice()
+  voiceExitFlush = false
+}
+
+// 按住说：空格按住/松开，按钮点击切换。两者共用同一对 startHold/endHold。
+function toggleVoiceHold() {
+  if (voiceHolding.value) endVoiceHold()
+  else startVoiceHold()
+}
+
+function isTextEntryTarget(target) {
+  if (!(target instanceof HTMLElement)) return false
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+}
+
+function onVoiceKeyDown(e) {
+  if (!voiceActive.value || e.code !== 'Space' || e.isComposing) return
+  if (e.repeat) {
+    // 按住期间的空格自动重复也要拦下，别漏给页面滚动
+    if (voiceHolding.value) e.preventDefault()
+    return
+  }
+  if (isTextEntryTarget(e.target)) return
+  e.preventDefault()
+  if (!voiceHolding.value) startVoiceHold()
+}
+
+function onVoiceKeyUp(e) {
+  if (!voiceActive.value || e.code !== 'Space') return
+  // 先收本监听器开出的 hold，再看焦点：按住中途焦点移进输入框时，松开也必须收尾
+  if (voiceHolding.value) {
+    e.preventDefault()
+    endVoiceHold()
+    return
+  }
+  if (isTextEntryTarget(e.target)) return
+  e.preventDefault()
+  endVoiceHold()
+}
+
+function onVoiceWindowBlur() {
+  if (voiceHolding.value) endVoiceHold()
+}
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 
 onMounted(() => {
   fetchAgents()
+  refreshVoice()
   document.addEventListener('visibilitychange', onVisibilityChange)
   // 输入区高度变化（收起/展开/挂图）时重算「↓」的位置
   if (mobileInputRef.value) {
@@ -107,6 +213,9 @@ onMounted(() => {
     composerObserver.observe(mobileInputRef.value)
   }
   window.addEventListener('resize', onLayoutResize)
+  window.addEventListener('keydown', onVoiceKeyDown)
+  window.addEventListener('keyup', onVoiceKeyUp)
+  window.addEventListener('blur', onVoiceWindowBlur)
   nextTick(onLayoutResize)
   // 复用已存在会话（从其它 tab 返回，route id 与 store 中 conversationId 相同，
   // 导致 watcher 三分支全跳过）时，主动同步一次：拉取最新消息 + 滚到底，
@@ -164,6 +273,19 @@ function toggleRound(roundKey) {
 
 // Compute roundKey for each message: each user msg starts a round,
 // subsequent non-user msgs inherit that roundKey until next user msg.
+// 语音朗读进度：只给「正在念的那条」——流式气泡或最后一条 assistant
+const voiceSpeech = computed(() => {
+  if (!voiceSpeaking.value && !voicePreparing.value) return null
+  const sentences = voiceSpeechSentences.value
+  if (!sentences.length) return null
+  return { sentences, index: voiceSpeechIndex.value }
+})
+
+const lastAssistantId = computed(() => {
+  const last = chat.messages[chat.messages.length - 1]
+  return last && last.role === 'assistant' ? last.id : ''
+})
+
 const messagesWithRoundKeys = computed(() => {
   let currentRoundKey = ''
   return chat.messages.map(msg => {
@@ -696,7 +818,12 @@ onBeforeUnmount(() => {
   clearTimeout(hideCooldownTimer)
   composerObserver?.disconnect()
   window.removeEventListener('resize', onLayoutResize)
+  window.removeEventListener('keydown', onVoiceKeyDown)
+  window.removeEventListener('keyup', onVoiceKeyUp)
+  window.removeEventListener('blur', onVoiceWindowBlur)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  cancelVoice()
+  stopSpeaking()
   if (chat.isStreaming) cancel()
 })
 
@@ -750,27 +877,81 @@ async function handleSend() {
     })
   })
 
-  const opts = {
+  // 打字发送不朗读（语音轮才带 voice_mode + onAssistantReply）
+  await sendMessage(content, {
     conversationId: chat.conversationId,
     agentId: chat.agentId,
     attachments: imageIds,
     // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
     initMode: chat.conversationId ? undefined : chat.mode,
     ephemeral: chat.conversationId ? false : chat.ephemeral
-  }
-  await sendMessage(content, opts)
+  })
 }
 
-function handleStop() {
-  const convId = chat.conversationId
-  // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
-  // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
-  // 服务端会照常跑完；等 done 回传 id 后才有服务端停止能力。
+// 麦克风按钮 = 连续对话开关。会话中再点是「结束」（发 end，让最后一句识别完），
+// 不是 cancel：cancel 会把已经识别出来的文本整段丢掉（见 docs/bugs/049）。
+async function toggleVoice() {
+  if (voiceActive.value) {
+    endVoiceSession()
+    return
+  }
+  if (voiceCalling.value) return
+  if (voiceSpeaking.value) stopSpeaking()
+  try {
+    await startVoice()
+  } catch (err) {
+    nMessage.error(`无法开始语音对话：${err?.message || '麦克风不可用'}`)
+  }
+}
+
+/// 停掉本地 SSE 流，保留已经生成的部分。
+/// 不发 /api/chat/stop：下一轮 sendMessage 会顶掉服务端的旧 loop，迟到的 stop 会误杀新轮。
+function stopLocalStream() {
   const partial = chat.streamingMessage
   cancel()
   if (partial && (partial.content || partial.reasoning)) {
     chat.addMessage({ ...partial, id: `local-${Date.now()}`, toolCalls: [] })
   }
+}
+
+// 连续对话：一条判停分句 = 一轮。上一轮还在跑就先停本地流，避免两个 loop 交叉写库。
+async function submitVoiceSentence(text) {
+  const content = String(text || '').trim()
+  if (!content) return
+  // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
+  stopSpeaking()
+  if (chat.isStreaming) stopLocalStream()
+  chat.addMessage({
+    id: `voice-${Date.now()}`,
+    role: 'user',
+    content,
+    imageIds: [],
+    created_at: new Date().toISOString()
+  })
+  await sendMessage(content, {
+    conversationId: chat.conversationId,
+    agentId: chat.agentId,
+    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+    initMode: chat.conversationId ? undefined : chat.mode,
+    ephemeral: chat.conversationId ? false : chat.ephemeral,
+    // 语音来源：服务端注入短回答约束；正文边到边切句合成，done 后收尾。
+    // 退出语音时 flush 的话按普通消息提交（voiceExitFlush），不朗读。
+    voiceMode: !voiceExitFlush,
+    ...(voiceExitFlush ? {} : {
+      onAssistantReplyDelta: (text) => appendVoiceReply(text),
+      onAssistantReply: (reply, ok = true) => (ok ? endVoiceReply(reply) : stopSpeaking())
+    })
+  })
+}
+
+function handleStop() {
+  const convId = chat.conversationId
+  stopSpeaking()
+  // 语音会话不在这里收：停生成后麦克风还要继续听（用户可能接着说）
+  // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
+  // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
+  // 服务端会照常跑完；等 done 回传 id 后才有服务端停止能力。
+  stopLocalStream()
   if (!convId) return
   api.post('/api/chat/stop', { conversation_id: convId }).catch(err => {
     console.error('Stop chat failed', err)
@@ -1032,12 +1213,14 @@ function handleContainerClick(e) {
           :message="msg"
           :is-history="true"
           :round-key="msg.roundKey"
+          :speech="!chat.streamingMessage && voiceSpeech && msg.id === lastAssistantId ? voiceSpeech : null"
         />
         <div style="position: relative;">
           <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
             <MessageBubble
               :message="chat.streamingMessage"
               :is-history="false"
+              :speech="voiceSpeech"
             />
           </div>
           <ToolCallToast />
@@ -1128,7 +1311,14 @@ function handleContainerClick(e) {
           @retry="retryDraft"
           @clear="clearDrafts"
         />
+        <VoiceWaveLine
+          v-if="voiceActive"
+          :phase="voicePhase"
+          :level="voiceLevel"
+          @interrupt="voiceInterrupt"
+        />
         <NInput
+          v-else
           v-model:value="inputValue"
           type="textarea"
           placeholder="发消息..."
@@ -1139,52 +1329,94 @@ function handleContainerClick(e) {
           :bordered="false"
           style="background: transparent; flex: 1;"
         />
-        <div class="composer-row">
-          <div class="composer-left">
+        <div class="composer-row" :class="{ 'voice-row': voiceActive }">
+          <template v-if="!voiceActive">
+            <div class="composer-left">
+              <NTooltip v-if="voiceAvailable" :disabled="isMobile" placement="top">
+                <template #trigger>
+                  <button class="icon-pill" :class="{ on: voiceActive }" type="button"
+                    :aria-label="voiceActive ? '结束语音对话' : '语音对话'"
+                    :aria-pressed="voiceActive"
+                    :disabled="voiceCalling"
+                    @click="toggleVoice">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+                  </button>
+                </template>
+                {{ voiceActive ? '结束语音对话' : '语音对话（连续对话）' }}
+              </NTooltip>
+              <NTooltip :disabled="isMobile" placement="top">
+                <template #trigger>
+                  <button class="icon-pill" type="button" aria-label="添加图片" :disabled="chat.isStreaming" @click="pickImages">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+                  </button>
+                </template>
+                添加图片
+              </NTooltip>
+              <NTooltip :disabled="isMobile" placement="top">
+                <template #trigger>
+                  <button class="icon-pill" :class="{ on: chat.mode === 'plan' }" type="button" :aria-pressed="chat.mode === 'plan'" :aria-label="chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）'" @click="toggleMode">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg>
+                  </button>
+                </template>
+                {{ chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）' }}
+              </NTooltip>
+              <NTooltip :disabled="isMobile" placement="top">
+                <template #trigger>
+                  <button class="icon-pill" :class="{ on: chat.ephemeral }" type="button" :aria-pressed="chat.ephemeral" :aria-label="chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）'" @click="toggleEphemeral">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
+                  </button>
+                </template>
+                {{ chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）' }}
+              </NTooltip>
+              <button v-if="isMobile" class="icon-pill" type="button" aria-label="收起输入框" @click="toggleInput">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+            </div>
+            <div class="composer-actions">
+              <NButton
+                v-if="!chat.isStreaming"
+                type="primary"
+                size="small"
+                :disabled="!canSend"
+                @click="handleSend"
+                style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
+              >↑</NButton>
+              <NButton
+                v-else
+                type="error"
+                size="small"
+                @click="handleStop"
+                style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
+              >■</NButton>
+            </div>
+          </template>
+          <div v-else class="voice-group">
             <NTooltip :disabled="isMobile" placement="top">
               <template #trigger>
-                <button class="icon-pill" type="button" aria-label="添加图片" :disabled="chat.isStreaming" @click="pickImages">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+                <button class="icon-pill hold-btn" :class="{ holding: voiceHolding }" type="button"
+                  :aria-label="voiceHolding ? '松开后整段提交' : '按住说'"
+                  :aria-pressed="voiceHolding"
+                  @click="toggleVoiceHold">
+                  <span class="hold-icon" aria-hidden="true"></span>
                 </button>
               </template>
-              添加图片
+              {{ voiceHolding ? '松开后整段提交' : '按住期间停顿不触发提交，松开后整段提交' }}
             </NTooltip>
-            <NTooltip :disabled="isMobile" placement="top">
+            <NTooltip v-if="!chat.isStreaming" :disabled="isMobile" placement="top">
               <template #trigger>
-                <button class="icon-pill" :class="{ on: chat.mode === 'plan' }" type="button" :aria-pressed="chat.mode === 'plan'" :aria-label="chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）'" @click="toggleMode">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg>
+                <button class="icon-pill voice-continuous" type="button" aria-label="退出语音对话" @click="endVoiceSession">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                    <circle cx="12" cy="12" r="9"/>
+                    <path d="M7 12h1.5M10 9v6M13.5 7.5v9M17 10v4"/>
+                  </svg>
                 </button>
               </template>
-              {{ chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）' }}
+              退出语音对话
             </NTooltip>
-            <NTooltip :disabled="isMobile" placement="top">
-              <template #trigger>
-                <button class="icon-pill" :class="{ on: chat.ephemeral }" type="button" :aria-pressed="chat.ephemeral" :aria-label="chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）'" @click="toggleEphemeral">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
-                </button>
-              </template>
-              {{ chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）' }}
-            </NTooltip>
-            <button v-if="isMobile" class="icon-pill" type="button" aria-label="收起输入框" @click="toggleInput">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            <button v-else class="icon-pill voice-stop" type="button"
+              aria-label="停止生成" @click="handleStop">
+              <span class="stop-core"></span>
             </button>
-          </div>
-          <div class="composer-actions">
-            <NButton
-              v-if="!chat.isStreaming"
-              type="primary"
-              size="small"
-              :disabled="!canSend"
-              @click="handleSend"
-              style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
-            >↑</NButton>
-            <NButton
-              v-else
-              type="error"
-              size="small"
-              @click="handleStop"
-              style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
-            >■</NButton>
           </div>
         </div>
       </div>
@@ -1285,6 +1517,64 @@ function handleContainerClick(e) {
   cursor: pointer;
 }
 .composer-reopen svg { width: 14px; height: 14px; }
+.composer-row.voice-row { justify-content: center; }
+.voice-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 语音模式固定两个 36pt 按钮（icon-pill 的 32/34 与灰字色不能覆盖） */
+.icon-pill.hold-btn,
+.icon-pill.voice-continuous,
+.icon-pill.voice-stop { width: 36px; height: 36px; }
+.icon-pill.hold-btn { position: relative; color: var(--color-primary); }
+.icon-pill.hold-btn:hover:not(:disabled) { background: var(--color-primary-soft); }
+/* SF Symbol hand.tap 的位图蒙版，跟随 currentColor（与 mockup 同源） */
+.hold-icon {
+  width: 21px;
+  height: 21px;
+  display: block;
+  background: currentColor;
+  -webkit-mask: url("data:image/png;base64,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") center / contain no-repeat;
+  mask: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFQAAABUCAYAAAAcaxDBAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAVKADAAQAAAABAAAAVAAAAAC3aM1AAAALTUlEQVR4Ad2aeexdRRXH2drKpmyVpdIiEkFbpYIKQVYLQlGigEDZC7apkYqEJSSmSiNLhQKBRIIYJC2LohRcwiJFW6Hwh5LKEpE2pf21/FKLYSlQpJTS6vdTO+F6OGfe+73ffe/e9zvJ982dM+ecOTN35sxy3yabNKYTJfKu8J8M5qoMuS2EHFF+gjBHWC9ENqkPuQFHX1eLcp35kMpHtdjqkdJ7UMh16nEt2q6l2kfl1StBg9eJ/0NhM6E/hP4PBOx5Hfuy+DsJA4LuUiu8Rr4q/ldKbiH2Xgvqu73kuioxNzZoHCOp7M5MDTxaD9FIPSoJdWO6uZxeInijk2neTpoq4169i8Tvb3hpp99Z24xAr1EsQH1p1I6SP0Rg9d9daIawP1vw6j+iGQN1lJkZNKiZ1Xwr6V4urHBsLBbvGmGIkKPRKvQ69NacUl3L6JA3nQbNbcLhkySzzNG1nfNXyQxvYG+eY2eleB9qoFe74nFOQ+gQpm2OIj3bmSnPdmhExuCpKkuyxbTrNvtXOw1hm5Q7Ae2l8jccvWJHeM+/kk5Eg1Xg2SSc1JrsIuNNxYVqwXuZVvxMZR/OlEdFJ6vg0KCQ0xkru6VmFzer17G87VDP4SUZb7ZU2cFOOaPrXIFTzm5CtKCwSEXk1eu98Ei/FnxvUflRxrNDVOZNZ0Zfkdjb/kXwZKPdw48deW/UFuup/NmO0J0dj5Y7vMRii2OJ8HCfYa5T/krDS9kz0oNJXzR5srs6vFqxbIf+y/FuqMNLLK+zWcC2TwKFlIMBly2WThPD+oEMZ3tL71hG3fK2Ib2Og7m49ZwjD2uMw18r3t0On7h9uMN/VLz1hn+/ydc++wt5aOMcIysiYuNqweo8ECh8wZFF97ZA/iTxe4S3BF7GdkJXkbcQsAkflGnFIyqzHcpo9OIxZp535NkVsGOIaNOooG58O+WfcRxk63OMw0+sO9NDISWOctrx6A6HyT6WrwMR8cK6kraW16sEO+J+nWnNNipjSlqd+YHOCPFZ9a1818XHoH0fYDOCbGOJkx//gOT7DE8HGyPfF/m/p7nK2ToIE3x2GXDEzbltLPk/CVEsi+5QickenSOmV8f5nnC381i5lwUNnhQ0Dh32pLaTesWzcRoTxMx/C1aeq71ExOEDhLOFq4Qbha8JWwldRywQtrHkXxfoDI+mi+npjPGExfO2aOjvI3BduEDw7BF+rhd4iUXaV5mpwj3CcwIv5wrhS0ItaJa88Bo0OfDus4H8jEB+bCDPdaFXr+X9VnKMVg4GMwRvoUs616rcmylid444N3NLnpxK6cSMC0878nwBYPdgiSntfSpJ9TSTsqd9W2hG9l7JHS9MFX4j9Ai073HhZuE8oe2LIieVNUJymGnIvjSii1SQZIvp6YECU7coV/Xza/LnO4INJ4H7rbH3l9o04Xyh0RtkVHPbZDvmD+J5NFpMK+vlWcA413tl7eA9qbo+I9SC6DzbSDqZzvboWTGtPHli6feEoQJEjJ4neLKJR8c/JNwqLG4gm3Si9CXpjxAqJ6a35yThwKNLxPTkP+8I81LYaXjyLFK7FHS4f7gpkPX0PR4ve9uCzUoeWYBYiKyDLFgeDRPTCxPRbmKK5K1twgGrvSV2AT2ClWchY2Hilos0F044Erc1psp+Q5ohCdsI8lFcmu3Is4/0aLiY3hbpYk9YPMKG9YUXyLeuRPvpYY5g5VI+erlJv+3pmMC5a4KazwjkPxXIe42PZsDOsrHWsW9fACHCs0unvigMFiojNtG9QnrDKV0unjd9CBOrHHl2Fx5FdwGjPGHxWKiSDyn1XsBOkutxZNGZIFRKXIwk54vpUYFXMx15RoZ3wmGhYEUv2uU5egHRQumFoM/JjhdSXhCfw0hlNFI12waTvz3w6MhAnvDh0Z1iWvtc6mzqCEczgPjq0T1iWtvkCU2V0nzVbh1jam/jeBWFCUauR0eLaW2TP9QTFo8XaeUvDGQ5zFhZ8vMC+Y6xLwgcOzPwwAsT0QsgFhOTbcNvCGzvKf4bBfl/6pmYGZG381gvYexURtEKi7MeRWHiLE9YvOmC7dBZgSzsTwhTBEZmrjNVvOGv79Y2+csorJIeUOXWsffEY0PvkRcmoruAETLwulC0H41+r64cLwpBi6TkxemcrVLLxslascHpmSOnR16YWOwJbuQdrPRB4c/COUKZdLWMJX+L6UFlVlK0xdmZRYAVOvquDr8Yu5Jjz4rvETdadtSx6lZBbKuSv8X05jKdYTGYKNgFgfMxI2W0YOnnYhQdSs+eLLrHCb0CoeFhIQoPKmo7PaUakr8p5d50SBk17yUjjKxk2Evp2PFCkQ5XxpO9rihknrdQfpDhVZG9SJV6vp/YX2d2kIGFgXGvwmJnEcSXOrpsXRjxdSYuUZgpto1399dp7zxsK7H5ywqVXuk4hfwxBZm6Pv7R8f1l8Vpe7YlhbGpth5FfIrBo3C94MueJD+0jePp3bSit98/Fge+c+1uiSdLyOuNe8bcuWGQxedXIrlP+1I0y3HFaO1xybLuxvK4Jn1+s3+Tp6JboOml5Br1j2H6SXWnk31Weqf1dw082x4tfZ2JqE++TvyklDLZE35ZWMlJMo+PbgZJ/0+i8pfx0w0u2iFF1p5lyMPmbUto0uBXHj3CMYXRCxhgbfu/OMjlTTAkLu2ds1aHodDlR9Dk9084+00ekYUccBl8RuACJiBPUaiFVnksvjYzUhM8Jzlt0p7bq3w1S9DrkcfFzp4avqnxNoFu093fJ1J3sgov/t7XqNOd2RmSxE9JzI6PHS29toJtskLKg1ZkWyLmivzznrgsbtuUUx2CqgCNajtg6eSeOpE96fc5ADcrmyYeivzw/0l+/bnKMYpjOOraB8fEqZwGyTqX8Ew30qy6+z/E9+v9A075yaeEdxegUruk+3cASWzAvuKPPXUGd6RY5l15+SkvxeQcZXuQYp5IXhB2FHE1WoTf9p+WUalDm3UesKMsv/tVhL4LTW5ujskENKmJvm4I8JylCSXRJ3cBUx4p/qppSG1PKXrs0GitL3kijMipvhtjH5rZdzdjolIwX6piRpdKFspbelk2Z2gOJlqoxto2/a0cD2Yfaisiz9+S0NBCIWeTtUIirpROVcWLyOpXvL58svcbOG4zuc09rlyucdZcKXqey+GwndDNNkvNe2/ZtZ6Mwviqo+GHx2cN2Kz0tx22HEtKYnW0lzu1erMGZG9tac/uMHyTTtjPJE+Y6QlNUi+cAvIkd8aDcSu4I2nNyudXE1vhk8MvACTbxh8WqtSthbXhHsANkmXgdDWGceryPcjjGNeAooe7EwPi9YDuT/CVVOD9MlS4PHFoh/t5VONWHOvmK4HUm35K274OdUkW/KGtvC55jveJ7X05LdaBFY4dJj1Xc8/snLdosTW2cLEUrf4/KhpdWUzmGdpUZZpDXmQwC4mrlNEkeRPegi1S2W+Ue/s+B/ZUsFbzOXCP+AUJt6AJ54jkKb7FQtbPnyofVGR+5HK8dfV8eRZ3Kloo97OYd9nqI6rtFiPyCP0OoLV0hz3LOP6byPTrg/Waq45vCM0LOn7+pvO6X3xu+cOYawdeAbwkt/dVFejkapMKzheeFnA+UzRYafdKRSPXEpvlSgWmea9RLKr9c+JjQXxoqA/y9skfI1UkZC+hVQqfDj6rsHx0o9SVCowayJ5wl8NllF6EZIjZ+WZgmzBeirZutm9nxDaHPxCipA/HfKRaFU/rgzErJMmUXCGy76Dy+xiYwTTneFv+/qmxD+ockThAWNpTsAoEJ8pGviHbEdCK/TPVOFmq/+MjHPtHekp4psInuREcyEtl/tmPxk9n60DC5Quzjm1Q7OpatEkfiUhed/wKz9pq/K6vNVwAAAABJRU5ErkJggg==") center / contain no-repeat;
+}
+.icon-pill.hold-btn.holding {
+  background: var(--color-primary);
+  color: #fff;
+  animation: hold-pulse 1.6s ease-in-out infinite;
+}
+.icon-pill.hold-btn.holding::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+}
+.icon-pill.hold-btn.holding .hold-icon { background: #fff; }
+@keyframes hold-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 42%, transparent); }
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+}
+.icon-pill.voice-continuous { color: var(--color-danger); }
+.icon-pill.voice-continuous:hover:not(:disabled) {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.icon-pill.voice-stop {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+.icon-pill.voice-stop:hover:not(:disabled) {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.voice-stop .stop-core {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: currentColor;
+}
 .icon-pill {
   width: 32px;
   height: 32px;

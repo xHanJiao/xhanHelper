@@ -72,6 +72,7 @@ type RunRequest struct {
 	Mode               string       // 会话模式：ConvModeWork（默认）| ConvModePlan（只读）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
 	BriefAnswer        bool         // 本轮要求精简回答（注入 system prompt 的输出长度约束，≤500 字）
+	VoiceMode          bool         // 本轮是语音对话（注入口语化/短回答约束，回答会被朗读）
 	VerifyEnabled      *bool        // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
 
 	// 资源区方案：上一条 user 消息的 XMLContext（增量资源区来源，零额外 DB 读）。
@@ -393,6 +394,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		StableContextXML:  stableXML,
 		ClientToolCatalog: clientCatalog,
 		BriefAnswer:       req.BriefAnswer,
+		VoiceMode:         req.VoiceMode,
 	})
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)

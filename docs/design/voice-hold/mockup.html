@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-state="idle">
+<head>
+<meta charset="utf-8">
+<title>连续对话 · 按住说 · UI 预览</title>
+<style>
+  :root {
+    --bg: #F7EEDD;
+    --bg-deep: #EFE2C8;
+    --text: #3B2E1F;
+    --text-dim: rgba(59,46,31,.55);
+    --text-faint: rgba(59,46,31,.35);
+    --accent: #2F7D63;
+    --accent2: #41C9E2;
+    --surface: #F2F7F3;
+    --card: rgba(255,255,255,.55);
+    --card-border: rgba(255,255,255,.8);
+    --user-text: #2A7F58;
+    --danger: #C4473E;
+    --shadow: 0 12px 30px -18px rgba(59,46,31,.35);
+    --hand-icon: url("data:image/png;base64,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");
+  }
+  html[data-theme="dark"] {
+    --bg: #1C1C1E;
+    --bg-deep: #141416;
+    --text: #FFFFFF;
+    --text-dim: rgba(255,255,255,.6);
+    --text-faint: rgba(255,255,255,.32);
+    --accent: #92C8B4;
+    --accent2: #41C9E2;
+    --surface: #2C2E2D;
+    --card: rgba(255,255,255,.06);
+    --card-border: rgba(255,255,255,.5);
+    --user-text: #90D4A8;
+    --danger: #E0716A;
+    --shadow: 0 12px 30px -18px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background:
+      radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb, var(--bg-deep) 85%, transparent), transparent 70%),
+      radial-gradient(900px 500px at 100% 100%, color-mix(in srgb, var(--bg-deep) 70%, transparent), transparent 70%),
+      var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* ---------- 假聊天区：给输入栏一点上下文 ---------- */
+  .stage {
+    flex: 1;
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 54px 24px 200px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 18px;
+  }
+  .msg { max-width: 78%; line-height: 1.75; font-size: 15.5px; }
+  .msg.assistant { color: var(--text); }
+  .msg.user { color: var(--user-text); align-self: flex-end; text-align: left; }
+  .msg .ghost { color: var(--text-dim); }
+  .prompt-hint {
+    align-self: center;
+    font-size: 12px;
+    color: var(--text-faint);
+    letter-spacing: .04em;
+    margin-bottom: 2px;
+  }
+
+  /* ---------- 输入栏胶囊 ---------- */
+  .composer {
+    width: 100%;
+    border-radius: 26px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow);
+    padding: 8px 12px 8px;
+    backdrop-filter: blur(18px) saturate(120%);
+  }
+
+  .wave {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 6px;
+    position: relative;
+  }
+  .wave svg { flex: 1; height: 30px; width: 100%; display: block; }
+  .voice-group {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  html[data-state="holding"] .wave svg path { stroke-dasharray: none; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 2px 2px;
+  }
+  .spacer { flex: 1; }
+  /* 连续对话时：只剩「按住说 / 连续对话 / 停止」，整组水平居中 */
+  html:not([data-legacy="1"]) .row { justify-content: center; }
+  html:not([data-legacy="1"]) .spacer { display: none; }
+
+  .btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 0;
+    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--accent);
+    position: relative;
+    padding: 0;
+    transition: background .15s, transform .12s, color .15s;
+  }
+  .btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .btn:active { transform: scale(.94); }
+  .btn svg { width: 21px; height: 21px; }
+  /* 按住说：SF Symbol hand.tap 的位图蒙版（跟随 currentColor，深浅主题自动上色） */
+  .ico-hand {
+    width: 21px;
+    height: 21px;
+    display: block;
+    background: currentColor;
+    -webkit-mask: var(--hand-icon) center / contain no-repeat;
+    mask: var(--hand-icon) center / contain no-repeat;
+  }
+  .btn.muted { color: var(--text-dim); }
+  .btn.danger { color: var(--danger); }
+  .btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+  /* 运行时的上下文圆环（左下） */
+  .ring { opacity: .9; }
+  .ring .track { stroke: var(--text-faint); }
+
+  /* ---------- 连续对话键（进行中）：红图标 + 红点，hover 提示「点一下结束」 ---------- */
+  .continuous { color: var(--danger); }
+  .continuous:hover,
+  html[data-simhover="continuous"] .continuous {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+  }
+
+  /* ---------- 悬停气泡 ---------- */
+  .btn[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    transform: translateX(-50%) translateY(2px);
+    padding: 5px 8px;
+    border-radius: 7px;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 11.5px;
+    line-height: 1;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+    z-index: 5;
+  }
+  .btn:hover::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+  html[data-simhover="hold"] .hold::after,
+  html[data-simhover="continuous"] .continuous::after {
+    opacity: 1; transform: translateX(-50%) translateY(0);
+  }
+
+  /* ---------- 按住说 ---------- */
+  .hold { position: relative; }
+  .hold .ring2 {
+    position: absolute; inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    opacity: 0;
+    transition: opacity .18s;
+  }
+  html[data-state="holding"] .hold::after { content: "松开后整段提交"; }
+  html[data-state="holding"] .hold {
+    background: var(--accent);
+    color: #fff;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  html[data-state="holding"] .hold .ring2 { opacity: 1; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent); }
+    50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); }
+  }
+
+
+  /* 停止键 */
+  .stop {
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    color: var(--danger);
+  }
+  .stop .core { width: 11px; height: 11px; border-radius: 2px; background: currentColor; }
+
+  /* 可见性：按状态/形态切换 */
+  .only-idle, .only-holding, .only-streaming, .only-not-streaming, .only-voice, .only-legacy { display: none; }
+  html[data-state="idle"] .only-idle { display: inline-flex; }
+  html[data-state="holding"] .only-holding { display: inline-flex; }
+  html[data-state="streaming"] .only-streaming { display: inline-flex; }
+  html[data-state="idle"] .only-not-streaming,
+  html[data-state="holding"] .only-not-streaming { display: inline-flex; }
+  /* 语音模式下才出现的一批按钮 */
+  html:not([data-legacy="1"]) .only-voice { display: inline-flex; }
+
+  /* 改造前：完整按钮行 */
+  html[data-legacy="1"] .only-voice { display: none !important; }
+  html[data-legacy="1"] .only-legacy { display: inline-flex !important; }
+  html[data-legacy="1"] .wave { display: none; }
+  html[data-legacy="1"] .faux-input { display: block; }
+  .faux-input { display: none; font-size: 15px; color: var(--text-faint); padding: 9px 8px 10px; }
+
+  /* ---------- 底部控制条 ---------- */
+  .ui {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 10px 14px;
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--card) 96%, var(--bg));
+    border: 1px solid var(--card-border);
+    box-shadow: 0 18px 40px -24px rgba(0,0,0,.5);
+    font-size: 12px;
+    color: var(--text-dim);
+    max-width: min(92vw, 760px);
+  }
+  .ui .group { display: flex; align-items: center; gap: 4px; }
+  .ui .k { color: var(--text-faint); margin-right: 2px; }
+  .ui button {
+    font: inherit;
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .ui button:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .ui button[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    font-weight: 600;
+  }
+  .ui .sep { width: 1px; height: 16px; background: var(--card-border); }
+  .note { max-width: 760px; margin: 0 auto; padding: 60px 24px 20px; font-size: 12px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="prompt-hint">连续对话中 · 输入栏</div>
+
+  <div class="msg assistant">查了一下，你待办里还挂着十五条，不少是过期的。<span class="ghost">要不要处理一下？</span></div>
+  <div class="msg user">嗯，说起来<span class="ghost">……</span></div>
+
+  <div class="composer">
+    <div class="faux-input">发消息…</div>
+    <div class="wave">
+      <svg viewBox="0 0 640 30" preserveAspectRatio="none" aria-hidden="true">
+        <path id="wavePath" fill="var(--accent)" stroke="none"/>
+      </svg>
+    </div>
+
+    <div class="row">
+      <!-- 上下文圆环（连续对话时隐藏） -->
+      <div class="btn ring only-legacy" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <circle class="track" cx="12" cy="12" r="8.5" stroke-width="1.6" opacity=".55"/>
+          <circle cx="12" cy="12" r="8.5" stroke="var(--text-faint)" stroke-width="1.6"
+                  stroke-dasharray="13 40" stroke-linecap="round" transform="rotate(-90 12 12)"/>
+          <circle cx="12" cy="12" r="2" fill="var(--text-faint)"/>
+        </svg>
+      </div>
+
+      <div class="spacer"></div>
+
+      <!-- 改造前的常规按钮行（对比用） -->
+      <button class="btn muted only-legacy" title="计划模式">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M4 7h9M4 12h9M4 17h6"/><circle cx="18" cy="16" r="3"/><path d="M18 19v3"/>
+        </svg>
+      </button>
+      <button class="btn muted only-legacy" title="无痕">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>
+        </svg>
+      </button>
+      <button class="btn only-legacy" title="添加图片">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/>
+        </svg>
+      </button>
+
+      <div class="voice-group only-voice">
+      <!-- 按住说 / 松开发送（紧跟连续对话左侧） -->
+      <button class="btn hold only-voice" data-tip="按住期间停顿不触发提交，松开后整段提交" title="">
+        <span class="ring2"></span>
+        <span class="ico-hand" aria-hidden="true"></span>
+      </button>
+
+      <!-- 连续对话键（语音模式下 = 结束） -->
+      <button class="btn continuous only-not-streaming" data-tip="退出语音对话" title="">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M7 12h1.5M10 9v6M13.5 7.5v9M17 10v4"/>
+        </svg>
+      </button>
+
+      <!-- 停止 -->
+      <button class="btn stop only-streaming" title="停止生成">
+        <span class="core"></span>
+      </button>
+      </div>
+
+      <!-- 改造前的发送（语音模式下隐藏） -->
+      <button class="btn only-legacy" title="发送" style="color:var(--text-faint)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20V5"/><path d="M5.5 11.5L12 5l6.5 6.5"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="ui" role="group" aria-label="预览控制">
+  <div class="group">
+    <span class="k">主题</span>
+    <button data-set="theme" data-value="light" aria-pressed="true">浅色</button>
+    <button data-set="theme" data-value="dark" aria-pressed="false">深色</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <span class="k">状态</span>
+    <button data-set="state" data-value="idle" aria-pressed="true">空闲</button>
+    <button data-set="state" data-value="holding" aria-pressed="false">暂存中</button>
+    <button data-set="state" data-value="streaming" aria-pressed="false">生成中</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <span class="k">悬停</span>
+    <button data-set="simhover" data-value="none" aria-pressed="true">无</button>
+    <button data-set="simhover" data-value="hold" aria-pressed="false">按住说</button>
+    <button data-set="simhover" data-value="continuous" aria-pressed="false">连续对话</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <span class="k">对比</span>
+    <button data-set="legacy" data-value="0" aria-pressed="true">改造后</button>
+    <button data-set="legacy" data-value="1" aria-pressed="false">改造前</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const root = document.documentElement;
+
+  // 波形：确定性伪随机，保证每次截图一致；镜像填充成刺状波形带
+  function drawWave() {
+    const path = document.getElementById('wavePath');
+    const n = 150;
+    const W = 640, mid = 15;
+    const state = root.dataset.state;
+    const xs = [], hs = [];
+    for (let i = 0; i < n; i++) {
+      const x = (i + 0.5) * (W / n);
+      const edge = Math.pow(Math.sin(Math.PI * (i + 0.5) / n), 0.55);
+      let amp;
+      if (state === 'streaming') {
+        // 「想」态：一道高斯小鼓包
+        const g = Math.exp(-Math.pow((x - W * 0.42) / 46, 2));
+        amp = 0.7 + g * 7;
+      } else {
+        // 「听 / 暂存」：三组不可通约正弦叠出的稀疏尖峰
+        const noise = Math.sin(x * (2 * Math.PI * 8.5 / W) + 0.4) * 0.52
+                    + Math.sin(x * (2 * Math.PI * 21 / W) + 1.9) * 0.3
+                    + Math.sin(x * (2 * Math.PI * 2.3 / W) + 2.6) * 0.18;
+        const spike = Math.pow(Math.abs(noise), 1.6);
+        amp = (state === 'holding' ? 0.8 : 1.1) + spike * (state === 'holding' ? 9 : 13);
+      }
+      xs.push(x);
+      hs.push(Math.max(0.5, amp * edge));
+    }
+    let d = 'M' + xs[0].toFixed(1) + ' ' + (mid - hs[0]).toFixed(1);
+    for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ' ' + (mid - hs[i]).toFixed(1);
+    for (let i = n - 1; i >= 0; i--) d += ' L' + xs[i].toFixed(1) + ' ' + (mid + hs[i]).toFixed(1);
+    d += ' Z';
+    path.setAttribute('d', d);
+    path.setAttribute('fill', state === 'streaming' ? 'var(--accent2)' : 'var(--accent)');
+    path.setAttribute('opacity', state === 'streaming' ? '0.85' : '0.9');
+  }
+
+  function applyParam(key, value) {
+    if (key === 'legacy') root.dataset.legacy = value;
+    else root.dataset[key] = value;
+    document.querySelectorAll('.ui button[data-set="' + key + '"]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.value === value));
+    });
+    drawWave();
+  }
+
+  // URL 预设：?theme=dark&state=holding&legacy=1
+  const params = new URLSearchParams(location.search);
+  ['theme', 'state', 'legacy', 'simhover'].forEach(function (k) {
+    const v = params.get(k);
+    if (v !== null) applyParam(k, v);
+  });
+
+  document.querySelectorAll('.ui button[data-set]').forEach(function (b) {
+    b.addEventListener('click', function () { applyParam(b.dataset.set, b.dataset.value); });
+  });
+
+  drawWave();
+})();
+</script>
+</body>
+</html>

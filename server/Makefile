@@ -370,7 +370,7 @@ deploy: build-frontend build-linux
 	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "5/5 替换二进制并重启..."; \
-	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
+	ssh $$U@$$H "cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
@@ -403,7 +403,7 @@ deploy-backend: build-linux
 	echo "3/4 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "4/4 替换二进制并重启..."; \
-	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
+	ssh $$U@$$H "cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
@@ -452,7 +452,7 @@ deploy-only:
 	echo "3/4 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "4/4 替换二进制并重启..."; \
-	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
+	ssh $$U@$$H "cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \

@@ -23,6 +23,8 @@ const props = defineProps({
   isHistory: { type: Boolean, default: true },
   isSharedView: { type: Boolean, default: false },
   roundKey: { type: String, default: '' },
+  // 句级朗读进度：{ sentences: string[], index: number }；只由正在念的那条消息传入
+  speech: { type: Object, default: null },
 })
 
 // --- Inject selection mode state ---
@@ -36,6 +38,13 @@ const isTool = computed(() => props.message.role === 'tool')
 const isAssistant = computed(() => props.message.role === 'assistant')
 
 const contentHtml = computed(() => md.render(props.message.content || ''))
+
+// 句子切片必须拼回原文才认（否则跨端切分规则不一致时退回 markdown，别丢字）
+const speechActive = computed(() => {
+  const s = props.speech
+  const content = props.message.content || ''
+  return !!s && Array.isArray(s.sentences) && s.sentences.length > 0 && s.sentences.join('') === content
+})
 
 // 用户消息附带的图片（后端存 JSON 数组字符串；本地刚发出的消息是数组）
 const imageIds = computed(() => {
@@ -242,8 +251,13 @@ onBeforeUnmount(() => {
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
       <div style="flex: 1; min-width: 0; max-width: 100%; border-radius: var(--radius-lg); padding: var(--space-xs) var(--space-sm);">
-        <div v-if="contentHtml" class="assistant-content" style="font-size: var(--chat-font-size); line-height: 1.7; color: var(--color-text);">
-          <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
+        <div v-if="speechActive || contentHtml" class="assistant-content" style="font-size: var(--chat-font-size); line-height: 1.7; color: var(--color-text);">
+          <div v-if="speechActive" class="message-content speech-content" style="margin: 0; white-space: pre-wrap; overflow-wrap: break-word;"><span
+            v-for="(sentence, i) in speech.sentences"
+            :key="i"
+            :class="i < speech.index ? 'speech-done' : (i === speech.index ? 'speech-now' : 'speech-todo')"
+          >{{ sentence }}</span></div>
+          <div v-else class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
         <ArtifactCards :items="message.artifacts || []" />
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
@@ -257,6 +271,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.speech-todo { opacity: 0.45; }
+.speech-now { font-weight: 600; color: var(--app-accent); }
+.speech-done { opacity: 1; }
+
 .user-bubble {
   background: var(--color-user-bubble);
   color: var(--color-user-text);

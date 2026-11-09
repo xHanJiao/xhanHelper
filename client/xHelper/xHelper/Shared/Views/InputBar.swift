@@ -37,6 +37,9 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
     let bottomLeading: (InputBarContext) -> BottomLeading
     /// 编辑器下方的附件缩略图托盘（不注入时为空视图）。
     let attachmentTray: (InputBarContext) -> AttachmentTraySlot
+    /// 语音会话期间顶替文本行的音波条（非 nil 时编辑器让位）。
+    /// 用 AnyView 而不是再加一个泛型槽：整个 InputBar 调用表达式已顶到类型检查预算。
+    var voiceStrip: AnyView? = nil
 
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
@@ -90,12 +93,14 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         onToggleMode: @escaping () -> Void = {},
+        voiceStrip: AnyView? = nil,
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder statusRowExtras: @escaping (InputBarContext) -> StatusRowExtras,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
         @ViewBuilder bottomLeading: @escaping (InputBarContext) -> BottomLeading,
         @ViewBuilder attachmentTray: @escaping (InputBarContext) -> AttachmentTraySlot
     ) {
+        self.voiceStrip = voiceStrip
         self._text = text
         self._isEditing = isEditing
         self.isStreaming = isStreaming
@@ -147,6 +152,8 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
     private var macOSBody: some View {
         VStack(alignment: .trailing, spacing: 0) {
             twoRowLayout
+            // 语音会话开始/结束时编辑器↔音波条互换，高度差走一次短动画，避免胶囊硬跳
+            .animation(.easeOut(duration: 0.2), value: voiceStrip == nil)
             .background(
                 GeometryReader { proxy in
                     Color.clear
@@ -164,7 +171,8 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             // 按钮/编辑器本体由子视图优先消费（SwiftUI 子视图手势优先），不受影响。
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .onTapGesture {
-                guard !isStreaming else { return }
+                // 语音会话时编辑器被音波条顶替，焦点不能落到看不见的编辑器上
+                guard voiceStrip == nil, !isStreaming else { return }
                 isFocused = true
             }
             .shadow(
@@ -195,14 +203,28 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
     /// 宽度受胶囊约束——窄窗也不会戳出框。
     private var twoRowLayout: some View {
         VStack(spacing: 6) {
-            editor
-            attachmentTray(context)
-            statusRowExtras(context)
+            if let voiceStrip {
+                voiceStrip
+            } else {
+                editor
+            }
+            if voiceStrip == nil {
+                attachmentTray(context)
+                statusRowExtras(context)
+            }
             HStack(spacing: 4) {
-                bottomLeading(context)
-                Spacer(minLength: 0)
-                statusRow(context)
-                trailingActions(context)
+                if voiceStrip != nil {
+                    // 语音模式：只剩「按住说 / 退出语音对话 / 停止」，整组水平居中
+                    Spacer(minLength: 0)
+                    statusRow(context)
+                    trailingActions(context)
+                    Spacer(minLength: 0)
+                } else {
+                    bottomLeading(context)
+                    Spacer(minLength: 0)
+                    statusRow(context)
+                    trailingActions(context)
+                }
             }
         }
     }

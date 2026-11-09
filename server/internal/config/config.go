@@ -42,6 +42,7 @@ type Config struct {
 	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
 	Activity          ActivityConfig          `yaml:"activity"`
+	Voice             VoiceConfig             `yaml:"voice"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
 }
 
@@ -707,6 +708,7 @@ func merge(dst, src *Config) {
 	if src.Backup.WeeklyKeep != 0 {
 		dst.Backup.WeeklyKeep = src.Backup.WeeklyKeep
 	}
+	mergeVoice(&dst.Voice, &src.Voice)
 }
 
 // mergeSourceWeights 按字段合并检索源配置，非零值覆盖
@@ -773,6 +775,7 @@ func resolveEnvVars(cfg *Config) {
 	cfg.LLMBg.APIKey = os.ExpandEnv(cfg.LLMBg.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
 	cfg.Server.LocalToken = os.ExpandEnv(cfg.Server.LocalToken)
+	cfg.Voice.APIKey = os.ExpandEnv(cfg.Voice.APIKey)
 	applyLLMEnvOverrides(cfg)
 	applyBackupEnvOverrides(cfg)
 }
@@ -847,6 +850,11 @@ func validate(cfg *Config) error {
 	// Activity 日期边界时区：空 = 沿用主机 Local；非空必须是可加载的 IANA 名。
 	if _, err := cfg.Activity.DayLocation(); err != nil {
 		return err
+	}
+	// Voice 默认值；启用时必须有 API Key，否则启动即失败（别等到第一次说话才发现）
+	cfg.Voice.ApplyDefaults()
+	if cfg.Voice.Enabled && cfg.Voice.APIKey == "" {
+		return fmt.Errorf("voice.enabled=true 但 voice.api_key 为空（设置 DOUBAO_VOICE_API_KEY）")
 	}
 	// Snowflake 默认值
 	if cfg.Snowflake.NodeID == 0 {

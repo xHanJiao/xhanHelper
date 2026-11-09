@@ -27,6 +27,8 @@ struct MessageListView: View {
     let onRetry: () -> Void
     let baseURL: String
     let token: String
+    /// 句级朗读进度（只给最后一条 assistant 消息，其余传 nil）
+    let speech: SpeechProgress?
     @State private var initialLoadDone = false
     @State private var activeTimeBubbleId: String? = nil
     @State private var autoDismissTask: Task<Void, Never>? = nil
@@ -615,7 +617,8 @@ struct MessageListView: View {
             } else {
                 ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) })
+                           onTapToShowTime: { toggleTimeBubble(msg.id) },
+                           speech: msg.id == messages.last?.id ? speech : nil)
                     .allowsHitTesting(!isShareSelectMode)
             }
         }

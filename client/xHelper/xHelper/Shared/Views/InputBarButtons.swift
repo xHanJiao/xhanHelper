@@ -175,6 +175,55 @@ struct ExpandPill: View {
     }
 }
 
+/// 按住说：按住期间判停分句只暂存，不提交；松手后整段提交（与 mockup 同形）。
+/// 图标用 `hand.tap`（`walkie.talkie` 不存在，`radio` 是收音机，不采用）。
+struct HoldToTalkButton: View {
+    let context: InputBarContext
+    let isHolding: Bool
+    var isEnabled: Bool = true
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    private var background: Color {
+        if isHolding { return Color("appAccent") }
+        if hovering { return Color("appAccent").opacity(0.10) }
+        return .clear
+    }
+
+    private var tooltip: String {
+        isHolding ? "松开后整段提交" : "按住期间停顿不触发提交，松开后整段提交"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "hand.tap")
+                .font(.system(size: 21, weight: .regular))
+                .frame(width: 34, height: 34)
+                .foregroundColor(isHolding ? .white : Color("appAccent"))
+                .background(
+                    Circle()
+                        .fill(background)
+                        .shadow(color: isHolding ? Color("appAccent").opacity(0.42) : .clear,
+                                radius: isHolding ? 7 : 0)
+                )
+                .overlay {
+                    Circle()
+                        .stroke(Color("appAccent").opacity(0.55), lineWidth: 1.5)
+                        .scaleEffect(1.16)
+                        .opacity(isHolding ? 1 : 0)
+                }
+                .animation(isHolding
+                           ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                           : .easeOut(duration: 0.15),
+                           value: isHolding)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .inputBarControl(.always, context: context, isEnabled: isEnabled, tooltip: tooltip)
+    }
+}
+
 /// 发送/停止按钮：仅展开态显示。流式时 morph 为红色停止，否则为发送箭头。
 struct SendStopButton: View {
     let context: InputBarContext

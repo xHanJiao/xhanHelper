@@ -43,6 +43,8 @@ type BuildOptions struct {
 	ClientToolCatalog string // 客户端工具目录文本（组名+函数名，无 schema），由 orchestrator 渲染后传入，并入「工具使用」段
 	// BriefAnswer 本轮要求精简回答（≤500 字）。逐轮可变 —— 见 builder.go 里关于前缀缓存的说明。
 	BriefAnswer bool
+	// VoiceMode 本轮是语音对话：注入口语化、无 markdown、短回答约束（回答会被朗读）。
+	VoiceMode bool
 }
 
 // BuildResult — Build() 的返回值。

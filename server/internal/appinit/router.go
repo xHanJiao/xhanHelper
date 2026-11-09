@@ -164,6 +164,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	replayHandler := controller.NewReplayHandler(repos.Message, agents.ReplayRunner, infra.Embedder)
 	imageHandler := controller.NewImageHandler(infra.ImageStore)
 	artifactHandler := controller.NewArtifactHandler(repos.Artifact)
+	voiceHandler := controller.NewVoiceHandler(&cfg.Voice)
 
 	router := controller.NewRouter(&controller.RouterConfig{
 		Cfg:                  cfg,
@@ -189,6 +190,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		EventHandler:         eventHandler,
 		ImageHandler:         imageHandler,
 		ArtifactHandler:      artifactHandler,
+		VoiceHandler:         voiceHandler,
 		ClientBridge:         agents.ClientBridge,
 		Destroyer:            agents.Destroyer,
 		LlmCostRepo:          repos.LlmCost,

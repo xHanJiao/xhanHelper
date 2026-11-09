@@ -51,6 +51,13 @@ func seedEventRow(t *testing.T, db *gorm.DB, id, name, summary string) *model.Ev
 	return e
 }
 
+func setEventLastMemoryAt(t *testing.T, db *gorm.DB, id string, at time.Time) {
+	t.Helper()
+	if err := db.Model(&model.Event{ID: id}).UpdateColumn("last_memory_at", at).Error; err != nil {
+		t.Fatalf("set last_memory_at %s: %v", id, err)
+	}
+}
+
 func seedEventMemory(t *testing.T, db *gorm.DB, id, eventID, content string, updatedAt time.Time) {
 	t.Helper()
 	m := &model.UserMemory{
@@ -80,38 +87,282 @@ func eventOf(packets []ContextPacket) (EventMeta, bool) {
 	return EventMeta{}, false
 }
 
-func TestEventSource_GroupsMemoriesByEvent(t *testing.T) {
+func eventByID(packets []ContextPacket, id string) (EventMeta, bool) {
+	for _, p := range packets {
+		if meta, ok := p.Meta.(EventMeta); ok && meta.EventID == id {
+			return meta, true
+		}
+	}
+	return EventMeta{}, false
+}
+
+func allEventOptions() SearchOptions {
+	return SearchOptions{
+		UserID: "u1", EventsAll: true,
+		Event: SourceConfig{Threshold: 0.5, Limit: 20},
+	}
+}
+
+// 全量列表：pinned/full、命中/hit、窗口内/summary、窗口外/index 四种形态同时出现。
+func TestEventSource_AllEventsModes(t *testing.T) {
 	f := setupEventSource(t, EventSourceConfig{})
-	seedEventRow(t, f.db, "e1", "回西安准备", "打包中")
 	now := time.Now()
-	seedEventMemory(t, f.db, "m1", "e1", "打包行李", now)
-	seedEventMemory(t, f.db, "m2", "e1", "订机票", now.Add(-time.Hour))
-	seedEventMemory(t, f.db, "m3", "", "普通记忆", now)
-	f.vs.results = []SearchResult{
-		fullMemResult("m1", 0.9),
-		fullMemResult("m2", 0.7),
-		fullMemResult("m3", 0.95),
+	seedEventRow(t, f.db, "p1", "钉住事件", "钉住现状")
+	seedEventMemory(t, f.db, "pm1", "p1", "钉住记忆", now)
+	seedEventRow(t, f.db, "h1", "命中事件", "命中现状")
+	seedEventMemory(t, f.db, "hm1", "h1", "命中记忆", now)
+	seedEventRow(t, f.db, "r1", "最近事件", "最近现状")
+	seedEventMemory(t, f.db, "rm1", "r1", "最近记忆", now.Add(-time.Hour))
+	seedEventRow(t, f.db, "o1", "老事件", "老现状")
+	seedEventMemory(t, f.db, "om1", "o1", "老记忆", now.AddDate(0, 0, -40))
+	setEventLastMemoryAt(t, f.db, "o1", now.AddDate(0, 0, -40))
+
+	f.vs.results = []SearchResult{fullMemResult("hm1", 0.9)}
+
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	opts.PinnedEventIDs = []string{"p1"}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(packets) != 4 {
+		t.Fatalf("expected all 4 events, got %d", len(packets))
+	}
+	want := map[string]string{"p1": EventModeFull, "h1": EventModeHit, "r1": EventModeSummary, "o1": EventModeIndex}
+	for id, mode := range want {
+		meta, ok := eventByID(packets, id)
+		if !ok {
+			t.Fatalf("event %s missing from list", id)
+		}
+		if meta.Mode != mode {
+			t.Fatalf("event %s: expected mode %s, got %s", id, mode, meta.Mode)
+		}
+	}
+	if meta, _ := eventByID(packets, "p1"); !meta.Pinned {
+		t.Fatal("pinned event should carry pinned=1")
+	}
+	if meta, _ := eventByID(packets, "o1"); len(meta.Memories) != 0 {
+		t.Fatalf("index event must not carry memories, got %d", len(meta.Memories))
+	}
+	if meta, _ := eventByID(packets, "p1"); len(meta.Memories) != 1 {
+		t.Fatalf("pinned event should carry memories, got %d", len(meta.Memories))
+	}
+}
+
+// 命中事件带的是「命中的记忆」按分数排序，不是最近 N 条。
+func TestEventSource_HitMemoriesByScore(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{HitMemories: 2})
+	seedEventRow(t, f.db, "e1", "事件", "现状")
+	base := time.Now()
+	seedEventMemory(t, f.db, "m1", "e1", "新但没命中", base)
+	seedEventMemory(t, f.db, "m2", "e1", "命中低分", base.Add(-48*time.Hour))
+	seedEventMemory(t, f.db, "m3", "e1", "命中高分", base.Add(-72*time.Hour))
+	f.vs.results = []SearchResult{fullMemResult("m2", 0.7), fullMemResult("m3", 0.95)}
+
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	meta, ok := eventByID(packets, "e1")
+	if !ok || meta.Mode != EventModeHit {
+		t.Fatalf("event should be hit, got %+v", meta)
+	}
+	if len(meta.Memories) != 2 || meta.Memories[0].ID != "m3" || meta.Memories[1].ID != "m2" {
+		t.Fatalf("expected hit memories by score (m3,m2), got %+v", meta.Memories)
+	}
+	if meta.MemoryCount != 3 {
+		t.Fatalf("memory_count should be full count, got %d", meta.MemoryCount)
+	}
+}
+
+// 命中事件数超过上限时，其余命中事件按普通规则走。
+func TestEventSource_HitLimit(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{HitMax: 2})
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("e%d", i)
+		seedEventRow(t, f.db, id, "事件"+id, "现状")
+		seedEventMemory(t, f.db, "m"+id, id, "内容", time.Now())
+		f.vs.results = append(f.vs.results, fullMemResult("m"+id, 0.9-float64(i)*0.05))
 	}
 
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if got := countMode(packets, EventModeHit); got != 2 {
+		t.Fatalf("expected 2 hit events, got %d", got)
+	}
+	if got := countMode(packets, EventModeSummary); got != 3 {
+		t.Fatalf("expected remaining 3 as summary, got %d", got)
+	}
+}
+
+// 最近窗口事件带最近 N 条记忆（updated_at DESC）。
+func TestEventSource_RecentMemoriesCapped(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{RecentMemories: 3})
+	seedEventRow(t, f.db, "e1", "事件", "现状")
+	base := time.Now()
+	for i, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
+		seedEventMemory(t, f.db, id, "e1", id, base.Add(-time.Duration(i)*time.Hour))
+	}
+
+	packets, _, err := f.src.Fetch(context.Background(), allEventOptions())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	meta, ok := eventByID(packets, "e1")
+	if !ok || meta.Mode != EventModeSummary {
+		t.Fatalf("event should be summary, got %+v", meta)
+	}
+	if len(meta.Memories) != 3 || meta.Memories[0].ID != "m1" || meta.Memories[2].ID != "m3" {
+		t.Fatalf("expected newest 3, got %+v", meta.Memories)
+	}
+}
+
+// 检索工具路径（EventsAll=false）只返回命中事件，不返回 pinned / recent / index。
+func TestEventSource_SearchModeHitsOnly(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "p1", "钉住事件", "现状")
+	seedEventMemory(t, f.db, "pm1", "p1", "内容", time.Now())
+	seedEventRow(t, f.db, "r1", "最近事件", "现状")
+	seedEventMemory(t, f.db, "rm1", "r1", "内容", time.Now())
+	seedEventRow(t, f.db, "h1", "命中事件", "现状")
+	seedEventMemory(t, f.db, "hm1", "h1", "内容", time.Now())
+	f.vs.results = []SearchResult{fullMemResult("hm1", 0.9)}
+
 	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		Embedding: []float64{1}, UserID: "u1", Query: "去西安",
-		Event: SourceConfig{Threshold: 0.5, Limit: 20},
+		Embedding: []float64{1}, UserID: "u1",
+		PinnedEventIDs: []string{"p1"},
+		Event:          SourceConfig{Threshold: 0.5, Limit: 20},
 	})
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
 	if len(packets) != 1 {
-		t.Fatalf("expected one event packet, got %d", len(packets))
+		t.Fatalf("search mode should return only hits, got %d", len(packets))
 	}
-	meta, _ := eventOf(packets)
-	if meta.EventID != "e1" || meta.Mode != EventModeFull {
-		t.Fatalf("unexpected meta: %+v", meta)
+	if meta, _ := eventOf(packets); meta.EventID != "h1" || meta.Mode != EventModeHit {
+		t.Fatalf("unexpected search hit: %+v", meta)
 	}
-	if meta.Score < 0.89 {
-		t.Fatalf("event score should be the max memory score, got %.3f", meta.Score)
+}
+
+// 短输入兜底：不跑向量检索，仍然出全量列表。
+func TestEventSource_ListForInjection(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "e1", "事件一", "现状")
+	seedEventRow(t, f.db, "e2", "事件二", "现状")
+	f.vs.results = []SearchResult{fullMemResult("m1", 0.9)} // 不应被使用
+
+	packets, err := f.src.ListForInjection(context.Background(), "u1", "", nil)
+	if err != nil {
+		t.Fatalf("list: %v", err)
 	}
-	if len(meta.Memories) != 2 || meta.Memories[0].ID != "m1" {
-		t.Fatalf("memories should be updated_at DESC, got %+v", meta.Memories)
+	if len(packets) != 2 {
+		t.Fatalf("expected all 2 events, got %d", len(packets))
+	}
+	for _, p := range packets {
+		if meta := p.Meta.(EventMeta); meta.Mode != EventModeSummary {
+			t.Fatalf("recent events should be summary, got %s", meta.Mode)
+		}
+	}
+}
+
+func TestEventSource_PinnedNotDegradedByHitQuota(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{HitMax: 1})
+	for _, id := range []string{"p1", "p2", "p3"} {
+		seedEventRow(t, f.db, id, "pinned-"+id, "")
+		seedEventMemory(t, f.db, "pm-"+id, id, "内容", time.Now())
+	}
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("f%d", i)
+		seedEventRow(t, f.db, id, "fresh-"+id, "")
+		seedEventMemory(t, f.db, "fm-"+id, id, "内容", time.Now())
+		f.vs.results = append(f.vs.results, fullMemResult("fm-"+id, 0.9))
+	}
+
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	opts.PinnedEventIDs = []string{"p1", "p2", "p3"}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	pinnedCount := 0
+	for _, p := range packets {
+		meta := p.Meta.(EventMeta)
+		if meta.Pinned {
+			pinnedCount++
+			if meta.Mode != EventModeFull {
+				t.Fatalf("pinned event degraded: %+v", meta)
+			}
+		}
+	}
+	if pinnedCount != 3 {
+		t.Fatalf("expected 3 pinned full events, got %d", pinnedCount)
+	}
+	if got := countMode(packets, EventModeHit); got != 1 {
+		t.Fatalf("expected hit capped at 1, got %d", got)
+	}
+}
+
+// pinned 带最近 20 条（event_memories 默认值）。
+func TestEventSource_PinnedMemoriesCapped(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "p1", "钉住事件", "现状")
+	base := time.Now()
+	for i := 0; i < 25; i++ {
+		seedEventMemory(t, f.db, fmt.Sprintf("m%02d", i), "p1", "内容", base.Add(-time.Duration(i)*time.Hour))
+	}
+
+	opts := allEventOptions()
+	opts.PinnedEventIDs = []string{"p1"}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	meta, ok := eventByID(packets, "p1")
+	if !ok || meta.Mode != EventModeFull {
+		t.Fatalf("pinned event should be full, got %+v", meta)
+	}
+	if len(meta.Memories) != 20 {
+		t.Fatalf("pinned event should carry 20 memories, got %d", len(meta.Memories))
+	}
+	if meta.Memories[0].ID != "m00" {
+		t.Fatalf("pinned memories should be updated_at DESC, got first=%s", meta.Memories[0].ID)
+	}
+}
+
+// 命中事件带命中记忆 top 10（event_hit_memories 默认值）。
+func TestEventSource_HitMemoriesCapped(t *testing.T) {
+	f := setupEventSource(t, EventSourceConfig{})
+	seedEventRow(t, f.db, "e1", "事件", "现状")
+	base := time.Now()
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("m%02d", i)
+		seedEventMemory(t, f.db, id, "e1", "内容", base.Add(-time.Duration(i)*time.Hour))
+		f.vs.results = append(f.vs.results, fullMemResult(id, 0.9-float64(i)*0.01))
+	}
+
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	meta, ok := eventByID(packets, "e1")
+	if !ok || meta.Mode != EventModeHit {
+		t.Fatalf("event should be hit, got %+v", meta)
+	}
+	if len(meta.Memories) != 10 {
+		t.Fatalf("hit event should carry 10 memories, got %d", len(meta.Memories))
+	}
+	if meta.Memories[0].ID != "m00" {
+		t.Fatalf("hit memories should be score DESC, got first=%s", meta.Memories[0].ID)
 	}
 }
 
@@ -124,150 +375,14 @@ func TestEventSource_SkipsDeletedEvent(t *testing.T) {
 	seedEventMemory(t, f.db, "m1", "e1", "记忆", time.Now())
 	f.vs.results = []SearchResult{fullMemResult("m1", 0.9)}
 
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		Embedding: []float64{1}, UserID: "u1",
-		Event: SourceConfig{Threshold: 0.5, Limit: 20},
-	})
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
 	if len(packets) != 0 {
 		t.Fatalf("deleted event must not be injected, got %d", len(packets))
-	}
-}
-
-func TestEventSource_FullMemoriesCapped(t *testing.T) {
-	f := setupEventSource(t, EventSourceConfig{MemoriesPerEvent: 3})
-	seedEventRow(t, f.db, "e1", "事件", "")
-	base := time.Now()
-	for i, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
-		seedEventMemory(t, f.db, id, "e1", id, base.Add(-time.Duration(i)*time.Hour))
-		f.vs.results = append(f.vs.results, fullMemResult(id, 0.9))
-	}
-
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		Embedding: []float64{1}, UserID: "u1",
-		Event: SourceConfig{Threshold: 0.5, Limit: 20},
-	})
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	meta, _ := eventOf(packets)
-	if len(meta.Memories) != 3 {
-		t.Fatalf("expected 3 memories, got %d", len(meta.Memories))
-	}
-	if meta.Memories[0].ID != "m1" || meta.Memories[2].ID != "m3" {
-		t.Fatalf("expected newest 3, got %+v", meta.Memories)
-	}
-	if meta.MemoryCount != 5 {
-		t.Fatalf("memory_count should be the full count, got %d", meta.MemoryCount)
-	}
-}
-
-func TestEventSource_QuotaDegradesLowestScore(t *testing.T) {
-	f := setupEventSource(t, EventSourceConfig{
-		QuotaFull: 2, QuotaCompact: 1, QuotaSummary: 1, QuotaIndex: 1,
-	})
-	scores := []float64{0.9, 0.8, 0.7, 0.6, 0.55, 0.51}
-	for i := range scores {
-		id := string(rune('a' + i))
-		seedEventRow(t, f.db, "e"+id, "事件"+id, "")
-		seedEventMemory(t, f.db, "m"+id, "e"+id, "内容", time.Now())
-		f.vs.results = append(f.vs.results, fullMemResult("m"+id, scores[i]))
-	}
-
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		Embedding: []float64{1}, UserID: "u1",
-		Event: SourceConfig{Threshold: 0.5, Limit: 20},
-	})
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	modes := map[string]int{}
-	for _, p := range packets {
-		modes[p.Meta.(EventMeta).Mode]++
-	}
-	if modes[EventModeFull] != 2 || modes[EventModeCompact] != 1 ||
-		modes[EventModeSummary] != 1 || modes[EventModeIndex] != 1 {
-		t.Fatalf("unexpected mode distribution: %v", modes)
-	}
-	if len(packets) != 5 {
-		t.Fatalf("one event should be dropped by index quota, got %d", len(packets))
-	}
-}
-
-func TestEventSource_StickyWithinSession(t *testing.T) {
-	f := setupEventSource(t, EventSourceConfig{})
-	seedEventRow(t, f.db, "e1", "事件", "")
-	seedEventMemory(t, f.db, "m1", "e1", "内容", time.Now())
-
-	cases := []struct {
-		ref  EventRef
-		mode string
-		miss int
-	}{
-		{EventRef{ID: "e1", Mode: EventModeFull, Miss: 0}, EventModeFull, 1},
-		{EventRef{ID: "e1", Mode: EventModeFull, Miss: 1}, EventModeCompact, 2},
-		{EventRef{ID: "e1", Mode: EventModeCompact}, EventModeCompact, 0},
-	}
-	for _, c := range cases {
-		packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-			UserID: "u1", PrevEventRefs: []EventRef{c.ref},
-			Event: SourceConfig{Threshold: 0.5, Limit: 20},
-		})
-		if err != nil {
-			t.Fatalf("fetch: %v", err)
-		}
-		meta, ok := eventOf(packets)
-		if !ok {
-			t.Fatalf("sticky event %+v should be injected", c.ref)
-		}
-		if meta.Mode != c.mode || meta.Miss != c.miss {
-			t.Fatalf("ref %+v: expected %s/miss=%d, got %s/miss=%d", c.ref, c.mode, c.miss, meta.Mode, meta.Miss)
-		}
-	}
-}
-
-func TestEventSource_CrossSessionCarriedSummary(t *testing.T) {
-	f := setupEventSource(t, EventSourceConfig{})
-	seedEventRow(t, f.db, "e1", "事件", "现状")
-	seedEventMemory(t, f.db, "m1", "e1", "内容", time.Now())
-
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		UserID: "u1", IsNewSession: true,
-		PrevEventRefs: []EventRef{{ID: "e1", Mode: EventModeFull}},
-		Event:         SourceConfig{Threshold: 0.5, Limit: 20},
-	})
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	meta, ok := eventOf(packets)
-	if !ok {
-		t.Fatal("carried event should be injected")
-	}
-	if meta.Mode != EventModeSummary || !meta.Carried {
-		t.Fatalf("expected summary carried, got mode=%s carried=%v", meta.Mode, meta.Carried)
-	}
-	if len(meta.Memories) != 0 {
-		t.Fatalf("carried summary must not carry memories, got %d", len(meta.Memories))
-	}
-}
-
-func TestEventSource_PinnedForcesFull(t *testing.T) {
-	f := setupEventSource(t, EventSourceConfig{})
-	seedEventRow(t, f.db, "e1", "事件", "现状")
-	seedEventMemory(t, f.db, "m1", "e1", "内容", time.Now())
-
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		UserID: "u1", PinnedEventIDs: []string{"e1"},
-		Event: SourceConfig{Threshold: 0.5, Limit: 20},
-	})
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	meta, ok := eventOf(packets)
-	if !ok || meta.Mode != EventModeFull || !meta.Pinned {
-		t.Fatalf("pinned event should be full, got %+v", meta)
 	}
 }
 
@@ -277,14 +392,15 @@ func TestEventSource_LiteralNameHit(t *testing.T) {
 	seedEventMemory(t, f.db, "m1", "e1", "内容", time.Now())
 
 	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		UserID: "u1", Query: "回西安准备得怎么样了",
+		UserID: "u1", Query: "回西安准备得怎么样了", EventsAll: true,
 		Event: SourceConfig{Threshold: 0.5, Limit: 20},
 	})
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if _, ok := eventOf(packets); !ok {
-		t.Fatal("literal event name hit should inject the event")
+	meta, ok := eventByID(packets, "e1")
+	if !ok || meta.Mode != EventModeHit {
+		t.Fatalf("literal event name hit should mark event as hit, got %+v", meta)
 	}
 }
 
@@ -317,14 +433,13 @@ func TestEventSource_ChunkVectorHit(t *testing.T) {
 		memChunkResult("chunk:memory:m1/0", "m1", 0.88),
 	}
 
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		Embedding: []float64{1}, UserID: "u1",
-		Event: SourceConfig{Threshold: 0.5, Limit: 20},
-	})
+	opts := allEventOptions()
+	opts.Embedding = []float64{1}
+	packets, _, err := f.src.Fetch(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if meta, ok := eventOf(packets); !ok || meta.EventID != "e1" {
+	if meta, ok := eventByID(packets, "e1"); !ok || meta.Mode != EventModeHit {
 		t.Fatalf("chunk hit should resolve to its event, got %+v", packets)
 	}
 }
@@ -393,45 +508,3 @@ func TestEventSource_DanglingEventID(t *testing.T) {
 }
 
 func stringPtr(s string) *string { return &s }
-
-func TestEventSource_PinnedNotDegradedByFreshQuota(t *testing.T) {
-	f := setupEventSource(t, EventSourceConfig{QuotaFull: 1, QuotaCompact: 1, QuotaSummary: 1, QuotaIndex: 1})
-	for _, id := range []string{"p1", "p2", "p3"} {
-		seedEventRow(t, f.db, id, "pinned-"+id, "")
-		seedEventMemory(t, f.db, "pm-"+id, id, "内容", time.Now())
-	}
-	var results []SearchResult
-	for i := 0; i < 5; i++ {
-		id := fmt.Sprintf("f%d", i)
-		seedEventRow(t, f.db, id, "fresh-"+id, "")
-		seedEventMemory(t, f.db, "fm-"+id, id, "内容", time.Now())
-		results = append(results, fullMemResult("fm-"+id, 0.9))
-	}
-	f.vs.results = results
-
-	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{
-		Embedding: []float64{1}, UserID: "u1",
-		PinnedEventIDs: []string{"p1", "p2", "p3"},
-		Event:          SourceConfig{Threshold: 0.5, Limit: 20},
-	})
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	pinnedCount := 0
-	for _, p := range packets {
-		meta := p.Meta.(EventMeta)
-		if meta.Pinned {
-			pinnedCount++
-			if meta.Mode != EventModeFull {
-				t.Fatalf("pinned event degraded: %+v", meta)
-			}
-			continue
-		}
-		if meta.Mode == EventModeFull {
-			t.Fatalf("fresh event should be degraded before pinned, got %+v", meta)
-		}
-	}
-	if pinnedCount != 3 {
-		t.Fatalf("expected 3 pinned full events, got %d", pinnedCount)
-	}
-}

@@ -461,7 +461,7 @@ func TestUnifiedSearch_EventMetaFields(t *testing.T) {
 	sources := map[string]retrieval.ContextSource{
 		"event": &mockContextSource{name: "event", pkts: []retrieval.ContextPacket{
 			{ID: "e1", Type: "event", Score: 0.78, Meta: retrieval.EventMeta{
-				EventID: "e1", Title: "日本旅行计划", Summary: "在做攻略", Mode: retrieval.EventModeCompact, MemoryCount: 5,
+				EventID: "e1", Title: "日本旅行计划", Summary: "在做攻略", Mode: retrieval.EventModeHit, MemoryCount: 5,
 			}},
 		}},
 	}
@@ -483,8 +483,8 @@ func TestUnifiedSearch_EventMetaFields(t *testing.T) {
 	if first["summary"] != "在做攻略" {
 		t.Errorf("expected summary=在做攻略, got %v", first["summary"])
 	}
-	if first["mode"] != retrieval.EventModeCompact {
-		t.Errorf("expected mode=compact, got %v", first["mode"])
+	if first["mode"] != retrieval.EventModeHit {
+		t.Errorf("expected mode=hit, got %v", first["mode"])
 	}
 }
 

@@ -50,12 +50,10 @@ type EventMeta struct {
 	EventID     string
 	Title       string
 	Summary     string
-	Mode        string // full | compact | summary | index
+	Mode        string // full | hit | summary | index
 	Score       float64
 	UpdatedAt   time.Time // 最后一条记忆的时间
 	Pinned      bool
-	Carried     bool // 跨窗口延续（只注入 summary）
-	Miss        int  // 同窗口连续未命中轮数（供下一轮解析）
 	Memories    []model.UserMemory
 	MemoryCount int
 }

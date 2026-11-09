@@ -374,18 +374,24 @@ func TestBuildEventsBlock_FullAndIndex(t *testing.T) {
 	}
 }
 
-func TestBuildEventsBlock_Carried(t *testing.T) {
+func TestBuildEventsBlock_HitMode(t *testing.T) {
 	items := []retrieval.ContextPacket{
 		{ID: "e1", Type: TypeEvent, Meta: retrieval.EventMeta{
 			EventID: "e1", Title: "回西安准备", Summary: "打包中",
-			Mode: retrieval.EventModeSummary, Carried: true,
+			Mode: retrieval.EventModeHit,
+			Memories: []model.UserMemory{{
+				ID: "m1", MemoryValue: "科三挂了",
+			}},
 		}},
 	}
 	got := marshalBlock(t, buildBlock(TypeEvent, items))
-	if !strings.Contains(got, `carried="上一窗口"`) {
-		t.Errorf("missing carried marker: %s", got)
+	if !strings.Contains(got, `mode="hit"`) {
+		t.Errorf("missing hit mode: %s", got)
 	}
-	if strings.Contains(got, `<memory`) {
-		t.Errorf("summary mode must not render memories: %s", got)
+	if !strings.Contains(got, `<memory id="m1"`) {
+		t.Errorf("hit mode should render memories: %s", got)
+	}
+	if strings.Contains(got, `carried=`) || strings.Contains(got, `miss=`) {
+		t.Errorf("carried/miss markers are retired: %s", got)
 	}
 }

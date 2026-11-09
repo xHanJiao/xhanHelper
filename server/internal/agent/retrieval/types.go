@@ -13,10 +13,9 @@ const (
 		"用户偏好或价值观的变化。本条通过双路向量检索（分块级+全文级）按实体去重后拼接，并经过时间衰减过滤。"
 	DescNotes = "大模型在对话过程中记录的值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等。" +
 		"本条通过双路向量检索（分块级+全文级）按实体去重后拼接。"
-	DescEvents = "用户现实里持续在跟进的事件，由系统把相关记忆聚合而成（如「回西安准备」「驾照考取」）。" +
-		"每个事件带一句当前状态 summary；mode=full 附带最近的记忆，mode=compact 只附 2 条，" +
-		"mode=summary 只有状态，mode=index 只有标题（说明它存在，需要时用检索工具 unified_search 查完整记忆）。" +
-		"本块通过记忆向量检索后按事件聚合召回，并按相关度与新近度决定注入形态。"
+	DescEvents = "用户现实里持续在跟进的全部事件（未删除）。最近有活动的带当前状态 summary 和少量最近记忆；" +
+		"更早的只有标题（mode=index），需要细节用 event.get 查。mode=hit 是本次对话命中的事件，附带命中的记忆；" +
+		"mode=full 是用户钉住的事件，附带最近 20 条记忆。"
 	DescHistory = "之前的聊天记录，以 round 的方式组织，一个 round 代表了用户一次发送的消息和接收到的返回内容。" +
 		"本条通过单路向量检索召回后，扩展为完整对话轮次。"
 	DescMessages = "用户历史聊天记录中的发言内容，通过语义或关键词检索召回。仅返回用户自己发送的消息原文，不附带对话轮的上下文和 AI 回复。"
@@ -80,10 +79,10 @@ type SearchOptions struct {
 	Summary SourceConfig // 摘要检索
 	Event   SourceConfig // 事件检索（复用记忆向量，按 event_id 聚合）
 
-	// 事件粘滞/跨窗口携带：从上一轮 XML 解析，不落库（设计 §6.10）。
-	PrevEventRefs  []EventRef
-	PinnedEventIDs []string // 用户 event.enable 钉住的事件（阶段 4 写入）
-	IsNewSession   bool     // 本轮是否开启新窗口：跨窗口的 prev 事件降为 summary
+	// 事件注入：EventsAll=true 时返回全量事件列表（主对话资源区）；
+	// false 时只返回命中事件（unified_search 语义检索）。
+	EventsAll      bool
+	PinnedEventIDs []string // 用户 event.enable 钉住的事件
 
 	// 排除已在当前消息列表中的消息 ID（避免系统提示词与历史消息重复）
 	ExcludeMsgIDs map[string]bool

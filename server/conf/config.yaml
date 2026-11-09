@@ -157,29 +157,29 @@ retrieval:
     freshness_decay: 0.008
     threshold: 0.6
     limit: 2
-  # 事件注入：复用记忆向量，按 event_id 聚合（docs/design/event-threads）
+  # 事件注入：全量列表 + 命中附记忆（见 docs/design/event-threads/injection-rewrite.md）
   event:
     freshness_decay: 0.01
     threshold: 0.5
-    limit: 20 # 记忆召回乘数（chunk=limit*8 / 全量=limit*2），不是事件条数上限；事件条数由 quota_event_* 控制
+    limit: 20 # 记忆召回乘数（chunk=limit*8 / 全量=limit*2），不是事件条数上限
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true
-    budget_chars: 15000 # 总预算帽（UTF-8 字符数，中文 1 字=1）
+    budget_chars: 24000 # 总预算帽（UTF-8 字符数，中文 1 字=1）
     budget_profile: 1600 # profile 预算（稳定画像层）
     budget_summary: 500 # summary 预算
-    budget_memory: 1000 # memory 预算（只放未聚合的普通记忆）
+    budget_memory: 3000 # memory 预算（只放未聚合的普通记忆）
     budget_note: 0 # note 预算（笔记不再注入资源区）
-    budget_event: 12000 # 事件区预算（所有事件形态合计）
+    budget_event: 18000 # 事件区预算（全量列表 + 命中附记忆）
     quota_summary: 1 # 摘要配额
     quota_memory: 6 # 记忆配额
     quota_note: 0 # 笔记配额（0 = 不注入）
-    quota_event_full: 4 # 事件 full 上限（含 pinned）
-    quota_event_compact: 6 # 事件 compact 上限
-    quota_event_summary: 12 # 事件 summary 上限，超出降 index
-    quota_event_index: 25 # 事件 index 上限，超出移出资源区
-    quota_event_pinned: 3 # event.enable 钉住上限
-    event_memories: 20 # full 形态每个事件附带的记忆条数（updated_at DESC）
+    quota_event_pinned: 3 # event.enable 钉住上限（full + 最近 20 条记忆）
+    quota_event_hit: 3 # 命中事件上限（hit + 命中记忆 top 10）
+    event_memories: 20 # pinned 每事件附带记忆条数（updated_at DESC）
+    event_hit_memories: 10 # 命中事件附带记忆条数（按命中分数）
+    event_recent_memories: 3 # 最近窗口事件附带记忆条数
+    event_recent_window_days: 14 # 摘要窗口：last_memory_at 在 N 天内放 summary，否则 index
 
 # session 结束后的记忆 → 事件拼装（docs/design/event-threads）
 event_assembly:

@@ -112,8 +112,6 @@ type eventItem struct {
 	Updated     string         `xml:"updated,attr,omitempty" json:"updated,omitempty"`
 	MemoryCount int            `xml:"memory_count,attr,omitempty" json:"memory_count,omitempty"`
 	Pinned      string         `xml:"pinned,attr,omitempty" json:"pinned,omitempty"`
-	Miss        int            `xml:"miss,attr,omitempty" json:"miss,omitempty"`
-	Carried     string         `xml:"carried,attr,omitempty" json:"carried,omitempty"`
 	Summary     string         `xml:"summary,omitempty" json:"summary,omitempty"`
 	Memories    *eventMemories `xml:"memories" json:"memories,omitempty"`
 }
@@ -314,7 +312,6 @@ func buildEventsBlock(items []retrieval.ContextPacket) Block {
 			Mode:        meta.Mode,
 			Score:       roundScore(meta.Score),
 			MemoryCount: meta.MemoryCount,
-			Miss:        meta.Miss,
 		}
 		if it.ID == "" {
 			it.ID = pkt.ID
@@ -325,13 +322,10 @@ func buildEventsBlock(items []retrieval.ContextPacket) Block {
 		if meta.Pinned {
 			it.Pinned = "1"
 		}
-		if meta.Carried {
-			it.Carried = "上一窗口"
-		}
 		if meta.Mode != retrieval.EventModeIndex {
 			it.Summary = meta.Summary
 		}
-		if meta.Mode == retrieval.EventModeFull || meta.Mode == retrieval.EventModeCompact {
+		if len(meta.Memories) > 0 {
 			mems := &eventMemories{}
 			for _, m := range meta.Memories {
 				mi := eventMemoryItem{ID: m.ID, Topic: m.Topic, Content: m.MemoryValue}
@@ -450,7 +444,7 @@ func eventModeRank(mode string) int {
 	switch mode {
 	case retrieval.EventModeFull:
 		return 0
-	case retrieval.EventModeCompact:
+	case retrieval.EventModeHit:
 		return 1
 	case retrieval.EventModeSummary:
 		return 2
@@ -559,7 +553,7 @@ func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
 	case TypeRecent:
 		// recent 按时间正序注入，不重排
 	case TypeEvent:
-		// 事件按注入形态排序：pinned → full → compact → summary → index，
+		// 事件按注入形态排序：pinned(full) → hit → summary → index，
 		// 同形态内分数降序、新近度降序、ID（确定性）。
 		sort.SliceStable(packets, func(i, j int) bool {
 			mi, oki := packets[i].Meta.(retrieval.EventMeta)

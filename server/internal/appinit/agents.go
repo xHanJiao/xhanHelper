@@ -35,11 +35,11 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memDecayer)
 	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
 	eventSource := retrieval.NewEventSource(vs, repos.Mem, repos.Event, retrieval.EventSourceConfig{
-		QuotaFull:        cfg.Retrieval.ResourceZone.QuotaEventFull,
-		QuotaCompact:     cfg.Retrieval.ResourceZone.QuotaEventCompact,
-		QuotaSummary:     cfg.Retrieval.ResourceZone.QuotaEventSummary,
-		QuotaIndex:       cfg.Retrieval.ResourceZone.QuotaEventIndex,
 		PinnedMax:        cfg.Retrieval.ResourceZone.QuotaEventPinned,
+		HitMax:           cfg.Retrieval.ResourceZone.QuotaEventHit,
+		HitMemories:      cfg.Retrieval.ResourceZone.EventHitMemories,
+		RecentMemories:   cfg.Retrieval.ResourceZone.EventRecentMemories,
+		RecentWindowDays: cfg.Retrieval.ResourceZone.EventRecentWindowDays,
 		MemoriesPerEvent: cfg.Retrieval.ResourceZone.EventMemories,
 	}, retrieval.NewTimeDecay(cfg.Retrieval.Event.FreshnessDecay))
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer, cfg.Vector.MessageRetentionDays)
@@ -256,6 +256,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SummaryRepo:               repos.ConversationSummary,
 		MemRepo:                   repos.Mem,
 		ContextRetriever:          retriever,
+		EventLister:               eventSource,
 		ContextFormatter:          formatter,
 		SummaryAttachCount:        cfg.Chat.SummaryAttachCount,
 		SummaryAttachMaxDays:      cfg.Chat.SummaryAttachMaxDays,

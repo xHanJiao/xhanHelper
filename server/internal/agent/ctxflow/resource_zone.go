@@ -45,9 +45,9 @@ type ZoneBudgets struct {
 }
 
 // DefaultZoneBudgets 默认预算（与 config/validate 对齐）：
-// profile 1600 / summary 500 / memory 1000 / note 0 / event 12000。
+// profile 1600 / summary 500 / memory 3000 / note 0 / event 18000。
 func DefaultZoneBudgets() ZoneBudgets {
-	return ZoneBudgets{Profile: 1600, Summary: 500, Memory: 1000, Note: 0, Event: 12000}
+	return ZoneBudgets{Profile: 1600, Summary: 500, Memory: 3000, Note: 0, Event: 18000}
 }
 
 // zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/events/recent），
@@ -154,8 +154,6 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 				Score:       it.Score,
 				UpdatedAt:   parseZoneDate(it.Updated),
 				Pinned:      it.Pinned == "1",
-				Carried:     it.Carried != "",
-				Miss:        it.Miss,
 				MemoryCount: it.MemoryCount,
 			}
 			if it.Memories != nil {
@@ -194,80 +192,6 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 		}
 	}
 	return pkts
-}
-
-// EventRefsFromPackets 从资源区 packets 提取上一轮注入过的事件引用（id/mode/miss/pinned）。
-// 粘滞/跨窗口状态不落库，全部从上一条 user 消息的 XML 还原（设计 §6.10）。
-// 入参通常是 ParseResourceZone 的结果；单独抽出来是为了同一条 XML 只解析一次。
-func EventRefsFromPackets(pkts []retrieval.ContextPacket) []retrieval.EventRef {
-	var out []retrieval.EventRef
-	for _, p := range pkts {
-		if p.Type != TypeEvent {
-			continue
-		}
-		meta, ok := p.Meta.(retrieval.EventMeta)
-		if !ok || meta.EventID == "" {
-			continue
-		}
-		out = append(out, retrieval.EventRef{
-			ID: meta.EventID, Mode: meta.Mode, Miss: meta.Miss, Pinned: meta.Pinned,
-		})
-	}
-	return out
-}
-
-// CarryEventPackets 取上一轮事件原样携带（跳过检索 / 事件源失败时用）。
-//
-// 这条路径拿不到 Conversation.Extra 的完整内容，但调用方会把 PinnedEventIDs 传进来：
-//   - pinned 事件跨窗口保持原形态与记忆（「继续」最需要上下文，不能降级）；
-//   - 其余事件同窗口保留原形态，跨窗口把 full/compact 降为 summary carried
-//     （index 保持 index，避免变成没有 summary 的空壳）。
-//
-// 所有非 pinned 事件都会清掉 pinned 标签：权威来源是 PinnedEventIDs，保留旧标签可能已经过期
-// （用户刚 disable）；下一轮 EventSource 会从 Extra 重新派生。
-//
-// 注意：这里不做 DB 校验。删除/合并在第 N 轮发生、第 N+1 轮是短消息时，
-// 该事件会从 XML 多残留一轮；下一轮 EventSource 正常跑时会跳过（自愈延迟一轮）。
-func CarryEventPackets(pkts []retrieval.ContextPacket, newSession bool, pinnedIDs []string) []retrieval.ContextPacket {
-	pinned := make(map[string]struct{}, len(pinnedIDs))
-	for _, id := range pinnedIDs {
-		pinned[id] = struct{}{}
-	}
-	var out []retrieval.ContextPacket
-	for _, p := range pkts {
-		if p.Type != TypeEvent {
-			continue
-		}
-		meta, ok := p.Meta.(retrieval.EventMeta)
-		if !ok || meta.EventID == "" {
-			continue
-		}
-		if _, isPinned := pinned[meta.EventID]; isPinned {
-			meta.Pinned = true
-			meta.Carried = false
-			p.Meta = meta
-			out = append(out, p)
-			continue
-		}
-		meta.Pinned = false
-		if newSession {
-			meta.Miss = 0
-			meta.Memories = nil
-			switch meta.Mode {
-			case retrieval.EventModeFull, retrieval.EventModeCompact:
-				meta.Mode = retrieval.EventModeSummary
-				meta.Carried = true
-			case retrieval.EventModeSummary:
-				meta.Carried = true
-			default:
-				// index：没有 summary 可带，跨窗口保持 index。
-				meta.Carried = false
-			}
-		}
-		p.Meta = meta
-		out = append(out, p)
-	}
-	return out
 }
 
 // parseZoneDate 解析日期属性（"2006年01月02日" 或 "2006-01-02"），失败返回零值。
@@ -338,7 +262,7 @@ func zoneQuota(pkt retrieval.ContextPacket, q ZoneQuotas) int {
 	case TypeNote:
 		return q.Note
 	case TypeEvent:
-		// 事件配额由 EventSource 按注入形态（full/compact/summary/index）自己控制，
+		// 事件配额由 EventSource 按注入形态（full/hit/summary/index）自己控制，
 		// 资源区不再二次裁剪（设计 §6.10）。
 		return 1 << 30
 	case TypeProfile:
@@ -409,7 +333,7 @@ func MergeResourceZone(prev, fresh []retrieval.ContextPacket, q ZoneQuotas) []re
 	}
 
 	for _, pkt := range prev {
-		// 事件以本轮 EventSource 返回的集合为准（粘滞由 EventSource 解析 PrevEventRefs），
+		// 事件以本轮 EventSource 返回的全量列表为准（每轮从 DB 重建，不从上一轮携带）。
 		// 不从上一轮资源区捞旧事件（设计 §6.10）。
 		if pkt.Type == TypeEvent {
 			continue
@@ -523,8 +447,8 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 		}
 		var victim string
 		for _, typ := range budgetTypePriority {
-			if typ == TypeEvent && !hasNonPinnedEvent(pkts) {
-				continue // 全是 pinned：不降不丢，让其它类型先挨刀
+			if typ == TypeEvent && !hasUnprotectedEvent(pkts) {
+				continue // 全是 pinned/hit：不降不丢，让其它类型先挨刀
 			}
 			if hasType(pkts, typ) {
 				victim = typ
@@ -535,9 +459,9 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 			return pkts // 无可砍，接受超限（理论不应发生）
 		}
 		if victim == TypeEvent {
-			// 事件先降级（full→compact→summary→index），index 再降就丢弃
-			if !demoteLastEvent(pkts) {
-				pkts = dropLastNonPinnedEvent(pkts)
+			// summary 先降 index；没有可降级的再丢 index；pinned/hit 不降不丢
+			if !demoteLastSummary(pkts) {
+				pkts = dropLastUnprotectedEvent(pkts)
 			}
 		} else {
 			pkts = dropFirstOfType(pkts, victim)
@@ -562,25 +486,17 @@ func budgetPerType(pkts []retrieval.ContextPacket, budgets ZoneBudgets) []retrie
 			continue
 		}
 		list := groups[typ]
+		if typ == TypeEvent {
+			// 事件组：summary 先降 index，index 再二分丢弃（避免逐条整组重编码）
+			groups[typ] = trimEventGroup(list, budget)
+			continue
+		}
 		for {
 			if len(list) == 0 {
 				break
 			}
 			if utf8.RuneCountInString(FormatResourceZone(list)) <= budget {
 				break
-			}
-			if typ == TypeEvent {
-				// 事件超预算先降级最低优先级那条（full→compact→summary→index），
-				// index 再降就丢弃；符合设计 §6.4「预算不足时 summary → index」。
-				if demoteEvent(&list[len(list)-1]) {
-					continue
-				}
-				next := dropLastNonPinnedEvent(list)
-				if len(next) == len(list) {
-					break // 全是 pinned：接受超预算，不降不丢
-				}
-				list = next
-				continue
 			}
 			list = list[1:] // 砍最旧
 		}
@@ -637,25 +553,18 @@ func dropLastOfType(pkts []retrieval.ContextPacket, typ string) []retrieval.Cont
 	return pkts
 }
 
-// demoteEvent 把事件降一级：full→compact（留 2 条记忆）→summary（清记忆）→index（清 summary）。
-// index 已是最低形态，返回 false 表示调用方应丢弃。
+// demoteEvent 把事件降一级：summary→index（清 summary 与记忆）。
+// pinned / hit 不降级，index 已是最低形态；返回 false 表示调用方应丢弃。
 func demoteEvent(pkt *retrieval.ContextPacket) bool {
 	meta, ok := pkt.Meta.(retrieval.EventMeta)
-	if !ok || meta.Pinned {
-		return false // pinned 不降级（设计 §6.5），预算兜底时也不动它
+	if !ok || meta.Pinned || meta.Mode == retrieval.EventModeHit {
+		return false // pinned / hit 不降不丢
 	}
 	switch meta.Mode {
-	case retrieval.EventModeFull:
-		meta.Mode = retrieval.EventModeCompact
-		if len(meta.Memories) > 2 {
-			meta.Memories = meta.Memories[:2]
-		}
-	case retrieval.EventModeCompact:
-		meta.Mode = retrieval.EventModeSummary
-		meta.Memories = nil
-	case retrieval.EventModeSummary:
+	case retrieval.EventModeFull, retrieval.EventModeSummary:
 		meta.Mode = retrieval.EventModeIndex
 		meta.Summary = ""
+		meta.Memories = nil
 	case retrieval.EventModeIndex:
 		return false
 	default:
@@ -665,37 +574,79 @@ func demoteEvent(pkt *retrieval.ContextPacket) bool {
 	return true
 }
 
-// demoteLastEvent 降级最后一个（最低优先级）非 pinned 事件；没有可降级的返回 false。
-func demoteLastEvent(pkts []retrieval.ContextPacket) bool {
+// demoteLastSummary 把最后一条可降级的 summary（或非 pinned 的 full）降为 index。
+// pinned / hit / index 不参与；没有可降级的返回 false。
+func demoteLastSummary(pkts []retrieval.ContextPacket) bool {
 	for i := len(pkts) - 1; i >= 0; i-- {
-		if pkts[i].Type == TypeEvent && !isPinnedEvent(pkts[i]) {
-			return demoteEvent(&pkts[i])
+		if pkts[i].Type != TypeEvent || isProtectedEvent(pkts[i]) {
+			continue
 		}
+		if meta, ok := pkts[i].Meta.(retrieval.EventMeta); ok && meta.Mode == retrieval.EventModeIndex {
+			continue
+		}
+		return demoteEvent(&pkts[i])
 	}
 	return false
 }
 
-// dropLastNonPinnedEvent 丢掉最后一个非 pinned 事件；全是 pinned 时原样返回。
-func dropLastNonPinnedEvent(pkts []retrieval.ContextPacket) []retrieval.ContextPacket {
+// trimEventGroup 事件组按预算裁剪：summary 先降 index（条数少，逐条重编码），
+// 全是 index 后二分找能保留的最长前缀（避免逐条整组重编码的 O(n²)）。
+// pinned / hit 不降不丢，预算再紧也保留。
+func trimEventGroup(list []retrieval.ContextPacket, budget int) []retrieval.ContextPacket {
+	for len(list) > 0 && utf8.RuneCountInString(FormatResourceZone(list)) > budget {
+		if !demoteLastSummary(list) {
+			break
+		}
+	}
+	if len(list) == 0 || utf8.RuneCountInString(FormatResourceZone(list)) <= budget {
+		return list
+	}
+	// 前 minKeep 条是 pinned/hit，必须保留
+	minKeep := 0
+	for minKeep < len(list) && isProtectedEvent(list[minKeep]) {
+		minKeep++
+	}
+	lo, hi := minKeep, len(list)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if utf8.RuneCountInString(FormatResourceZone(list[:mid])) <= budget {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	kept := list[:lo]
+	// 防御：顺序不变量被破坏时，把尾部残留的 pinned/hit 也带上（宁可超预算）
+	for _, p := range list[lo:] {
+		if isProtectedEvent(p) {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
+// dropLastUnprotectedEvent 丢掉最后一个可丢弃事件；全是 pinned/hit 时原样返回。
+func dropLastUnprotectedEvent(pkts []retrieval.ContextPacket) []retrieval.ContextPacket {
 	for i := len(pkts) - 1; i >= 0; i-- {
-		if pkts[i].Type == TypeEvent && !isPinnedEvent(pkts[i]) {
+		if pkts[i].Type == TypeEvent && !isProtectedEvent(pkts[i]) {
 			return append(pkts[:i], pkts[i+1:]...)
 		}
 	}
 	return pkts
 }
 
-func isPinnedEvent(pkt retrieval.ContextPacket) bool {
+// isProtectedEvent pinned / hit 由用户意图或本轮命中决定，预算兜底时不降不丢。
+func isProtectedEvent(pkt retrieval.ContextPacket) bool {
 	if pkt.Type != TypeEvent {
 		return false
 	}
 	meta, ok := pkt.Meta.(retrieval.EventMeta)
-	return ok && meta.Pinned
+	return ok && (meta.Pinned || meta.Mode == retrieval.EventModeHit)
 }
 
-func hasNonPinnedEvent(pkts []retrieval.ContextPacket) bool {
+func hasUnprotectedEvent(pkts []retrieval.ContextPacket) bool {
 	for _, p := range pkts {
-		if p.Type == TypeEvent && !isPinnedEvent(p) {
+		if p.Type == TypeEvent && !isProtectedEvent(p) {
 			return true
 		}
 	}

@@ -78,10 +78,8 @@ type RunRequest struct {
 	// 历史消息不再重放完整 XML；注入资源收敛到当前消息的公共资源区。
 	PreviousUserXMLContext string
 
-	// PrevZonePackets / PrevEventRefs 在 Run 内从 Window.PrevEventXML 解析一次，
-	// 供资源区与事件层共用（避免同一条 XML 解析两遍）。
+	// PrevZonePackets 在 Run 内从 Window.PrevEventXML 解析一次，供资源区复用（避免同一条 XML 解析两遍）。
 	PrevZonePackets []retrieval.ContextPacket
-	PrevEventRefs   []retrieval.EventRef
 
 	// PinnedEventIDs — 用户 event.enable 钉住的事件（Conversation.Extra.EventFocus.Enabled）。
 	// 每轮无条件 full 注入；权威来源只在这里，不从上一轮 XML 推断。
@@ -200,6 +198,7 @@ type Orchestrator struct {
 	memRepo                 *service.UserMemoryRepo   // 记忆 confirm_count 计数（口径 B，见 buildUserMessage）
 	contextRetriever        *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter        ctxflow.ContextFormatter  // 上下文格式化（接口）
+	eventLister             EventLister               // 事件全量列表（短输入/检索失败兜底）
 	profileFactRepo         profileFactGetter
 	imageStore              *service.ImageStore // 图床（懒补 file_id / 标记引用）
 	activity                *activity.Store     // 活动埋点 events.db；nil = 采集关闭
@@ -252,6 +251,7 @@ type OrchestratorConfig struct {
 	MemRepo                   *service.UserMemoryRepo   // 记忆 confirm_count 计数（可选；nil = 不计数）
 	ContextRetriever          *ctxflow.ContextRetriever // 上下文检索
 	ContextFormatter          ctxflow.ContextFormatter  // 上下文格式化
+	EventLister               EventLister               // 事件全量列表（短输入/检索失败兜底）
 	SummaryAttachCount        int                       // 摘要附着条数上限，默认 10
 	SummaryAttachMaxDays      int                       // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
@@ -328,6 +328,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		memRepo:                   cfg.MemRepo,
 		contextRetriever:          cfg.ContextRetriever,
 		contextFormatter:          cfg.ContextFormatter,
+		eventLister:               cfg.EventLister,
 		summaryAttachCount:        cfg.SummaryAttachCount,
 		summaryAttachMaxDays:      cfg.SummaryAttachMaxDays,
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
@@ -357,11 +358,9 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	// 资源区增量来源：上一条 user 消息的 XMLContext（computeWindowSize 已查，零额外 DB 读）
 	req.PreviousUserXMLContext = req.Window.PrevUserXML
-	// 事件层要跨 session 读取上一轮事件；PrevEventXML 在新 session 也保留。
 	// 同一条 XML 只解析一次，资源区在字符串相同时直接复用。
 	if req.Window.PrevEventXML != "" {
 		req.PrevZonePackets = ctxflow.ParseResourceZone(req.Window.PrevEventXML)
-		req.PrevEventRefs = ctxflow.EventRefsFromPackets(req.PrevZonePackets)
 	}
 
 	var queryVec []float64
@@ -403,8 +402,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	// 2. 上下文检索
 	var retrieveResult *ctxflow.RetrieveResult
 	if !req.SkipRetrieval && len(queryVec) > 0 {
-		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(
-			req, queryVec, req.PrevEventRefs))
+		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(req, queryVec))
 		if err != nil {
 			log.Printf("[orch] retrieve error: %v", err)
 		}
@@ -415,7 +413,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	return events, nil
 }
 
-func mkSearchOptions(req *RunRequest, queryVec []float64, prevEventRefs []retrieval.EventRef) retrieval.SearchOptions {
+func mkSearchOptions(req *RunRequest, queryVec []float64) retrieval.SearchOptions {
 	// 从已有消息中采集 DB ID，供检索时去重
 	excludeMsgIDs := make(map[string]bool)
 	for _, m := range req.Messages {
@@ -433,24 +431,25 @@ func mkSearchOptions(req *RunRequest, queryVec []float64, prevEventRefs []retrie
 		History:        req.History,
 		Summary:        req.Summary,
 		Event:          req.Event,
-		PrevEventRefs:  prevEventRefs,
+		EventsAll:      true,
 		PinnedEventIDs: req.PinnedEventIDs,
-		IsNewSession:   req.Window.IsNewSession,
 		ExcludeMsgIDs:  excludeMsgIDs,
 	}
 }
 
+// EventLister 事件全量列表（短输入 / 检索失败时的兜底，不跑向量检索）。
+type EventLister interface {
+	ListForInjection(ctx context.Context, userID, query string, pinnedIDs []string) ([]retrieval.ContextPacket, error)
+}
+
 // eventZonePackets 决定本轮事件区来源：
-//   - 检索正常跑过且 EventSource 没报错 → 用本轮结果（EventSource 自己处理粘滞/降级）；
+//   - 检索正常跑过且 EventSource 没报错 → 用本轮结果（全量列表 + 命中附记忆）；
 //   - 跳过检索（短输入）、embedding 失败、EventSource 报错、或检索器没注册 event 源
-//     → 携带上一轮事件（跨窗口降为 summary carried）。
-//
-// 后一种情况必须携带：本轮 XML 会写回 DB，如果这里为空，下一轮解析就丢了粘滞链。
-func eventZonePackets(
+//     → 直接向 EventLister 要全量列表（不携带上一轮：事件每轮从 DB 重建）。
+func (o *Orchestrator) eventZonePackets(
+	ctx context.Context,
+	req *RunRequest,
 	retrieveResult *ctxflow.RetrieveResult,
-	prevPackets []retrieval.ContextPacket,
-	isNewSession bool,
-	pinnedIDs []string,
 ) []retrieval.ContextPacket {
 	if retrieveResult != nil && retrieveResult.Trace != nil {
 		for _, p := range retrieveResult.Trace.Providers {
@@ -463,7 +462,16 @@ func eventZonePackets(
 			break
 		}
 	}
-	return ctxflow.CarryEventPackets(prevPackets, isNewSession, pinnedIDs)
+	if o.eventLister == nil {
+		log.Printf("[orch] event lister not configured, event zone skipped")
+		return nil
+	}
+	pkts, err := o.eventLister.ListForInjection(ctx, req.UserID, req.RawUserMessage, req.PinnedEventIDs)
+	if err != nil {
+		log.Printf("[orch] event list fallback error: %v", err)
+		return nil
+	}
+	return pkts
 }
 
 func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent string) []float64 {
@@ -827,9 +835,8 @@ func (o *Orchestrator) buildUserMessage(
 				}
 			}
 		}
-		// 事件：检索正常用本轮结果；跳过检索/事件源失败时携带上一轮。
-		// 不携带的话本轮 XML 会写回 DB，下一轮粘滞链就断了（设计 §6.10）。
-		zoneFresh = append(zoneFresh, eventZonePackets(retrieveResult, req.PrevZonePackets, req.Window.IsNewSession, req.PinnedEventIDs)...)
+		// 事件：全量列表（检索正常用本轮结果；跳过检索/事件源失败时回退 EventLister）。
+		zoneFresh = append(zoneFresh, o.eventZonePackets(ctx, req, retrieveResult)...)
 		// 新窗口首条注入最近对话（用户 + AI 最终回复）到资源区，随后随增量携带、新窗口重置
 		if req.Window.IsNewSession {
 			zoneFresh = append(zoneFresh, buildRecentUserPackets(req.RecentUserMessages)...)

@@ -504,11 +504,11 @@ func initAssembler(ctx context.Context, cfg *config.Config, repos *app.Repos, ll
 	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder,
 		retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay))
 	eventSource := retrieval.NewEventSource(vs, repos.Mem, repos.Event, retrieval.EventSourceConfig{
-		QuotaFull:        cfg.Retrieval.ResourceZone.QuotaEventFull,
-		QuotaCompact:     cfg.Retrieval.ResourceZone.QuotaEventCompact,
-		QuotaSummary:     cfg.Retrieval.ResourceZone.QuotaEventSummary,
-		QuotaIndex:       cfg.Retrieval.ResourceZone.QuotaEventIndex,
 		PinnedMax:        cfg.Retrieval.ResourceZone.QuotaEventPinned,
+		HitMax:           cfg.Retrieval.ResourceZone.QuotaEventHit,
+		HitMemories:      cfg.Retrieval.ResourceZone.EventHitMemories,
+		RecentMemories:   cfg.Retrieval.ResourceZone.EventRecentMemories,
+		RecentWindowDays: cfg.Retrieval.ResourceZone.EventRecentWindowDays,
 		MemoriesPerEvent: cfg.Retrieval.ResourceZone.EventMemories,
 	}, retrieval.NewTimeDecay(cfg.Retrieval.Event.FreshnessDecay))
 

@@ -392,6 +392,8 @@ flowchart TD
 
 ### 6.3 四种形态
 
+> **2026-11-09 起本节已被 `injection-rewrite.md` 取代**：不再有 full/compact/summary/index 状态机与配额降级，事件改为全量列表 + 命中附记忆。以下保留作历史记录。
+
 | 形态 | 内容 | 大约字数 | 什么时候 |
 |---|---|---|---|
 | `full` | summary + 最多 20 条记忆 | ~2300 | fresh 命中 / pinned |
@@ -819,4 +821,5 @@ event_assembly:
 - 2026-11-04 阶段 5：旧主题只从主对话链路移除（注入源、`theme_search`、`/api/themes`、前端页面、`ctxflow` 的 topic 块与预算、`retrieval.theme` 配置）。
 - 2026-11-04 追加：反思侧也停写状态页——post-chat 摘掉 `StateWorker`，反思注册表不再注册主题工具，每日回顾只留 trace。`ThemeState` 仅剩调试读取（Admin message-debug），代码保留待统一删除。
 - 2026-11-05：每日回顾（MorningReview / EveningReview）彻底停用——`CronRunner` 移除 discover 定时器与相关配置，不再产生新的 `ReflectionTrace`；`HookStatus.discover_remaining` 与前端「每日回顾剩余」一并删除。影响文件：`server/internal/agent/cron_runner.go`、`server/internal/agent/reflection.go`、`server/internal/appinit/agents.go`、`server/internal/config/config.go`、`front-end/src/views/AdminView.vue`。
+- 2026-11-09 注入重写（取代 §6.3–§6.5 的四形态/状态机/配额降级）：资源区改为**全量列出所有未删除事件**，检索只决定给谁附记忆——最近 14 天 `summary + 3 条`、更早 `index`、命中事件 `hit + 命中记忆 top 10`（最多 3 个事件，覆盖年龄规则）、pinned `full + 最近 20 条`。预算 `budget_event` 12000→18000、`budget_chars` 15000→24000、`budget_memory` 1000→3000；四形态配额字段删除。实测最坏 17.8k 字符 ≈ 7.7k tokens/轮（25 事件、12 recent）。详见 `docs/design/event-threads/injection-rewrite.md`。
 - 2026-11-05 summary 口径回退 + 上限调整：summary 口径定为「≤300 字 + 电报体 + 倒金字塔」：先结论/现状、按重要性降序、背景最后；`MaxEventSummaryRunes` 由 600 提到 **1000**（只兜底，不参与目标长度）。`event-bootstrap --resummarize-truncated` 不截断模型输出（`EventRepo.UpdateSummaryUncapped`）并设 `temperature=0.3`。本地测试库实测 11 条存量重写为 168–521 字、结尾完整，无一条触顶。影响文件：`server/internal/agent/event_assembler.go`、`server/internal/service/event_repo.go`、`server/internal/tool/event.go`、`server/internal/model/event.go`、`server/cmd/event-bootstrap/main.go`。

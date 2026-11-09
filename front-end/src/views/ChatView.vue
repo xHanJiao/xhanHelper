@@ -111,7 +111,10 @@ const {
   start: startVoice,
   stop: stopVoice,
   cancel: cancelVoice,
-  speak: speakVoice,
+  speechSentences: voiceSpeechSentences,
+  speechIndex: voiceSpeechIndex,
+  appendReplyDelta: appendVoiceReply,
+  endReplyStream: endVoiceReply,
   stopSpeaking
 } = useVoiceChat({
   onSentence: submitVoiceSentence,
@@ -211,6 +214,19 @@ function toggleRound(roundKey) {
 
 // Compute roundKey for each message: each user msg starts a round,
 // subsequent non-user msgs inherit that roundKey until next user msg.
+// 语音朗读进度：只给「正在念的那条」——流式气泡或最后一条 assistant
+const voiceSpeech = computed(() => {
+  if (!voiceSpeaking.value && !voicePreparing.value) return null
+  const sentences = voiceSpeechSentences.value
+  if (!sentences.length) return null
+  return { sentences, index: voiceSpeechIndex.value }
+})
+
+const lastAssistantId = computed(() => {
+  const last = chat.messages[chat.messages.length - 1]
+  return last && last.role === 'assistant' ? last.id : ''
+})
+
 const messagesWithRoundKeys = computed(() => {
   let currentRoundKey = ''
   return chat.messages.map(msg => {
@@ -856,9 +872,10 @@ async function submitVoiceSentence(text) {
     // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
     initMode: chat.conversationId ? undefined : chat.mode,
     ephemeral: chat.conversationId ? false : chat.ephemeral,
-    // 语音来源：服务端注入短回答约束；done 后自动朗读
+    // 语音来源：服务端注入短回答约束；正文边到边切句合成，done 后收尾
     voiceMode: true,
-    onAssistantReply: (reply) => speakVoice(reply)
+    onAssistantReplyDelta: (text) => appendVoiceReply(text),
+    onAssistantReply: (reply, ok = true) => (ok ? endVoiceReply(reply) : stopSpeaking())
   })
 }
 
@@ -1131,12 +1148,14 @@ function handleContainerClick(e) {
           :message="msg"
           :is-history="true"
           :round-key="msg.roundKey"
+          :speech="!chat.streamingMessage && voiceSpeech && msg.id === lastAssistantId ? voiceSpeech : null"
         />
         <div style="position: relative;">
           <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
             <MessageBubble
               :message="chat.streamingMessage"
               :is-history="false"
+              :speech="voiceSpeech"
             />
           </div>
           <ToolCallToast />

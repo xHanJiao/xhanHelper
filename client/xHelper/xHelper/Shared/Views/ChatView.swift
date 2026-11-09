@@ -97,6 +97,12 @@ struct ChatView: View {
         return .listening
     }
 
+    /// 句级朗读进度：只给「正在念的那条」消息（流式气泡或最后一条 assistant）
+    private var voiceSpeechProgress: SpeechProgress? {
+        guard voice.isSpeaking || voice.isPreparingSpeech, !voice.speechSentences.isEmpty else { return nil }
+        return SpeechProgress(sentences: voice.speechSentences, index: voice.speechIndex)
+    }
+
     /// 语音会话期间顶替输入栏文本行的音波条（iOS 没有连续对话入口，恒为 nil）。
     private var voiceStripSlot: AnyView? {
         guard voice.continuousActive else { return nil }
@@ -133,6 +139,7 @@ struct ChatView: View {
                 },
                 baseURL: baseURL,
                 token: token,
+                speech: voiceSpeechProgress,
                 scrollPosition: $scrollPosition,
                 showScrollToBottom: $showScrollToBottom
             )
@@ -219,9 +226,16 @@ struct ChatView: View {
             }
             // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
             voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
+            // 正文边到边切句合成：首句一到就出声，不再等整段回复 + 整段 mp3
+            viewModel.onAssistantReplyDelta = { text in
+                voice.appendReplyDelta(text, baseURL: baseURL, token: token)
+            }
             viewModel.onAssistantReplyDone = { text in
                 LogBuffer.shared.diag("[voice] assistant reply done, tts chars=\(text.count)")
-                Task { await voice.speak(text: text, baseURL: baseURL, token: token) }
+                voice.endReplyStream(text, baseURL: baseURL, token: token)
+            }
+            viewModel.onAssistantReplyAborted = {
+                voice.stopSpeaking()
             }
             Task { await voice.refresh(baseURL: baseURL, token: token) }
         }

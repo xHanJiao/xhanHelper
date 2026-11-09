@@ -23,7 +23,7 @@
 ## 非目标
 
 - 不做 iOS 原生客户端（PWA 代替）。
-- 不做逐句流式 TTS（首版整段返回 mp3；C 再评估）。
+- 后端不做逐句流式 TTS：`POST /api/voice/tts` 仍整段返回 mp3；客户端按句切分后复用该接口（见 C2b）。
 - 不做声音复刻、付费精品音库。
 - 不把音频落库、不进 LLM I/O 审计、不写活动事件。
 
@@ -243,6 +243,24 @@ C 模式说明：
   由 `InputBar` 的 `voiceStrip` 槽顶替编辑器；PWA 实现在 `components/VoiceWaveLine.vue`（canvas，同一套数学）。
 - `prefers-reduced-motion` / `accessibilityReduceMotion` 时冻结相位与波包，只保留振幅响应。
 
+### C2b 朗读节奏：句级流水线 + 字幕跟随
+
+- 问题：TTS 原本在 `done` 后才拿整段回复合成、且要等整个 mp3 下完才开播；语音轮回复只有 80–120 字，
+  用户 3 秒读完，再干等 1~2 秒才听到第一句——「都看完了才开始念」。
+- 修法（后端不改，复用现有 `POST /api/voice/tts`）：
+  - 正文 delta 一进来就切句：句末 `。！？!?；;…\n`；**第一句额外在 12 字后的 `，,、` 处先切一刀**，
+    让首包音频尽早响。切出的句子立刻并发请求 TTS，按序播放；未以句末标点结尾的尾巴只显示、不合成，
+    `done` 时把尾巴整句合成。两端规则逐项一致：macOS `VoiceChatService.appendReplyDelta/endReplyStream`，
+    PWA `useVoiceChat` 的 `beginReplyStream/appendReplyDelta/endReplyStream`。
+  - 播报期间麦克风门跨句保持关闭（句间不解除）；打断清空整条队列。
+  - 纯代码/表格回复（每句都念不出来）收尾补播「这条回复主要是代码或表格……」，与一次性朗读一致。
+- 显示（字幕跟随）：正在念的那条消息按句上色——**已播正常 / 当前句加粗 + accent / 未播 45% 透明**。
+  macOS 在 `ChatBubble` 用 `Text` 拼接（流式气泡正文比流水线慢 100ms 节流，以流水线文本为准）；
+  PWA 在 `MessageBubble` 用 `<span>`。句子拼回原文不一致时退回 markdown，避免切分规则漂移时丢字。
+- 停止/出错/空回复都显式收掉流水线（macOS `onAssistantReplyAborted`、PWA handler 的 `ok=false`），
+  避免永远等下半句。
+- `shortcut:` 没有逐句时间戳；高亮粒度 = 一次 TTS 请求的句子。豆包以后若给词级时间戳，可细化到「当前词」。
+
 ### C3a 回声消除与打断（macOS）
 
 - `Shared/Services/VoiceAudioEngine.swift`：采集与播放共用一个 `AVAudioEngine`；
@@ -287,7 +305,8 @@ C 模式说明：
 - `URLSessionWebSocketTask` 连自家后端，二进制发 PCM，文本发 `{"type":"end"}`。
 - WS 一打开就开始采集（不等 `ready`），早于 `ready` 的帧由 socket 缓冲；`max_seconds-2` 自动收口。
 - 识别文本填输入框（不自动发送）。
-- 回复 `done` 后请求 TTS，由 `VoiceAudioEngine`（`AVAudioPlayerNode` + VPIO）播放；停止按钮同时停朗读。
+- 回复正文 delta 边到边切句请求 TTS（C2b），`VoiceAudioEngine`（`AVAudioPlayerNode` + VPIO）按序播放；
+  停止按钮同时停朗读。
 - 补 `NSMicrophoneUsageDescription`。
 
 ### PWA（Vue）
@@ -296,7 +315,7 @@ C 模式说明：
 - WebSocket 连自家后端。
 - WS 打开即采集（不等 `ready`），`max_seconds-2` 自动收口；`limit` 后停止采集等 `final`。
 - 识别文本填输入框（不自动发送）。
-- 回复完成后 `<audio>` 播放 mp3；首次点击麦克风时解锁音频元素。
+- 回复正文 delta 边到边切句请求 TTS（C2b），`<audio>` 按序播放；首次点击麦克风时解锁音频元素。
 - 不支持麦克风的浏览器隐藏按钮。
 
 ## 语音回复约束
@@ -512,3 +531,13 @@ location = /api/voice/asr {
   - 去掉状态字「听/想/说」与「点一下打断」：状态由颜色/波形表达，点整条仍是打断。
   - 两端实现同步为镜像填充的波形带（`VoiceOrbView.swift` 的 `VoiceWaveLine` /
     `components/VoiceWaveLine.vue`）；`mockup.html` 换成带麦克风与滑杆的调参页。
+
+- 2026-11-09（朗读节奏：句级流水线 + 字幕跟随）：
+  - 原路径是 `done` → 整段 TTS → 等整个 mp3 → 播，用户读完还要干等 1~2 秒。
+  - 改为正文 delta 边到边切句（首句在 12 字后的逗号处先切），每句单独请求现有 `/api/voice/tts`，
+    客户端按序播放；后端接口与协议不变。
+  - 正在念的消息按句上色：已播正常、当前句加粗 + accent、未播 45% 透明；流式气泡以流水线文本为准。
+  - 停止/出错/空回复显式停流水线（`onAssistantReplyAborted` / handler `ok=false`）。
+  - 影响文件：`VoiceChatService.swift`、`ChatViewModel.swift`、`ChatView.swift`、`MessageListView.swift`、
+    `ChatBubble.swift`；`useVoiceChat.js`、`useChatSSE.js`、`ChatView.vue`、`MessageBubble.vue`、
+    `utils/speech.js`（新增，含单测）。

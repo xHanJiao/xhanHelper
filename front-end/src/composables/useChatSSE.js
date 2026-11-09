@@ -67,6 +67,7 @@ export function useChatSSE() {
   // 本轮是否语音来源（done 后朗读回复）；resume 续传沿用
   let streamVoiceMode = false
   let streamReplyHandler = null
+  let streamReplyDeltaHandler = null
   // failStream 本次收尾的消息 id：done 只认它，避免把真实 id/灵阅卡片
   // 补到上一轮「停止」遗留的 local- 消息上（那条永远不会有真实 id）。
   let failedLocalId = null
@@ -75,14 +76,23 @@ export function useChatSSE() {
     return abortController === controller
   }
 
+  /// 语音轮异常收尾：让已经开始的句级朗读流水线停掉，别一直等下半句
+  function abortVoiceReply() {
+    if (!streamVoiceMode) return
+    const handler = streamReplyHandler
+    streamVoiceMode = false
+    streamReplyHandler = null
+    streamReplyDeltaHandler = null
+    handler?.('', false)
+  }
+
   // 流式失败时别把气泡留在「流式中」：有正文或思考就收尾成普通消息，再露出可重试的错误块。
   // 服务端随后仍会发 done（带本轮灵阅卡片），由 done 分支补到这条本地消息上。
   function failStream(message, kind) {
     const partial = chat.streamingMessage
     failedLocalId = null
     lastErrorKind = kind || 'server'
-    streamVoiceMode = false
-    streamReplyHandler = null
+    abortVoiceReply()
     if (partial?.content || partial?.reasoning) {
       failedLocalId = `local-${Date.now()}`
       chat.addMessage({ ...partial, id: failedLocalId, toolCalls: [] })
@@ -100,8 +110,7 @@ export function useChatSSE() {
     chat.isStreaming = false
     chat.streamingMessage = null
     chat.statusMessage = null
-    streamVoiceMode = false
-    streamReplyHandler = null
+    abortVoiceReply()
   }
 
   function makeWatchdog(controller) {
@@ -134,7 +143,7 @@ export function useChatSSE() {
     })
   }
 
-  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral, voiceMode, onAssistantReply } = {}) {
+  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral, voiceMode, onAssistantReply, onAssistantReplyDelta } = {}) {
     if (chat.isStreaming) return
 
     // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再点开关不该改写已落库的值）
@@ -142,6 +151,7 @@ export function useChatSSE() {
     streamEphemeral = !!ephemeral
     streamVoiceMode = !!voiceMode
     streamReplyHandler = onAssistantReply || null
+    streamReplyDeltaHandler = onAssistantReplyDelta || null
     lastSeq = null
     lastTurnId = ''
     streamOutcome = null
@@ -337,6 +347,8 @@ export function useChatSSE() {
         const parsed = JSON.parse(rawData)
         chat.streamingMessage.content += parsed.delta
         chat.statusMessage = null // 正文开始推送，清除「正在分析」提示
+        // 语音轮：把累积正文喂给句级 TTS，首句一到就开始合成
+        if (streamVoiceMode) streamReplyDeltaHandler?.(chat.streamingMessage.content)
         break
       }
       case 'thought_delta':
@@ -464,11 +476,18 @@ export function useChatSSE() {
           chat.error = d.error
           lastErrorKind = 'server'
         }
-        if (streamVoiceMode && !d.error && replyText.trim()) {
+        if (streamVoiceMode) {
           const handler = streamReplyHandler
+          const deltaHandler = streamReplyDeltaHandler
           streamVoiceMode = false
           streamReplyHandler = null
-          handler?.(replyText)
+          streamReplyDeltaHandler = null
+          if (!d.error && replyText.trim()) {
+            deltaHandler?.(replyText)
+            handler?.(replyText, true)
+          } else {
+            handler?.(replyText, false)
+          }
         }
         break
       }

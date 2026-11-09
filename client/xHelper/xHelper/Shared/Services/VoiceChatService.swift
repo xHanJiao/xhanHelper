@@ -52,9 +52,23 @@ final class VoiceChatService: ObservableObject {
     /// 回复已生成完、TTS 还在合成音频（还没开播）：界面据此停在「想」，
     /// 不要在这段里先闪回「听」（听→想→听→说的那个多余「听」）。
     @Published private(set) var isPreparingSpeech = false
+    /// 句级朗读进度：`speechSentences` = 已切开的句子 + 还没切开的流式尾巴；
+    /// `speechIndex` = 正在播的句子。界面据此做「已播正常 / 当前高亮 / 未播淡显」。
+    @Published private(set) var speechSentences: [String] = []
+    @Published private(set) var speechIndex: Int = 0
     /// 空闲多久没听到完整分句就结束会话（秒）
     private let continuousIdleSeconds = 30
     private var speakEndTask: Task<Void, Never>?
+    // 句级 TTS 流水线（代次复用 speakEpoch）
+    private var speechFrozen: [String] = []
+    private var speechTail = ""
+    private var speechConsumed = 0
+    private var speechTasks: [Int: Task<Data?, Never>] = [:]
+    private var speechEnded = true
+    private var speechNeedsPlaceholder = false
+    private var speechPump: Task<Void, Never>?
+    private var wakeCont: AsyncStream<Void>.Continuation?
+    private var playContinuation: CheckedContinuation<Void, Error>?
     private var gateTask: Task<Void, Never>?
     /// 麦克风门是否生效（播报期间 + 播报结束后的 600ms 尾音窗口）
     private var micGated = false
@@ -437,56 +451,191 @@ final class VoiceChatService: ObservableObject {
 
     // MARK: TTS
 
-    /// 朗读一段回复；纯代码/表格回复改播一句提示。
-    func speak(text: String, baseURL: String, token: String) async {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !baseURL.isEmpty, !token.isEmpty else { return }
-        let cleaned = Self.sanitizeForSpeech(text)
-        let speech = cleaned.isEmpty ? "这条回复主要是代码或表格，我放在屏幕上了。" : cleaned
-        vlog("tts request: reply=\(text.count) chars speech=\(speech.count) chars")
+    /// 句级 TTS 流水线：流式正文边到边切句合成，按序播放。
+    /// 与 PWA useVoiceChat 的切句/排队规则逐项一致（见 design.md C2）。
+    private func beginSpeechStream(baseURL: String, token: String) {
         stopSpeaking()
         speakEpoch += 1
-        let epoch = speakEpoch
+        speechFrozen = []
+        speechTail = ""
+        speechConsumed = 0
+        speechTasks = [:]
+        speechSentences = []
+        speechIndex = 0
+        speechEnded = false
+        speechNeedsPlaceholder = false
         isPreparingSpeech = true
-        do {
-            let data = try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
-            vlog("tts ok: bytes=\(data.count)")
-            guard epoch == speakEpoch else {
-                vlog("tts dropped: epoch \(epoch) != \(speakEpoch)")
-                return
-            }
-            #if os(iOS)
-            // AEC 场景必须用 .voiceChat；.spokenAudio 下系统不会给回声参考
-            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat,
-                                                             options: [.defaultToSpeaker, .allowBluetooth])
-            try? AVAudioSession.sharedInstance().setActive(true)
-            #endif
-            configureAudio()
-            // 播报期间压住麦克风（AEC 只削掉大部分回声，尾音还会漏进来）
-            beginMicGate()
-            isPreparingSpeech = false
-            isSpeaking = true
-            vlog("tts play begin")
+        startSpeechPump(epoch: speakEpoch, baseURL: baseURL, token: token)
+    }
+
+    /// 流式正文（累积全文）：切出的句子立刻排队合成，尾巴只显示不合成。
+    func appendReplyDelta(_ text: String, baseURL: String, token: String) {
+        guard !baseURL.isEmpty, !token.isEmpty else { return }
+        if speechEnded { beginSpeechStream(baseURL: baseURL, token: token) }
+        guard text.count > speechConsumed else { return }
+        let (cuts, consumed) = Self.cutSentences(text, from: speechConsumed, first: speechFrozen.isEmpty)
+        for sentence in cuts {
+            freezeSentence(sentence, baseURL: baseURL, token: token)
+        }
+        speechConsumed = consumed
+        speechTail = String(text.dropFirst(consumed))
+        speechSentences = speechTail.isEmpty ? speechFrozen : speechFrozen + [speechTail]
+        if !cuts.isEmpty { wakeSpeechPump() }
+    }
+
+    /// 本轮回复结束：尾巴整句合成，播完即收。
+    func endReplyStream(_ text: String, baseURL: String, token: String) {
+        if speechEnded {
+            // 极端情况：一条 delta 回调都没走（正常流式不会），收尾时整段补上
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            beginSpeechStream(baseURL: baseURL, token: token)
+        }
+        if !text.isEmpty { appendReplyDelta(text, baseURL: baseURL, token: token) }
+        if !speechTail.isEmpty {
+            freezeSentence(speechTail, baseURL: baseURL, token: token)
+            speechTail = ""
+            speechSentences = speechFrozen
+        }
+        // 纯代码/表格：整段都念不出来时，收尾补一句提示（沿用一次性朗读的行为）
+        speechNeedsPlaceholder = speechFrozen.allSatisfy { Self.sanitizeForSpeech($0).isEmpty }
+        speechEnded = true
+        wakeSpeechPump()
+    }
+
+    private func freezeSentence(_ sentence: String, baseURL: String, token: String) {
+        let index = speechFrozen.count
+        speechFrozen.append(sentence)
+        let speech = Self.sanitizeForSpeech(sentence)
+        guard !speech.isEmpty else {
+            speechTasks[index] = Task { Optional<Data>.none }
+            return
+        }
+        speechTasks[index] = Task {
             do {
-                try audio.play(data) { [weak self] in
-                    Task { @MainActor [weak self] in
-                        guard let self, epoch == self.speakEpoch else { return }
-                        self.finishSpeaking()
-                    }
-                }
+                return try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
             } catch {
-                vlog("tts play failed: \(error.localizedDescription)")
-                isSpeaking = false
-                isPreparingSpeech = false
-                endMicGate(flushPreroll: false)
-                throw error
+                LogBuffer.shared.error("voice tts sentence failed: \(error.localizedDescription)")
+                return nil
             }
-        } catch {
-            isPreparingSpeech = false
-            LogBuffer.shared.error("voice tts failed: \(error.localizedDescription)")
-            ToastCenter.shared.show("语音播放失败")
         }
     }
+
+    private func startSpeechPump(epoch: Int, baseURL: String, token: String) {
+        let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        wakeCont = continuation
+        speechPump?.cancel()
+        speechPump = Task { [weak self] in
+            guard let self else { return }
+            var iterator = stream.makeAsyncIterator()
+            var index = 0
+            var didPlay = false
+            while true {
+                if epoch != self.speakEpoch { return }
+                if index < self.speechFrozen.count {
+                    let data = await self.speechTasks[index]?.value
+                    if epoch != self.speakEpoch { return }
+                    self.speechIndex = index
+                    if let data, !data.isEmpty {
+                        if !didPlay {
+                            didPlay = true
+                            self.prepareForPlayback()
+                        }
+                        self.isPreparingSpeech = false
+                        self.isSpeaking = true
+                        do {
+                            try await self.playAndWait(data)
+                        } catch {
+                            self.vlog("tts play failed: \(error.localizedDescription)")
+                        }
+                        if epoch != self.speakEpoch { return }
+                    }
+                    index += 1
+                    continue
+                }
+                if self.speechEnded { break }
+                _ = await iterator.next()
+            }
+            if !didPlay, self.speechNeedsPlaceholder,
+               let data = try? await APIClient(baseURL: baseURL, token: token)
+                .synthesizeSpeech(text: "这条回复主要是代码或表格，我放在屏幕上了。") {
+                if epoch != self.speakEpoch { return }
+                self.prepareForPlayback()
+                self.isPreparingSpeech = false
+                self.isSpeaking = true
+                try? await self.playAndWait(data)
+            }
+            guard epoch == self.speakEpoch else { return }
+            self.speechTasks = [:]
+            self.wakeCont?.finish()
+            self.wakeCont = nil
+            self.speechPump = nil
+            self.isPreparingSpeech = false
+            self.speechSentences = []
+            self.speechIndex = 0
+            self.finishSpeaking()
+        }
+    }
+
+    private func prepareForPlayback() {
+        #if os(iOS)
+        // AEC 场景必须用 .voiceChat；.spokenAudio 下系统不会给回声参考
+        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat,
+                                                         options: [.defaultToSpeaker, .allowBluetooth])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        configureAudio()
+        // 播报期间压住麦克风（AEC 只削掉大部分回声，尾音还会漏进来）
+        beginMicGate()
+    }
+
+    private func playAndWait(_ data: Data) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            playContinuation = continuation
+            do {
+                try audio.play(data) { [weak self] in
+                    Task { @MainActor [weak self] in self?.resumePlayback() }
+                }
+            } catch {
+                playContinuation = nil
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    private func resumePlayback() {
+        let continuation = playContinuation
+        playContinuation = nil
+        continuation?.resume()
+    }
+
+    private func wakeSpeechPump() {
+        wakeCont?.yield(())
+    }
+
+    /// 句末标点处切；第一句额外在 12 字后的逗号处切开，让首包音频尽早响。
+    private static func cutSentences(_ text: String, from consumed: Int,
+                                     first: Bool) -> ([String], Int) {
+        let chars = Array(text)
+        guard consumed < chars.count else { return ([], consumed) }
+        var cuts: [String] = []
+        var start = consumed
+        var allowClause = first
+        var i = consumed
+        while i < chars.count {
+            let ch = chars[i]
+            let length = i - start + 1
+            if Self.sentenceEnd.contains(ch) || (allowClause && length >= 12 && Self.clauseEnd.contains(ch)) {
+                cuts.append(String(chars[start...i]))
+                start = i + 1
+                allowClause = false
+            }
+            i += 1
+        }
+        return (cuts, start)
+    }
+
+    private static let sentenceEnd: Set<Character> = ["。", "！", "？", "!", "?", "；", ";", "…", "\n"]
+    private static let clauseEnd: Set<Character> = ["，", ",", "、"]
 
     /// 播报正常结束：解除「说」态，再延后 600ms 解除麦克风门（收掉尾音）。
     private func finishSpeaking() {
@@ -520,12 +669,26 @@ final class VoiceChatService: ObservableObject {
 
     func stopSpeaking() {
         speakEpoch += 1
+        speechEnded = true
+        speechPump?.cancel()
+        speechPump = nil
+        wakeCont?.finish()
+        wakeCont = nil
+        speechTasks.values.forEach { $0.cancel() }
+        speechTasks = [:]
+        speechFrozen = []
+        speechTail = ""
+        speechConsumed = 0
+        speechNeedsPlaceholder = false
+        speechSentences = []
+        speechIndex = 0
         speakEndTask?.cancel()
         speakEndTask = nil
         let wasSpeaking = isSpeaking
         isSpeaking = false
         isPreparingSpeech = false
         audio.stopPlayback()
+        resumePlayback()
         // 只要门还关着就开：仅在 wasSpeaking 时开会让「TTS 尾音门 600ms 窗口内启动新一轮」
         // 永久卡在门控里（一帧都不会发给 ASR，表现为麦克风亮着但毫无反应）
         if wasSpeaking || micGated { endMicGate(flushPreroll: false) }

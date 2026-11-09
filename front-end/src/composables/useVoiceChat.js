@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { api } from '@/api/client'
+import { cutSentences } from '@/utils/speech'
 
 // 首次点击麦克风时用它解锁 <audio>（浏览器自动播放策略）
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
@@ -87,6 +88,9 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   // 回复已生成完、TTS 还在合成音频（还没开播）：「想」态要把它算进去，
   // 否则这段里会先闪回「听」（听→想→听→说）
   const preparing = ref(false)
+  // 句级朗读进度：sentences = 已切开的句子 + 还没切开的流式尾巴；index = 正在播的句子
+  const speechSentences = ref([])
+  const speechIndex = ref(0)
 
   let socket = null
   let mediaStream = null
@@ -113,6 +117,14 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   let sentBytes = 0
   let lastUpLog = 0
 
+  // 句级 TTS 流水线状态（代次用 speakEpoch）
+  let speechFrozen = []      // 已切开的句子，每个对应一次 TTS 请求
+  let speechTail = ''        // 还没切开的流式尾巴（只显示、不合成）
+  let speechConsumed = 0     // 已从累积文本里消费掉的字符数
+  let speechTasks = new Map() // index -> Promise<Blob|null>
+  let speechEnded = true     // 本轮回复是否已结束（endReplyStream）
+  let wakeResolve = null     // 泵等待「新句子/结束」的单槽信号
+
   async function refresh() {
     try {
       const cfg = await api.get('/api/voice/config')
@@ -127,12 +139,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   }
 
   function ensureAudio() {
-    if (!audioEl) {
-      audioEl = new Audio()
-      // ended 正常收尾，pause 覆盖被 stopSpeaking 打断的情况
-      audioEl.addEventListener('ended', onPlaybackEnd)
-      audioEl.addEventListener('pause', onPlaybackEnd)
-    }
+    if (!audioEl) audioEl = new Audio()
     return audioEl
   }
 
@@ -481,56 +488,159 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     }, 5000)
   }
 
-  function speak(text) {
-    if (!String(text || '').trim()) return null
-    const cleaned = cleanForSpeech(text)
-    const speech = cleaned || '这条回复主要是代码或表格，我放在屏幕上了。'
-    stopSpeaking()
-    speakEpoch += 1
-    const epoch = speakEpoch
-    preparing.value = true
-    lastActivity = Date.now()
-    return (async () => {
-      try {
-        log(`tts request chars=${speech.length}`)
-        const blob = await api.postBlob('/api/voice/tts', { text: speech })
-        if (epoch !== speakEpoch) return
-        log(`tts ok bytes=${blob.size}`)
-        const el = ensureAudio()
-        if (objectUrl) URL.revokeObjectURL(objectUrl)
-        objectUrl = URL.createObjectURL(blob)
-        el.src = objectUrl
-        // 播报期间不把麦克风里的声音（含外放回声）发给 ASR，但上行流不能空闲
-        setGate(true)
-        preparing.value = false
-        speaking.value = true
-        await el.play()
-      } catch (err) {
-        if (epoch === speakEpoch) {
-          console.error('[voice] tts failed', err)
-          preparing.value = false
-          speaking.value = false
-          setGate(false)
-          onError?.('语音播放失败')
-        }
-      }
-    })()
+  // MARK: 句级朗读流水线
+
+  function wake() {
+    const resolve = wakeResolve
+    wakeResolve = null
+    if (resolve) resolve()
   }
 
-  function onPlaybackEnd() {
-    if (!speaking.value) return
-    speaking.value = false
-    if (gateTailTimer) clearTimeout(gateTailTimer)
-    gateTailTimer = setTimeout(() => {
-      gateTailTimer = null
-      if (!speaking.value) setGate(false)
-    }, GATE_TAIL_MS)
+  function waitWake() {
+    return new Promise((resolve) => { wakeResolve = resolve })
+  }
+
+  function freezeSentence(sentence) {
+    const index = speechFrozen.length
+    speechFrozen.push(sentence)
+    const speech = cleanForSpeech(sentence)
+    speechTasks.set(index, speech
+      ? api.postBlob('/api/voice/tts', { text: speech }).catch((err) => {
+          console.error('[voice] tts failed', err)
+          return null
+        })
+      : Promise.resolve(null))
+  }
+
+  /** 新一轮语音回复：先收掉上一轮（含还在念的）。 */
+  function beginReplyStream() {
+    stopSpeaking()
+    speakEpoch += 1
+    speechFrozen = []
+    speechTail = ''
+    speechConsumed = 0
+    speechTasks = new Map()
+    speechSentences.value = []
+    speechIndex.value = 0
+    speechEnded = false
+    preparing.value = true
+    lastActivity = Date.now()
+    runSpeechPump(speakEpoch)
+  }
+
+  /** 流式正文（累积全文）：切出的句子立刻排队合成，尾巴只显示不合成。 */
+  function appendReplyDelta(text) {
+    if (speechEnded) beginReplyStream()
+    const full = String(text || '')
+    if (full.length <= speechConsumed) return
+    const cut = cutSentences(full, speechConsumed, speechFrozen.length === 0)
+    cut.sentences.forEach(freezeSentence)
+    speechConsumed = cut.consumed
+    speechTail = full.slice(speechConsumed)
+    speechSentences.value = speechTail ? [...speechFrozen, speechTail] : speechFrozen.slice()
+    lastActivity = Date.now()
+    if (cut.sentences.length) wake()
+  }
+
+  /** 本轮回复结束：尾巴整句合成，播完即收。 */
+  function endReplyStream(text) {
+    if (speechEnded) {
+      // 极端情况：一条 delta 回调都没走（正常流式不会），收尾时整段补上
+      if (!String(text || '').trim()) return
+      beginReplyStream()
+    }
+    if (text) appendReplyDelta(text)
+    if (speechTail) {
+      freezeSentence(speechTail)
+      speechTail = ''
+      speechSentences.value = speechFrozen.slice()
+    }
+    speechEnded = true
+    wake()
+  }
+
+  function playBlob(el, blob) {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const finish = (err) => {
+        if (settled) return
+        settled = true
+        el.removeEventListener('ended', onEnded)
+        el.removeEventListener('pause', onPause)
+        el.removeEventListener('error', onError)
+        if (err) reject(err)
+        else resolve()
+      }
+      const onEnded = () => finish()
+      const onPause = () => finish() // stopSpeaking 打断：直接收尾，泵看代次退出
+      const onError = () => finish(new Error('audio element error'))
+      el.addEventListener('ended', onEnded)
+      el.addEventListener('pause', onPause)
+      el.addEventListener('error', onError)
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      objectUrl = URL.createObjectURL(blob)
+      el.src = objectUrl
+      el.play().catch(finish)
+    })
+  }
+
+  async function runSpeechPump(epoch) {
+    const el = ensureAudio()
+    let index = 0
+    let playing = false
+    try {
+      for (;;) {
+        if (epoch !== speakEpoch) return
+        if (index < speechFrozen.length) {
+          const blob = await (speechTasks.get(index) || Promise.resolve(null))
+          if (epoch !== speakEpoch) return
+          speechIndex.value = index
+          if (blob) {
+            if (!playing) { setGate(true); playing = true }
+            preparing.value = false
+            speaking.value = true
+            await playBlob(el, blob)
+            if (epoch !== speakEpoch) return
+          }
+          index += 1
+          continue
+        }
+        if (speechEnded) break
+        await waitWake()
+      }
+      speaking.value = false
+      preparing.value = false
+      speechSentences.value = []
+      speechIndex.value = 0
+      if (playing) {
+        if (gateTailTimer) clearTimeout(gateTailTimer)
+        gateTailTimer = setTimeout(() => {
+          gateTailTimer = null
+          if (epoch === speakEpoch && !speaking.value) setGate(false)
+        }, GATE_TAIL_MS)
+      }
+    } catch (err) {
+      if (epoch !== speakEpoch) return
+      console.error('[voice] playback failed', err)
+      speaking.value = false
+      preparing.value = false
+      setGate(false)
+      onError?.('语音播放失败')
+    }
   }
 
   function stopSpeaking() {
     speakEpoch += 1
+    speechEnded = true
+    speechFrozen = []
+    speechTail = ''
+    speechConsumed = 0
+    speechTasks = new Map()
+    speechSentences.value = []
+    speechIndex.value = 0
     preparing.value = false
     speaking.value = false
+    wake()
     if (gateTailTimer) { clearTimeout(gateTailTimer); gateTailTimer = null }
     // 只要门还关着就开：只在 speaking 为真时才开，会卡在「播放结束到门关」这段里
     setGate(false)
@@ -546,11 +656,14 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     level,
     speaking,
     preparing,
+    speechSentences,
+    speechIndex,
     refresh,
     start,
     stop,
     cancel,
-    speak,
+    appendReplyDelta,
+    endReplyStream,
     stopSpeaking
   }
 }

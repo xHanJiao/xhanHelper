@@ -180,6 +180,10 @@ class ChatViewModel: ObservableObject {
     private var speakReplyForCurrentTurn = false
     /// 本轮正常完成时回调回复正文（语音模式用于 TTS）
     var onAssistantReplyDone: ((String) -> Void)?
+    /// 语音轮：正文增量（累积全文），供句级 TTS 在流式期间就开始合成
+    var onAssistantReplyDelta: ((String) -> Void)?
+    /// 语音轮异常收尾（停止/出错/空回复）：已开始的朗读流水线要停掉
+    var onAssistantReplyAborted: (() -> Void)?
 
     // MARK: 无痕（ephemeral）
 
@@ -1301,6 +1305,9 @@ class ChatViewModel: ObservableObject {
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
                 throttleFlush()
+                if speakReplyForCurrentTurn {
+                    onAssistantReplyDelta?(streamingContent)
+                }
                 let now = Date()
                 if now.timeIntervalSince(lastHapticTime) >= 0.15 {
                     #if os(iOS)
@@ -1411,13 +1418,16 @@ class ChatViewModel: ObservableObject {
             let replyElapsed = streamStartedAt.map { Date().timeIntervalSince($0) } ?? 0
             let hasReplyContent = !streamingContent.isEmpty
             let replyText = streamingContent
-            let shouldSpeak = speakReplyForCurrentTurn && doneError == nil && hasReplyContent
-            LogBuffer.shared.diag("[voice] done: speakReply=\(speakReplyForCurrentTurn) " +
+            let voiceTurn = speakReplyForCurrentTurn
+            let shouldSpeak = voiceTurn && doneError == nil && hasReplyContent
+            LogBuffer.shared.diag("[voice] done: speakReply=\(voiceTurn) " +
                                   "hasContent=\(hasReplyContent) error=\(doneError ?? "-") shouldSpeak=\(shouldSpeak)")
             speakReplyForCurrentTurn = false
             finishStreaming()
             if shouldSpeak {
                 onAssistantReplyDone?(replyText)
+            } else if voiceTurn {
+                onAssistantReplyAborted?()
             }
             // 仅正常完成才响：done 带 error 说明这轮有异常，不报喜；无内容（空回复/被截断）也不响
             if hasReplyContent, doneError == nil, replyElapsed >= Self.longReplyAlertThreshold() {
@@ -1525,6 +1535,11 @@ class ChatViewModel: ObservableObject {
         // done 路径由 .done handler 清（此处清了 timer 永远没机会跑）
         pendingToolCalls = []
         verifyStatus = nil
+        // 停止/出错路径：语音轮已经开始的朗读流水线不能一直等下去
+        if speakReplyForCurrentTurn {
+            speakReplyForCurrentTurn = false
+            onAssistantReplyAborted?()
+        }
         #if os(iOS)
         endBackgroundTask()
         #endif

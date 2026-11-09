@@ -150,5 +150,17 @@ let package = Package(
             dependencies: ["ChatWireCore"],
             path: "Tests/ChatWireCoreTests"
         ),
+        // NearFieldGateCore — 近场电平闸的纯判定（未门控帧 2s 窗中位数 vs 阈值）。
+        // 「门控帧不算用户说话」「数据不足放行」这两条容易被改坏，抽出来让 swift test 钉住。
+        .target(
+            name: "NearFieldGateCore",
+            path: "xHelper/Shared",
+            sources: ["Services/NearFieldGate.swift"]
+        ),
+        .testTarget(
+            name: "NearFieldGateCoreTests",
+            dependencies: ["NearFieldGateCore"],
+            path: "Tests/NearFieldGateCoreTests"
+        ),
     ]
 )

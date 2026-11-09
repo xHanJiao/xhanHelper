@@ -931,6 +931,8 @@ struct MacSettingsView: View {
 
     // 语音音色：服务端下发白名单，选择存本地（空 = 默认）。
     @AppStorage(VoicePreference.speakerKey) private var storedSpeaker = ""
+    // 近场电平闸：off / loose / standard / near，默认 off（与加闸之前完全一致）
+    @AppStorage(VoicePreference.nearFieldKey) private var nearFieldRaw = VoicePreference.nearFieldDefault
     @State private var voiceConfig: VoiceConfigInfo?
     @State private var voiceSpeaker = ""
     @State private var voiceNotice: String?
@@ -1100,7 +1102,17 @@ struct MacSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
-                    Text("只影响语音回复的朗读；切换后下一句生效。")
+                    Text("音色只影响语音回复的朗读；切换后下一句生效。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Picker("只响应近处的声音", selection: $nearFieldRaw) {
+                        ForEach(NearFieldGate.Sensitivity.allCases) { option in
+                            Text(option.label).tag(option.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text("关闭＝和以前一样。标准档会忽略远处（隔壁房间）的说话声；"
+                         + "被忽略时会有提示，离麦克风远一点说话被吞就切「宽松」。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

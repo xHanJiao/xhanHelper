@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>近场电平采集</title>
+<style>
+  :root { --bg:#F7EEDD; --card:#FFFFFF; --text:#3B2E1F; --muted:#8A7A66; --accent:#2F7D63; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font: 15px/1.6 -apple-system, "PingFang SC", sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .note { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card { background: var(--card); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px;
+          box-shadow: 0 1px 2px rgba(59,46,31,.08); }
+  button { font: inherit; border: 1px solid #D8CDB8; background:#FFF; color:var(--text);
+           border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); color:#fff; border-color: var(--accent); }
+  button:disabled { opacity:.45; cursor: not-allowed; }
+  .row { display:flex; gap:10px; flex-wrap: wrap; align-items:center; }
+  .meter { height: 14px; background:#EFE2C8; border-radius: 7px; overflow:hidden; margin: 10px 0 4px; }
+  .meter > i { display:block; height:100%; width:0; background:var(--accent); transition: width .05s linear; }
+  .big { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kv { display:flex; gap:26px; flex-wrap:wrap; color:var(--muted); font-size:13px;
+        font-variant-numeric: tabular-nums; }
+  .kv b { color: var(--text); font-weight:600; }
+  table { width:100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size:13px; }
+  th, td { text-align:right; padding: 6px 8px; border-bottom: 1px solid #F0E7D6; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color: var(--muted); font-weight: 500; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status.err { color: #B3402A; }
+  code { background:#F5EFE2; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>近场电平采集</h1>
+  <p class="note">
+    口径与 App 一致：<code>level = min(1, RMS × 4)</code>，每 100ms 一帧。边做边点标签，不用卡秒数。
+    导出文件会落在下载目录。
+  </p>
+  <p class="note">
+    <b>默认不勾「关闭浏览器音频处理」</b>：这时采集约束和线上 PWA 完全一致（<code>{audio:{channelCount:1}}</code>），
+    测出来的数才能用来定线上阈值。勾上只是对照用的原始电平——浏览器默认会开 AGC，那会把近场和远场拉平。
+  </p>
+
+  <div class="card">
+    <div class="row">
+      <button id="start">开始采集</button>
+      <button id="stop" disabled>停止</button>
+      <button id="export" disabled>导出 JSON</button>
+      <button id="reset" disabled>清空</button>
+      <span class="status" id="status">未开始</span>
+      <span class="status" id="rec">已暂停</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="status" style="display:flex;gap:6px;align-items:center">
+        <input type="checkbox" id="rawMode">
+        关闭浏览器音频处理（AGC / 降噪 / 回声消除）
+      </label>
+      <span class="status">默认不勾＝和 PWA 真实采集一致</span>
+    </div>
+    <div class="meter"><i id="bar"></i></div>
+    <div class="row" style="justify-content:space-between; align-items:flex-end">
+      <div class="big" id="level">0.000</div>
+      <div class="kv">
+        <span>p20(1s) <b id="p20">-</b></span>
+        <span>peak(1s) <b id="peak">-</b></span>
+        <span>帧数 <b id="count">0</b></span>
+        <span>时长 <b id="dur">0s</b></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" id="labels" style="margin-bottom:12px">
+      <button data-label="静" class="on">静</button>
+      <button data-label="远场会议">远场会议</button>
+      <button data-label="50cm">50cm</button>
+      <button data-label="20cm">20cm</button>
+      <button data-label="其他">其他</button>
+    </div>
+    <table>
+      <thead><tr><th>标签</th><th>帧数</th><th>时长</th><th>p20</th><th>p50</th><th>peak</th><th>mean</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="kv" style="font-size:12px">
+      <span>实际输入设置：<b id="settings">-</b></span>
+    </div>
+    <p class="note" style="margin:8px 0 0">
+      如果 <code>autoGainControl</code> 显示 true，说明浏览器没听约束，电平被拉平，这组数据不能用来定阈值。
+    </p>
+  </div>
+</div>
+
+<script>
+(() => {
+  const state = {
+    running: false, ctx: null, stream: null, proc: null, sink: null,
+    frames: [], label: '静', marks: [], sumsq: 0, count: 0,
+    startedAt: 0, baseTime: 0, // baseTime = 之前几次启停累计的秒数，帧时间是累计值
+  };
+  const $ = id => document.getElementById(id);
+  const LABELS = ['静', '远场会议', '50cm', '20cm', '其他'];
+
+  function setStatus(text, err) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = 'status' + (err ? ' err' : '');
+  }
+
+  async function start() {
+    try {
+      setStatus('请求麦克风…');
+      // 默认用和 PWA 完全一致的约束（{audio:{channelCount:1}}），否则测出来的电平不能代表线上行为
+      const raw = $('rawMode').checked;
+      const constraints = raw
+        ? { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } }
+        : { audio: { channelCount: 1 } };
+      state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const track = state.stream.getAudioTracks()[0];
+      const s = track.getSettings ? track.getSettings() : {};
+      $('settings').textContent =
+        `sr=${s.sampleRate || '?'} ch=${s.channelCount || '?'} ` +
+        `aec=${s.echoCancellation} ns=${s.noiseSuppression} agc=${s.autoGainControl}` +
+        (raw ? ' · 原始模式' : ' · PWA 默认');
+
+      state.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = state.ctx.createMediaStreamSource(state.stream);
+      const proc = state.ctx.createScriptProcessor(4096, 1, 1);
+      // 必须接到 destination 才会跑；用 0 增益避免把麦克风放出来
+      const sink = state.ctx.createGain();
+      sink.gain.value = 0;
+      proc.onaudioprocess = onAudio;
+      src.connect(proc);
+      proc.connect(sink);
+      sink.connect(state.ctx.destination);
+
+      state.proc = proc;
+      state.sink = sink;
+      state.sumsq = 0;
+      state.count = 0;
+      state.startedAt = performance.now();
+      // 多次启停累计：只在第一次落初始标签，之前的帧不清空
+      if (!state.marks.length) state.marks.push({ t: 0, label: state.label });
+      state.running = true;
+
+      $('start').disabled = true;
+      $('stop').disabled = false;
+      $('export').disabled = true;
+      setLabelButtons(true);
+      setStatus(`采集中（${state.ctx.sampleRate}Hz），当前标签：${state.label}`);
+      render();
+    } catch (err) {
+      setStatus('麦克风不可用：' + err.message, true);
+    }
+  }
+
+  function stop() {
+    if (state.running) {
+      state.baseTime += (performance.now() - state.startedAt) / 1000;
+    }
+    state.running = false;
+    if (state.proc) { state.proc.onaudioprocess = null; state.proc.disconnect(); }
+    if (state.sink) state.sink.disconnect();
+    if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+    if (state.ctx) state.ctx.close();
+    state.ctx = state.proc = state.sink = state.stream = null;
+    $('start').disabled = false;
+    $('stop').disabled = true;
+    $('export').disabled = state.frames.length === 0;
+    $('reset').disabled = state.frames.length === 0;
+    setLabelButtons(false);
+    setStatus(`已暂停（数据保留，可继续采集），累计 ${(state.frames.length / 10).toFixed(1)} 秒`);
+    render();
+  }
+
+  function onAudio(e) {
+    if (!state.running) return;
+    const ch = e.inputBuffer.getChannelData(0);
+    const need = Math.round(state.ctx.sampleRate * 0.1);
+    for (let i = 0; i < ch.length; i++) {
+      state.sumsq += ch[i] * ch[i];
+      state.count++;
+      if (state.count < need) continue;
+      // 正好凑满 100ms 才出帧，余下的样本留在 count 里，避免帧长漂移
+      const rms = Math.sqrt(state.sumsq / state.count);
+      const t = state.baseTime + (performance.now() - state.startedAt) / 1000;
+      state.frames.push({ t: +t.toFixed(3), level: +Math.min(1, rms * 4).toFixed(4), label: state.label });
+      state.sumsq = 0;
+      state.count = 0;
+    }
+    render();
+  }
+
+  function setLabel(label) {
+    if (!LABELS.includes(label)) return;
+    if (state.label === label) return;
+    state.label = label;
+    if (state.running) {
+      const t = state.baseTime + (performance.now() - state.startedAt) / 1000;
+      state.marks.push({ t: +t.toFixed(3), label });
+    }
+    document.querySelectorAll('#labels button').forEach(b => {
+      b.classList.toggle('on', b.dataset.label === label);
+    });
+    if (state.running) setStatus(`采集中，当前标签：${label}`);
+    render();
+  }
+
+  /// 没在采集时标签按钮不可点，避免"点了没反应还以为在录"
+  function setLabelButtons(enabled) {
+    document.querySelectorAll('#labels button').forEach(b => { b.disabled = !enabled; });
+  }
+
+  function pct(sorted, q) {
+    return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * q))];
+  }
+
+  function render() {
+    const frames = state.frames;
+    const last = frames.slice(-10);
+    const cur = frames.length ? frames[frames.length - 1].level : 0;
+    $('level').textContent = cur.toFixed(3);
+    $('bar').style.width = Math.min(100, cur * 100) + '%';
+    if (last.length) {
+      const s = last.map(f => f.level).sort((a, b) => a - b);
+      $('p20').textContent = pct(s, 0.2).toFixed(3);
+      $('peak').textContent = s[s.length - 1].toFixed(3);
+    }
+    $('count').textContent = frames.length;
+    const elapsed = state.running
+      ? state.baseTime + (performance.now() - state.startedAt) / 1000
+      : state.baseTime;
+    $('dur').textContent = elapsed.toFixed(1) + 's';
+    $('rec').textContent = state.running ? '● 录制中' : '已暂停';
+    $('rec').style.color = state.running ? '#B3402A' : '#8A7A66';
+
+    const byLabel = new Map();
+    for (const f of frames) {
+      if (!byLabel.has(f.label)) byLabel.set(f.label, []);
+      byLabel.get(f.label).push(f.level);
+    }
+    const rows = [];
+    for (const [label, levels] of byLabel) {
+      const s = levels.slice().sort((a, b) => a - b);
+      const mean = levels.reduce((a, b) => a + b, 0) / levels.length;
+      rows.push(`<tr><td>${label}</td><td>${levels.length}</td>` +
+        `<td>${(levels.length / 10).toFixed(1)}s</td>` +
+        `<td>${pct(s, 0.2).toFixed(3)}</td><td>${pct(s, 0.5).toFixed(3)}</td>` +
+        `<td>${s[s.length - 1].toFixed(3)}</td><td>${mean.toFixed(3)}</td></tr>`);
+    }
+    $('tbody').innerHTML = rows.join('') ||
+      '<tr><td colspan="7" style="text-align:center;color:#8A7A66">还没有数据</td></tr>';
+  }
+
+  function exportJSON() {
+    if (state.frames.length / 10 < 20) {
+      if (!confirm(`当前只有 ${(state.frames.length / 10).toFixed(1)} 秒数据，确定导出？`)) return;
+    }
+    const payload = {
+      capturedAt: new Date().toISOString(),
+      sampleRate: state.ctx ? state.ctx.sampleRate : null,
+      settings: $('settings').textContent,
+      frameMs: 100,
+      scale: 'min(1, RMS*4)',
+      mode: $('rawMode').checked ? 'raw' : 'pwa-default',
+      marks: state.marks,
+      frames: state.frames,
+    };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'level-sweep-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`已导出 ${(state.frames.length / 10).toFixed(1)} 秒数据到 ~/Downloads`);
+  }
+
+  function resetAll() {
+    if (state.frames.length && !confirm('清空当前所有数据？')) return;
+    if (state.running) stop();
+    state.frames = [];
+    state.marks = [];
+    state.baseTime = 0;
+    state.sumsq = 0;
+    state.count = 0;
+    $('export').disabled = true;
+    $('reset').disabled = true;
+    setStatus('未开始');
+    render();
+  }
+
+  $('start').addEventListener('click', start);
+  $('stop').addEventListener('click', stop);
+  $('export').addEventListener('click', exportJSON);
+  $('reset').addEventListener('click', resetAll);
+  document.querySelectorAll('#labels button').forEach(b => {
+    b.addEventListener('click', () => setLabel(b.dataset.label));
+  });
+  setLabelButtons(false);
+  render();
+})();
+</script>
+</body>
+</html>

@@ -88,12 +88,14 @@ final class VoiceChatService: ObservableObject {
     private var micGated = false
     /// 打断判定：连续 3 帧（tap 3200 帧 @48k，约 200ms）超过阈值才算真的开口
     private var loudFrames = 0
-    private let bargeInFrames = 3
+    /// 近场闸开启时的打断判定：连续 5 帧（约 330ms），滤掉碰一下手机的瞬时尖峰。
+    /// 闸门关闭时退回加闸之前的 3 帧 / 0.03 / 2.2（「关闭＝与现状完全一致」）。
+    private var bargeInFrames: Int { nearFieldSensitivity == .off ? 3 : 5 }
     /// 打断判定的绝对地板（`onLevel` 是 RMS×4 的刻度）：真静音时的数字噪声不该触发
-    private let bargeInFloor: Double = 0.03
+    private var bargeInFloor: Double { nearFieldSensitivity == .off ? 0.03 : 0.06 }
     /// 用户要明显高于「残响本底」才算开口。远场（0.5~1m）说话只有 0.04~0.08，钉死绝对
     /// 阈值就永远打不断（051 的教训），所以阈值跟着本机残响走：漏音大的音箱自己抬阈值。
-    private let bargeInRatio: Double = 2.2
+    private var bargeInRatio: Double { nearFieldSensitivity == .off ? 2.2 : 4 }
     /// 播报期间门控电平的最近若干帧：p20 当残响本底，短暂人声抬不动它
     private var levelWindow: [Double] = []
     private let levelWindowSize = 30
@@ -102,6 +104,17 @@ final class VoiceChatService: ObservableObject {
     /// 最近一次确认用户在说话的时间（服务端 `voice` 事件 / 新分句）：空闲收口看它，
     /// 别在人家说话中途把会话收掉
     private var lastVoiceAt = Date()
+
+    /// 近场电平闸用的电平历史（约 2 秒）：每帧标上门控标记，播报期的 TTS 残留不算用户说话
+    private var levelHistory: [NearFieldGate.Frame] = []
+    private var lastNearFieldNoticeAt = Date.distantPast
+
+    /// 每次现读：设置页改完下一句就生效，不用重开会话。
+    private var nearFieldSensitivity: NearFieldGate.Sensitivity {
+        NearFieldGate.Sensitivity(
+            rawValue: UserDefaults.standard.string(forKey: VoicePreference.nearFieldKey) ?? ""
+        ) ?? .standard
+    }
 
     // 诊断（只记长度/次数，不记识别文本）
     private var sentBytes = 0
@@ -211,6 +224,7 @@ final class VoiceChatService: ObservableObject {
             lastSendLog = .distantPast
             lastLevelLog = .distantPast
             peakLevel = 0
+            levelHistory.removeAll(keepingCapacity: true)
             let task = URLSession.shared.webSocketTask(with: url)
             socket = task
             task.resume()
@@ -261,6 +275,12 @@ final class VoiceChatService: ObservableObject {
         waveLevel = value
         peakLevel = max(peakLevel, value)
 
+        // 近场闸：每帧都记，但标上门控——播报期读到的是 TTS 漏音残留，不能当用户说话
+        let now = Date()
+        levelHistory.append(NearFieldGate.Frame(at: now, level: value, gated: micGated))
+        let cutoff = now.addingTimeInterval(-(NearFieldGate.windowSeconds + 0.5))
+        levelHistory.removeAll { $0.at < cutoff }
+
         if !(continuousActive && micGated) {
             loudFrames = 0
             levelWindow.removeAll(keepingCapacity: true)
@@ -308,6 +328,14 @@ final class VoiceChatService: ObservableObject {
         endMicGate(flushPreroll: true)
         stopSpeaking()
         onBargeIn?()
+    }
+
+    /// 被近场闸丢掉时的轻提示：误拒比误收难受，必须让人看见；限频 10 秒，别刷屏。
+    private func notifyNearFieldIgnored() {
+        let now = Date()
+        guard now.timeIntervalSince(lastNearFieldNoticeAt) >= 10 else { return }
+        lastNearFieldNoticeAt = now
+        ToastCenter.shared.show("已忽略：声音来自远处")
     }
 
     /// 开始推 PCM。
@@ -894,6 +922,14 @@ final class VoiceChatService: ObservableObject {
                   let text = msg.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else {
                 vlog("sentence dropped: active=\(continuousActive) state=\(state)")
+                return
+            }
+            // 近场闸：远处（隔壁房间）的话不提交成一轮
+            let ungated = levelHistory.filter { !$0.gated }
+            guard NearFieldGate.shouldAccept(frames: levelHistory, sensitivity: nearFieldSensitivity) else {
+                vlog("sentence dropped: near-field gate frames=\(ungated.count) " +
+                     "median=\(fmt3(NearFieldGate.median(ungated.map(\.level))))")
+                notifyNearFieldIgnored()
                 return
             }
             armIdleTimer()

@@ -176,4 +176,7 @@ enum LongReplyAlert {
 /// 语音音色偏好（本地保存；空 = 没选过，用服务端默认）。
 enum VoicePreference {
     static var speakerKey: String { LocalPaths.scoped("xhan_voice_speaker") }
+    /// 近场电平闸档位（off / loose / standard / near）。默认 standard。
+    static var nearFieldKey: String { LocalPaths.scoped("xhan_voice_nearfield") }
+    static let nearFieldDefault = "standard"
 }

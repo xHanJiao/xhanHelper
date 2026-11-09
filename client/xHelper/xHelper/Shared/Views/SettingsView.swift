@@ -5,6 +5,8 @@ struct SettingsView: View {
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     @AppStorage(LocalPaths.scoped("xhan_server_url")) private var serverURL = DeviceManager.defaultBaseURL
     @AppStorage(LocalPaths.scoped("xhan_web_url")) private var webURL = DeviceManager.defaultWebBaseURL
+    // 近场电平闸：off / loose / standard / near，默认 off（与加闸之前完全一致）
+    @AppStorage(VoicePreference.nearFieldKey) private var nearFieldRaw = VoicePreference.nearFieldDefault
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -66,6 +68,19 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("显示")
+            }
+            .listRowBackground(Rectangle().fill(.ultraThinMaterial))
+
+            Section {
+                Picker("只响应近处的声音", selection: $nearFieldRaw) {
+                    ForEach(NearFieldGate.Sensitivity.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+            } header: {
+                Text("语音")
+            } footer: {
+                Text("关闭＝和以前一样。标准档会忽略远处（隔壁房间）的说话声；被忽略时会有提示。")
             }
             .listRowBackground(Rectangle().fill(.ultraThinMaterial))
 

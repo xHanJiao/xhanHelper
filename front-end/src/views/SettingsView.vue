@@ -8,7 +8,8 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useMobile } from '@/composables/useMobile'
 import { api } from '@/api/client'
 import { CHAT_FONT_OPTIONS, readChatFont, setChatFont } from '@/utils/chatFont'
-import { readVoiceSpeaker, setVoiceSpeaker } from '@/utils/voicePref'
+import { readVoiceSpeaker, setVoiceSpeaker, readVoiceNearField, setVoiceNearField } from '@/utils/voicePref'
+import { NEAR_FIELD_LEVELS } from '@/utils/nearFieldGate'
 import { isMacEmbedded } from '@/utils/embed'
 import PageHeader from '@/components/PageHeader.vue'
 
@@ -40,6 +41,7 @@ const saving = ref(false)
 // 语音音色：只存本地；服务端下发白名单与默认值。
 const voiceConfig = ref(null)
 const voiceSpeaker = ref(readVoiceSpeaker())
+const voiceNearField = ref(readVoiceNearField())
 const voiceNotice = ref('')
 const previewState = ref('idle') // idle | loading | playing
 const PREVIEW_TEXT = '你好，我是你的聊天助手，今天过得怎么样？'
@@ -82,6 +84,11 @@ function chooseSpeaker(e) {
   setVoiceSpeaker(id)
   voiceNotice.value = ''
   stopPreview()
+}
+
+function chooseNearField(value) {
+  voiceNearField.value = value
+  setVoiceNearField(value)
 }
 
 function stopPreview() {
@@ -286,9 +293,23 @@ onMounted(() => {
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>播放
             </span>
           </button>
+          <div class="row">
+            <span class="label">只响应近处的声音</span>
+            <div class="seg">
+              <button
+                v-for="opt in NEAR_FIELD_LEVELS"
+                :key="opt.value"
+                type="button"
+                :aria-pressed="voiceNearField === opt.value"
+                :class="{ on: voiceNearField === opt.value }"
+                @click="chooseNearField(opt.value)"
+              >{{ opt.label }}</button>
+            </div>
+          </div>
         </div>
         <div v-if="voiceNotice" class="note warn">{{ voiceNotice }}</div>
         <div class="note">只影响语音回复的朗读；切换后下一句生效。</div>
+        <div class="note">「只响应近处的声音」关闭＝和以前一样。标准档会忽略隔壁房间/远处的说话声（被忽略时会有提示）；离麦克风远一点说话被吞，就切「宽松」。</div>
       </div>
 
       <div class="group">

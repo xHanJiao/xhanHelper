@@ -1,7 +1,8 @@
 import { ref } from 'vue'
 import { api } from '@/api/client'
 import { cutSentences } from '@/utils/speech'
-import { readVoiceSpeaker } from '@/utils/voicePref'
+import { readVoiceSpeaker, readVoiceNearField } from '@/utils/voicePref'
+import { NEAR_FIELD_WINDOW_MS, nearFieldThreshold, shouldAccept } from '@/utils/nearFieldGate'
 
 // 首次点击麦克风时用它解锁 <audio>（浏览器自动播放策略）
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
@@ -122,6 +123,9 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   let sentChunks = 0
   let sentBytes = 0
   let lastUpLog = 0
+  // 近场闸：最近 2 秒的电平帧（带门控标记，播报期的 TTS 残留不能算用户说话）
+  let levelFrames = []
+  let lastNearFieldNoticeAt = 0
 
   // hold 暂存：holding = 按住中；awaitingTail = 已松手、还在等最后半句
   let heldSentences = []
@@ -200,12 +204,31 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     }
   }
 
+  /** 近场闸：远处的声音不提交；关闭时恒放行（与加闸之前完全一致）。 */
+  function acceptNearField() {
+    const threshold = nearFieldThreshold(readVoiceNearField())
+    if (threshold == null) return true
+    if (shouldAccept(levelFrames, threshold)) return true
+    log(`sentence dropped: near-field gate frames=${levelFrames.length}`)
+    // 误拒比误收难受：被吞掉时必须让人看见，限频 10 秒
+    const now = Date.now()
+    if (now - lastNearFieldNoticeAt >= 10_000) {
+      lastNearFieldNoticeAt = now
+      onNotice?.('已忽略：声音来自远处')
+    }
+    return false
+  }
+
   function handleWorkletMessage(samples, sampleRate) {
     if (!samples || !samples.length) return
     let sum = 0
     for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
     // 和 macOS 一致 ×4：原始 RMS 只有 0.02~0.2，不放大浮层几乎看不出动静
     level.value = Math.min(1, Math.sqrt(sum / samples.length) * 4)
+    const now = Date.now()
+    levelFrames.push({ t: now, level: level.value, gated })
+    const cutoff = now - (NEAR_FIELD_WINDOW_MS + 500)
+    while (levelFrames.length && levelFrames[0].t < cutoff) levelFrames.shift()
     let pcm = resampleToInt16(samples, sampleRate)
     // 门控：真实音频不进 ASR（否则会把自己念的再识别一遍），但上行流不能空闲
     if (gated) pcm = new Int16Array(pcm.length)
@@ -251,6 +274,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
       try { ws.close() } catch { /* 已关闭 */ }
     }
     pending = new Int16Array(0)
+    levelFrames = []
     level.value = 0
     gated = false
   }
@@ -284,6 +308,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     sentChunks = 0
     sentBytes = 0
     lastUpLog = 0
+    levelFrames = []
     lastActivity = Date.now()
     stopSpeaking()
     unlockAudio()
@@ -348,6 +373,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
           }
           const text = String(msg.text || '').trim()
           if (!text) return
+          if (!acceptNearField()) return
           log(`sentence chars=${text.length}`)
           lastActivity = Date.now()
           // 按住 / 松手等尾巴：只暂存，不提交、不打断

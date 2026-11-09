@@ -117,7 +117,7 @@ const userMsgBodyHtml = computed(() => {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/\n/g, '<br>')
-  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|summaries|current_datetime|profile|notice|user_query|reminders|recent)&gt;/g,
+  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|summaries|events|current_datetime|profile|notice|user_query|reminders|recent)&gt;/g,
     '<span style="color:var(--color-primary);font-weight:600">&lt;$1$2&gt;</span>')
   return html
 })
@@ -140,7 +140,52 @@ function parseXMLToBlocks(xmlText) {
   }
 }
 
+// parseBlockElement — 已知块走专门分支，未知标签走通用树（不丢块，不必每加一个标签就改这里）。
 function parseBlockElement(el) {
+  const block = parseKnownBlock(el)
+  if (block && block.type !== 'generic') {
+    block.extraAttrs = extraAttrs(el, ['description'])
+  }
+  return block
+}
+
+// extraAttrs 取未被专门分支消费的属性，避免新增属性静默消失。
+function extraAttrs(el, known) {
+  const out = {}
+  for (const a of Array.from(el.attributes || [])) {
+    if (!known.includes(a.name)) out[a.name] = a.value
+  }
+  return out
+}
+
+// flattenGeneric 把元素拍平成行列表（tag + 属性 + 直接文本），模板按 depth 缩进渲染，无需递归组件。
+function flattenGeneric(el, depth, out) {
+  const attrs = Object.fromEntries(Array.from(el.attributes || []).map(a => [a.name, a.value]))
+  const text = Array.from(el.childNodes)
+    .filter(n => n.nodeType === 3)
+    .map(n => n.textContent.trim())
+    .filter(Boolean)
+    .join(' ')
+  out.push({ depth, tag: el.tagName, attrs, text })
+  for (const child of el.children) flattenGeneric(child, depth + 1, out)
+  return out
+}
+
+function parseGenericBlock(el) {
+  const rows = []
+  for (const child of el.children) flattenGeneric(child, 0, rows)
+  if (rows.length === 0) flattenGeneric(el, 0, rows) // 无子元素的纯文本块：直接展示自身
+  return {
+    type: 'generic',
+    tag: el.tagName,
+    description: el.getAttribute('description') || '',
+    items: [],
+    rows,
+    extraAttrs: extraAttrs(el, ['description']),
+  }
+}
+
+function parseKnownBlock(el) {
   const tag = el.tagName
   const attrs = Object.fromEntries(Array.from(el.attributes || []).map(a => [a.name, a.value]))
 
@@ -154,6 +199,7 @@ function parseBlockElement(el) {
           date: child.getAttribute('date') || '',
           score: parseFloat(child.getAttribute('score')) || 0,
           content: child.textContent?.trim() || '',
+          extraAttrs: extraAttrs(child, ['topic', 'date', 'score']),
         })
       }
       return { type: tag === 'memories' ? 'memory' : 'note', description: attrs.description || '', items }
@@ -165,6 +211,7 @@ function parseBlockElement(el) {
           state: child.getAttribute('desc') || '',
           score: parseFloat(child.getAttribute('score')) || 0,
           content: child.textContent?.trim() || '',
+          extraAttrs: extraAttrs(child, ['desc', 'score']),
         })
       }
       return { type: 'theme', description: attrs.description || '', items }
@@ -176,6 +223,7 @@ function parseBlockElement(el) {
           topics: child.getAttribute('topics') || '',
           score: parseFloat(child.getAttribute('score')) || 0,
           content: child.textContent?.trim() || '',
+          extraAttrs: extraAttrs(child, ['topics', 'score']),
         })
       }
       return { type: 'summary', description: attrs.description || '', items }
@@ -201,6 +249,7 @@ function parseBlockElement(el) {
         items.push({
           id: child.getAttribute('id') || '',
           content: child.textContent?.trim() || '',
+          extraAttrs: extraAttrs(child, ['id']),
         })
       }
       return { type: 'reminder', description: attrs.description || '', items }
@@ -211,9 +260,41 @@ function parseBlockElement(el) {
         items.push({
           date: child.getAttribute('date') || '',
           content: child.textContent?.trim() || '',
+          extraAttrs: extraAttrs(child, ['date']),
         })
       }
       return { type: 'recent', description: attrs.description || '', items }
+    }
+    case 'events': {
+      const items = []
+      for (const child of el.children) {
+        // summary / memories 是子元素：textContent 会连记忆正文一起带出来，必须按直接子节点取
+        const kids = Array.from(child.children)
+        const summaryEl = kids.find(c => c.tagName === 'summary')
+        const memoriesEl = kids.find(c => c.tagName === 'memories')
+        const memories = []
+        for (const m of memoriesEl?.children || []) {
+          memories.push({
+            id: m.getAttribute('id') || '',
+            topic: m.getAttribute('topic') || '',
+            date: m.getAttribute('date') || '',
+            content: m.textContent?.trim() || '',
+          })
+        }
+        items.push({
+          id: child.getAttribute('id') || '',
+          title: child.getAttribute('title') || '',
+          mode: child.getAttribute('mode') || '',
+          score: parseFloat(child.getAttribute('score')) || 0,
+          updated: child.getAttribute('updated') || '',
+          memoryCount: parseInt(child.getAttribute('memory_count'), 10) || 0,
+          pinned: child.getAttribute('pinned') === '1',
+          summary: summaryEl?.textContent?.trim() || '',
+          memories,
+          extraAttrs: extraAttrs(child, ['id', 'title', 'mode', 'score', 'updated', 'memory_count', 'pinned']),
+        })
+      }
+      return { type: 'event', description: attrs.description || '', items }
     }
     case 'current_datetime':
       return { type: 'current_datetime', content: el.textContent?.trim() || '' }
@@ -227,6 +308,7 @@ function parseBlockElement(el) {
           updatedAt: child.getAttribute('updated_at') || '',
           source: child.getAttribute('source') || '',
           value: child.textContent?.trim() || '',
+          extraAttrs: extraAttrs(child, ['key', 'updated_at', 'source']),
         })
       }
       return { type: 'profile', description: attrs.description || '', items }
@@ -234,7 +316,7 @@ function parseBlockElement(el) {
     case 'user_query':
       return { type: 'user_query', content: el.textContent?.trim() || '' }
     default:
-      return null
+      return parseGenericBlock(el)
   }
 }
 
@@ -245,17 +327,18 @@ const parsedBlocks = computed(() => {
 })
 
 function blockTypeLabel(type) {
-  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', reminder: '提醒 (reminders)', current_datetime: '当前时间', profile: '用户画像 (profile)', notice: '系统提示 (notice)', user_query: '用户查询', recent: '最近用户消息 (recent)' }
+  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', event: '事件 (events)', reminder: '提醒 (reminders)', current_datetime: '当前时间', profile: '用户画像 (profile)', notice: '系统提示 (notice)', user_query: '用户查询', recent: '最近用户消息 (recent)' }
   return map[type] || type
 }
 
 function blockTypeIcon(type) {
-  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', reminder: '⏰', current_datetime: '🕐', profile: '👤', notice: '📢', user_query: '💭', recent: '🕘' }
+  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', event: '📌', reminder: '⏰', current_datetime: '🕐', profile: '👤', notice: '📢', user_query: '💭', recent: '🕘' }
   return map[type] || '📦'
 }
 
 function blockItemCount(block) {
   if (block.type === 'history') return block.rounds?.length || 0
+  if (block.type === 'generic') return block.rows?.length || 0
   if (block.type === 'notice') return 1
   return block.items?.length || 0
 }
@@ -274,9 +357,35 @@ function isBlockCollapsed(key) {
 }
 
 function blockHeaderBg(type) {
-  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166', reminder: '99,102,241', profile: '139,92,246', notice: '120,113,108', recent: '249,115,22' }
+  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166', event: '236,72,153', reminder: '99,102,241', profile: '139,92,246', notice: '120,113,108', recent: '249,115,22' }
   const rgb = base[type] || '100,100,100'
   return themeStore.isDark ? `rgba(${rgb},0.12)` : `rgba(${rgb},0.06)`
+}
+
+// 事件注入形态（full=用户钉住 / hit=本轮命中 / summary=窗口内 / index=只有标题）
+const EVENT_MODE_META = {
+  full: { label: '钉住 full', color: '#7c3aed' },
+  hit: { label: '命中 hit', color: '#d97706' },
+  summary: { label: '摘要 summary', color: '#0d9488' },
+  index: { label: '索引 index', color: '#64748b' },
+}
+
+function eventModeLabel(mode) {
+  return EVENT_MODE_META[mode]?.label || mode
+}
+
+function eventModeStyle(mode) {
+  const color = EVENT_MODE_META[mode]?.color || '#64748b'
+  return {
+    fontSize: '11px', padding: '1px 6px', borderRadius: '4px', fontWeight: 500,
+    color, background: themeStore.isDark ? `${color}33` : `${color}1a`,
+  }
+}
+
+// extraAttrsText — 未适配属性的单行展示（新增属性不至于完全看不见）。
+function extraAttrsText(extra) {
+  if (!extra) return ''
+  return Object.entries(extra).map(([k, v]) => `${k}=${v}`).join(' · ')
 }
 
 function scorePercent(score) {
@@ -740,7 +849,8 @@ onMounted(loadRound)
                     >
                       <div style="display: flex; align-items: center; gap: 8px;">
                         <span style="font-size: 15px;">{{ blockTypeIcon(block.type) }}</span>
-                        <span style="font-size: 13px; font-weight: 600; color: var(--color-text);">{{ blockTypeLabel(block.type) }}</span>
+                        <span style="font-size: 13px; font-weight: 600; color: var(--color-text);">{{ block.type === 'generic' ? `<${block.tag}>` : blockTypeLabel(block.type) }}</span>
+                        <span v-if="block.type === 'generic'" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-bg-page); color: var(--color-text-muted);">未适配</span>
                         <span style="font-size: 11px; color: var(--color-text-muted); background: var(--color-bg-page); padding: 1px 6px; border-radius: 10px;">{{ blockItemCount(block) }}条</span>
                       </div>
                       <span style="font-size: 11px; color: var(--color-text-muted);">{{ isBlockCollapsed(idx) ? '▶' : '▼' }}</span>
@@ -750,6 +860,24 @@ onMounted(loadRound)
                     <div v-if="!isBlockCollapsed(idx)" style="padding: 10px 14px 14px; background: var(--color-surface);">
                       <!-- Description -->
                       <div v-if="block.description" style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 10px; max-height: 3em; overflow: hidden;" :title="block.description">{{ block.description }}</div>
+                      <div v-if="extraAttrsText(block.extraAttrs)" style="font-size: 11px; color: var(--color-text-muted); font-family: monospace; margin-bottom: 10px;">{{ extraAttrsText(block.extraAttrs) }}</div>
+
+                      <!-- 未适配的块：通用树，保证新标签也能看见 -->
+                      <template v-if="block.type === 'generic'">
+                        <div v-for="(row, i) in block.rows" :key="i" :style="{
+                          marginLeft: row.depth * 14 + 'px',
+                          padding: '6px 10px', marginBottom: '4px',
+                          borderRadius: 'var(--radius-sm)',
+                          background: themeStore.isDark ? 'rgba(255,255,255,0.04)' : '#f8fafc',
+                          border: '1px solid var(--color-border)',
+                        }">
+                          <div style="font-family: monospace; font-size: 12px; color: var(--color-primary);">
+                            &lt;{{ row.tag }}&gt;
+                            <span v-for="(v, k) in row.attrs" :key="k" style="color: var(--color-text-muted); margin-left: 6px;">{{ k }}="{{ v }}"</span>
+                          </div>
+                          <div v-if="row.text" style="font-size: 13px; color: var(--color-text); line-height: 1.6; white-space: pre-wrap; word-break: break-all; margin-top: 2px;">{{ row.text }}</div>
+                        </div>
+                      </template>
 
                       <!-- memory / note / theme / summary / reminder / recent items -->
                       <template v-if="['memory','note','theme','summary','reminder','recent'].includes(block.type)">
@@ -770,6 +898,41 @@ onMounted(loadRound)
                             <div :style="{ width: scorePercent(item.score) + '%', height: '100%', borderRadius: '2px', background: scoreBarColor(item.score) }"></div>
                           </div>
                           <div style="font-size: 13px; color: var(--color-text); line-height: 1.6; white-space: pre-wrap; word-break: break-all;">{{ item.content || '(空)' }}</div>
+                          <div v-if="extraAttrsText(item.extraAttrs)" style="font-size: 11px; color: var(--color-text-muted); font-family: monospace; margin-top: 6px;">{{ extraAttrsText(item.extraAttrs) }}</div>
+                        </div>
+                      </template>
+
+                      <!-- event items：标题 + 形态 + summary + 内嵌记忆 -->
+                      <template v-if="block.type === 'event'">
+                        <div v-for="(item, i) in block.items" :key="i" :style="{
+                          padding: '10px 12px', marginBottom: i < block.items.length - 1 ? '8px' : '0',
+                          borderRadius: 'var(--radius-sm)',
+                          background: themeStore.isDark ? 'rgba(255,255,255,0.04)' : '#f8fafc',
+                          border: '1px solid var(--color-border)',
+                        }">
+                          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px;">
+                            <span style="font-size: 13px; font-weight: 600; color: var(--color-text);">{{ item.title || item.id }}</span>
+                            <span v-if="item.mode" :style="eventModeStyle(item.mode)">{{ eventModeLabel(item.mode) }}</span>
+                            <span v-if="item.pinned" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-primary); color: #fff; font-weight: 500;">钉住</span>
+                            <span v-if="item.updated" style="font-size: 11px; color: var(--color-text-muted);">{{ item.updated }}</span>
+                            <span v-if="item.memoryCount" style="font-size: 11px; color: var(--color-text-muted);">记忆 {{ item.memoryCount }}</span>
+                            <span v-if="item.score" style="font-size: 11px; color: var(--color-text-muted); margin-left: auto;">{{ scorePercent(item.score) }}%</span>
+                          </div>
+                          <div v-if="item.summary" style="font-size: 13px; color: var(--color-text); line-height: 1.6; white-space: pre-wrap; word-break: break-all;">{{ item.summary }}</div>
+                          <div v-if="extraAttrsText(item.extraAttrs)" style="font-size: 11px; color: var(--color-text-muted); font-family: monospace; margin-top: 6px;">{{ extraAttrsText(item.extraAttrs) }}</div>
+                          <div v-if="item.memories.length" style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--color-border);">
+                            <div v-for="(m, mi) in item.memories" :key="mi" :style="{
+                              fontSize: '12px', lineHeight: 1.6, color: 'var(--color-text)',
+                              padding: '4px 8px', marginBottom: mi < item.memories.length - 1 ? '4px' : '0',
+                              borderRadius: 'var(--radius-sm)',
+                              background: themeStore.isDark ? 'rgba(255,255,255,0.03)' : 'var(--color-bg-page)',
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                            }">
+                              <span v-if="m.date" style="font-size: 10px; color: var(--color-text-muted); margin-right: 6px;">{{ m.date }}</span>
+                              <span v-if="m.topic" style="font-size: 10px; color: var(--color-text-muted); margin-right: 6px;">#{{ m.topic }}</span>
+                              {{ m.content }}
+                            </div>
+                          </div>
                         </div>
                       </template>
 
@@ -792,6 +955,7 @@ onMounted(loadRound)
                             <span v-if="item.updatedAt" style="font-size: 11px; color: var(--color-text-muted);">{{ item.updatedAt }}</span>
                           </div>
                           <div style="font-size: 13px; color: var(--color-text); line-height: 1.6; white-space: pre-wrap; word-break: break-all;">{{ item.value || '(空)' }}</div>
+                          <div v-if="extraAttrsText(item.extraAttrs)" style="font-size: 11px; color: var(--color-text-muted); font-family: monospace; margin-top: 6px;">{{ extraAttrsText(item.extraAttrs) }}</div>
                         </div>
                       </template>
 

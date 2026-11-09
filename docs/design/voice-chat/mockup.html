@@ -131,6 +131,7 @@
   .slider{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--text-2)}
   .slider input[type=range]{width:92px}
   .slider b{font-weight:500; color:var(--text); min-width:26px; text-align:right; font-variant-numeric:tabular-nums}
+  .mic-hint{font-size:11.5px; opacity:.66; max-width:520px; line-height:1.5}
   .ui-card .sep{width:1px; height:18px; background:var(--capsule-border)}
   .toggle{
     display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-2); cursor:pointer;
@@ -144,7 +145,7 @@
   <div class="head">
     <h1>语音音波轨 · 动效示意</h1>
     <p>输入框的文本行被一条对称音波线替代；消息区不动。切换状态看四种运动。</p>
-    <p>已定稿：幅度 0.80 / 响应 2.00 / 波包 1.15（两端实现用的就是这组）。底栏仍可拖动对比。</p>
+    <p>定稿：听 / 说 = 幅度 1.00 / 响应 2.00 / 波包 1.15 / 横向 0.05；想 = 同一组、幅度 ×0.8。底栏仍可拖动对比。</p>
   </div>
 
   <div class="chat">
@@ -188,14 +189,19 @@
       <button class="pbtn" data-phase="speaking">说</button>
     </div>
     <span class="sep"></span>
-    <label class="slider">幅度 <input id="amp" type="range" min="0.6" max="1.5" step="0.05" value="0.8"><b id="ampV">0.80</b></label>
+    <label class="slider">幅度 <input id="amp" type="range" min="0.6" max="1.5" step="0.05" value="1"><b id="ampV">1.00</b></label>
     <label class="slider">响应 <input id="speed" type="range" min="0.2" max="2" step="0.05" value="2"><b id="speedV">2.00</b></label>
     <label class="slider">波包 <input id="packet" type="range" min="0.5" max="1.6" step="0.05" value="1.15"><b id="packetV">1.15</b></label>
     <label class="slider">静息 <input id="wobble" type="range" min="0" max="2" step="0.1" value="1"><b id="wobbleV">1.0</b></label>
+    <label class="slider">横向流动 <input id="drift" type="range" min="0" max="1" step="0.05" value="0.05"><b id="driftV">0.05</b></label>
     <span class="sep"></span>
     <label class="toggle"><input id="glow" type="checkbox" checked> 说态发光</label>
+    <label class="toggle"><input id="labels" type="checkbox"> 状态字/提示</label>
     <button class="pbtn on" id="styleBtn">正弦线</button>
     <button class="pbtn" id="demoBtn">自动演示</button>
+    <button class="pbtn" id="micBtn">接麦克风</button>
+    <span class="slider">电平 <b id="micReadout">0.00</b></span>
+    <span id="micHint" class="mic-hint" hidden></span>
     <button class="pbtn" id="themeBtn">切深色</button>
   </div>
 </div>
@@ -217,16 +223,23 @@
     speaking: { word: '说', hint: '点一下打断', cls: 'is-speaking' }
   };
 
-  const params = { amp: 0.8, speed: 2, packet: 1.15, wobble: 1 };
+  const params = { amp: 1, speed: 2, packet: 1.15, wobble: 1, drift: 0.05 };
   let phase = 'idle';
   let dark = qs.get('theme') === 'dark';
   let clock = 0;
   let level = 0;
   let ampSmooth = 0.8;
   let glow = true;
-  let style = qs.get('style') === 'spike' ? 'spike' : 'sine';
+  let style = qs.get('style') === 'sine' ? 'sine' : 'spike';
   let demo = false;
   let demoClock = 0;
+  let micOn = false;
+  let audioCtx = null;
+  let analyser = null;
+  let micStream = null;
+  let micBuf = null;
+  const micBtn = document.getElementById('micBtn');
+  const micReadout = document.getElementById('micReadout');
   const DEMO_SEQ = [
     { at: 0, phase: 'listen' },
     { at: 3.6, phase: 'thinking' },
@@ -238,6 +251,67 @@
 
   if (dark) { document.documentElement.classList.add('theme-dark'); document.getElementById('themeBtn').textContent = '切浅色'; }
   if (qs.get('bare') === '1') body.classList.add('bare');
+
+  // 真麦克风：RMS×4，与客户端 onLevel 同刻度（远场说话约 0.04~0.08，近场 0.08~0.28）
+  function readMicLevel() {
+    if (!analyser || !micBuf) return 0;
+    analyser.getFloatTimeDomainData(micBuf);
+    let sum = 0;
+    for (let i = 0; i < micBuf.length; i++) sum += micBuf[i] * micBuf[i];
+    return Math.sqrt(sum / micBuf.length) * 4;
+  }
+
+  async function startMic() {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false }
+      });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      await audioCtx.resume();
+      const src = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0;
+      src.connect(analyser);
+      micBuf = new Float32Array(analyser.fftSize);
+      micOn = true;
+      micBtn.textContent = '关麦克风';
+      micBtn.classList.add('on');
+      micBtn.title = '';
+      document.getElementById('micHint').hidden = true;
+      setPhase('listen');
+    } catch (err) {
+      console.error('getUserMedia failed', err);
+      if (micStream) {
+        micStream.getTracks().forEach(function (t) { t.stop(); });
+        micStream = null;
+      }
+      if (audioCtx) {
+        audioCtx.close();
+        audioCtx = null;
+      }
+      analyser = null;
+      micBuf = null;
+      const name = (err && err.name) || String(err);
+      const hint = document.getElementById('micHint');
+      hint.hidden = false;
+      hint.textContent = '麦克风打不开（' + name + '）。file:// 可能被拒：在本目录跑 python3 -m http.server 8787，再开 http://localhost:8787/mockup.html';
+      micBtn.title = name;
+    }
+  }
+
+  function stopMic() {
+    micOn = false;
+    micBtn.textContent = '接麦克风';
+    micBtn.classList.remove('on');
+    micReadout.textContent = '0.00';
+    if (micStream) micStream.getTracks().forEach(function (t) { t.stop(); });
+    if (audioCtx) audioCtx.close();
+    micStream = null;
+    audioCtx = null;
+    analyser = null;
+    micBuf = null;
+  }
 
   function setPhase(p) {
     if (!PHASES[p]) return;
@@ -284,7 +358,7 @@
     if (phase === 'speaking') {
       const cad = (0.5 + 0.5 * Math.sin(clock * 2.7)) *
                   (0.35 + 0.65 * Math.abs(Math.sin(clock * 1.13 + 0.7)));
-      return (5 + 9 * cad) * params.amp;
+      return (8 + 12 * cad) * params.amp;
     }
     return 1;
   }
@@ -326,7 +400,7 @@
       const period = 3.4 / params.packet;
       const pos = -0.16 + ((clock % period) / period) * 1.32;
       const g = Math.exp(-Math.pow((x - pos) / 0.19, 2));
-      return 12.5 * params.amp * g * Math.sin((x - pos) * k - clock * 1.4 * params.speed);
+      return 7 * params.amp * 0.8 * g * Math.sin((x - pos) * k - clock * 1.4 * params.speed);
     }
     // 相位锁死：线不横移，只靠振幅呼吸
     return ampSmooth * env * Math.sin(k * (x - 0.5));
@@ -339,8 +413,8 @@
       const period = 2.4 / params.packet;
       const pos = -0.14 + ((clock % period) / period) * 1.28;
       const g = Math.exp(-Math.pow((x - pos) / 0.16, 2));
-      const n = noise(x, clock * 3.6 * params.speed, 3.1);
-      return 12.5 * params.amp * g * (0.3 + 0.7 * n);
+      const n = noise(x, clock * 3.6 * params.speed * params.drift, 3.1);
+      return 7 * params.amp * 0.8 * g * (0.3 + 0.7 * n);
     }
     let sp;
     if (p === 'idle') {
@@ -351,7 +425,7 @@
     } else {
       sp = 2 + 3.5 * cadence(clock);
     }
-    const n = noise(x, clock * sp * params.speed, p === 'speaking' ? 5.7 : 2.3);
+    const n = noise(x, clock * sp * params.speed * params.drift, p === 'speaking' ? 5.7 : 2.3);
     return ampSmooth * env * (0.08 + 0.92 * n);
   }
 
@@ -450,9 +524,16 @@
       if (want !== phase) setPhase(want);
     }
 
-    if (forcedLevel !== null) level = forcedLevel;
-    else if (phase === 'listen') simulateLevel();
-    else level += (0 - level) * 0.2;
+    if (micOn) {
+      level = readMicLevel();
+      micReadout.textContent = level.toFixed(2);
+    } else if (forcedLevel !== null) {
+      level = forcedLevel;
+    } else if (phase === 'listen') {
+      simulateLevel();
+    } else {
+      level += (0 - level) * 0.2;
+    }
 
     const target = targetAmp();
     const tau = (target > ampSmooth ? 0.03 : 0.12) / params.speed; // 快起慢落
@@ -478,8 +559,31 @@
   bindSlider('speed', 'speed');
   bindSlider('packet', 'packet');
   bindSlider('wobble', 'wobble');
+  bindSlider('drift', 'drift');
+  if (qs.get('drift') !== null) {
+    const driftParam = parseFloat(qs.get('drift'));
+    if (Number.isFinite(driftParam)) {
+      params.drift = driftParam;
+      const dEl = document.getElementById('drift');
+      dEl.value = params.drift;
+      document.getElementById('driftV').textContent = params.drift.toFixed(2);
+    }
+  }
 
   document.getElementById('glow').addEventListener('change', function (e) { glow = e.target.checked; });
+
+  const labelsBox = document.getElementById('labels');
+  function applyLabels() {
+    const on = labelsBox.checked;
+    wordEl.style.display = on ? '' : 'none';
+    hintEl.style.display = on ? '' : 'none';
+  }
+  labelsBox.addEventListener('change', applyLabels);
+  if (qs.get('labels') === '1') labelsBox.checked = true;
+  applyLabels();
+
+  micBtn.addEventListener('click', function () { if (micOn) stopMic(); else startMic(); });
+  if (qs.get('mic') === '1') startMic();
 
   const styleBtn = document.getElementById('styleBtn');
   styleBtn.textContent = style === 'sine' ? '正弦线' : '刺状';

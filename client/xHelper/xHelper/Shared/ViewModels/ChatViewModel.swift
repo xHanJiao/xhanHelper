@@ -1006,7 +1006,7 @@ class ChatViewModel: ObservableObject {
         speakReplyForCurrentTurn = speakReply
         // 新会话第一轮还没 done 时插话：meta 帧已经给了 id，这一轮必须落回同一会话，
         // 否则会另起一个会话、第一轮还在后台继续跑（连续对话最常见的路径）。
-        let turnConversationID = effectiveConversationID
+        let turnConversationID = sendConversationID
         let userMsg = Message.localUser(text: text, conversationId: turnConversationID ?? "", imageIds: attachmentIds, localImages: localImages)
         messages.append(userMsg)
 
@@ -1149,8 +1149,9 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）。
         // 已有 pending id 说明会话正在创建/已创建，不能再下发 init_mode。
-        let targetConversationID = conversationOverride ?? effectiveConversationID
-        let initMode: String? = targetConversationID == nil ? mode : nil
+        let targetConversationID = conversationOverride ?? sendConversationID
+        // 空串也是「空 tab」：会话要新建，init_mode 必须带上
+        let initMode: String? = (targetConversationID ?? "").isEmpty ? mode : nil
         sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: targetConversationID, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
@@ -1191,6 +1192,14 @@ class ChatViewModel: ObservableObject {
     private var effectiveConversationID: String? {
         if let cid = conversationId, !cid.isEmpty { return cid }
         return pendingConversationID.isEmpty ? nil : pendingConversationID
+    }
+
+    /// 发新轮用的会话 id：空白 tab 必须发空串，后端据此创建**非默认**会话；
+    /// 发 nil 会被当成老客户端、落进「默认对话」（见 server/controller/chat.go 的
+    /// `req.ConversationID == nil` 分支）。续传仍用 effectiveConversationID（要真实 id）。
+    private var sendConversationID: String? {
+        if let cid = conversationId { return cid }
+        return pendingConversationID.isEmpty ? "" : pendingConversationID
     }
 
     /// 回前台续传：带 turn + from 重连，补发断点后的帧并继续跟流。

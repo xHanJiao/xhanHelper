@@ -55,6 +55,7 @@ func (h *VoiceHandler) Status(c *gin.Context) {
 		"enabled":     h.cfg.Enabled,
 		"ready":       h.cfg.Ready(),
 		"speaker":     h.cfg.TTS.Speaker,
+		"speakers":    voice.SpeakerList(h.cfg.TTS.Speaker),
 		"language":    h.cfg.ASR.Language,
 		"max_seconds": h.cfg.ASR.MaxSeconds,
 		// C 模式单次会话上限（客户端据此做硬收口；空闲收口由客户端判定）
@@ -80,14 +81,20 @@ func (h *VoiceHandler) TTS(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Speaker string `json:"speaker"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		view.JSONError(c, http.StatusBadRequest, "invalid request")
 		return
 	}
-	audio, textWords, err := h.tts.Synthesize(c.Request.Context(), req.Text)
+	// 音色不是安全边界：下架/旧页面带来的非法 id 记日志后回落默认，别让整段朗读失败。
+	speaker, fallback := voice.ResolveSpeaker(h.cfg.TTS.Speaker, req.Speaker)
+	if fallback {
+		log.Printf("[voice] unknown speaker %q, fallback to %q", req.Speaker, speaker)
+	}
+	audio, textWords, err := h.tts.Synthesize(c.Request.Context(), req.Text, speaker)
 	if err != nil {
 		log.Printf("[voice] tts failed (chars=%d): %v", len([]rune(req.Text)), err)
 		view.JSONError(c, http.StatusBadGateway, "语音合成失败")

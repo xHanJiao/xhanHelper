@@ -278,6 +278,10 @@ struct ChatView: View {
             voice.cancel()
             voice.stopSpeaking()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .voicePreviewWillStart)) { _ in
+            // 设置页试听前先停朗读，别让两路音频叠在一起。
+            voice.stopSpeaking()
+        }
         .onChange(of: viewModel.conversationId) { _, _ in
 #if os(macOS)
             Task { await reloadAgentPicker() }

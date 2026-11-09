@@ -2,6 +2,11 @@ import AVFoundation
 import Combine
 import Foundation
 
+extension Notification.Name {
+    /// 设置页开始试听：聊天窗先停朗读，避免两路音频叠在一起。
+    static let voicePreviewWillStart = Notification.Name("VoicePreviewWillStart")
+}
+
 /// 语音聊天客户端：麦克风采集 → 自家后端 WebSocket → 豆包流式 ASR；
 /// 回复文本 → 自家后端 TTS → 同一个 AVAudioEngine（VPIO 回声消除）播放。
 @MainActor
@@ -605,9 +610,11 @@ final class VoiceChatService: ObservableObject {
             speechTasks[index] = Task { Optional<Data>.none }
             return
         }
+        // 每次合成时读：设置窗与聊天窗可能同时开着，切换后下一句立即生效。
+        let speaker = UserDefaults.standard.string(forKey: VoicePreference.speakerKey) ?? ""
         speechTasks[index] = Task {
             do {
-                return try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech)
+                return try await APIClient(baseURL: baseURL, token: token).synthesizeSpeech(text: speech, speaker: speaker)
             } catch {
                 LogBuffer.shared.error("voice tts sentence failed: \(error.localizedDescription)")
                 return nil
@@ -650,9 +657,10 @@ final class VoiceChatService: ObservableObject {
                 if self.speechEnded { break }
                 _ = await iterator.next()
             }
+            let placeholderSpeaker = UserDefaults.standard.string(forKey: VoicePreference.speakerKey) ?? ""
             if !didPlay, self.speechNeedsPlaceholder,
                let data = try? await APIClient(baseURL: baseURL, token: token)
-                .synthesizeSpeech(text: "这条回复主要是代码或表格，我放在屏幕上了。") {
+                .synthesizeSpeech(text: "这条回复主要是代码或表格，我放在屏幕上了。", speaker: placeholderSpeaker) {
                 if epoch != self.speakEpoch { return }
                 self.prepareForPlayback()
                 self.isPreparingSpeech = false

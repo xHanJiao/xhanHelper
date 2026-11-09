@@ -71,7 +71,8 @@ type ttsLine struct {
 }
 
 // Synthesize 合成一段文本，返回 mp3 字节与实际计费字符数（服务端返回时）。
-func (c *TTSClient) Synthesize(ctx context.Context, text string) ([]byte, int, error) {
+// speaker 为空时使用配置的默认音色；调用方负责把请求里的音色解析成白名单内的值。
+func (c *TTSClient) Synthesize(ctx context.Context, text, speaker string) ([]byte, int, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, 0, fmt.Errorf("tts: 文本为空")
@@ -79,11 +80,14 @@ func (c *TTSClient) Synthesize(ctx context.Context, text string) ([]byte, int, e
 	if c.cfg.MaxChars > 0 && len([]rune(text)) > c.cfg.MaxChars {
 		return nil, 0, fmt.Errorf("tts: 文本超过 %d 字符", c.cfg.MaxChars)
 	}
+	if speaker == "" {
+		speaker = c.cfg.Speaker
+	}
 
 	payload, err := json.Marshal(ttsRequest{
 		ReqParams: ttsReqParams{
 			Text:    text,
-			Speaker: c.cfg.Speaker,
+			Speaker: speaker,
 			AudioParams: ttsAudioParams{
 				Format:                c.cfg.Format,
 				SampleRate:            c.cfg.SampleRate,

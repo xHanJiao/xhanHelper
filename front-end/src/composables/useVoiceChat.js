@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { api } from '@/api/client'
 import { cutSentences } from '@/utils/speech'
+import { readVoiceSpeaker } from '@/utils/voicePref'
 
 // 首次点击麦克风时用它解锁 <audio>（浏览器自动播放策略）
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
@@ -603,8 +604,9 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     const index = speechFrozen.length
     speechFrozen.push(sentence)
     const speech = cleanForSpeech(sentence)
+    const speaker = readVoiceSpeaker()
     speechTasks.set(index, speech
-      ? api.postBlob('/api/voice/tts', { text: speech }).catch((err) => {
+      ? api.postBlob('/api/voice/tts', speaker ? { text: speech, speaker } : { text: speech }).catch((err) => {
           console.error('[voice] tts failed', err)
           return null
         })

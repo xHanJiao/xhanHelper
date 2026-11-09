@@ -196,7 +196,7 @@ voice:
   tts:
     endpoint: https://openspeech.bytedance.com/api/v3/tts/unidirectional
     resource_id: seed-tts-2.0
-    speaker: zh_female_vv_uranus_bigtts # Vivi 2.0；可在控制台试听后改
+    speaker: zh_female_vv_uranus_bigtts # 默认音色（客户端未选择时使用）；Vivi 2.0
     format: mp3
     sample_rate: 24000
     speech_rate: 0

@@ -553,3 +553,9 @@ location = /api/voice/asr {
     `timeIntervalSinceReferenceDate`（约 8×10⁸），从第一帧起纹理就飞速跳变，PWA 开久了同样会变快。
   - 改为 `flow += speed(phase) · dt` 后代入噪声，三端（macOS / PWA / 调参页）同步；参数与振幅调制不变。
   - 详见 `docs/bugs/053-voice-wave-time-warp.md`。
+
+- 2026-11-09（音色可切换：服务端白名单 + 客户端本地偏好）：
+  - 音色从「yaml 唯一来源」改为「服务端下发白名单 + 每次合成带 speaker」；`voice.tts.speaker`
+    变成默认值，请求里的非法 id 记日志后回落默认，不中断朗读。
+  - 设置页（PWA / macOS）可选 12 个精选 2.0 音色并就地试听；选择存客户端本地，下一句生效。
+  - 方案、接口与 UI 见 `docs/design/voice-timbre/design.md`；已按该方案实现后端 / PWA / macOS。

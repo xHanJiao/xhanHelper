@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-view="phone" data-state="normal">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音音色 · 设置页示意</title>
+<style>
+  /* ===== 设计 token（与 front-end/src/style.css 对齐） ===== */
+  :root {
+    --color-primary: #2F7D63;
+    --color-primary-soft: rgba(47, 125, 99, 0.10);
+    --color-danger: #C0504D;
+    --color-danger-soft: rgba(192, 80, 77, 0.10);
+    --color-warning: #B7791F;
+    --color-warning-soft: rgba(183, 121, 31, 0.12);
+
+    --color-bg: #F7EEDD;
+    --color-bg-page: #F7EEDD;
+    --color-surface: rgba(255, 255, 255, 0.50);
+    --color-surface-strong: #FBF6EC;
+    --color-surface-hover: rgba(47, 125, 99, 0.08);
+    --color-input: #F2F7F3;
+    --color-tool: #E8E4EF;
+
+    --color-text: #3B2E1F;
+    --color-text-secondary: rgba(59, 46, 31, 0.64);
+    --color-text-muted: rgba(59, 46, 31, 0.42);
+    --color-user-text: #2A7F58;
+
+    --color-border: rgba(59, 46, 31, 0.12);
+    --color-border-strong: rgba(59, 46, 31, 0.18);
+
+    --radius-md: 12px;
+    --shadow-sm: 0 1px 3px rgba(59, 46, 31, 0.05);
+    --shadow-lg: 0 18px 50px rgba(59, 46, 31, 0.10);
+
+    --bottom-tabs-height: 56px;
+    --bottom-chrome: #F9F5EC;
+
+    --app-bg-image:
+      radial-gradient(900px 620px at 8% 4%, rgba(146, 200, 180, 0.30), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255, 213, 166, 0.34), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.18), transparent 60%),
+      linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
+  }
+
+  [data-theme="dark"] {
+    --color-primary: #92C8B4;
+    --color-primary-soft: rgba(146, 200, 180, 0.14);
+    --color-danger: #E07A76;
+    --color-danger-soft: rgba(224, 122, 118, 0.12);
+    --color-warning: #E0B25C;
+    --color-warning-soft: rgba(224, 178, 92, 0.12);
+
+    --color-bg: #1C1C1E;
+    --color-bg-page: #141416;
+    --color-surface: rgba(255, 255, 255, 0.06);
+    --color-surface-strong: #242426;
+    --color-surface-hover: rgba(255, 255, 255, 0.08);
+    --color-input: #2C2E2D;
+    --color-tool: #2E2B36;
+
+    --color-text: #FFFFFF;
+    --color-text-secondary: rgba(255, 255, 255, 0.66);
+    --color-text-muted: rgba(255, 255, 255, 0.40);
+    --color-user-text: #90D4A8;
+
+    --color-border: rgba(255, 255, 255, 0.12);
+    --color-border-strong: rgba(255, 255, 255, 0.18);
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.24);
+    --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.34);
+    --bottom-chrome: #1E1F21;
+
+    --app-bg-image:
+      radial-gradient(900px 620px at 8% 4%, rgba(146, 200, 180, 0.14), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255, 213, 166, 0.10), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.16), transparent 60%),
+      linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: var(--color-bg-page);
+    color: var(--color-text);
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 170px;
+  }
+
+  /* ===== 文档外壳 ===== */
+  .doc {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 28px 24px 8px;
+  }
+  .doc h1 {
+    font-size: 19px;
+    margin: 0 0 6px;
+    letter-spacing: .01em;
+  }
+  .doc .sub {
+    font-size: 12.5px;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+    margin: 0;
+  }
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 14px 0 4px;
+    font-size: 11.5px;
+    color: var(--color-text-secondary);
+  }
+  .flow .step {
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: var(--color-surface);
+    border: 0.5px solid var(--color-border);
+  }
+  .flow .sep { color: var(--color-text-muted); }
+
+  .stage {
+    display: flex;
+    justify-content: center;
+    padding: 22px 0 12px;
+  }
+  .frame { display: none; }
+  html[data-view="phone"] .frame-phone,
+  html[data-view="wide"] .frame-wide,
+  html[data-view="mac"] .frame-mac { display: block; }
+
+  .caption {
+    text-align: center;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    margin-top: 12px;
+  }
+
+  /* ===== PWA 手机外框 ===== */
+  .phone {
+    width: 382px;
+    height: 748px;
+    border-radius: 42px;
+    padding: 10px;
+    background: #24242a;
+    box-shadow: var(--shadow-lg);
+  }
+  .phone-screen {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 33px;
+    overflow: hidden;
+    background-image: var(--app-bg-image);
+    display: flex;
+    flex-direction: column;
+  }
+  .statusbar {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 22px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text);
+    opacity: .8;
+    flex-shrink: 0;
+  }
+  .statusbar .right { display: flex; gap: 4px; align-items: center; }
+  .statusbar .bar {
+    width: 18px; height: 8px; border-radius: 2px;
+    border: 1px solid currentColor; padding: 1px;
+  }
+  .statusbar .bar i { display: block; width: 78%; height: 100%; border-radius: 1px; background: currentColor; }
+
+  .page {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 4px 16px 0;
+  }
+  .page-head {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: .01em;
+    padding: 6px 4px 16px;
+  }
+  .group { margin-bottom: 15px; }
+  .group-title {
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    color: var(--color-text-muted);
+    padding: 0 4px 7px;
+  }
+  .card {
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    border: 0.5px solid var(--color-border);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 13px;
+    font-size: 13px;
+    border-bottom: 0.5px solid var(--color-border);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .label { flex: 1; }
+  .row .value { color: var(--color-text-muted); font-size: 11.5px; }
+  .row-btn {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+  }
+  .row-btn:hover { background: var(--color-surface-hover); }
+  .chev { color: var(--color-text-muted); flex-shrink: 0; }
+
+  .seg { display: flex; gap: 2px; background: var(--color-tool); border-radius: 9px; padding: 2px; }
+  .seg span {
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+  }
+  .seg span.on { background: var(--color-primary); color: #fff; }
+  [data-theme="dark"] .seg span.on { color: #10221B; }
+
+  .note {
+    font-size: 10.5px;
+    color: var(--color-text-muted);
+    padding: 8px 4px 0;
+    line-height: 1.55;
+  }
+  .note.warn { color: var(--color-warning); }
+
+  /* 音色：行内下拉 */
+  .vselect {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px 5px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--color-border);
+    background: var(--color-input);
+    font-size: 12.5px;
+    color: var(--color-text);
+    min-width: 128px;
+    justify-content: space-between;
+  }
+  .vselect svg { width: 10px; height: 10px; color: var(--color-text-muted); }
+
+  /* 试听按钮（整行可点） */
+  .listen-main {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--color-primary);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .listen-main svg { width: 15px; height: 15px; }
+  .dot-spin {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    border: 1.8px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+    border-top-color: var(--color-primary);
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .eq { display: flex; gap: 2px; align-items: flex-end; height: 14px; }
+  .eq i {
+    width: 2.5px;
+    border-radius: 2px;
+    background: var(--color-primary);
+    animation: eq 0.9s ease-in-out infinite;
+  }
+  .eq i:nth-child(1) { height: 6px; animation-delay: 0s; }
+  .eq i:nth-child(2) { height: 12px; animation-delay: .12s; }
+  .eq i:nth-child(3) { height: 8px; animation-delay: .24s; }
+  .eq i:nth-child(4) { height: 13px; animation-delay: .36s; }
+  @keyframes eq { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+
+  /* 状态显隐 */
+  .st { display: none !important; }
+  html[data-state="normal"] .st-normal,
+  html[data-state="loading"] .st-loading,
+  html[data-state="playing"] .st-playing,
+  html[data-state="stale"] .st-stale { display: flex !important; }
+  html[data-state="normal"] .round-btn.st-normal,
+  html[data-state="loading"] .round-btn.st-loading,
+  html[data-state="playing"] .round-btn.st-playing,
+  html[data-state="stale"] .round-btn.st-stale { display: grid !important; }
+  html[data-state="stale"] .st-note { display: block; }
+  html[data-state="off"] .voice-group { display: none; }
+  html[data-state="off"] .off-note { display: block; }
+  .off-note { display: none; }
+  .st-note { display: none; }
+
+  /* 底部 tab */
+  .tabs {
+    height: calc(var(--bottom-tabs-height) + 16px);
+    padding: 4px 8px 16px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-around;
+    background: var(--bottom-chrome);
+    border-top: 0.5px solid var(--color-border);
+    flex-shrink: 0;
+  }
+  .tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding-top: 4px;
+    font-size: 10px;
+    color: var(--color-text-muted);
+  }
+  .tab.on { color: var(--color-primary); }
+  .tab svg { width: 22px; height: 22px; }
+
+  /* ===== PWA 宽屏 ===== */
+  .wide {
+    width: 760px;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 0.5px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    background-image: var(--app-bg-image);
+  }
+  .wide .page { padding: 18px 24px 26px; overflow: visible; }
+  .wide .page-head { padding-top: 8px; }
+
+  /* ===== macOS 设置（示意，不作为像素依据） ===== */
+  .win {
+    width: 580px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 0.5px solid var(--color-border-strong);
+    background: color-mix(in srgb, var(--color-surface-strong) 88%, transparent);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(30px);
+  }
+  .titlebar {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 0.5px solid var(--color-border);
+  }
+  .lights { display: flex; gap: 7px; width: 62px; }
+  .lights i { width: 11px; height: 11px; border-radius: 50%; background: var(--color-border-strong); }
+  .titlebar .title {
+    flex: 1;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 600;
+    margin-right: 62px;
+  }
+  .form { padding: 14px 18px 26px; }
+  .fsec { margin-bottom: 16px; }
+  .fsec > h3 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    margin: 0 0 7px 4px;
+  }
+  .fcard {
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+    border: 0.5px solid var(--color-border);
+    overflow: hidden;
+  }
+  .frow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    border-bottom: 0.5px solid var(--color-border);
+  }
+  .frow:last-child { border-bottom: 0; }
+  .frow .label { flex: 1; }
+  .frow .hint { font-size: 11px; color: var(--color-text-muted); }
+  .popup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 132px;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 0.5px solid var(--color-border-strong);
+    background: var(--color-surface);
+    font-size: 12px;
+  }
+  .popup svg { width: 9px; height: 9px; color: var(--color-text-muted); }
+  .round-btn {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 0.5px solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-primary);
+    display: grid; place-items: center;
+  }
+  .round-btn svg { width: 11px; height: 11px; }
+  .fcap {
+    font-size: 10.5px;
+    color: var(--color-text-muted);
+    padding: 6px 4px 0;
+    line-height: 1.5;
+  }
+  .fcap.warn { color: var(--color-warning); }
+  .foff {
+    display: none;
+    border: 1px dashed var(--color-border-strong);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+  html[data-state="off"] .foff { display: block; }
+  html[data-state="off"] .fsec-voice .fcard { display: none; }
+
+  /* ===== 底部控制条 ===== */
+  .ui {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--color-surface-strong) 92%, transparent);
+    border: 0.5px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(24px);
+    z-index: 50;
+    max-width: calc(100vw - 24px);
+  }
+  .ui .k { font-size: 10.5px; color: var(--color-text-muted); padding: 0 2px 0 6px; }
+  .ui .sep { width: 1px; height: 18px; background: var(--color-border); margin: 0 3px; }
+  .ui button {
+    border: 0.5px solid transparent;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-family: inherit;
+    border-radius: 7px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .ui button:hover { background: var(--color-surface-hover); }
+  .ui button[aria-pressed="true"] {
+    background: var(--color-primary-soft);
+    border-color: color-mix(in srgb, var(--color-primary) 32%, transparent);
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+
+  .spec {
+    max-width: 1120px;
+    margin: 10px auto 0;
+    padding: 0 24px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .spec .box {
+    border-radius: 12px;
+    border: 0.5px solid var(--color-border);
+    background: var(--color-surface);
+    padding: 12px 14px;
+  }
+  .spec h4 { margin: 0 0 6px; font-size: 11.5px; }
+  .spec p { margin: 0; font-size: 11px; line-height: 1.65; color: var(--color-text-muted); }
+  @media (max-width: 900px) { .spec { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="doc">
+  <h1>语音音色 · 设置页示意</h1>
+  <p class="sub">
+    本地保存 · 精选 12 个豆包 2.0 音色 · 行内下拉选择 + 整行试听，复用现有 <code>/api/voice/tts</code>。
+    后端未启用语音时整组不显示；切换后从下一句回复开始生效。
+  </p>
+  <div class="flow">
+    <span class="step">我的</span><span class="sep">→</span>
+    <span class="step">设置</span><span class="sep">→</span>
+    <span class="step">语音 · 音色</span><span class="sep">→</span>
+    <span class="step">选择</span><span class="sep">→</span>
+    <span class="step">试听</span><span class="sep">→</span>
+    <span class="step">语音回复下一句生效</span>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ========== PWA 手机 ========== -->
+  <div class="frame frame-phone">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="right">
+            <svg width="15" height="11" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="4.3" y="5.5" width="3" height="6.5" rx="1"/><rect x="8.6" y="3" width="3" height="9" rx="1"/><rect x="12.9" y="0.5" width="3" height="11.5" rx="1"/></svg>
+            <span class="bar"><i></i></span>
+          </span>
+        </div>
+
+        <div class="page">
+          <div class="page-head">设置</div>
+
+          <div class="group">
+            <div class="group-title">外观</div>
+            <div class="card">
+              <div class="row">
+                <span class="label">主题</span>
+                <div class="seg"><span>浅色</span><span class="on">深色</span><span>跟随系统</span></div>
+              </div>
+              <div class="row">
+                <span class="label">字号</span>
+                <div class="seg"><span>小</span><span class="on">标准</span><span>大</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group voice-group" id="voiceGroup">
+            <div class="group-title">语音</div>
+            <div class="card">
+              <!-- 形态 A：行内下拉 -->
+              <div class="row select-only">
+                <span class="label">音色</span>
+                <div class="vselect">
+                  <span>Vivi 2.0</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                </div>
+              </div>
+
+              <!-- 试听：整行按钮 -->
+              <button class="row row-btn" type="button">
+                <span class="label">试听当前音色</span>
+                <span class="listen-main st st-normal">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
+                  播放
+                </span>
+                <span class="listen-main st st-loading">
+                  <span class="dot-spin"></span>合成中…
+                </span>
+                <span class="listen-main st st-playing">
+                  <span class="eq"><i></i><i></i><i></i><i></i></span>停止
+                </span>
+                <span class="listen-main st st-stale">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
+                  播放
+                </span>
+              </button>
+            </div>
+            <div class="note st-note st-stale" style="color: var(--color-warning);">
+              「深夜播客 2.0」已不可用，已切回 Vivi 2.0
+            </div>
+            <div class="note">只影响语音回复的朗读；切换后下一句生效。</div>
+          </div>
+
+          <div class="off-note note" style="border: 1px dashed var(--color-border-strong); border-radius: 10px; padding: 12px; margin-top: -4px;">
+            语音功能未启用（<code>ready=false</code>）时，这一整组不渲染。示意态见这里。
+          </div>
+
+          <div class="group">
+            <div class="group-title">会话</div>
+            <div class="card">
+              <div class="row"><span class="label">已归档会话</span><span class="value">12</span></div>
+              <div class="row"><span class="label" style="color: var(--color-text-muted);">恢复归档…</span><span class="chev">›</span></div>
+            </div>
+          </div>
+        </div>
+
+        <nav class="tabs">
+          <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>对话</span>
+          <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 5.6L20 11l-5.8 2.4L12 19l-2.2-5.6L4 11l5.8-2.4L12 3z"/></svg>灵阅</span>
+          <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg>文档</span>
+          <span class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.8-3.4 3.4-5 7-5s6.2 1.6 7 5"/></svg>我的</span>
+        </nav>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== PWA 宽屏 ========== -->
+  <div class="frame frame-wide">
+    <div class="wide-wrap">
+      <div class="wide">
+        <div class="page">
+          <div class="page-head">设置</div>
+
+          <div class="group">
+            <div class="group-title">外观</div>
+            <div class="card">
+              <div class="row">
+                <span class="label">主题</span>
+                <div class="seg"><span>浅色</span><span class="on">深色</span><span>跟随系统</span></div>
+              </div>
+              <div class="row">
+                <span class="label">字号</span>
+                <div class="seg"><span>小</span><span class="on">标准</span><span>大</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group voice-group" id="wideVoiceGroup">
+            <div class="group-title">语音</div>
+            <div class="card">
+              <div class="row select-only">
+                <span class="label">音色</span>
+                <div class="vselect">
+                  <span>Vivi 2.0</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                </div>
+              </div>
+              <button class="row row-btn" type="button">
+                <span class="label">试听当前音色</span>
+                <span class="listen-main st st-normal">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>播放
+                </span>
+                <span class="listen-main st st-loading"><span class="dot-spin"></span>合成中…</span>
+                <span class="listen-main st st-playing"><span class="eq"><i></i><i></i><i></i><i></i></span>停止</span>
+                <span class="listen-main st st-stale">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>播放
+                </span>
+              </button>
+            </div>
+            <div class="note st-note st-stale" style="color: var(--color-warning);">「深夜播客 2.0」已不可用，已切回 Vivi 2.0</div>
+            <div class="note">只影响语音回复的朗读；切换后下一句生效。</div>
+          </div>
+
+          <div class="off-note note" style="border: 1px dashed var(--color-border-strong); border-radius: 10px; padding: 12px;">
+            语音功能未启用（<code>ready=false</code>）时，这一整组不渲染。
+          </div>
+
+          <div class="group">
+            <div class="group-title">会话</div>
+            <div class="card">
+              <div class="row"><span class="label">已归档会话</span><span class="value">12</span></div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">账号</div>
+            <div class="card">
+              <div class="row"><span class="label">xchang</span><span class="value">管理员</span></div>
+              <button class="row row-btn" type="button"><span class="label">修改密码</span><span class="chev">›</span></button>
+              <button class="row row-btn" type="button"><span class="label" style="color: var(--color-danger);">退出登录</span><span class="chev">›</span></button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">关于</div>
+            <div class="card">
+              <div class="row"><span class="label">版本</span><span class="value">Web 0.0.0</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="caption">PWA 宽屏：同一套行结构，行宽拉到 760 后仍是一行一个控件</div>
+  </div>
+
+  <!-- ========== macOS 设置 ========== -->
+  <div class="frame frame-mac">
+    <div class="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <span class="title">设置</span>
+      </div>
+      <div class="form">
+        <div class="fsec">
+          <h3>外观</h3>
+          <div class="fcard">
+            <div class="frow">
+              <span class="label">主题</span>
+              <div class="seg"><span>浅色</span><span>深色</span><span class="on">跟随系统</span></div>
+            </div>
+            <div class="frow">
+              <span class="label">背景图片…</span>
+              <span class="hint">照片</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="fsec fsec-voice">
+          <h3>语音</h3>
+          <div class="fcard">
+            <div class="frow">
+              <span class="label">音色</span>
+              <div class="popup">
+                <span>Vivi 2.0</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l5-5 5 5M7 14l5 5 5-5"/></svg>
+              </div>
+              <span class="round-btn st st-normal">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg>
+              </span>
+              <span class="round-btn st st-playing" style="color: var(--color-primary);">
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+              </span>
+              <span class="round-btn st st-loading">
+                <span class="dot-spin"></span>
+              </span>
+              <span class="round-btn st st-stale">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg>
+              </span>
+            </div>
+          </div>
+          <div class="fcap st-note st-stale" style="color: var(--color-warning);">「深夜播客 2.0」已不可用，已切回 Vivi 2.0</div>
+          <div class="fcap">只影响语音回复的朗读；切换后下一句生效。播放按钮就地试听当前音色。</div>
+          <div class="foff">语音功能未启用（ready=false）时，「语音」分组不显示。</div>
+        </div>
+
+        <div class="fsec">
+          <h3>提醒</h3>
+          <div class="fcard">
+            <div class="frow"><span class="label">提示音</span><span class="hint">开</span></div>
+            <div class="frow"><span class="label">久等回复完成提示音</span><span class="hint">开</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="caption">macOS 设置（示意）：原生 Picker + 圆形试听按钮，不作为像素依据</div>
+  </div>
+
+</div>
+
+<div class="spec">
+  <div class="box">
+    <h4>入口</h4>
+    <p>PWA：底部「我的」→ 设置 → 语音。macOS：⌘, → 设置 → 语音。语音未启用（ready=false）时整组不渲染，也不给禁用态。</p>
+  </div>
+  <div class="box">
+    <h4>保存与生效</h4>
+    <p>选中即写本地（macOS UserDefaults / PWA localStorage），无「保存」按钮。合成请求带 speaker，空值回落服务端默认；从下一句开始生效。</p>
+  </div>
+  <div class="box">
+    <h4>试听与失败</h4>
+    <p>试听复用 /api/voice/tts，固定一句约 20 字；再点一次停止，切换音色时先停。进入设置页先停当前朗读，避免两路音频打架。音色未开通或网络失败就地提示，保持原选择，不静默改音色。</p>
+  </div>
+</div>
+
+<div class="ui" role="group" aria-label="预览控制">
+  <span class="k">视图</span>
+  <button data-set="view" data-value="phone" aria-pressed="true">PWA 手机</button>
+  <button data-set="view" data-value="wide" aria-pressed="false">PWA 宽屏</button>
+  <button data-set="view" data-value="mac" aria-pressed="false">macOS</button>
+  <span class="sep"></span>
+  <span class="k">主题</span>
+  <button data-set="theme" data-value="light" aria-pressed="true">浅</button>
+  <button data-set="theme" data-value="dark" aria-pressed="false">深</button>
+  <span class="sep"></span>
+  <span class="k">状态</span>
+  <button data-set="state" data-value="normal" aria-pressed="true">正常</button>
+  <button data-set="state" data-value="loading" aria-pressed="false">合成中</button>
+  <button data-set="state" data-value="playing" aria-pressed="false">试听中</button>
+  <button data-set="state" data-value="stale" aria-pressed="false">音色失效</button>
+  <button data-set="state" data-value="off" aria-pressed="false">未启用</button>
+</div>
+
+<script>
+(function () {
+  const root = document.documentElement;
+  function syncButtons() {
+    document.querySelectorAll('.ui button[data-set]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(root.dataset[b.dataset.set] === b.dataset.value));
+    });
+  }
+
+  document.querySelectorAll('.ui button[data-set]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      root.dataset[b.dataset.set] = b.dataset.value;
+      syncButtons();
+    });
+  });
+
+  // URL 预设：?view=phone&theme=dark&state=playing
+  ['view', 'theme', 'state'].forEach(function (k) {
+    const v = new URLSearchParams(location.search).get(k);
+    if (v) root.dataset[k] = v;
+  });
+  syncButtons();
+})();
+</script>
+</body>
+</html>

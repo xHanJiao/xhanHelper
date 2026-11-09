@@ -172,3 +172,8 @@ enum LongReplyAlert {
     static let defaultSoundEnabled = true
     static var defaultSeconds: Int { LocalPaths.isDev ? 5 : 180 }
 }
+
+/// 语音音色偏好（本地保存；空 = 没选过，用服务端默认）。
+enum VoicePreference {
+    static var speakerKey: String { LocalPaths.scoped("xhan_voice_speaker") }
+}

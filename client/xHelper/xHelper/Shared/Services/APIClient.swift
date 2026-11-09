@@ -104,13 +104,16 @@ class APIClient {
     }
 
     /// 整段回复转 mp3；失败时服务端返回统一错误包装，这里只取原始音频。
-    func synthesizeSpeech(text: String) async throws -> Data {
+    /// speaker 为空时不传，服务端用配置默认音色。
+    func synthesizeSpeech(text: String, speaker: String = "") async throws -> Data {
         var req = URLRequest(url: try requestURL("/api/voice/tts"))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = 120
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
+        var body: [String: Any] = ["text": text]
+        if !speaker.isEmpty { body["speaker"] = speaker }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
         guard statusCode == 200 else {
@@ -731,12 +734,19 @@ struct VoiceConfigInfo: Codable {
     /// C 模式单次会话上限（秒）；空闲收口由客户端判定。
     /// 可选：灰度/回滚时连旧后端没有这个字段，不能让整份配置解码失败。
     let sessionSeconds: Int?
+    /// 可选同理：旧后端没有音色列表。
+    let speakers: [VoiceSpeaker]?
 
     enum CodingKeys: String, CodingKey {
-        case enabled, ready, speaker, language
+        case enabled, ready, speaker, language, speakers
         case maxSeconds = "max_seconds"
         case sessionSeconds = "session_seconds"
     }
+}
+
+struct VoiceSpeaker: Codable, Identifiable {
+    let id: String
+    let name: String
 }
 
 struct VoiceTicketInfo: Codable {

@@ -7,6 +7,8 @@ private struct InputBarControlModifier: ViewModifier {
     let context: InputBarContext
     let isEnabled: Bool
     let tooltip: String
+    /// hover 底色（如连续对话键的淡红）；nil 时保持现在的「只缩放」反馈。
+    let hoverBackground: Color?
 
     @State private var hovering = false
 
@@ -17,6 +19,11 @@ private struct InputBarControlModifier: ViewModifier {
                 content
                     .opacity(isEnabled ? 1 : 0.35)
                     .scaleEffect(hovering && isEnabled ? 1.08 : 1)
+                    .background(
+                        Circle()
+                            .fill(hoverBackground ?? .clear)
+                            .opacity(hovering && isEnabled ? 1 : 0)
+                    )
                     .animation(.easeOut(duration: 0.12), value: hovering)
                     .disabled(!isEnabled)
                     .onHover { isHovering in
@@ -33,13 +40,15 @@ extension View {
         _ visibility: ButtonVisibility,
         context: InputBarContext,
         isEnabled: Bool = true,
-        tooltip: String = ""
+        tooltip: String = "",
+        hoverBackground: Color? = nil
     ) -> some View {
         modifier(InputBarControlModifier(
             visibility: visibility,
             context: context,
             isEnabled: isEnabled,
-            tooltip: tooltip
+            tooltip: tooltip,
+            hoverBackground: hoverBackground
         ))
     }
 }
@@ -55,6 +64,8 @@ struct IconButton: View {
     var tooltip: String = ""
     /// 是否持续脉冲（如流式中的停止按钮）。
     var pulsing: Bool = false
+    /// hover 底色；nil = 只缩放（现有按钮的行为）。
+    var hoverBackground: Color? = nil
     var action: () -> Void
 
     var body: some View {
@@ -67,6 +78,7 @@ struct IconButton: View {
                 .symbolEffect(.pulse, options: .repeating, isActive: pulsing)
         }
         .buttonStyle(.plain)
-        .inputBarControl(visibility, context: context, isEnabled: isEnabled, tooltip: tooltip)
+        .inputBarControl(visibility, context: context, isEnabled: isEnabled,
+                         tooltip: tooltip, hoverBackground: hoverBackground)
     }
 }

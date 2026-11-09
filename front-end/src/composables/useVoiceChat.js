@@ -9,6 +9,9 @@ const CHUNK_SAMPLES = 3200 // 200ms @ 16k mono int16 = 6400 bytes
 const IDLE_STOP_MS = 30_000
 // 播报结束后再压 600ms 麦克风门：收掉外放尾音
 const GATE_TAIL_MS = 600
+// 松手后等最后半句 definite：1.5s 静默提交，3s 硬上限（豆包判停 800ms + 二遍识别）
+const HOLD_TAIL_MS = 1500
+const HOLD_MAX_MS = 3000
 
 function resampleToInt16(input, inputRate) {
   if (inputRate === 16000) {
@@ -91,6 +94,8 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   // 句级朗读进度：sentences = 已切开的句子 + 还没切开的流式尾巴；index = 正在播的句子
   const speechSentences = ref([])
   const speechIndex = ref(0)
+  // 按住说：按住期间判停分句只暂存、不提交；松手后整段作为一轮
+  const holding = ref(false)
 
   let socket = null
   let mediaStream = null
@@ -116,6 +121,12 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   let sentChunks = 0
   let sentBytes = 0
   let lastUpLog = 0
+
+  // hold 暂存：holding = 按住中；awaitingTail = 已松手、还在等最后半句
+  let heldSentences = []
+  let heldAwaitingTail = false
+  let heldTailTimer = null
+  let heldCapTimer = null
 
   // 句级 TTS 流水线状态（代次用 speakEpoch）
   let speechFrozen = []      // 已切开的句子，每个对应一次 TTS 请求
@@ -210,6 +221,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   function cleanup() {
     // 出错/硬收口时朗读可能还在播：一并停掉，别让 speaking 挂成 true、声音继续出
     stopSpeaking()
+    resetHeld()
     finished = true
     finishing = false
     active.value = false
@@ -260,6 +272,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     calling.value = true
     // 上一轮可能还在收尾（已发 end、等连接关）：直接拆掉，别让它的兜底计时器打到新会话
     clearTimers()
+    resetHeld()
     if (socket) {
       const stale = socket
       socket = null
@@ -336,10 +349,18 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
           if (!text) return
           log(`sentence chars=${text.length}`)
           lastActivity = Date.now()
+          // 按住 / 松手等尾巴：只暂存，不提交、不打断
+          if (holding.value || heldAwaitingTail) {
+            heldSentences.push(text)
+            if (heldAwaitingTail) armHeldTail()
+            return
+          }
           onSentence?.(text)
         } else if (msg.type === 'voice') {
           // 服务端听到非空识别结果（含未判停的 partial）：空闲收口据此顺延
           lastActivity = Date.now()
+          // 松手后 partial 还在变，说明最后半句没吐完：重置 1.5s 尾巴窗口
+          if (heldAwaitingTail) armHeldTail()
         } else if (msg.type === 'limit') {
           log('ws limit', msg.message || '')
           onNotice?.(msg.message || '语音会话已到上限')
@@ -412,11 +433,13 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   }
 
   /** 结束会话（用户点麦克风）：发完尾巴和 end，等服务端收尾后关连接。 */
-  function stop() {
+  function stop({ flush = true } = {}) {
     if (!active.value) {
       log('stop ignored: not active')
       return
     }
+    // 用户主动退出时先把暂存的话提交出去，不丢话；上限/空闲收口则不补发
+    if (flush) flushHeld(true)
     // 连接还没开（服务端还在连豆包）：end 发不出去、采集也还没开始，直接拆，别白等 15 秒兜底
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       log('stop before ws open, cleanup directly')
@@ -462,12 +485,12 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
         maxTimer = setTimeout(() => {
           if (!active.value) return
           onNotice?.(limitText)
-          stop()
+          stop({ flush: false })
         }, 15000)
         return
       }
       onNotice?.(limitText)
-      stop()
+      stop({ flush: false })
     }, sessionSeconds * 1000)
   }
 
@@ -476,16 +499,92 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     if (idleTimer) clearInterval(idleTimer)
     idleTimer = setInterval(() => {
       if (!active.value) return
-      // AI 正在回答/朗读也算会话仍在进行，顺延而不是收口
-      if (speaking.value || isBusy?.()) {
+      // AI 正在回答/朗读、或用户按住说（可能正在想）也算会话仍在进行，顺延而不是收口
+      if (speaking.value || isBusy?.() || holding.value) {
         lastActivity = Date.now()
         return
       }
       if (Date.now() - lastActivity < IDLE_STOP_MS) return
       log('idle limit reached, stopping')
       onNotice?.('30 秒没有听到说话，语音会话已结束')
-      stop()
+      stop({ flush: false })
     }, 5000)
+  }
+
+  // MARK: 按住说（hold 暂存）
+
+  /** 是否有还没提交的暂存（退出语音时决定是否通知服务端停旧轮）。 */
+  function hasHeld() {
+    return heldSentences.length > 0
+  }
+
+  function clearHeldTimers() {
+    if (heldTailTimer) { clearTimeout(heldTailTimer); heldTailTimer = null }
+    if (heldCapTimer) { clearTimeout(heldCapTimer); heldCapTimer = null }
+  }
+
+  function resetHeld() {
+    clearHeldTimers()
+    holding.value = false
+    heldAwaitingTail = false
+    heldSentences = []
+  }
+
+  function startHold() {
+    if (!active.value || finishing) return
+    // 松手后的等尾巴窗口内再次按住：上一批暂存还没提交，先提交，别丢话
+    if (heldSentences.length) flushHeld(true)
+    clearHeldTimers()
+    heldSentences = []
+    heldAwaitingTail = false
+    holding.value = true
+    lastActivity = Date.now()
+    stopSpeaking()
+    log('hold start')
+  }
+
+  function endHold() {
+    if (!holding.value) return
+    holding.value = false
+    heldAwaitingTail = true
+    log('hold end')
+    // 3s 硬上限从松手算起，不受后续 sentence/voice 重置影响
+    if (heldCapTimer) clearTimeout(heldCapTimer)
+    heldCapTimer = setTimeout(() => {
+      heldCapTimer = null
+      flushHeld()
+    }, HOLD_MAX_MS)
+    armHeldTail()
+  }
+
+  /** 尾巴窗口：每来一条 sentence/voice 就重置 1.5s 静默计时。 */
+  function armHeldTail() {
+    if (!heldAwaitingTail) return
+    if (heldTailTimer) clearTimeout(heldTailTimer)
+    heldTailTimer = setTimeout(() => {
+      heldTailTimer = null
+      flushHeld()
+    }, HOLD_TAIL_MS)
+  }
+
+  function flushHeld(force = false) {
+    if (holding.value) {
+      if (!force) return
+      holding.value = false
+    }
+    // 会话已结束/正在收尾（上限、断线、用户已退出）：清空暂存，不补发
+    if (!active.value || finishing) {
+      resetHeld()
+      return
+    }
+    heldAwaitingTail = false
+    clearHeldTimers()
+    const text = heldSentences.join('').trim()
+    heldSentences = []
+    if (!text) return
+    log(`hold flush chars=${text.length}`)
+    lastActivity = Date.now()
+    onSentence?.(text)
   }
 
   // MARK: 句级朗读流水线
@@ -658,8 +757,12 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     preparing,
     speechSentences,
     speechIndex,
+    holding,
+    hasHeld,
     refresh,
     start,
+    startHold,
+    endHold,
     stop,
     cancel,
     appendReplyDelta,

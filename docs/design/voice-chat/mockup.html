@@ -227,6 +227,8 @@
   let phase = 'idle';
   let dark = qs.get('theme') === 'dark';
   let clock = 0;
+  // 纹理相位累加器：t·sp(t) 会让瞬时频率随绝对时间漂移，调参页必须与运行时一致
+  let flow = 0;
   let level = 0;
   let ampSmooth = 0.8;
   let glow = true;
@@ -406,6 +408,16 @@
     return ampSmooth * env * Math.sin(k * (x - 0.5));
   }
 
+  function flowSpeed() {
+    if (phase === 'thinking') return 3.6;
+    if (phase === 'speaking') return 2 + 3.5 * cadence(clock);
+    if (phase === 'listen') {
+      const a = Math.sqrt(clamp(level / 0.22, 0, 1));
+      return 1.4 + 3.2 * a;
+    }
+    return 0.4;
+  }
+
   function profileFor(p, x) {
     // 两端收口，但留出足够宽的可用区（^0.55 比 ^1.2 平缓）
     const env = Math.pow(Math.sin(Math.PI * x), 0.55);
@@ -413,19 +425,10 @@
       const period = 2.4 / params.packet;
       const pos = -0.14 + ((clock % period) / period) * 1.28;
       const g = Math.exp(-Math.pow((x - pos) / 0.16, 2));
-      const n = noise(x, clock * 3.6 * params.speed * params.drift, 3.1);
+      const n = noise(x, flow * params.speed * params.drift, 3.1);
       return 7 * params.amp * 0.8 * g * (0.3 + 0.7 * n);
     }
-    let sp;
-    if (p === 'idle') {
-      sp = 0.4;
-    } else if (p === 'listen') {
-      const a = Math.sqrt(clamp(level / 0.22, 0, 1));
-      sp = 1.4 + 3.2 * a;
-    } else {
-      sp = 2 + 3.5 * cadence(clock);
-    }
-    const n = noise(x, clock * sp * params.speed * params.drift, p === 'speaking' ? 5.7 : 2.3);
+    const n = noise(x, flow * params.speed * params.drift, p === 'speaking' ? 5.7 : 2.3);
     return ampSmooth * env * (0.08 + 0.92 * n);
   }
 
@@ -513,7 +516,7 @@
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    if (freeze === null) clock += dt; else clock = freeze;
+    if (freeze === null) { clock += dt; flow += flowSpeed() * dt; } else clock = freeze;
 
     if (demo) {
       demoClock += dt;

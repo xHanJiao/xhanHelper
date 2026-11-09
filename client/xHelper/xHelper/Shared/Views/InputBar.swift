@@ -208,13 +208,23 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             } else {
                 editor
             }
-            attachmentTray(context)
-            statusRowExtras(context)
+            if voiceStrip == nil {
+                attachmentTray(context)
+                statusRowExtras(context)
+            }
             HStack(spacing: 4) {
-                bottomLeading(context)
-                Spacer(minLength: 0)
-                statusRow(context)
-                trailingActions(context)
+                if voiceStrip != nil {
+                    // 语音模式：只剩「按住说 / 退出语音对话 / 停止」，整组水平居中
+                    Spacer(minLength: 0)
+                    statusRow(context)
+                    trailingActions(context)
+                    Spacer(minLength: 0)
+                } else {
+                    bottomLeading(context)
+                    Spacer(minLength: 0)
+                    statusRow(context)
+                    trailingActions(context)
+                }
             }
         }
     }

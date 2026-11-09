@@ -9,6 +9,8 @@ struct ChatPage: View {
     let loadError: String?
     let baseURL: String
     let token: String
+    /// 只有当前会话 tab 响应空格按住；PiP 副本传 false
+    var isCurrentTab: Bool = false
 
     var body: some View {
         Group {
@@ -18,7 +20,7 @@ struct ChatPage: View {
                 }
             } else {
                 ChatView(viewModel: chatViewModel, agentId: nil,
-                         baseURL: baseURL, token: token)
+                         baseURL: baseURL, token: token, isCurrentTab: isCurrentTab)
             }
         }
     }

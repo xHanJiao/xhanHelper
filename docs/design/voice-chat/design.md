@@ -541,3 +541,15 @@ location = /api/voice/asr {
   - 影响文件：`VoiceChatService.swift`、`ChatViewModel.swift`、`ChatView.swift`、`MessageListView.swift`、
     `ChatBubble.swift`；`useVoiceChat.js`、`useChatSSE.js`、`ChatView.vue`、`MessageBubble.vue`、
     `utils/speech.js`（新增，含单测）。
+
+- 2026-11-09（按住说：显式声明「没说完」）：
+  - 判停固定是豆包的 800ms 静默（`end_window_size`），半句会被提前提交；`enable_punc` 补的句号
+    不能当「说完」的证据，`vad_segment_duration` 也不改变 definite 位置。因此不再尝试猜，
+    改为用户按住空格/按钮显式声明「还没说完」，松手后整段提交一轮。
+  - 方案、交互与 UI 见 `docs/design/voice-hold/design.md`；文档与预览先落，代码在同一分支实现。
+
+- 2026-11-09（音波噪声相位修复：绝对时间 → 累加器）：
+  - 旧实现把 `t · sp(t)` 直接当噪声坐标，瞬时频率是 `sp + t·sp'`；macOS 的 `t` 是
+    `timeIntervalSinceReferenceDate`（约 8×10⁸），从第一帧起纹理就飞速跳变，PWA 开久了同样会变快。
+  - 改为 `flow += speed(phase) · dt` 后代入噪声，三端（macOS / PWA / 调参页）同步；参数与振幅调制不变。
+  - 详见 `docs/bugs/053-voice-wave-time-warp.md`。

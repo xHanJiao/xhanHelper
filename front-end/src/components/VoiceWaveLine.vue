@@ -29,6 +29,8 @@ let secondary = '#41C9E2'
 let reduce = false
 let amp = 2
 let lastT = 0
+// 噪声相位累加器：不能用 t·sp(t)（瞬时频率会变成 sp + t·sp'，绝对时间越大越失控）
+let flow = 0
 const HALVES = new Float64Array(241) // N = 240，逐帧复用，不新建数组
 let phaseAt = -999
 let prevPhase = props.phase
@@ -76,20 +78,27 @@ function cadence(t) {
   return (0.5 + 0.5 * Math.sin(t * 3.6)) * (0.3 + 0.7 * Math.abs(Math.sin(t * 1.7 + 0.7)))
 }
 
-// 半高（中线到边缘），两端用 sin^0.55 收口
-function halfFor(p, x, t) {
+// 半高（中线到边缘），两端用 sin^0.55 收口。
+// flowT 是累积的噪声时间（不是绝对时钟），纹理快慢只由 waveSpeed 决定。
+function halfFor(p, x, t, flowT) {
   const env = Math.pow(Math.sin(Math.PI * x), 0.55)
   if (p === 'thinking') {
     const period = 2.4 / PACKET
     const pos = reduce ? 0.5 : -0.14 + ((t % period) / period) * 1.28
     const g = Math.exp(-Math.pow((x - pos) / 0.16, 2))
-    const n = noise(x, reduce ? 0 : t * 3.6 * RESPONSE * DRIFT, 3.1)
+    const n = noise(x, reduce ? 0 : flowT, 3.1)
     return 7 * AMP * THINK * g * (0.3 + 0.7 * n)
   }
-  const a = Math.sqrt(Math.min(1, Math.max(0, props.level / 0.22)))
-  const sp = p === 'listening' ? 1.4 + 3.2 * a : 2 + 3.5 * cadence(t)
-  const n = noise(x, reduce ? 0 : t * sp * RESPONSE * DRIFT, p === 'speaking' ? 5.7 : 2.3)
+  const n = noise(x, reduce ? 0 : flowT, p === 'speaking' ? 5.7 : 2.3)
   return amp * env * (0.08 + 0.92 * n)
+}
+
+// 纹理时间流速：声音越大越快；thinking 固定 3.6（与旧实现一致）
+function waveSpeed(t) {
+  if (props.phase === 'thinking') return 3.6
+  if (props.phase === 'speaking') return 2 + 3.5 * cadence(t)
+  const a = Math.sqrt(Math.min(1, Math.max(0, props.level / 0.22)))
+  return 1.4 + 3.2 * a
 }
 
 function clampHalf(h) {
@@ -109,7 +118,7 @@ function targetAmp(t) {
   return idle * (1 - w) + active * w
 }
 
-function draw(t) {
+function draw(t, flowT) {
   if (!ctx) return
   ctx.clearRect(0, 0, cssW, cssH)
   const mid = cssH / 2
@@ -121,8 +130,8 @@ function draw(t) {
   const mixing = prevPhase !== props.phase && ease < 1
   for (let i = 0; i <= N; i++) {
     const x = i / N
-    const current = halfFor(props.phase, x, t)
-    const h = mixing ? halfFor(prevPhase, x, t) * (1 - ease) + current * ease : current
+    const current = halfFor(props.phase, x, t, flowT)
+    const h = mixing ? halfFor(prevPhase, x, t, flowT) * (1 - ease) + current * ease : current
     HALVES[i] = clampHalf(h)
   }
 
@@ -157,11 +166,12 @@ function frame(now) {
   const dt = Math.min(0.05, Math.max(0.001, lastT ? (now - lastT) / 1000 : 0.016))
   lastT = now
   const t = reduce ? 0 : now / 1000
+  if (!reduce) flow += waveSpeed(t) * dt
   const target = targetAmp(t)
   // 振幅快起慢落：响应 2.0 → 起 15ms / 落 60ms
   const tau = (target > amp ? 0.03 : 0.12) / RESPONSE
   amp += (target - amp) * (1 - Math.exp(-dt / tau))
-  draw(t)
+  draw(t, flow * RESPONSE * DRIFT)
 }
 
 watch(() => props.phase, (next, old) => {

@@ -622,7 +622,8 @@ struct ContentView: View {
                     chatViewModel: vm,
                     loadError: conversationLoadError,
                     baseURL: deviceManager.baseURL,
-                    token: deviceManager.token ?? ""
+                    token: deviceManager.token ?? "",
+                    isCurrentTab: true
                 )
             } else {
                 ProgressView()

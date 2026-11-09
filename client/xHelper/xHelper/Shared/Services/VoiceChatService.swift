@@ -58,6 +58,15 @@ final class VoiceChatService: ObservableObject {
     @Published private(set) var speechIndex: Int = 0
     /// 空闲多久没听到完整分句就结束会话（秒）
     private let continuousIdleSeconds = 30
+    /// 按住说：按住期间判停分句只暂存，不提交、不打断；松手后整段作为一轮。
+    @Published private(set) var isHolding = false
+    private var heldSentences: [String] = []
+    /// 已松手、还在等最后半句 definite（1.5s 静默 / 3s 硬上限）
+    private var heldAwaitingTail = false
+    private var heldTailTask: Task<Void, Never>?
+    private var heldCapTask: Task<Void, Never>?
+    private let holdTailSeconds: Double = 1.5
+    private let holdMaxSeconds: Double = 3
     private var speakEndTask: Task<Void, Never>?
     // 句级 TTS 流水线（代次复用 speakEpoch）
     private var speechFrozen: [String] = []
@@ -164,6 +173,7 @@ final class VoiceChatService: ObservableObject {
         }
         vlog("microphone permission ok")
         guard gen == generation, state == .requestingPermission else { return }
+        clearHeld()
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio,
                                                          options: [.defaultToSpeaker, .allowBluetooth])
@@ -339,9 +349,11 @@ final class VoiceChatService: ObservableObject {
     }
 
     /// 结束 C 模式会话：先发负包，让服务端把最后一句吐完再随连接关闭一起收尾。
-    func stopContinuous() {
-        vlog("stopContinuous requested state=\(state) active=\(continuousActive)")
+    /// `flush` = 用户主动退出时先把暂存提交（不丢话）；上限/空闲收口传 false。
+    func stopContinuous(flush: Bool = true) {
+        vlog("stopContinuous requested state=\(state) active=\(continuousActive) flush=\(flush)")
         guard continuousActive else { return }
+        if flush { flushHeld(force: true) }
         // 还没开采集（socket 刚建/权限确认中）：直接收掉，不用等负包，也别卡 15 秒兜底
         if state == .requestingPermission {
             endContinuous(reason: nil)
@@ -371,6 +383,7 @@ final class VoiceChatService: ObservableObject {
         vlog("cancel: state=\(state) active=\(continuousActive) sent=\(sentBytes)B")
         generation += 1
         continuousActive = false
+        clearHeld()
         cancelTimers()
         _ = detachCapture()
         sendControl("cancel")
@@ -393,9 +406,89 @@ final class VoiceChatService: ObservableObject {
                 return
             }
             LogBuffer.shared.diag("[voice] session limit reached (\(self.sessionSeconds)s)")
-            self.stopContinuous()
+            self.stopContinuous(flush: false)
             ToastCenter.shared.show("语音会话已到上限（\(self.sessionSeconds / 60) 分钟），已结束")
         }
+    }
+
+    // MARK: 按住说（hold 暂存）
+
+    /// 按下（空格/按钮点击）：之后收到的判停分句只暂存，不提交、不打断。
+    func startHold() {
+        guard continuousActive, state == .recording else { return }
+        // 松手后的等尾巴窗口内再次按住：上一批暂存还没提交，先提交，别丢话
+        if !heldSentences.isEmpty { flushHeld(force: true) }
+        cancelHeldTasks()
+        heldSentences = []
+        heldAwaitingTail = false
+        isHolding = true
+        lastVoiceAt = Date()
+        stopSpeaking()
+        vlog("hold start")
+    }
+
+    /// 松开：最后半句可能还在 ASR 判停里，先等 1.5s 静默（3s 硬上限），再整段提交。
+    func endHold() {
+        guard isHolding else { return }
+        isHolding = false
+        heldAwaitingTail = true
+        vlog("hold end")
+        heldCapTask?.cancel()
+        heldCapTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(self?.holdMaxSeconds ?? 3))
+            guard !Task.isCancelled, let self, self.heldAwaitingTail else { return }
+            self.flushHeld()
+        }
+        armHeldTail()
+    }
+
+    /// 尾巴窗口：每来一条 sentence/voice 重置 1.5s 静默计时（3s 上限不重置）。
+    private func armHeldTail() {
+        guard heldAwaitingTail else { return }
+        heldTailTask?.cancel()
+        heldTailTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(self?.holdTailSeconds ?? 1.5))
+            guard !Task.isCancelled, let self, self.heldAwaitingTail else { return }
+            self.flushHeld()
+        }
+    }
+
+    /// 合并暂存并提交一轮（走与普通分句相同的 onSentence 路径）。
+    private func flushHeld(force: Bool = false) {
+        if isHolding {
+            guard force else { return }
+            isHolding = false
+        }
+        // 会话已结束/正在收尾（上限、断线、用户已退出）：清空暂存，不补发
+        guard continuousActive, state == .recording else {
+            clearHeld()
+            return
+        }
+        heldAwaitingTail = false
+        cancelHeldTasks()
+        let text = heldSentences.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        heldSentences = []
+        guard !text.isEmpty else { return }
+        vlog("hold flush chars=\(text.count)")
+        lastVoiceAt = Date()
+        onSentence?(text)
+    }
+
+    /// 是否有还没提交的暂存（用于退出语音时决定是否通知服务端停旧轮）
+    var hasHeldText: Bool { !heldSentences.isEmpty }
+
+    private func cancelHeldTasks() {
+        heldTailTask?.cancel()
+        heldTailTask = nil
+        heldCapTask?.cancel()
+        heldCapTask = nil
+    }
+
+    private func clearHeld() {
+        isHolding = false
+        heldAwaitingTail = false
+        cancelHeldTasks()
+        heldSentences = []
     }
 
     /// 空闲收口：一直没人说话就别占着豆包并发、白扣音频时长。
@@ -405,14 +498,15 @@ final class VoiceChatService: ObservableObject {
             guard let self else { return }
             try? await Task.sleep(for: .seconds(self.continuousIdleSeconds))
             guard !Task.isCancelled, self.continuousActive else { return }
-            // AI 正在回答/朗读、或刚刚还在说话（长句没判停）也算「会话仍在进行」，顺延而不是收口
-            if self.isSpeaking || (self.isChatBusy?() ?? false)
+            // AI 正在回答/朗读、用户按住说（可能正在想）、或刚刚还在说话（长句没判停）
+            // 也算「会话仍在进行」，顺延而不是收口
+            if self.isSpeaking || self.isHolding || (self.isChatBusy?() ?? false)
                 || Date().timeIntervalSince(self.lastVoiceAt) < TimeInterval(self.continuousIdleSeconds) {
                 self.armIdleTimer()
                 return
             }
             LogBuffer.shared.diag("[voice] idle limit reached (\(self.continuousIdleSeconds)s), stopping")
-            self.stopContinuous()
+            self.stopContinuous(flush: false)
             ToastCenter.shared.show("\(self.continuousIdleSeconds) 秒没有听到说话，语音会话已结束")
         }
     }
@@ -442,6 +536,7 @@ final class VoiceChatService: ObservableObject {
         guard continuousActive else { return }
         generation += 1
         continuousActive = false
+        clearHeld()
         cancelTimers()
         _ = detachCapture()
         closeSocket()
@@ -794,6 +889,12 @@ final class VoiceChatService: ObservableObject {
                 return
             }
             armIdleTimer()
+            if isHolding || heldAwaitingTail {
+                heldSentences.append(text)
+                if heldAwaitingTail { armHeldTail() }
+                vlog("sentence held: chars=\(text.count) holding=\(isHolding) awaitTail=\(heldAwaitingTail)")
+                return
+            }
             onSentence?(text)
         case "result":
             vlog("ws result: chars=\(msg.text?.count ?? 0) definite=\(msg.definite == true) final=\(msg.final == true)")
@@ -803,6 +904,8 @@ final class VoiceChatService: ObservableObject {
             // 服务端听到非空识别结果（含未判停的 partial）才发这个：空闲收口据此顺延。
             // 不用麦克风电平猜——环境噪声会一直续命，远场长句又会被误收。
             lastVoiceAt = Date()
+            // 松手后 partial 还在变，说明最后半句没吐完：重置 1.5s 尾巴窗口
+            if heldAwaitingTail { armHeldTail() }
         case "limit":
             vlog("ws limit: \(msg.message ?? "-")")
             guard state == .recording || state == .finishing else { return }

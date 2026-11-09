@@ -64,6 +64,9 @@ struct VoiceWaveLine: View {
         // dt 用真实时间：reduced-motion 只冻结波形相位，振幅该多快还是多快
         let dt = anim.advance(now)
         anim.track(phase, now: t, reduceMotion: reduceMotion)
+        // 纹理相位用累加器：直接 t·sp(t) 会让瞬时频率随绝对时间失控
+        anim.flow += waveSpeed(at: t) * dt
+        let flowT = reduceMotion ? 0 : anim.flow * Self.response * Self.drift
 
         // 振幅快起慢落：响应 2.0 → 起 15ms / 落 60ms
         let target = targetAmp(at: t)
@@ -81,8 +84,10 @@ struct VoiceWaveLine: View {
         }
         for i in 0...n {
             let x = Double(i) / Double(n)
-            let current = bandHalf(phase, x: x, t: t)
-            let half = mixing ? bandHalf(prev, x: x, t: t) * (1 - ease) + current * ease : current
+            let current = bandHalf(phase, x: x, t: t, flowT: flowT)
+            let half = mixing
+                ? bandHalf(prev, x: x, t: t, flowT: flowT) * (1 - ease) + current * ease
+                : current
             anim.halves[i] = clampHalf(half, mid: mid)
         }
 
@@ -106,7 +111,8 @@ struct VoiceWaveLine: View {
     }
 
     /// 单点的半高（中线到边缘），两端用 sin^0.55 收口。
-    private func bandHalf(_ p: Phase, x: Double, t: Double) -> Double {
+    /// `flowT` 是累积的噪声时间（不是绝对时钟），纹理快慢只由 `waveSpeed` 决定。
+    private func bandHalf(_ p: Phase, x: Double, t: Double, flowT: Double) -> Double {
         let env = pow(sin(.pi * x), 0.55)
         if p == .thinking {
             // 一道小鼓包从左穿到右，走过恢复平静
@@ -115,15 +121,25 @@ struct VoiceWaveLine: View {
                 ? 0.5
                 : -0.14 + (t.truncatingRemainder(dividingBy: period) / period) * 1.28
             let g = exp(-pow((x - pos) / 0.16, 2))
-            let nse = noise(x, t: reduceMotion ? 0 : t * 3.6 * Self.response * Self.drift, seed: 3.1)
+            let nse = noise(x, t: reduceMotion ? 0 : flowT, seed: 3.1)
             return 7 * Self.amp * Self.thinkScale * g * (0.3 + 0.7 * nse)
         }
-        let a = sqrt(min(1, max(0, level() / 0.22)))
-        // 声音越大，纹理变化越快（跟随音节）；横向整体流动由 drift 控制
-        let sp = p == .listening ? 1.4 + 3.2 * a : 2 + 3.5 * cadence(t)
-        let nse = noise(x, t: reduceMotion ? 0 : t * sp * Self.response * Self.drift,
+        let nse = noise(x, t: reduceMotion ? 0 : flowT,
                         seed: p == .speaking ? 5.7 : 2.3)
         return anim.amp * env * (0.08 + 0.92 * nse)
+    }
+
+    /// 纹理时间流速：声音越大越快；thinking 固定 3.6（与旧实现一致）
+    private func waveSpeed(at t: Double) -> Double {
+        switch phase {
+        case .thinking:
+            return 3.6
+        case .speaking:
+            return 2 + 3.5 * cadence(t)
+        case .listening:
+            let a = sqrt(min(1, max(0, level() / 0.22)))
+            return 1.4 + 3.2 * a
+        }
     }
 
     private func targetAmp(at t: Double) -> Double {
@@ -176,6 +192,8 @@ struct VoiceWaveLine: View {
     private final class AnimState {
         var amp: Double = 2
         var halves: [Double] = []
+        /// 噪声时间累加器：与绝对时钟原点无关，避免 t·sp(t) 的频率失控
+        var flow: Double = 0
         private(set) var prev: VoiceWaveLine.Phase = .listening
         private var cur: VoiceWaveLine.Phase?
         private var phaseAt: Double = -999

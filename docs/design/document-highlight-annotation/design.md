@@ -930,7 +930,7 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 
 三个实现细节，都有测试钉住：
 
-1. **注册顺序必须排在 `userContextTriggerProvider` 之后** —— 后者的 `9. 用户信息深挖` 是 `corePrinciples` 编号列表的**续写**，中间插一个带标题的章节会把它截断。
+1. **注册顺序必须排在 `userContextTriggerProvider` 之后** —— 后者那条「用户信息深挖」是 `corePrinciples` 编号列表的**续写**，中间插一个带标题的章节会把它截断。
 2. **条件判断写在 `Build` 里，不写在 provider 里** —— `StaticProvider.Render(ctx)` 签名不带 `opts`，条件没有别的入口。这与 Layer 3 里 plan / `ClientToolCatalog` 的既有写法一致。
 3. **不注入时整段跳过** → 输出与"从未有过这个 provider"**逐字节相同**（`TestBriefAnswerOffKeepsPrefixCache` 用摘掉 provider 的方式对比验证），所以不开 brief 的会话前缀缓存零影响。
 

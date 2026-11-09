@@ -30,7 +30,7 @@ func NewPromptBuilder(
 		preRoleStatic = append(preRoleStatic, &userContextTriggerProvider{})
 	}
 	// reply_form 常驻（不随请求变化，保前缀缓存稳定）
-	// 必须排在 user_context_trigger 之后：那条 "9. 用户信息深挖" 是行为准则编号列表的续写，
+	// 必须排在 user_context_trigger 之后：那条「用户信息深挖」是行为准则编号列表的续写，
 	// 中间插一个带标题的章节会把它截断
 	preRoleStatic = append(preRoleStatic, &replyFormProvider{})
 	// HTML 页面改版的动作选择：常驻，不依赖渐进暴露（docs/design/html-artifact/fine-grained-edit.md）

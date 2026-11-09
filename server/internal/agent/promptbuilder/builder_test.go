@@ -32,7 +32,7 @@ func TestCorePrinciplesListStructure(t *testing.T) {
 	if strings.Contains(corePrinciples, "\n\n") {
 		t.Fatal("行为准则列表里出现空行：会把某一项劈成多段、续段掉出编号列表")
 	}
-	for n := 1; n <= 8; n++ {
+	for n := 1; n <= 9; n++ {
 		marker := fmt.Sprintf("%d. ", n)
 		if !strings.HasPrefix(corePrinciples, marker) &&
 			!strings.Contains(corePrinciples, "\n"+marker) {
@@ -43,6 +43,12 @@ func TestCorePrinciplesListStructure(t *testing.T) {
 	for _, want := range []string{"record_memory", "不留旧数据", "内部动作"} {
 		if !strings.Contains(corePrinciples, want) {
 			t.Errorf("准则 4 缺行为规则 %q", want)
+		}
+	}
+	// 准则 9（事件全貌）：非 full 形态必须先 event.enable 拉全貌，动作不能被删
+	for _, want := range []string{"event.enable", "mode=index"} {
+		if !strings.Contains(corePrinciples, want) {
+			t.Errorf("准则 9 缺行为规则 %q", want)
 		}
 	}
 }
@@ -67,7 +73,7 @@ func TestUserContextTriggerToggle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out2.Prompt, "9. 用户信息深挖") || !strings.Contains(out2.Prompt, "user_context") {
+	if !strings.Contains(out2.Prompt, "10. 用户信息深挖") || !strings.Contains(out2.Prompt, "user_context") {
 		t.Error("开关开启时应注入 user_context 触发规则")
 	}
 }
@@ -321,13 +327,13 @@ func TestBriefAnswerToggle(t *testing.T) {
 		t.Error("brief_answer 轮应注入长度约束章节")
 	}
 	// 追加，不是替换：行为准则与角色定义都还在
-	for _, want := range []string{"## 行为准则", "## 角色定义", "9. 用户信息深挖"} {
+	for _, want := range []string{"## 行为准则", "## 角色定义", "10. 用户信息深挖"} {
 		if !strings.Contains(brief.Prompt, want) {
 			t.Errorf("brief_answer 轮丢了 %q", want)
 		}
 	}
 	// 长度约束不能插在行为准则编号列表中间（会把 9 截断）
-	if strings.Index(brief.Prompt, "9. 用户信息深挖") > strings.Index(brief.Prompt, "## 回答长度") {
+	if strings.Index(brief.Prompt, "10. 用户信息深挖") > strings.Index(brief.Prompt, "## 回答长度") {
 		t.Error("回答长度章节插到了行为准则编号列表中间")
 	}
 	// 开与不开只差插入的那一块，其余逐字节相同
@@ -364,7 +370,7 @@ func TestVoiceModeToggle(t *testing.T) {
 		t.Error("语音轮不应再注入 brief_answer 长度约束")
 	}
 	// 语音章节仍应在行为准则之后，不能截断编号列表
-	anchor := strings.Index(voice.Prompt, "9. 用户信息深挖")
+	anchor := strings.Index(voice.Prompt, "10. 用户信息深挖")
 	section := strings.Index(voice.Prompt, "## 语音回答")
 	if anchor < 0 || section < 0 || anchor > section {
 		t.Errorf("语音回答章节位置不对（anchor=%d, section=%d）", anchor, section)

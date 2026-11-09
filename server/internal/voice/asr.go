@@ -20,6 +20,14 @@ import (
 // 而不是直接取消连接。
 var ErrASRDurationLimit = errors.New("录音超过上限")
 
+// ASRUtterance — 一条分句（含说话人标识）。
+type ASRUtterance struct {
+	Text      string
+	Definite  bool
+	EndTime   int64
+	SpeakerID string
+}
+
 // ASRResult — 一条识别结果（部分或最终）。
 type ASRResult struct {
 	Text     string `json:"text"`
@@ -28,6 +36,10 @@ type ASRResult struct {
 	// EndTime 分句结束时间（ms），用于去重：enable_nonstream 会把同一句重复下发，
 	// 但「对。对。」这种连着两句一样的话 end_time 不同，不能按文本判重。
 	EndTime int64 `json:"end_time,omitempty"`
+	// SpeakerID 最后一条 definite 分句的说话人标识（开启说话人分离/声纹后才有）。
+	SpeakerID string `json:"speaker_id,omitempty"`
+	// Utterances 原始分句列表，探针与声纹过滤按分句取说话人。
+	Utterances []ASRUtterance `json:"utterances,omitempty"`
 }
 
 // SentenceCommitter 把 continuous 模式（result_type=single）的结果流折算成"可提交的新分句"。
@@ -81,23 +93,45 @@ type asrAudio struct {
 }
 
 type asrRequestOptions struct {
-	ModelName       string `json:"model_name"`
-	EnableITN       bool   `json:"enable_itn"`
-	EnablePunc      bool   `json:"enable_punc"`
-	ShowUtterances  bool   `json:"show_utterances"`
-	ResultType      string `json:"result_type"`
-	EnableNonstream bool   `json:"enable_nonstream"`
-	EndWindowSize   int    `json:"end_window_size"`
+	ModelName         string          `json:"model_name"`
+	EnableITN         bool            `json:"enable_itn"`
+	EnablePunc        bool            `json:"enable_punc"`
+	ShowUtterances    bool            `json:"show_utterances"`
+	ResultType        string          `json:"result_type"`
+	EnableNonstream   bool            `json:"enable_nonstream"`
+	EndWindowSize     int             `json:"end_window_size"`
+	EnableSpeakerInfo bool            `json:"enable_speaker_info,omitempty"`
+	SSDMode           int             `json:"ssd_mode,omitempty"`
+	Voiceprints       []asrVoiceprint `json:"voiceprints,omitempty"`
+}
+
+// asrVoiceprint — 声纹/声纹组引用；GroupID 非空时按组匹配，否则按单个声纹 1:1 验证。
+type asrVoiceprint struct {
+	ID      string `json:"id"`
+	GroupID string `json:"group_id,omitempty"`
+}
+
+type asrUtteranceResponse struct {
+	Text      string `json:"text"`
+	Definite  bool   `json:"definite"`
+	EndTime   int64  `json:"end_time"`
+	SpeakerID string `json:"speaker_id"`
+	Additions struct {
+		SpeakerID string `json:"speaker_id"`
+	} `json:"additions"`
+}
+
+func (u asrUtteranceResponse) speakerID() string {
+	if u.Additions.SpeakerID != "" {
+		return u.Additions.SpeakerID
+	}
+	return u.SpeakerID
 }
 
 type asrResponse struct {
 	Result struct {
-		Text       string `json:"text"`
-		Utterances []struct {
-			Text     string `json:"text"`
-			Definite bool   `json:"definite"`
-			EndTime  int64  `json:"end_time"`
-		} `json:"utterances"`
+		Text       string                 `json:"text"`
+		Utterances []asrUtteranceResponse `json:"utterances"`
 	} `json:"result"`
 }
 
@@ -146,6 +180,10 @@ func DialASR(ctx context.Context, cfg config.VoiceASRConfig, apiKey, uid string)
 			ResultType:      cfg.ResultType,
 			EnableNonstream: true,
 			EndWindowSize:   cfg.EndWindowSize,
+			// 豆包要求 ssd_mode=2 必须同时开 enable_speaker_info，否则 speaker_id 恒为空。
+			EnableSpeakerInfo: cfg.EnableSpeakerInfo || cfg.SSDMode == 2,
+			SSDMode:           cfg.SSDMode,
+			Voiceprints:       voiceprintsFor(cfg),
 		},
 	}
 	payload, err := json.Marshal(req)
@@ -168,6 +206,17 @@ func DialASR(ctx context.Context, cfg config.VoiceASRConfig, apiKey, uid string)
 		maxBytes = 60 * 16000 * 2
 	}
 	return &ASRClient{conn: conn, maxBytes: maxBytes}, nil
+}
+
+// voiceprintsFor 把配置折算成请求里的 voiceprints：组优先，其次单声纹；都空则不带。
+func voiceprintsFor(cfg config.VoiceASRConfig) []asrVoiceprint {
+	if cfg.VoiceprintGroupID != "" {
+		return []asrVoiceprint{{GroupID: cfg.VoiceprintGroupID}}
+	}
+	if cfg.VoiceprintID != "" {
+		return []asrVoiceprint{{ID: cfg.VoiceprintID}}
+	}
+	return nil
 }
 
 // SendAudio 发送一段 16k/16bit/单声道 PCM。
@@ -253,11 +302,13 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 		if err := json.Unmarshal(f.Payload, &parsed); err != nil {
 			return fmt.Errorf("parse asr response: %w", err)
 		}
+		utterances := toASRUtterances(parsed.Result.Utterances)
 		if final {
 			definite := true
 			if onResult != nil {
 				onResult(ASRResult{Text: parsed.Result.Text, Definite: definite, Final: true,
-					EndTime: lastDefiniteEndTime(parsed.Result.Utterances)})
+					EndTime: lastDefiniteEndTime(utterances), SpeakerID: lastSpeakerID(utterances),
+					Utterances: utterances})
 			}
 			return nil
 		}
@@ -270,12 +321,43 @@ func (c *ASRClient) Read(ctx context.Context, onResult func(ASRResult)) error {
 		}
 		if onResult != nil && parsed.Result.Text != "" {
 			onResult(ASRResult{
-				Text:     parsed.Result.Text,
-				Definite: definite,
-				EndTime:  lastDefiniteEndTime(parsed.Result.Utterances),
+				Text:       parsed.Result.Text,
+				Definite:   definite,
+				EndTime:    lastDefiniteEndTime(utterances),
+				SpeakerID:  lastSpeakerID(utterances),
+				Utterances: utterances,
 			})
 		}
 	}
+}
+
+// toASRUtterances 把协议分句转成对外结构（speaker_id 兼容 additions 内与顶层两种布局）。
+func toASRUtterances(in []asrUtteranceResponse) []ASRUtterance {
+	out := make([]ASRUtterance, 0, len(in))
+	for _, u := range in {
+		out = append(out, ASRUtterance{
+			Text:      u.Text,
+			Definite:  u.Definite,
+			EndTime:   u.EndTime,
+			SpeakerID: u.speakerID(),
+		})
+	}
+	return out
+}
+
+// lastSpeakerID 取最后一条带说话人的分句（优先 definite）；拿不到返回空串。
+func lastSpeakerID(utterances []ASRUtterance) string {
+	for i := len(utterances) - 1; i >= 0; i-- {
+		if utterances[i].Definite && utterances[i].SpeakerID != "" {
+			return utterances[i].SpeakerID
+		}
+	}
+	for i := len(utterances) - 1; i >= 0; i-- {
+		if utterances[i].SpeakerID != "" {
+			return utterances[i].SpeakerID
+		}
+	}
+	return ""
 }
 
 // Close 关闭连接。
@@ -287,11 +369,7 @@ func (c *ASRClient) Close() error {
 }
 
 // lastDefiniteEndTime 取最后一条已判停分句的结束时间；拿不到返回 0。
-func lastDefiniteEndTime(utterances []struct {
-	Text     string `json:"text"`
-	Definite bool   `json:"definite"`
-	EndTime  int64  `json:"end_time"`
-}) int64 {
+func lastDefiniteEndTime(utterances []ASRUtterance) int64 {
 	var end int64
 	for _, u := range utterances {
 		if u.Definite && u.EndTime > end {

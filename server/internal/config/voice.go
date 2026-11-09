@@ -35,6 +35,11 @@ type VoiceASRConfig struct {
 	// 分句与返回方式：开启二遍识别后由服务端按静音判停，definite 分句才带最终文本。
 	ResultType    string `yaml:"result_type"`     // full=累计全量；single=增量（不返回之前分句）
 	EndWindowSize int    `yaml:"end_window_size"` // 静音判停阈值 ms，范围 [300,5000]
+	// 声纹/说话人分离（默认关闭）。SSDMode=2 为短音频声纹识别，需配 VoiceprintID 或 VoiceprintGroupID。
+	EnableSpeakerInfo bool   `yaml:"enable_speaker_info"`
+	SSDMode           int    `yaml:"ssd_mode"`
+	VoiceprintID      string `yaml:"voiceprint_id"`
+	VoiceprintGroupID string `yaml:"voiceprint_group_id"`
 }
 
 // ApplyDefaults 填充语音配置默认值（仅零值）。
@@ -147,5 +152,17 @@ func mergeVoice(dst, src *VoiceConfig) {
 	}
 	if src.ASR.TimeoutSeconds != 0 {
 		dst.ASR.TimeoutSeconds = src.ASR.TimeoutSeconds
+	}
+	if src.ASR.EnableSpeakerInfo {
+		dst.ASR.EnableSpeakerInfo = true
+	}
+	if src.ASR.SSDMode != 0 {
+		dst.ASR.SSDMode = src.ASR.SSDMode
+	}
+	if src.ASR.VoiceprintID != "" {
+		dst.ASR.VoiceprintID = src.ASR.VoiceprintID
+	}
+	if src.ASR.VoiceprintGroupID != "" {
+		dst.ASR.VoiceprintGroupID = src.ASR.VoiceprintGroupID
 	}
 }

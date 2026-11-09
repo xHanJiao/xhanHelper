@@ -32,6 +32,10 @@ func main() {
 	resultType := flag.String("result-type", "", "full（累计全量，默认）| single（增量，不返回之前分句）")
 	maxSeconds := flag.Int("max-seconds", 0, "单条连接的音频上限秒数，0=默认 60")
 	endWindow := flag.Int("end-window", 0, "静音判停阈值 ms，0=默认 800（范围 300-5000）")
+	speakerInfo := flag.Bool("speaker-info", false, "开启说话人分离（enable_speaker_info）")
+	ssdMode := flag.Int("ssd-mode", 0, "声纹模式：0=关，2=短音频声纹识别")
+	voiceprintID := flag.String("voiceprint-id", "", "已注册声纹 ID（ssd_mode=2）")
+	voiceprintGroup := flag.String("voiceprint-group", "", "声纹组 ID（ssd_mode=2，优先于 -voiceprint-id）")
 	gapAt := flag.Int("gap-at", 0, "发送 N 秒后暂停发音频（模拟客户端 TTS 期间的麦克风门控）")
 	gapSeconds := flag.Int("gap-seconds", 0, "暂停多少秒后继续（验证豆包 8 秒等包超时）")
 	gapSilence := flag.Bool("gap-silence", false, "门控期间改发等长静音（验证保活方案）")
@@ -40,6 +44,8 @@ func main() {
 
 用法:
   voice-smoke -wav <file.wav> [-fast] [-result-type single] [-max-seconds 300] [-end-window 600]
+  voice-smoke -wav <file.wav> -speaker-info                 # 说话人分离：打印每句 speaker_id
+  voice-smoke -wav <file.wav> -ssd-mode 2 -voiceprint-id X  # 短音频声纹识别：验证是否命中
 
 需要环境变量 DOUBAO_VOICE_API_KEY。
 wav 必须是 16kHz/16bit/mono；mp3 或其它采样率先转：
@@ -80,9 +86,14 @@ Flags:
 	if *endWindow > 0 {
 		cfg.EndWindowSize = *endWindow
 	}
+	cfg.EnableSpeakerInfo = *speakerInfo
+	cfg.SSDMode = *ssdMode
+	cfg.VoiceprintID = *voiceprintID
+	cfg.VoiceprintGroupID = *voiceprintGroup
 
 	fmt.Printf("wav: %.2f 秒，endpoint=%s resource=%s\n", float64(len(pcm))/32000, cfg.Endpoint, cfg.ResourceID)
-	fmt.Printf("result_type=%s end_window=%dms max_seconds=%d\n", cfg.ResultType, cfg.EndWindowSize, cfg.MaxSeconds)
+	fmt.Printf("result_type=%s end_window=%dms max_seconds=%d speaker_info=%v ssd_mode=%d voiceprint=%q group=%q\n",
+		cfg.ResultType, cfg.EndWindowSize, cfg.MaxSeconds, cfg.EnableSpeakerInfo, cfg.SSDMode, cfg.VoiceprintID, cfg.VoiceprintGroupID)
 
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSeconds)*time.Second)
 	start := time.Now()
@@ -160,7 +171,15 @@ Flags:
 		case r.Definite:
 			tag = "definite"
 		}
-		fmt.Printf("[+%5dms] %-8s %s\n", time.Since(start).Milliseconds(), tag, r.Text)
+		if cfg.EnableSpeakerInfo || cfg.SSDMode > 0 {
+			fmt.Printf("[+%5dms] %-8s speaker=%-6q %s\n", time.Since(start).Milliseconds(), tag, r.SpeakerID, r.Text)
+			for i, u := range r.Utterances {
+				fmt.Printf("          utt[%d] definite=%v speaker=%q end=%d %s\n",
+					i, u.Definite, u.SpeakerID, u.EndTime, u.Text)
+			}
+		} else {
+			fmt.Printf("[+%5dms] %-8s %s\n", time.Since(start).Milliseconds(), tag, r.Text)
+		}
 		if !r.Final && r.Text != "" && r.Text == last {
 			fmt.Println("          ↑ 与上一条完全相同（疑似 enable_nonstream 重复下发）")
 		}

@@ -2,6 +2,8 @@
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
+# 同上，但用于 ssh "双引号命令"：$f 要留给远端展开
+REMOTE_ENV_DQ = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do . \"\$$f\" 2>/dev/null || true; done;
 
 # 服务器配置
 SERVER_USER=${DEPLOY_USER}
@@ -370,13 +372,13 @@ deploy: build-frontend build-linux
 	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "5/5 替换二进制并重启..."; \
-	ssh $$U@$$H "cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || ( \
+	ssh $$U@$$H "$(REMOTE_ENV_DQ) cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || { \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
-		ssh $$U@$$H "tail -50 $$P/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		ssh $$U@$$H "tail -50 \$$(ls -t $$P/logs/xhan-helper-*.log 2>/dev/null | head -1) </dev/null"; \
 		echo "========================================"; \
-		exit 1); \
+		exit 1; }; \
 	echo ""; \
 	echo "提示：nginx 配置已留档至 $$P/nginx-helper.conf；若本次有变更，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
 	echo "✅ 部署完成！"
@@ -403,13 +405,13 @@ deploy-backend: build-linux
 	echo "3/4 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "4/4 替换二进制并重启..."; \
-	ssh $$U@$$H "cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || ( \
+	ssh $$U@$$H "$(REMOTE_ENV_DQ) cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || { \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
-		ssh $$U@$$H "tail -50 $$P/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		ssh $$U@$$H "tail -50 \$$(ls -t $$P/logs/xhan-helper-*.log 2>/dev/null | head -1) </dev/null"; \
 		echo "========================================"; \
-		exit 1); \
+		exit 1; }; \
 	echo ""; \
 	echo "提示：nginx 配置已留档至 $$P/nginx-helper.conf；若本次有变更，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
 	echo "✅ 部署完成！"
@@ -439,7 +441,7 @@ deploy-only:
 		exit 1; \
 	fi; \
 	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); \
-	test -f $$B || (echo "❌ 未找到编译产物，请先执行 make build-linux"; exit 1); \
+	test -f $$B || { echo "❌ 未找到编译产物，请先执行 make build-linux"; exit 1; }; \
 	echo "========================================"; \
 	echo "       上传到阿里云服务器 (仅上传)"; \
 	echo "========================================"; \
@@ -452,13 +454,13 @@ deploy-only:
 	echo "3/4 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "4/4 替换二进制并重启..."; \
-	ssh $$U@$$H "cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || ( \
+	ssh $$U@$$H "$(REMOTE_ENV_DQ) cd $$P && chmod +x $(BINARY).tmp && APP_ENV=prod ./$(BINARY).tmp -check-config && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) scripts/control-xhan-helper.sh && bash scripts/control-xhan-helper.sh" || { \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
-		ssh $$U@$$H "tail -50 $$P/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		ssh $$U@$$H "tail -50 \$$(ls -t $$P/logs/xhan-helper-*.log 2>/dev/null | head -1) </dev/null"; \
 		echo "========================================"; \
-		exit 1); \
+		exit 1; }; \
 	echo ""; \
 	echo "提示：nginx 配置已留档至 $$P/nginx-helper.conf；若本次有变更，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
 	echo "✅ 部署完成！"

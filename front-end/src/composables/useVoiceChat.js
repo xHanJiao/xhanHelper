@@ -330,17 +330,25 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     }
 
     try {
+      // iOS Safari：AudioContext 必须在用户手势的同一个任务里创建/恢复。await 过
+      // getUserMedia（权限弹窗不算手势）之后再 new/resume，context 会一直 suspended，
+      // worklet 的 process 永远不会跑 —— 表现就是「麦克风开着但一句也识别不到」。
+      ctx = new (window.AudioContext || window.webkitAudioContext)()
+      ctx.resume().catch(() => {})
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
       log('mic ok')
       if (!isCurrent()) { discard(); return }
-      ctx = new (window.AudioContext || window.webkitAudioContext)()
-      await ctx.resume()
-      if (!isCurrent()) { discard(); return }
       await ctx.audioWorklet.addModule('/voice-pcm-worklet.js')
-      log(`worklet loaded, ctx=${ctx.sampleRate}Hz`)
+      log(`worklet loaded, ctx=${ctx.sampleRate}Hz state=${ctx.state}`)
       if (!isCurrent()) { discard(); return }
       wk = new AudioWorkletNode(ctx, 'voice-pcm')
       wk.port.onmessage = (event) => handleWorkletMessage(event.data, ctx.sampleRate)
+      // Safari 只从 destination 反向拉取音频图：输出不接任何东西的 worklet 不会执行
+      // process（Chrome 会）。接一条零增益到 destination 保活，不影响录音。
+      const sink = ctx.createGain()
+      sink.gain.value = 0
+      wk.connect(sink)
+      sink.connect(ctx.destination)
       src = ctx.createMediaStreamSource(stream)
 
       const ticket = await api.post('/api/voice/asr-ticket', {})
@@ -427,6 +435,8 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
       ws.onopen = () => { if (socket === ws) startCapture() }
     } catch (err) {
       if (isCurrent()) {
+        // ctx 在 getUserMedia 之前就建好了：失败路径也要关掉，否则留一个空跑的音频上下文
+        discard()
         cleanup()
         throw err
       }

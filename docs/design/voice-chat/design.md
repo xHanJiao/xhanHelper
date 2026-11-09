@@ -559,3 +559,14 @@ location = /api/voice/asr {
     变成默认值，请求里的非法 id 记日志后回落默认，不中断朗读。
   - 设置页（PWA / macOS）可选 12 个精选 2.0 音色并就地试听；选择存客户端本地，下一句生效。
   - 方案、接口与 UI 见 `docs/design/voice-timbre/design.md`；已按该方案实现后端 / PWA / macOS。
+
+- 2026-11-09（手机语音不可用：线上 nginx 缺 WS 升级）：
+  - 根因：生产 `/etc/nginx/sites-available/helper.xhanx.cn` 缺 `location = /api/voice/asr`，
+    请求落到 `location /api/` 的 `proxy_set_header Connection ""`，`Upgrade` 被抹掉，
+    Go 报 `upgrade token not found in 'Connection' header`。与浏览器无关，线上所有客户端都会失败；
+    Mac Chrome 能通是因为 dev 前端 `VITE_API_BASE=http://localhost:8080` 直连后端。
+  - 修法：按仓库 `server/nginx-helper.conf` 覆盖线上配置并 reload（**该文件手工安装，`make deploy` 不传**）。
+  - 同批加固 iOS WebAudio（未单独验证）：`AudioContext` 在用户手势内创建 + `resume()`（不 await）；
+    `AudioWorkletNode` 经 `GainNode(gain=0)` 接 destination（WebKit 不接就不跑 `process()`）。
+  - 详见 `docs/bugs/054-voice-ws-upgrade-missing-nginx.md`；影响文件：`server/nginx-helper.conf`、
+    `front-end/src/composables/useVoiceChat.js`。

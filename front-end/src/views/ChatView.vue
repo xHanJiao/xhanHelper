@@ -1702,6 +1702,13 @@ function handleContainerClick(e) {
 }
 .composer-reopen svg { width: 14px; height: 14px; }
 .composer-row.voice-row { justify-content: center; }
+/* 语音条是纯控件（长按=录音手势）：不禁选中，iOS 会把隔壁胶囊的「连续对话」当选中锚点，
+   上滑取消时还会一路延伸选到消息正文。touch-action / pointerdown.prevent 都拦不住选中手势。 */
+.composer-row.voice-row {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
 .voice-group {
   position: relative;
   display: inline-flex;

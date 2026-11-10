@@ -143,6 +143,22 @@ final class VoiceChatService: ObservableObject {
     /// 近场电平闸用的电平历史（约 2 秒）：每帧标上门控标记，播报期的 TTS 残留不算用户说话
     private var levelHistory: [NearFieldGate.Frame] = []
     private var lastNearFieldNoticeAt = Date.distantPast
+    /// 本次发言期间出现过近处人声（任意 2 秒窗通过即记）。句子到达时用它放行：
+    /// 只看到达那一刻的窗口会误杀被背景噪声拖后的句子，见 docs/bugs/058。
+    private var nearFieldHeard = false
+    /// 证据锁存的时刻。超过 15 秒没有新的近场帧就作废：ASR 整句丢掉时不会有 `sentence`
+    /// 来消费证据，留着会把很久之后远处的声音放行。也不能设太短——058 里句子会被背景
+    /// 噪声拖后好几秒。
+    private var nearFieldHeardAt = Date.distantPast
+    /// 上一句提交的时刻：那之前的电平帧不能再给下一句当证据
+    /// （否则清零后 2 秒窗里的本句帧会立刻把证据重新锁存）
+    private var lastSentenceAt = Date.distantPast
+    /// 观察用（不改上行音频）：本地近场门若真按阈值逐帧清零，会挖掉多少发言时长
+    private var probeStart: Date?
+    private var probeLowStart: Date?
+    private var probeLastHigh: Date?
+    private var probeHoleSeconds: Double = 0
+    private var probeMaxHole: Double = 0
 
     /// 每次现读：设置页改完下一句就生效，不用重开会话。
     private var nearFieldSensitivity: NearFieldGate.Sensitivity {
@@ -254,6 +270,7 @@ final class VoiceChatService: ObservableObject {
                 endMicGate(flushPreroll: false)
             }
             transcript = ""
+            resetNearFieldEvidence()
             continuousActive = continuous
             isSwitchingMode = false
             sentBytes = 0
@@ -323,6 +340,18 @@ final class VoiceChatService: ObservableObject {
             holdFrames.append(NearFieldGate.Frame(at: now, level: value, gated: false))
         }
 
+        // 提交闸的证据：任意 2 秒窗里有近处人声就记一笔，句子到达时按它放行（058）
+        if nearFieldHeard, now.timeIntervalSince(nearFieldHeardAt) > 15 {
+            nearFieldHeard = false
+        }
+        if !nearFieldHeard,
+           NearFieldGate.containsNearSpeech(frames: levelHistory, sensitivity: nearFieldSensitivity,
+                                            since: lastSentenceAt) {
+            nearFieldHeard = true
+            nearFieldHeardAt = now
+        }
+        trackNearFieldProbe(value, now: now)
+
         if !(continuousActive && micGated) {
             loudFrames = 0
             levelWindow.removeAll(keepingCapacity: true)
@@ -378,6 +407,62 @@ final class VoiceChatService: ObservableObject {
         guard now.timeIntervalSince(lastNearFieldNoticeAt) >= 10 else { return }
         lastNearFieldNoticeAt = now
         ToastCenter.shared.show("已忽略：声音来自远处")
+    }
+
+    /// 观察用：本地近场门若真按阈值逐帧清零，会把「发言时长」挖掉多少。
+    /// 只统计「第一次过阈值」到「句子到达」之间被关掉的时长（≥100ms 才算一个洞），
+    /// 句间静音和尾部静音不计入。判据：占比 <5% 才值得考虑上前处理。
+    private func trackNearFieldProbe(_ value: Double, now: Date) {
+        guard continuousActive, !micGated, let threshold = nearFieldSensitivity.threshold else { return }
+        if value >= threshold {
+            if probeStart == nil {
+                probeStart = now
+                probeLowStart = nil
+                probeHoleSeconds = 0
+                probeMaxHole = 0
+            }
+            probeLastHigh = now
+            if let low = probeLowStart {
+                let hole = now.timeIntervalSince(low)
+                probeMaxHole = max(probeMaxHole, hole)
+                if hole >= 0.1 { probeHoleSeconds += hole }
+                probeLowStart = nil
+            }
+        } else if probeStart != nil, probeLowStart == nil {
+            probeLowStart = now
+        } else if let low = probeLowStart, now.timeIntervalSince(low) > 5 {
+            // 超过 5 秒没过阈值：这句没判停（被丢/没识别出来），下一句重新起算，
+            // 别把这段空档算成「被挖掉的洞」
+            probeStart = nil
+            probeLowStart = nil
+        }
+    }
+
+    private func logNearFieldProbe(chars: Int) {
+        // 分母取「第一次过阈值 → 最后一次过阈值」：判停尾音和噪声拖出的延迟不算发言时长，
+        // 否则同一段音频会随句子晚到而把 holes 占比稀释掉
+        guard let start = probeStart, let lastHigh = probeLastHigh else { return }
+        let span = lastHigh.timeIntervalSince(start)
+        let holes = probeHoleSeconds
+        let maxHole = probeMaxHole
+        probeStart = nil
+        probeLowStart = nil
+        probeLastHigh = nil
+        guard span > 0.5 else { return }
+        vlog("nearfield probe: chars=\(chars) span=\(fmt3(span))s " +
+             "holes=\(fmt3(holes))s (\(Int(holes / span * 100))%) maxHole=\(fmt3(maxHole))s")
+    }
+
+    /// 跨会话别带证据：上一轮的「近处人声」不能放行新会话的第一句
+    private func resetNearFieldEvidence() {
+        nearFieldHeard = false
+        nearFieldHeardAt = .distantPast
+        lastSentenceAt = .distantPast
+        probeStart = nil
+        probeLowStart = nil
+        probeLastHigh = nil
+        probeHoleSeconds = 0
+        probeMaxHole = 0
     }
 
     /// 开始推 PCM。
@@ -458,6 +543,7 @@ final class VoiceChatService: ObservableObject {
         vlog("cancel: state=\(state) active=\(continuousActive) sent=\(sentBytes)B")
         generation += 1
         continuousActive = false
+        resetNearFieldEvidence()
         holdModeActive = false
         isSwitchingMode = false
         abortHold()
@@ -828,6 +914,7 @@ final class VoiceChatService: ObservableObject {
         guard continuousActive else { return }
         generation += 1
         continuousActive = false
+        resetNearFieldEvidence()
         clearHeld()
         cancelTimers()
         _ = detachCapture()
@@ -842,6 +929,10 @@ final class VoiceChatService: ObservableObject {
     /// 与 PWA useVoiceChat 的切句/排队规则逐项一致（见 design.md C2）。
     private func beginSpeechStream(baseURL: String, token: String) {
         stopSpeaking()
+        // 本轮发言已结束：证据与探针统计不能留到下一句
+        // （近场那句被 ASR 丢掉时，不会有 sentence 来消费证据）
+        resetNearFieldEvidence()
+        lastSentenceAt = Date()
         speakEpoch += 1
         speechFrozen = []
         speechTail = ""
@@ -1185,6 +1276,10 @@ final class VoiceChatService: ObservableObject {
             vlog("ws ready: server connected to ASR")
         case "sentence":
             vlog("ws sentence: chars=\(msg.text?.count ?? 0) state=\(state) active=\(continuousActive)")
+            // 证据取用即清零：留着会让上一句的勾放行下一句纯噪声
+            let heardNearField = nearFieldHeard
+            nearFieldHeard = false
+            lastSentenceAt = Date()
             // 只在还处于 .recording 时提交：结束/到上限后的残句不提交、不朗读
             guard continuousActive, state == .recording,
                   let text = msg.text?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1192,9 +1287,13 @@ final class VoiceChatService: ObservableObject {
                 vlog("sentence dropped: active=\(continuousActive) state=\(state)")
                 return
             }
-            // 近场闸：远处（隔壁房间）的话不提交成一轮
-            let ungated = levelHistory.filter { !$0.gated }
-            guard NearFieldGate.shouldAccept(frames: levelHistory, sensitivity: nearFieldSensitivity) else {
+            logNearFieldProbe(chars: text.count)
+            // 近场闸：远处（隔壁房间）的话不提交成一轮。本次发言期间任意时刻出现过近处人声
+            // 也算通过 —— 只看到达那一刻的窗口会误杀被背景噪声拖后的句子（人声早已滚出
+            // 2 秒窗，见 docs/bugs/058）。
+            guard heardNearField || NearFieldGate.shouldAccept(frames: levelHistory,
+                                                               sensitivity: nearFieldSensitivity) else {
+                let ungated = levelHistory.filter { !$0.gated }
                 vlog("sentence dropped: near-field gate frames=\(ungated.count) " +
                      "median=\(fmt3(NearFieldGate.median(ungated.map(\.level))))")
                 notifyNearFieldIgnored()

@@ -3,7 +3,8 @@ import { api } from '@/api/client'
 import { cutSentences } from '@/utils/speech'
 import { readVoiceSpeaker, readVoiceNearField, readVoiceMode, setVoiceMode } from '@/utils/voicePref'
 import {
-  NEAR_FIELD_WINDOW_MS, nearFieldThreshold, shouldAccept, shouldKeepAlive, judgeHoldSpan
+  NEAR_FIELD_WINDOW_MS, nearFieldThreshold, shouldAccept, shouldKeepAlive, judgeHoldSpan,
+  containsNearSpeech
 } from '@/utils/nearFieldGate'
 
 // 首次点击麦克风时用它解锁 <audio>（浏览器自动播放策略）
@@ -153,6 +154,16 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
   // 近场闸：最近 2 秒的电平帧（带门控标记，播报期的 TTS 残留不能算用户说话）
   let levelFrames = []
   let lastNearFieldNoticeAt = 0
+  // 本次发言期间出现过近处人声（任意 2 秒窗通过即记）。句子到达时用它放行：
+  // 只看到达那一刻的窗口会误杀被背景噪声拖后的句子（docs/bugs/058）
+  let nearFieldHeard = false
+  // 证据锁存的时刻：超过 15 秒没有新的近场帧就作废（ASR 整句丢掉时不会有 sentence 来
+  // 消费证据；但也不能设太短——058 里句子会被背景噪声拖后好几秒）
+  let nearFieldHeardAt = 0
+  let lastNearCheckAt = 0
+  // 上一句提交的时刻：那之前的帧不能再给下一句当证据（否则清零后 2 秒窗里的本句帧
+  // 会立刻把证据重新锁存）
+  let lastSentenceAt = 0
 
   // 长按说话：本地采集（不建常驻连接），松手后整段灌进一条短连接
   let holdCtx = null
@@ -243,11 +254,22 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     }
   }
 
+  /** 取用即清零：证据与「上一句提交时刻」都不能跨发言残留。 */
+  function consumeNearFieldEvidence() {
+    const heard = nearFieldHeard
+    nearFieldHeard = false
+    lastSentenceAt = Date.now()
+    return heard
+  }
+
   /** 近场闸：远处的声音不提交；关闭时恒放行（与加闸之前完全一致）。 */
   function acceptNearField() {
+    const heard = consumeNearFieldEvidence()
     const threshold = nearFieldThreshold(readVoiceNearField())
     if (threshold == null) return true
-    if (shouldAccept(levelFrames, threshold)) return true
+    // 本次发言期间任意时刻出现过近处人声也算通过：豆包判停要等 800ms 静音，
+    // 背景噪声会把句子拖后，到时人声早已滚出 2 秒窗（docs/bugs/058）
+    if (heard || shouldAccept(levelFrames, threshold)) return true
     log(`sentence dropped: near-field gate frames=${levelFrames.length}`)
     // 误拒比误收难受：被吞掉时必须让人看见，限频 10 秒
     const now = Date.now()
@@ -268,6 +290,15 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     levelFrames.push({ t: now, level: level.value, gated })
     const cutoff = now - (NEAR_FIELD_WINDOW_MS + 500)
     while (levelFrames.length && levelFrames[0].t < cutoff) levelFrames.shift()
+    // 提交闸的证据：任意 2 秒窗里有近处人声就记一笔（100ms 节流，不必每帧排序）
+    if (nearFieldHeard && now - nearFieldHeardAt > 15_000) nearFieldHeard = false
+    if (!nearFieldHeard && now - lastNearCheckAt >= 100) {
+      lastNearCheckAt = now
+      if (containsNearSpeech(levelFrames, nearFieldThreshold(readVoiceNearField()), now, lastSentenceAt)) {
+        nearFieldHeard = true
+        nearFieldHeardAt = now
+      }
+    }
     let pcm = resampleToInt16(samples, sampleRate)
     // 门控：真实音频不进 ASR（否则会把自己念的再识别一遍），但上行流不能空闲
     if (gated) pcm = new Int16Array(pcm.length)
@@ -316,6 +347,10 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     }
     pending = new Int16Array(0)
     levelFrames = []
+    nearFieldHeard = false
+    nearFieldHeardAt = 0
+    lastNearCheckAt = 0
+    lastSentenceAt = 0
     level.value = 0
     gated = false
   }
@@ -354,6 +389,10 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     sentBytes = 0
     lastUpLog = 0
     levelFrames = []
+    nearFieldHeard = false
+    nearFieldHeardAt = 0
+    lastNearCheckAt = 0
+    lastSentenceAt = 0
     lastActivity = Date.now()
     stopSpeaking()
     unlockAudio()
@@ -425,7 +464,11 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
             return
           }
           const text = String(msg.text || '').trim()
-          if (!text) return
+          if (!text) {
+            // 空句子也要把证据用掉，否则会跨发言残留
+            consumeNearFieldEvidence()
+            return
+          }
           if (!acceptNearField()) return
           log(`sentence chars=${text.length}`)
           lastActivity = Date.now()
@@ -951,6 +994,10 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
   /** 新一轮语音回复：先收掉上一轮（含还在念的）。 */
   function beginReplyStream() {
     stopSpeaking()
+    // 本轮发言已结束：证据不能留到下一句（近场那句被 ASR 丢掉时，不会有 sentence 来消费它）
+    nearFieldHeard = false
+    nearFieldHeardAt = 0
+    lastSentenceAt = Date.now()
     speakEpoch += 1
     speechFrozen = []
     speechTail = ''

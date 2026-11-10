@@ -274,3 +274,12 @@ xcrun swiftc -O -parse-as-library -o /tmp/level-sweep \
   提交（`sentence`），没挡续命（`voice`）。补**闸门 3 续命闸**：`voice` 只在最近 400ms
   未门控帧中位数 ≥ 阈值时才顺延空闲收口。详见 `docs/bugs/055`；影响 `nearFieldGate.js`、
   `NearFieldGate.swift`、`useVoiceChat.js`、`VoiceChatService.swift`。
+- 2026-11-10：提交闸的判定时间点修正 + 前处理可行性观察（`docs/bugs/058`）。
+  - 原来只在 `sentence` 到达那一刻取 2 秒窗；豆包判停被背景噪声拖后时人声已滚出窗口，整句被误丢。
+    现在改为「本次发言期间**任意 2 秒窗**通过即记一笔」（`containsNearSpeech`），句子到达时按它放行，
+    取用即清零；数据不足仍 fail-open。影响 `NearFieldGate.swift`、`nearFieldGate.js`、
+    `VoiceChatService.swift`、`useVoiceChat.js`（+ 两侧单测）。
+  - 加观察探针 `nearfield probe: chars=… span=… holes=…% maxHole=…`：统计「第一次过阈值」到
+    「句子到达」之间被阈值关掉的时长占比（句间/尾部静音不计），只写日志。
+  - **不做的结论**：不把远场帧直接清零（前处理）——不可撤销、逐帧切会在自己的话里挖洞、
+    连续档按时长计费省不到钱。只有探针显示 holes 占比 <5% 且集中在句首/句尾时才重新评估。

@@ -87,6 +87,23 @@ export function shouldAccept(frames, threshold, now = Date.now()) {
 }
 
 /**
+ * 「这段发言里有没有近处人声」：任意 2 秒窗判成通过就算有。
+ *
+ * 提交闸不能只看句子到达那一刻：豆包判停要等 800ms 静音，背景噪声会把句子拖后，
+ * 到时人声早已滚出窗口（docs/bugs/058）。调用方每帧调它、命中就记一笔，
+ * 句子到达时按「本次发言期间记过没有」放行。
+ * 数据不足返回 false（不记证据）——句子到达时仍会走 shouldAccept 的 fail-open。
+ */
+export function containsNearSpeech(frames, threshold, now = Date.now(), since = 0) {
+  if (threshold == null) return true
+  // since = 上一句提交的时刻：那之前的帧已经算过账，不能再给下一句当证据
+  const recent = frames.filter(f => !f.gated && f.t > since && now - f.t <= NEAR_FIELD_WINDOW_MS)
+  if (recent.length < 4) return false
+  if (recent[recent.length - 1].t - recent[0].t < NEAR_FIELD_MIN_SPAN_MS) return false
+  return judgeSpan(recent, threshold) === 'accept'
+}
+
+/**
  * 长按说话的整段判定：整段音频都在手上，帧不够说明本来就没说够 → 'tooShort'，
  * 不能像流式那样 fail-open（见 docs/design/voice-hold-mode/design.md）。
  */

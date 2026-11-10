@@ -94,6 +94,25 @@ enum NearFieldGate {
         return judge(recent, threshold: threshold) != .reject
     }
 
+    /// 「这段发言里有没有近处人声」：任意 2 秒窗判成 accept 就算有。
+    ///
+    /// 提交闸不能只看句子到达那一刻的窗口：豆包判停要等 800ms 静音，背景噪声会把句子
+    /// 拖后好几秒，到时人声早已滚出窗口（docs/bugs/058）。调用方每帧调它、命中就记一笔，
+    /// 句子到达时按「本次发言期间记过没有」放行。
+    /// 数据不足返回 false（不记证据）——句子到达时仍会走 `shouldAccept` 的 fail-open。
+    /// `since` = 上一句提交的时刻：那之前的帧已经算过账，不能再给下一句当证据。
+    static func containsNearSpeech(frames: [Frame], sensitivity: Sensitivity,
+                                   since: Date = .distantPast, now: Date = Date()) -> Bool {
+        guard let threshold = sensitivity.threshold else { return true }
+        let recent = frames.filter {
+            !$0.gated && $0.at > since && now.timeIntervalSince($0.at) <= windowSeconds
+        }
+        guard recent.count >= 4,
+              let first = recent.first, let last = recent.last,
+              last.at.timeIntervalSince(first.at) >= minSpanSeconds else { return false }
+        return judge(recent, threshold: threshold) == .accept
+    }
+
     static func judgeHoldSpan(frames: [Frame], sensitivity: Sensitivity) -> Verdict {
         judgeHoldSpan(frames: frames, threshold: sensitivity.threshold)
     }

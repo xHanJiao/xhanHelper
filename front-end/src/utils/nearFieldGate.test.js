@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { nearFieldThreshold, shouldAccept, shouldKeepAlive, judgeHoldSpan, median, percentile } from './nearFieldGate.js'
+import { nearFieldThreshold, shouldAccept, shouldKeepAlive, judgeHoldSpan, containsNearSpeech, median, percentile } from './nearFieldGate.js'
 
 const T0 = 1_700_000_000_000
 
@@ -137,4 +137,35 @@ test('median / percentile', () => {
   assert.equal(median([4, 1, 3, 2]), 2)
   assert.equal(percentile([1, 2, 3, 4, 5], 0.2), 1)
   assert.equal(percentile([1, 2, 3, 4, 5], 0.9), 4)
+})
+
+// 提交闸的证据（任意 2 秒窗有近处人声即记，docs/bugs/058）
+
+test('证据：近场记、远场不记', () => {
+  const now = T0 + 2000
+  assert.equal(containsNearSpeech(frames(0.21, 40), 0.05, now), true)
+  assert.equal(containsNearSpeech(frames(0.006, 40), 0.05, now), false)
+})
+
+test('证据：数据不足不记（句子到达时仍走 fail-open）', () => {
+  assert.equal(containsNearSpeech(frames(0.21, 10), 0.05, T0 + 450), false)
+  assert.equal(containsNearSpeech([], 0.05, T0), false)
+})
+
+test('证据：闸门关闭恒记', () => {
+  assert.equal(containsNearSpeech(frames(0.001, 10), null, T0), true)
+})
+
+test('证据：上一句的帧不能给下一句当证据', () => {
+  // 上一句已提交，2 秒窗里还留着它的近场帧；since 之后的帧只有远场
+  const mixed = [...frames(0.21, 30), ...frames(0.006, 10, { t0: T0 + 1500 })]
+  const now = T0 + 2200
+  assert.equal(containsNearSpeech(mixed, 0.05, now), true)
+  assert.equal(containsNearSpeech(mixed, 0.05, now, T0 + 2000), false)
+})
+
+test('证据：门控帧不算（播报期 TTS 残留）', () => {
+  const now = T0 + 1000
+  const mixed = [...frames(0.3, 40, { gated: true }), ...frames(0.004, 20, { t0: T0 + 100 })]
+  assert.equal(containsNearSpeech(mixed, 0.05, now), false)
 })

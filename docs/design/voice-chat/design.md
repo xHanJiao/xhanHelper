@@ -592,3 +592,13 @@ location = /api/voice/asr {
   - 两端分开记（`inputVPIO` / `outputVPIO`）：一端释放失败时另一端不会跟着「以为还开着」。
   - 诊断探针：`client/xHelper/scripts/vpio-release-probe.swift`；详见
     `docs/bugs/057-vpio-locks-system-output-volume.md`。
+
+- 2026-11-10（说完话后远处有声音，整句被近场闸吞掉）：
+  - 提交闸原来只看 `sentence` 到达那一刻往前 2 秒的电平窗。豆包判停要等 800ms 静音，
+    背景噪声会把句子拖后数秒，到时人声早已滚出窗口，窗口里只剩远处噪声 → 整句丢弃。
+  - 改为「**本次发言期间任意 2 秒窗出现过近处人声**就放行」（`nearFieldHeard` 锁存，取用即清零），
+    数据不足仍走 `shouldAccept` 的 fail-open。详见 `docs/bugs/058-voice-sentence-dropped-after-background-noise.md`；
+    影响文件：`NearFieldGate.swift`、`VoiceChatService.swift`、`front-end/src/utils/nearFieldGate.js`、
+    `front-end/src/composables/useVoiceChat.js`。
+  - 同时加观察探针（只写日志，不改上行音频）：`nearfield probe: chars=… span=… holes=…% maxHole=…`，
+    用于评估「本地逐帧近场门（前处理）」是否值得做；判据与理由见 `docs/design/voice-nearfield/design.md`。

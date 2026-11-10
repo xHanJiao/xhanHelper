@@ -160,4 +160,45 @@ final class NearFieldGateTests: XCTestCase {
         XCTAssertEqual(NearFieldGate.percentile([1, 2, 3, 4, 5], 0.2), 1)
         XCTAssertEqual(NearFieldGate.percentile([1, 2, 3, 4, 5], 0.9), 4)
     }
+
+    // MARK: 提交闸的证据（任意 2 秒窗有近处人声即记，docs/bugs/058）
+
+    func testContainsNearSpeechNearFieldAcceptedFarFieldRejected() {
+        let now = t0.addingTimeInterval(2.0)
+        XCTAssertTrue(NearFieldGate.containsNearSpeech(frames: frames(0.21, 40),
+                                                       sensitivity: .standard, now: now))
+        XCTAssertFalse(NearFieldGate.containsNearSpeech(frames: frames(0.006, 40),
+                                                        sensitivity: .standard, now: now))
+    }
+
+    func testContainsNearSpeechNeedsEnoughData() {
+        // 数据不足不记证据（句子到达时仍走 shouldAccept 的 fail-open）
+        XCTAssertFalse(NearFieldGate.containsNearSpeech(frames: frames(0.21, 10),
+                                                        sensitivity: .standard,
+                                                        now: t0.addingTimeInterval(0.45)))
+        XCTAssertFalse(NearFieldGate.containsNearSpeech(frames: [], sensitivity: .standard, now: t0))
+    }
+
+    func testContainsNearSpeechOffAlwaysTrue() {
+        XCTAssertTrue(NearFieldGate.containsNearSpeech(frames: frames(0.001, 10),
+                                                       sensitivity: .off, now: t0))
+    }
+
+    func testContainsNearSpeechIgnoresFramesBeforeLastSentence() {
+        // 上一句已提交：2 秒窗里还留着它的近场帧，但不能给下一句当证据（058 评审 P1）
+        let mixed = frames(0.21, 30) + frames(0.006, 10, from: t0.addingTimeInterval(1.5))
+        let now = t0.addingTimeInterval(2.2)
+        XCTAssertTrue(NearFieldGate.containsNearSpeech(frames: mixed, sensitivity: .standard, now: now))
+        XCTAssertFalse(NearFieldGate.containsNearSpeech(frames: mixed, sensitivity: .standard,
+                                                        since: t0.addingTimeInterval(2.0), now: now))
+    }
+
+    func testContainsNearSpeechIgnoresGatedFrames() {
+        // 播报期的 TTS 残留（门控帧 0.3）不能当证据
+        let now = t0.addingTimeInterval(1.0)
+        var mixed = frames(0.3, 40, gated: true)
+        mixed += frames(0.004, 20, from: t0.addingTimeInterval(0.1))
+        XCTAssertFalse(NearFieldGate.containsNearSpeech(frames: mixed,
+                                                        sensitivity: .standard, now: now))
+    }
 }

@@ -2,7 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   readVoiceSpeaker, setVoiceSpeaker,
-  readVoiceNearField, setVoiceNearField
+  readVoiceNearField, setVoiceNearField,
+  readVoiceMode, setVoiceMode
 } from './voicePref.js'
 
 function useStorage(initial = {}) {
@@ -58,4 +59,29 @@ test('voice near-field: no localStorage fallback', () => {
   delete globalThis.localStorage
   assert.equal(readVoiceNearField(), 'standard')
   assert.doesNotThrow(() => setVoiceNearField('near'))
+})
+
+test('voice mode: 默认连续对话（老用户升级后行为不变）', () => {
+  useStorage()
+  assert.equal(readVoiceMode(), 'continuous')
+})
+
+test('voice mode: round trip', () => {
+  const store = useStorage()
+  setVoiceMode('hold')
+  assert.equal(store.get('voice.mode'), 'hold')
+  assert.equal(readVoiceMode(), 'hold')
+  setVoiceMode('continuous')
+  assert.equal(readVoiceMode(), 'continuous')
+})
+
+test('voice mode: 未知值读回 continuous', () => {
+  useStorage({ 'voice.mode': 'garbage' })
+  assert.equal(readVoiceMode(), 'continuous')
+})
+
+test('voice mode: no localStorage fallback', () => {
+  delete globalThis.localStorage
+  assert.equal(readVoiceMode(), 'continuous')
+  assert.doesNotThrow(() => setVoiceMode('hold'))
 })

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { nearFieldThreshold, shouldAccept, median, percentile } from './nearFieldGate.js'
+import { nearFieldThreshold, shouldAccept, shouldKeepAlive, judgeHoldSpan, median, percentile } from './nearFieldGate.js'
 
 const T0 = 1_700_000_000_000
 
@@ -80,6 +80,55 @@ test('远场 + 单帧碰麦尖峰 → 仍然拒（尖峰不构成「有人说话
 
 test('宽松档：连续 0.03 的人声能通过（cap 跟着阈值走）', () => {
   assert.equal(shouldAccept(frames(0.03, 40), 0.02, T0 + 2000), true)
+})
+
+test('续命闸：远场噪声不续命，近场人声续命', () => {
+  const now = T0 + 500
+  assert.equal(shouldKeepAlive(frames(0.006, 10), 0.05, now), false)
+  assert.equal(shouldKeepAlive(frames(0.21, 10), 0.05, now), true)
+})
+
+test('续命闸：关闭档恒续命', () => {
+  assert.equal(shouldKeepAlive(frames(0.001, 10), null, T0 + 500), true)
+})
+
+test('续命闸：门控帧不算（播报期残留不能续命）', () => {
+  assert.equal(shouldKeepAlive(frames(0.3, 10, { gated: true }), 0.05, T0 + 500), false)
+})
+
+test('续命闸：窗口外的旧帧不算，帧不足不续命', () => {
+  assert.equal(shouldKeepAlive(frames(0.21, 10), 0.05, T0 + 5000), false)
+})
+
+// 长按整段判定：帧不够不是 fail-open，而是「太短」
+test('整段判定：关闭档恒放行', () => {
+  assert.equal(judgeHoldSpan(frames(0.001, 40), null), 'accept')
+})
+
+test('整段判定：近场人声放行、远场拒', () => {
+  assert.equal(judgeHoldSpan(frames(0.21, 40), 0.05), 'accept')
+  assert.equal(judgeHoldSpan(frames(0.006, 40), 0.05), 'reject')
+})
+
+test('整段判定：整段都是静音 → 拒（不是放行）', () => {
+  assert.equal(judgeHoldSpan(frames(0.003, 40), 0.05), 'reject')
+})
+
+test('整段判定：跨度不足 0.8 秒 → tooShort', () => {
+  assert.equal(judgeHoldSpan(frames(0.21, 10), 0.05), 'tooShort') // 0.45s
+  assert.equal(judgeHoldSpan([], 0.05), 'tooShort')
+})
+
+test('整段判定：远场 + 句末静音被拒，近场 + 句末静音放行', () => {
+  const far = [...frames(0.006, 8), ...frames(0.003, 12, { t0: T0 + 400 })]
+  const near = [...frames(0.21, 8), ...frames(0.003, 12, { t0: T0 + 400 })]
+  assert.equal(judgeHoldSpan(far, 0.05), 'reject')
+  assert.equal(judgeHoldSpan(near, 0.05), 'accept')
+})
+
+test('整段判定：门控帧不算（虽然长按模式不播报）', () => {
+  const mixed = [...frames(0.3, 40, { gated: true }), ...frames(0.004, 20, { t0: T0 + 100 })]
+  assert.equal(judgeHoldSpan(mixed, 0.05), 'reject')
 })
 
 test('median / percentile', () => {

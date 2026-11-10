@@ -175,52 +175,37 @@ struct ExpandPill: View {
     }
 }
 
-/// 按住说：按住期间判停分句只暂存，不提交；松手后整段提交（与 mockup 同形）。
-/// 图标用 `hand.tap`（`walkie.talkie` 不存在，`radio` 是收音机，不采用）。
-struct HoldToTalkButton: View {
-    let context: InputBarContext
-    let isHolding: Bool
-    var isEnabled: Bool = true
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    private var background: Color {
-        if isHolding { return Color("appAccent") }
-        if hovering { return Color("appAccent").opacity(0.10) }
-        return .clear
-    }
-
-    private var tooltip: String {
-        isHolding ? "松开后整段提交" : "按住期间停顿不触发提交，松开后整段提交"
-    }
+/// 两段式语音模式胶囊：只切档，不录音。当前档高亮。
+/// macOS 只有桌面形态，所以录音档叫「点击说话」（移动端 PWA 那边叫「长按说话」）。
+struct VoiceModeCapsule: View {
+    let mode: VoiceMode
+    let onSelect: (VoiceMode) -> Void
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "hand.tap")
-                .font(.system(size: 21, weight: .regular))
-                .frame(width: 34, height: 34)
-                .foregroundColor(isHolding ? .white : Color("appAccent"))
+        HStack(spacing: 2) {
+            segment(.continuous, label: "连续对话")
+            segment(.hold, label: "点击说话")
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .overlay(Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+    }
+
+    private func segment(_ value: VoiceMode, label: String) -> some View {
+        Button {
+            onSelect(value)
+        } label: {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(mode == value ? Color("appAccent") : .secondary)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
                 .background(
-                    Circle()
-                        .fill(background)
-                        .shadow(color: isHolding ? Color("appAccent").opacity(0.42) : .clear,
-                                radius: isHolding ? 7 : 0)
+                    Capsule().fill(mode == value ? Color("appAccent").opacity(0.16) : .clear)
                 )
-                .overlay {
-                    Circle()
-                        .stroke(Color("appAccent").opacity(0.55), lineWidth: 1.5)
-                        .scaleEffect(1.16)
-                        .opacity(isHolding ? 1 : 0)
-                }
-                .animation(isHolding
-                           ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
-                           : .easeOut(duration: 0.15),
-                           value: isHolding)
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .inputBarControl(.always, context: context, isEnabled: isEnabled, tooltip: tooltip)
+        .accessibilityAddTraits(mode == value ? .isSelected : [])
     }
 }
 

@@ -1006,7 +1006,7 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = [], speakReply: Bool = false) {
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = [], speakReply: Bool = false, voiceMode: Bool? = nil) {
         speakReplyForCurrentTurn = speakReply
         // 新会话第一轮还没 done 时插话：meta 帧已经给了 id，这一轮必须落回同一会话，
         // 否则会另起一个会话、第一轮还在后台继续跑（连续对话最常见的路径）。
@@ -1043,7 +1043,7 @@ class ChatViewModel: ObservableObject {
 
         Task { @MainActor in
             let clientTools = await Self.collectClientTools()
-            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds, conversationOverride: turnConversationID)
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds, conversationOverride: turnConversationID, voiceMode: voiceMode)
         }
         #if os(iOS)
         beginBackgroundTask()
@@ -1109,7 +1109,7 @@ class ChatViewModel: ObservableObject {
         """
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], conversationOverride: String? = nil) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], conversationOverride: String? = nil, voiceMode: Bool? = nil) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -1156,7 +1156,7 @@ class ChatViewModel: ObservableObject {
         let targetConversationID = conversationOverride ?? sendConversationID
         // 空串也是「空 tab」：会话要新建，init_mode 必须带上
         let initMode: String? = (targetConversationID ?? "").isEmpty ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: targetConversationID, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: targetConversationID, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, voiceMode: voiceMode ?? speakReplyForCurrentTurn, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
     /// `notifyServer=false` 用于「同一会话立刻发下一句」：服务端 Register 本来就会取消旧 loop，

@@ -36,8 +36,26 @@ export function median(values) {
   return sorted[(sorted.length - 1) >> 1]
 }
 
+// 续命判定窗口：voice 是 partial（开口后一小段就来），不能用提交闸的 2s 窗
+export const NEAR_FIELD_KEEPALIVE_MS = 400
+
 /**
- * frames: [{ t, level, gated }]（按时间递增），true = 放行。
+ * 空闲收口续命判定：只有近处的人声才算「还在说话」。
+ *
+ * 服务端只要 ASR 识别出非空文本就发 voice，隔壁嗑瓜子/收拾桌子也会被识别成文本。
+ * 以前 voice 无条件续命，远处噪声一直来就把 30 秒空闲收口无限推后。这里用最近
+ * 400ms 的未门控帧中位数判距离；帧不足 2 条不续命（播报期门控帧被排除后为空，
+ * 本来就有 speaking 保护）。
+ */
+export function shouldKeepAlive(frames, threshold, now = Date.now()) {
+  if (threshold == null) return true
+  const recent = frames.filter(f => !f.gated && now - f.t <= NEAR_FIELD_KEEPALIVE_MS)
+  if (recent.length < 2) return false
+  return median(recent.map(f => f.level)) >= threshold
+}
+
+/**
+ * 判定一段未门控帧：'accept' | 'reject' | 'tooShort'（数据不足，判不了）。
  *
  * 三处刻意设计：
  * - 只用未门控帧：播报期间读到的是 TTS 漏音残留，不是用户说话。
@@ -46,16 +64,33 @@ export function median(values) {
  *   距离信息，按本窗 p20 估个噪声本底剔掉；剔完一个不剩说明这段本来就没人靠近说。
  * - 有声帧要覆盖 0.15 秒以上：否则一次碰麦尖峰（单帧 0.3~0.55）就能把判定翻成放行。
  */
+function judgeSpan(frames, threshold) {
+  if (frames.length < 4) return 'tooShort'
+  if (frames[frames.length - 1].t - frames[0].t < NEAR_FIELD_MIN_SPAN_MS) return 'tooShort'
+  const levels = frames.map(f => f.level)
+  const cap = Math.min(NOISE_CAP, threshold / 2)
+  const floor = Math.min(cap, Math.max(NOISE_BASE, percentile(levels, 0.2) * NOISE_MULT))
+  const voiced = frames.filter(f => f.level >= floor)
+  if (voiced.length < 2) return 'reject'
+  if (voiced[voiced.length - 1].t - voiced[0].t < NEAR_FIELD_MIN_VOICED_MS) return 'reject'
+  return median(voiced.map(f => f.level)) >= threshold ? 'accept' : 'reject'
+}
+
+/**
+ * 流式判停分句的提交闸：frames = [{ t, level, gated }]（按时间递增），true = 放行。
+ * 数据不足（帧少 / 跨度短）放行——误拒比误收难受。
+ */
 export function shouldAccept(frames, threshold, now = Date.now()) {
   if (threshold == null) return true
   const recent = frames.filter(f => !f.gated && now - f.t <= NEAR_FIELD_WINDOW_MS)
-  if (recent.length < 4) return true
-  if (recent[recent.length - 1].t - recent[0].t < NEAR_FIELD_MIN_SPAN_MS) return true
-  const levels = recent.map(f => f.level)
-  const cap = Math.min(NOISE_CAP, threshold / 2)
-  const floor = Math.min(cap, Math.max(NOISE_BASE, percentile(levels, 0.2) * NOISE_MULT))
-  const voiced = recent.filter(f => f.level >= floor)
-  if (voiced.length < 2) return false
-  if (voiced[voiced.length - 1].t - voiced[0].t < NEAR_FIELD_MIN_VOICED_MS) return false
-  return median(voiced.map(f => f.level)) >= threshold
+  return judgeSpan(recent, threshold) !== 'reject'
+}
+
+/**
+ * 长按说话的整段判定：整段音频都在手上，帧不够说明本来就没说够 → 'tooShort'，
+ * 不能像流式那样 fail-open（见 docs/design/voice-hold-mode/design.md）。
+ */
+export function judgeHoldSpan(frames, threshold) {
+  if (threshold == null) return 'accept'
+  return judgeSpan(frames.filter(f => !f.gated), threshold)
 }

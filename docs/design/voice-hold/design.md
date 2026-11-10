@@ -215,3 +215,5 @@ private var heldCapTask: Task<Void, Never>?   // 松手后 3s 硬上限
     `Shared/Views/InputBar.swift`、`Shared/Views/InputBarButtons.swift`、`Shared/Views/InputBarControls.swift`、
     `Shared/Views/PageHolders.swift`、`Shared/Views/ContentView.swift`、`front-end/src/composables/useVoiceChat.js`、
     `front-end/src/views/ChatView.vue`。
+  - 2026-11-10：本文描述的「按住说」入口已被 `docs/design/voice-hold-mode/design.md` 的
+    两档胶囊（`VoiceModeCapsule` + `IconButton`）取代，`HoldToTalkButton` 已删除；本文只作考古。

@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音模式切换 · UI 预览</title>
+<style>
+  :root {
+    --app-accent: #2F7D63;
+    --accent-secondary: #41C9E2;
+    --color-primary: #2F7D63;
+    --color-primary-soft: rgba(47, 125, 99, 0.10);
+    --color-danger: #C0504D;
+    --color-danger-soft: rgba(192, 80, 77, 0.10);
+    --color-bg: #F7EEDD;
+    --color-bg-page: #F7EEDD;
+    --color-surface: rgba(255, 255, 255, 0.50);
+    --color-surface-strong: #FBF6EC;
+    --color-input: #F2F7F3;
+    --color-tool: #E8E4EF;
+    --color-text: #3B2E1F;
+    --color-text-secondary: rgba(59, 46, 31, 0.64);
+    --color-text-muted: rgba(59, 46, 31, 0.42);
+    --color-border: rgba(59, 46, 31, 0.12);
+    --color-border-strong: rgba(59, 46, 31, 0.18);
+    --chat-font-size: 15px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --shadow-sm: 0 1px 3px rgba(59, 46, 31, 0.05);
+    --shadow-md: 0 6px 18px rgba(59, 46, 31, 0.07);
+    --shadow-lg: 0 18px 50px rgba(59, 46, 31, 0.10);
+    --app-bg-image:
+      radial-gradient(900px 620px at 8% 4%, rgba(146, 200, 180, 0.30), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255, 213, 166, 0.34), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.18), transparent 60%),
+      linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
+  }
+  [data-theme="dark"] {
+    --app-accent: #92C8B4;
+    --color-primary: #92C8B4;
+    --color-primary-soft: rgba(146, 200, 180, 0.14);
+    --color-danger: #E07A76;
+    --color-danger-soft: rgba(224, 122, 118, 0.12);
+    --color-bg: #1C1C1E;
+    --color-bg-page: #141416;
+    --color-surface: rgba(255, 255, 255, 0.06);
+    --color-surface-strong: #242426;
+    --color-input: #2C2E2D;
+    --color-tool: #2E2B36;
+    --color-text: #FFFFFF;
+    --color-text-secondary: rgba(255, 255, 255, 0.66);
+    --color-text-muted: rgba(255, 255, 255, 0.40);
+    --color-border: rgba(255, 255, 255, 0.12);
+    --color-border-strong: rgba(255, 255, 255, 0.18);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.28);
+    --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.34);
+    --app-bg-image:
+      radial-gradient(900px 620px at 8% 4%, rgba(146, 200, 180, 0.14), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255, 213, 166, 0.10), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.12), transparent 60%),
+      linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    color: var(--color-text);
+    background: var(--app-bg-image);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage {
+    min-height: 100vh;
+    padding: 24px 24px 150px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  /* ---------- 设备框 ---------- */
+  .device {
+    position: relative;
+    width: 390px;
+    height: 844px;
+    border-radius: 42px;
+    background: var(--color-bg-page);
+    box-shadow: var(--shadow-lg), 0 0 0 10px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: width .25s ease, height .25s ease, border-radius .25s ease;
+  }
+  body[data-form="desktop"] .device {
+    width: 1120px;
+    height: 720px;
+    border-radius: 14px;
+    box-shadow: var(--shadow-lg), 0 0 0 1px var(--color-border);
+  }
+  .notch {
+    position: absolute;
+    top: 10px; left: 50%;
+    width: 116px; height: 28px;
+    margin-left: -58px;
+    border-radius: 16px;
+    background: var(--color-bg-page);
+    z-index: 5;
+    display: block;
+  }
+  body[data-form="desktop"] .notch { display: none; }
+  .winbar {
+    display: none;
+    height: 42px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    border-bottom: 0.5px solid var(--color-border);
+    background: var(--color-surface-strong);
+    flex: 0 0 auto;
+  }
+  body[data-form="desktop"] .winbar { display: flex; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--color-border-strong); }
+  .winbar .title { margin-left: 10px; font-size: 12px; color: var(--color-text-muted); }
+
+  /* ---------- 聊天区 ---------- */
+  .screen {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--app-bg-image);
+  }
+  .mobile-top {
+    flex: 0 0 auto;
+    padding: 54px 16px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  body[data-form="desktop"] .mobile-top { display: none; }
+  .mobile-top .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--color-primary-soft);
+    border: 0.5px solid var(--color-border);
+  }
+
+  .chat-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .sidebar {
+    display: none;
+    width: 232px;
+    flex: 0 0 auto;
+    border-right: 0.5px solid var(--color-border);
+    padding: 14px 10px;
+    background: color-mix(in srgb, var(--color-surface-strong) 55%, transparent);
+  }
+  body[data-form="desktop"] .sidebar { display: block; }
+  .side-item {
+    padding: 9px 10px;
+    border-radius: 9px;
+    font-size: 12.5px;
+    color: var(--color-text-secondary);
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .side-item.on { background: var(--color-primary-soft); color: var(--color-primary); }
+
+  .thread {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .messages {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 14px 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 760px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .bubble {
+    max-width: 78%;
+    padding: 10px 13px;
+    border-radius: var(--radius-lg);
+    font-size: var(--chat-font-size);
+    line-height: 1.5;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: var(--color-primary-soft);
+    color: var(--color-text);
+    border-bottom-right-radius: 5px;
+  }
+  .bubble.assistant {
+    align-self: flex-start;
+    background: var(--color-surface-strong);
+    border: 0.5px solid var(--color-border);
+    border-bottom-left-radius: 5px;
+  }
+  .bubble .who { font-size: 10.5px; color: var(--color-text-muted); margin-bottom: 3px; }
+
+  /* ---------- 输入区 ---------- */
+  .composer-wrap {
+    flex: 0 0 auto;
+    padding: 8px 12px 14px;
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .composer {
+    position: relative;
+    border: 0.5px solid var(--color-border);
+    border-radius: 22px;
+    background: var(--color-input);
+    box-shadow: var(--shadow-sm);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+  }
+  .wave {
+    position: relative;
+    height: 36px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .wave svg { width: 100%; height: 36px; display: block; }
+  .wave .hint { display: none; }
+  body[data-mode="hold"] .wave svg { opacity: 0.12; }
+
+  .voice-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .pill {
+    border: 0.5px solid transparent;
+    background: transparent;
+    color: var(--color-text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background .18s, color .18s, border-color .18s, box-shadow .18s;
+    font-family: inherit;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pill:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 3px; }
+
+  .icon-pill {
+    width: 36px; height: 36px;
+    padding: 0;
+    border-radius: 999px;
+  }
+  .icon-pill svg { width: 18px; height: 18px; }
+  .icon-pill:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+
+  /* 录音发送档：移动端「长按说话」小手，桌面端「点击说话」麦克风 */
+  .hold-btn {
+    color: var(--color-primary);
+    position: relative;
+    background: var(--color-primary-soft);
+    border-color: var(--color-border);
+  }
+  .hold-btn:hover { background: var(--color-primary-soft); border-color: var(--color-primary); }
+  body[data-mode="continuous"] .hold-slot { display: none; }
+  /* 图标：移动端手 / 桌面端麦克风 / 录音中停止方块 */
+  .hold-btn .i-mic, .hold-btn .i-stop { display: none; }
+  body[data-form="desktop"] .hold-btn .i-hand { display: none; }
+  body[data-form="desktop"] .hold-btn .i-mic { display: block; }
+  body[data-form="desktop"][data-mode="pressing"] .hold-btn .i-mic,
+  body[data-form="desktop"][data-mode="cancelling"] .hold-btn .i-mic { display: none; }
+  body[data-form="desktop"][data-mode="pressing"] .hold-btn .i-stop,
+  body[data-form="desktop"][data-mode="cancelling"] .hold-btn .i-stop { display: block; }
+
+  .hold-btn.holding {
+    background: var(--color-primary);
+    color: #fff;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  [data-theme="dark"] .hold-btn.holding { color: #10221B; }
+  .hold-btn.holding::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 42%, transparent); }
+    50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+  }
+  /* 移动端：上滑进入取消区 → 整个小手变红 */
+  body[data-form="mobile"][data-mode="cancelling"] .hold-btn {
+    background: var(--color-danger);
+    color: #fff;
+    animation: none;
+  }
+  body[data-form="mobile"][data-mode="cancelling"] .hold-btn::before { border-color: rgba(255, 255, 255, 0.5); }
+  /* 桌面端：录音中红底 + 停止方块（再点一下发送） */
+  body[data-form="desktop"][data-mode="pressing"] .hold-btn,
+  body[data-form="desktop"][data-mode="cancelling"] .hold-btn {
+    background: var(--color-danger);
+    color: #fff;
+    animation: none;
+  }
+
+  /* 桌面端专用：录音中在麦克风左边出现的「取消本次」（绝对定位，不挤动按钮） */
+  .hold-slot { position: relative; display: inline-flex; }
+  .hold-cancel {
+    position: absolute;
+    top: 50%;
+    right: calc(100% + 8px);
+    width: 36px; height: 36px;
+    padding: 0;
+    border-radius: 999px;
+    border: 0.5px solid color-mix(in srgb, var(--color-danger) 34%, transparent);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-50%) scale(0.86);
+    pointer-events: none;
+    transition: opacity .16s, transform .16s, background .16s, color .16s, border-color .16s;
+  }
+  .hold-cancel svg { width: 17px; height: 17px; }
+  body[data-form="desktop"][data-mode="pressing"] .hold-cancel,
+  body[data-form="desktop"][data-mode="cancelling"] .hold-cancel {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%) scale(1);
+    pointer-events: auto;
+  }
+  body[data-form="desktop"] .hold-cancel:hover {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+  }
+
+  /* 移动端：上滑取消提示条（浮在输入卡上方，与「已忽略」同位置） */
+  .hold-hint {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    transform: translateX(-50%) translateY(6px);
+    padding: 7px 13px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    background: var(--color-surface-strong);
+    border: 0.5px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s, transform .18s, background .18s, color .18s;
+  }
+  body[data-form="desktop"] .hold-hint { display: none; }
+  body[data-form="mobile"][data-mode="pressing"] .hold-hint {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  body[data-form="mobile"][data-mode="cancelling"] .hold-hint {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+  }
+
+  .exit-btn { color: var(--color-danger); }
+  .exit-btn:hover { background: var(--color-danger-soft); color: var(--color-danger); }
+
+  /* 模式切换：两段式胶囊，当前档高亮 */
+  .mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 999px;
+    border: 0.5px solid var(--color-border);
+    background: var(--color-primary-soft);
+  }
+  .seg {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .18s, color .18s, box-shadow .18s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .seg:hover { color: var(--color-primary); }
+  .seg:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+  .seg.on {
+    background: var(--color-surface-strong);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
+  }
+  [data-theme="dark"] .seg.on { background: rgba(255, 255, 255, 0.12); }
+
+  /* 已忽略提示 */
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    transform: translateX(-50%) translateY(6px);
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    background: var(--color-surface-strong);
+    border: 0.5px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s, transform .2s;
+  }
+  .composer { position: relative; }
+  body[data-toast="on"] .toast { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ---------- 控制条 ---------- */
+  .ui {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 18px;
+    padding: 10px 16px;
+    border-radius: 14px;
+    background: rgba(24, 26, 25, 0.88);
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(12px);
+    max-width: calc(100vw - 24px);
+  }
+  .ui .group { display: flex; align-items: center; gap: 6px; }
+  .ui .label { opacity: 0.55; }
+  .ui button {
+    font-family: inherit;
+    font-size: 12px;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.10);
+    border: 0.5px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    padding: 4px 9px;
+    cursor: pointer;
+  }
+  .ui button.on {
+    background: rgba(146, 200, 180, 0.92);
+    color: #10221B;
+    border-color: transparent;
+    font-weight: 600;
+  }
+  .ui input[type="range"] { width: 84px; accent-color: #92C8B4; }
+</style>
+</head>
+<body data-form="mobile" data-mode="continuous" data-toast="off">
+
+<div class="stage">
+  <div class="device">
+    <div class="notch"></div>
+    <div class="winbar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="title">xhanHelper</span>
+    </div>
+    <div class="screen">
+      <div class="mobile-top">
+        <span>语音对话</span>
+        <span class="avatar"></span>
+      </div>
+      <div class="chat-body">
+        <aside class="sidebar">
+          <div class="side-item on">语音模式 UI</div>
+          <div class="side-item">昨天的会议纪要</div>
+          <div class="side-item">记账 · 十一月</div>
+          <div class="side-item">读书笔记</div>
+          <div class="side-item">周报草稿</div>
+        </aside>
+        <div class="thread">
+          <div class="messages">
+            <div class="bubble user"><div class="who">你</div>帮我记一下，明天下午三点开产品评审。</div>
+            <div class="bubble assistant"><div class="who">助手</div>好的，已记下：明天 15:00 产品评审。需要提前 10 分钟提醒吗？</div>
+            <div class="bubble user"><div class="who">你</div>不用，正常提醒就行。</div>
+          </div>
+          <div class="composer-wrap">
+            <div class="composer">
+              <div class="toast">已忽略：声音来自远处</div>
+              <div class="hold-hint" id="holdHint">上滑取消</div>
+              <div class="wave">
+                <svg class="wave-svg" viewBox="0 0 400 36" preserveAspectRatio="none" aria-hidden="true"></svg>
+              </div>
+              <div class="voice-row">
+                <span class="hold-slot">
+                  <button class="pill hold-cancel" id="cancelBtn" type="button" aria-label="取消本次发送">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round">
+                      <path d="M7 7l10 10M17 7L7 17"/>
+                    </svg>
+                  </button>
+                  <button class="pill icon-pill hold-btn" id="holdBtn" type="button" aria-label="长按说话">
+                    <svg class="i-hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/>
+                      <path d="M12 10.5V4.5a1.5 1.5 0 0 1 3 0v6"/>
+                      <path d="M15 10.5V6.5a1.5 1.5 0 0 1 3 0V13a7 7 0 0 1-7 7h-1.2a6 6 0 0 1-4.6-2.2L3 15.2a1.6 1.6 0 0 1 2.5-2l1.5 1.6V8.5a1.5 1.5 0 0 1 3 0"/>
+                    </svg>
+                    <svg class="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="9" y="3" width="6" height="11" rx="3"/>
+                      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/>
+                      <path d="M12 18v3"/>
+                    </svg>
+                    <svg class="i-stop" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                      <rect x="8" y="8" width="8" height="8" rx="2"/>
+                    </svg>
+                  </button>
+                </span>
+                <div class="mode-switch" role="group" aria-label="语音模式">
+                  <button class="seg on" type="button" data-switch="continuous" aria-pressed="true">连续对话</button>
+                  <button class="seg" type="button" data-switch="hold" aria-pressed="false">长按说话</button>
+                </div>
+                <button class="pill icon-pill exit-btn" type="button" aria-label="退出语音对话">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                    <circle cx="12" cy="12" r="9"/>
+                    <path d="M7 12h1.5M10 9v6M13.5 7.5v9M17 10v4"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ui" role="group" aria-label="预览控制">
+  <div class="group">
+    <span class="label">形态</span>
+    <button data-form="mobile" class="on">移动</button>
+    <button data-form="desktop">桌面</button>
+  </div>
+  <div class="group">
+    <span class="label">主题</span>
+    <button data-theme="light" class="on">浅色</button>
+    <button data-theme="dark">深色</button>
+  </div>
+  <div class="group">
+    <span class="label">模式</span>
+    <button data-mode="continuous" class="on">连续</button>
+    <button data-mode="hold">待录</button>
+    <button data-mode="pressing">录音中</button>
+    <button data-mode="cancelling">取消态</button>
+  </div>
+  <div class="group">
+    <span class="label">提示</span>
+    <button data-toast="on">显示</button>
+    <button data-toast="off" class="on">隐藏</button>
+  </div>
+  <div class="group">
+    <span class="label">字号</span>
+    <input type="range" id="fontRange" min="13" max="19" value="15" step="1">
+    <span id="fontVal" style="opacity:.7">15</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var body = document.body;
+  var waveSvg = document.querySelector('.wave-svg');
+  var holdBtn = document.getElementById('holdBtn');
+  var cancelBtn = document.getElementById('cancelBtn');
+  var holdHint = document.getElementById('holdHint');
+  var segs = document.querySelectorAll('.mode-switch .seg');
+  var holdSeg = document.querySelector('.mode-switch .seg[data-switch="hold"]');
+
+  function buildWave(amplitude) {
+    var W = 400, H = 36, mid = H / 2, N = 64;
+    var top = [];
+    for (var i = 0; i <= N; i++) {
+      var x = (i / N) * W;
+      var env = Math.pow(Math.sin(Math.PI * (i / N)), 0.55);
+      var n1 = Math.sin(i * 1.73 + 0.9) * 0.5 + 0.5;
+      var n2 = Math.sin(i * 0.41 + 2.1) * 0.5 + 0.5;
+      var h = Math.max(0.9, env * (2.2 + amplitude * n1 * n2));
+      top.push([x, mid - h]);
+    }
+    var d = 'M' + top[0][0].toFixed(1) + ',' + top[0][1].toFixed(1);
+    for (var j = 1; j < top.length; j++) d += ' L' + top[j][0].toFixed(1) + ',' + top[j][1].toFixed(1);
+    for (var k = top.length - 1; k >= 0; k--) d += ' L' + top[k][0].toFixed(1) + ',' + (H - top[k][1]).toFixed(1);
+    d += ' Z';
+    waveSvg.innerHTML = '<path d="' + d + '" fill="var(--color-primary)"></path>';
+  }
+
+  function renderMode() {
+    var mode = body.dataset.mode;
+    var holding = mode === 'pressing' || mode === 'cancelling';
+    holdBtn.classList.toggle('holding', holding);
+    holdHint.textContent = mode === 'cancelling' ? '松开取消' : '上滑取消';
+    // 桌面端不是「按住」，档位名跟着形态走
+    holdSeg.textContent = body.dataset.form === 'desktop' ? '点击说话' : '长按说话';
+    buildWave(holding ? 12 : mode === 'hold' ? 3 : 7);
+  }
+
+  function setMode(mode) {
+    body.dataset.mode = mode;
+    var active = (mode === 'pressing' || mode === 'cancelling') ? 'hold' : mode;
+    segs.forEach(function (s) {
+      var on = s.getAttribute('data-switch') === active;
+      s.classList.toggle('on', on);
+      s.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    renderMode();
+  }
+
+  // URL 预设：?form=desktop&theme=dark&mode=hold&toast=on
+  function markOn(attr, value) {
+    var buttons = document.querySelectorAll('.ui button[' + attr + ']');
+    buttons.forEach(function (b) {
+      b.classList.toggle('on', b.getAttribute(attr) === value);
+    });
+  }
+  var q = new URLSearchParams(location.search);
+  if (q.get('form')) { body.dataset.form = q.get('form'); markOn('data-form', q.get('form')); }
+  if (q.get('theme')) { document.documentElement.setAttribute('data-theme', q.get('theme')); markOn('data-theme', q.get('theme')); }
+  if (q.get('mode')) { body.dataset.mode = q.get('mode'); markOn('data-mode', q.get('mode')); }
+  if (q.get('toast')) { body.dataset.toast = q.get('toast'); markOn('data-toast', q.get('toast')); }
+  if (q.get('font')) {
+    document.documentElement.style.setProperty('--chat-font-size', q.get('font') + 'px');
+    var fr = document.getElementById('fontRange');
+    if (fr) fr.value = q.get('font');
+    var fv = document.getElementById('fontVal');
+    if (fv) fv.textContent = q.get('font');
+  }
+
+  function bindGroup(attr, apply) {
+    var buttons = document.querySelectorAll('.ui button[' + attr + ']');
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        buttons.forEach(function (b) { b.classList.remove('on'); });
+        btn.classList.add('on');
+        apply(btn.getAttribute(attr));
+      });
+    });
+  }
+
+  bindGroup('data-form', function (v) {
+    body.dataset.form = v;
+    renderMode();
+  });
+  bindGroup('data-theme', function (v) {
+    document.documentElement.setAttribute('data-theme', v);
+  });
+  bindGroup('data-mode', function (v) {
+    setMode(v);
+  });
+  bindGroup('data-toast', function (v) {
+    body.dataset.toast = v;
+  });
+
+  // 胶囊只切档：连续 / 长按说话。长按档下才出现小手按钮。
+  segs.forEach(function (seg) {
+    seg.addEventListener('click', function () {
+      setMode(seg.getAttribute('data-switch'));
+    });
+  });
+
+  // 移动端：按住录音（pressing），松手提交回长按档；上滑到取消区松手丢弃。
+  holdBtn.addEventListener('pointerdown', function (e) {
+    if (body.dataset.form === 'desktop') return; // 桌面端是点击切换
+    if (body.dataset.mode !== 'hold') return;
+    e.preventDefault();
+    body.dataset.mode = 'pressing';
+    renderMode();
+  });
+  holdBtn.addEventListener('pointerup', function () {
+    if (body.dataset.form === 'desktop') return;
+    if (body.dataset.mode !== 'pressing' && body.dataset.mode !== 'cancelling') return;
+    body.dataset.mode = 'hold';
+    renderMode();
+  });
+  holdBtn.addEventListener('pointercancel', function () {
+    if (body.dataset.form === 'desktop') return;
+    if (body.dataset.mode !== 'pressing' && body.dataset.mode !== 'cancelling') return;
+    body.dataset.mode = 'hold';
+    renderMode();
+  });
+
+  // 桌面端：点一下开始录音，再点一下发送（两态按钮）。
+  holdBtn.addEventListener('click', function () {
+    if (body.dataset.form !== 'desktop') return;
+    if (body.dataset.mode === 'hold') body.dataset.mode = 'pressing';
+    else if (body.dataset.mode === 'pressing' || body.dataset.mode === 'cancelling') body.dataset.mode = 'hold';
+    renderMode();
+  });
+
+  // 桌面端「取消本次」：丢掉这次录音，回到待录状态。
+  cancelBtn.addEventListener('click', function () {
+    if (body.dataset.mode !== 'pressing' && body.dataset.mode !== 'cancelling') return;
+    body.dataset.mode = 'hold';
+    renderMode();
+  });
+
+  var fontRange = document.getElementById('fontRange');
+  var fontVal = document.getElementById('fontVal');
+  fontRange.addEventListener('input', function () {
+    var v = fontRange.value;
+    fontVal.textContent = v;
+    document.documentElement.style.setProperty('--chat-font-size', v + 'px');
+  });
+
+  setMode(body.dataset.mode);
+})();
+</script>
+</body>
+</html>

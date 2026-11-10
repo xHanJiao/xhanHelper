@@ -1,8 +1,10 @@
 import { ref } from 'vue'
 import { api } from '@/api/client'
 import { cutSentences } from '@/utils/speech'
-import { readVoiceSpeaker, readVoiceNearField } from '@/utils/voicePref'
-import { NEAR_FIELD_WINDOW_MS, nearFieldThreshold, shouldAccept } from '@/utils/nearFieldGate'
+import { readVoiceSpeaker, readVoiceNearField, readVoiceMode, setVoiceMode } from '@/utils/voicePref'
+import {
+  NEAR_FIELD_WINDOW_MS, nearFieldThreshold, shouldAccept, shouldKeepAlive, judgeHoldSpan
+} from '@/utils/nearFieldGate'
 
 // 首次点击麦克风时用它解锁 <audio>（浏览器自动播放策略）
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
@@ -14,6 +16,11 @@ const GATE_TAIL_MS = 600
 // 松手后等最后半句 definite：1.5s 静默提交，3s 硬上限（豆包判停 800ms + 二遍识别）
 const HOLD_TAIL_MS = 1500
 const HOLD_MAX_MS = 3000
+// 长按说话：单次录音上限（16k mono int16 下 60 秒 ≈ 1.9MB）
+const HOLD_TALK_MAX_SECONDS = 60
+const HOLD_TALK_MIN_MS = 300
+// 松手后整段灌入的兜底超时（60 秒音频实测 ~4 秒出 final）
+const HOLD_TRANSCRIBE_TIMEOUT_MS = 15_000
 
 function resampleToInt16(input, inputRate) {
   if (inputRate === 16000) {
@@ -43,6 +50,19 @@ function isTableOnly(text) {
   const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean)
   if (lines.length < 2) return false
   return lines.every(l => l.startsWith('|') && l.endsWith('|'))
+}
+
+// 长按说话：把若干段 Int16 拼成整段
+function concatInt16(chunks) {
+  let total = 0
+  for (const chunk of chunks) total += chunk.length
+  const out = new Int16Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
 }
 
 function cleanForSpeech(text) {
@@ -81,7 +101,7 @@ function log(...args) {
  * （门控），而是按原节拍发等长静音保活——豆包 8 秒收不到音频包会断会话（45000081）。
  * 代价是播报时听不到你开口，打断只能点按钮（PWA 不做自动打断）。
  */
-export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
+export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, isBusy } = {}) {
   const available = ref(false)
   // 会话开着（连 WS、录音、等回答、朗读都算）；浮层与按钮状态都看它
   const active = ref(false)
@@ -98,6 +118,13 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   const speechIndex = ref(0)
   // 按住说：按住期间判停分句只暂存、不提交；松手后整段作为一轮
   const holding = ref(false)
+  // 语音模式：continuous（连续对话）/ hold（长按说话）。两档互斥，靠它分流两条链路。
+  const mode = ref(readVoiceMode())
+  // 长按说话：正在录音 / 正在识别
+  const holdRecording = ref(false)
+  const holdTranscribing = ref(false)
+  // 切档过渡：旧链路已拆、新档还没就绪（连续档要等 ticket + 建连）。界面靠它别把语音条拆掉
+  const switching = ref(false)
 
   let socket = null
   let mediaStream = null
@@ -126,6 +153,18 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   // 近场闸：最近 2 秒的电平帧（带门控标记，播报期的 TTS 残留不能算用户说话）
   let levelFrames = []
   let lastNearFieldNoticeAt = 0
+
+  // 长按说话：本地采集（不建常驻连接），松手后整段灌进一条短连接
+  let holdCtx = null
+  let holdWorklet = null
+  let holdSink = null
+  let holdSource = null
+  let holdStream = null
+  let holdSocket = null
+  let holdChunks = []
+  let holdSamples = 0
+  let holdFrames = []
+  let holdStartedAt = 0
 
   // hold 暂存：holding = 按住中；awaitingTail = 已松手、还在等最后半句
   let heldSentences = []
@@ -246,10 +285,12 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     // 出错/硬收口时朗读可能还在播：一并停掉，别让 speaking 挂成 true、声音继续出
     stopSpeaking()
     resetHeld()
+    releaseHoldTalk()
     finished = true
     finishing = false
     active.value = false
     calling.value = false
+    switching.value = false
     clearTimers()
     if (worklet) {
       worklet.port.onmessage = null
@@ -289,7 +330,11 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   }
 
   async function start() {
-    if (active.value || calling.value) return
+    if (active.value || calling.value) {
+      // 切档过渡里再被叫起来：别把 switching 永久留在 true（语音条常开、却没会话）
+      switching.value = false
+      return
+    }
     log('start requested (continuous)')
     generation += 1
     const gen = generation
@@ -392,8 +437,11 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
           }
           onSentence?.(text)
         } else if (msg.type === 'voice') {
-          // 服务端听到非空识别结果（含未判停的 partial）：空闲收口据此顺延
-          lastActivity = Date.now()
+          // 服务端听到非空识别结果（含未判停的 partial）：只有近处的人声才顺延空闲收口。
+          // 远处噪声（隔壁说话/嗑瓜子/收拾桌子）也会被 ASR 识别成文本，不能给它续命。
+          if (shouldKeepAlive(levelFrames, nearFieldThreshold(readVoiceNearField()))) {
+            lastActivity = Date.now()
+          }
           // 松手后 partial 还在变，说明最后半句没吐完：重置 1.5s 尾巴窗口
           if (heldAwaitingTail) armHeldTail()
         } else if (msg.type === 'limit') {
@@ -428,6 +476,7 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
       }
 
       active.value = true
+      switching.value = false
       armSessionLimit()
       startIdleWatch()
       // 服务端要先连豆包（几百毫秒）才会 ready，采集不能等它：点完麦克风立刻开口的
@@ -472,7 +521,9 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
   /** 结束会话（用户点麦克风）：发完尾巴和 end，等服务端收尾后关连接。 */
   function stop({ flush = true } = {}) {
     if (!active.value) {
-      log('stop ignored: not active')
+      // 切档过渡期还没有会话：直接硬收口，别让在飞的 start() 把语音条又开起来
+      if (switching.value) cancel()
+      else log('stop ignored: not active')
       return
     }
     // 用户主动退出时先把暂存的话提交出去，不丢话；上限/空闲收口则不补发
@@ -622,6 +673,254 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     log(`hold flush chars=${text.length}`)
     lastActivity = Date.now()
     onSentence?.(text)
+  }
+
+  // MARK: 长按说话（本地录音 + 松手整段灌入）
+
+  /** 进入语音条（按当前档位）。连续档要建连；长按档只开 UI，不碰麦克风。 */
+  async function enter() {
+    if (active.value || calling.value) return
+    if (mode.value === 'hold') {
+      generation += 1
+      log('enter voice (hold)')
+      active.value = true
+      return
+    }
+    await start()
+  }
+
+  /** 切档：两档互斥。语音条开着时直接拆旧链路，按新档位重开。 */
+  function switchMode(next) {
+    if (next !== 'continuous' && next !== 'hold') return
+    if (mode.value === next) return
+    mode.value = next
+    setVoiceMode(next)
+    log(`mode switched: ${next}`)
+    // 切到一半再点另一段也要接得住（此时 active 已被 cancel 置 false）
+    if (!active.value && !switching.value) return
+    cancel()
+    // 连续档要等 ticket + 建连才 active，这段里界面靠 switching 保持语音条不拆
+    switching.value = true
+    if (next === 'continuous') {
+      start().catch((err) => fail(err?.message || '无法开始语音对话'))
+      return
+    }
+    generation += 1
+    active.value = true
+    switching.value = false
+  }
+
+  function ensureHoldGraph() {
+    if (holdCtx) return holdCtx
+    // iOS Safari：AudioContext 必须在用户手势的同一个任务里创建/恢复（见 start()）
+    holdCtx = new (window.AudioContext || window.webkitAudioContext)()
+    holdCtx.resume().catch((err) => console.warn('[voice] hold ctx resume failed', err))
+    return holdCtx
+  }
+
+  /** 按下：只本地录音（累积 PCM + 电平帧），不建连接。 */
+  async function startHoldTalk() {
+    if (!active.value || mode.value !== 'hold') return
+    if (holdRecording.value || holdTranscribing.value) return
+    holdChunks = []
+    holdSamples = 0
+    holdFrames = []
+    holdStartedAt = Date.now()
+    level.value = 0
+    holdRecording.value = true
+    try {
+      const ctx = ensureHoldGraph()
+      if (!holdWorklet) {
+        await ctx.audioWorklet.addModule('/voice-pcm-worklet.js')
+        holdWorklet = new AudioWorkletNode(ctx, 'voice-pcm')
+        holdWorklet.port.onmessage = (event) => handleHoldSamples(event.data, ctx.sampleRate)
+        // Safari 只从 destination 反向拉取音频图（见 start()）
+        holdSink = ctx.createGain()
+        holdSink.gain.value = 0
+        holdWorklet.connect(holdSink)
+        holdSink.connect(ctx.destination)
+      }
+      ctx.resume().catch((err) => console.warn('[voice] hold ctx resume failed', err))
+      holdStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+      // 权限弹窗期间就松手了：别把麦克风留在后台
+      if (!holdRecording.value) {
+        holdStream.getTracks().forEach(t => t.stop())
+        holdStream = null
+        return
+      }
+      holdSource = ctx.createMediaStreamSource(holdStream)
+      holdSource.connect(holdWorklet)
+      // 计时从真正开始采集算起：权限弹窗/建图耗时不算「按住时长」
+      holdStartedAt = Date.now()
+      log('hold talk started')
+    } catch (err) {
+      console.error('[voice] hold capture failed', err)
+      holdRecording.value = false
+      releaseHoldTalk()
+      onError?.('麦克风启动失败')
+    }
+  }
+
+  function handleHoldSamples(samples, sampleRate) {
+    if (!holdRecording.value || !samples || !samples.length) return
+    let sum = 0
+    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
+    level.value = Math.min(1, Math.sqrt(sum / samples.length) * 4)
+    holdFrames.push({ t: Date.now(), level: level.value, gated: false })
+    const pcm = resampleToInt16(samples, sampleRate)
+    holdChunks.push(pcm)
+    holdSamples += pcm.length
+    if (holdSamples >= 16000 * HOLD_TALK_MAX_SECONDS) {
+      log('hold talk reached 60s, auto submit')
+      onNotice?.('已到 60 秒，自动发送')
+      stopHoldTalk()
+    }
+  }
+
+  /** 松手：整段判定 → 灌入流式 ASR → 出字提交。 */
+  async function stopHoldTalk({ cancelled = false } = {}) {
+    if (!holdRecording.value) return
+    const gen = generation
+    const frames = holdFrames
+    const chunks = holdChunks
+    const durationMs = Date.now() - holdStartedAt
+    stopHoldCapture()
+    holdChunks = []
+    holdSamples = 0
+    holdFrames = []
+    if (cancelled) {
+      log('hold talk cancelled')
+      return
+    }
+    if (durationMs < HOLD_TALK_MIN_MS) {
+      onNotice?.('说话时间太短')
+      return
+    }
+    const verdict = judgeHoldSpan(frames, nearFieldThreshold(readVoiceNearField()))
+    if (verdict === 'tooShort') {
+      log(`hold talk too short: frames=${frames.length} span=${durationMs}ms`)
+      onNotice?.('说话时间太短')
+      return
+    }
+    if (verdict === 'reject') {
+      log(`hold talk dropped: near-field gate frames=${frames.length}`)
+      // 误拒比误收难受：被吞掉时必须让人看见，限频 10 秒
+      const now = Date.now()
+      if (now - lastNearFieldNoticeAt >= 10_000) {
+        lastNearFieldNoticeAt = now
+        onNotice?.('已忽略：声音来自远处')
+      }
+      return
+    }
+    const pcm = concatInt16(chunks)
+    if (!pcm.length) {
+      onNotice?.('说话时间太短')
+      return
+    }
+    await transcribeHold(gen, pcm)
+  }
+
+  async function transcribeHold(gen, pcm) {
+    holdTranscribing.value = true
+    try {
+      const ticket = await api.post('/api/voice/asr-ticket', {})
+      if (gen !== generation || !active.value) return
+      const text = await injectAudio(ticket.ticket, pcm)
+      if (gen !== generation || !active.value) return
+      const trimmed = String(text || '').trim()
+      log(`hold talk done chars=${trimmed.length} audio=${(pcm.length / 16000).toFixed(1)}s`)
+      if (!trimmed) {
+        onNotice?.('没有听清，请再说一次')
+        return
+      }
+      lastActivity = Date.now()
+      onHoldSentence?.(trimmed)
+    } catch (err) {
+      if (gen !== generation) return
+      console.error('[voice] hold transcribe failed', err)
+      onError?.('语音识别失败')
+    } finally {
+      if (gen === generation) holdTranscribing.value = false
+    }
+  }
+
+  /** 把整段 PCM 灌进一条短连接：松手才建连，吐完即断。 */
+  function injectAudio(ticket, pcm) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(websocketURL(ticket))
+      ws.binaryType = 'arraybuffer'
+      holdSocket = ws
+      let text = ''
+      let done = false
+      let timer = null
+      const finish = (err) => {
+        if (done) return
+        done = true
+        if (timer) clearTimeout(timer)
+        if (holdSocket === ws) holdSocket = null
+        try { ws.close() } catch { /* 已关闭 */ }
+        if (err) reject(err)
+        else resolve(text)
+      }
+      timer = setTimeout(() => finish(new Error('语音识别超时')), HOLD_TRANSCRIBE_TIMEOUT_MS)
+      ws.onopen = () => {
+        // 灌入不按实时节拍：豆包接受快于实时的音频（6.2s 音频 0.79s 出 final）
+        for (let i = 0; i < pcm.length; i += CHUNK_SAMPLES) {
+          ws.send(pcm.slice(i, i + CHUNK_SAMPLES).buffer)
+        }
+        ws.send(JSON.stringify({ type: 'end' }))
+      }
+      ws.onmessage = (event) => {
+        let msg
+        try {
+          msg = JSON.parse(event.data)
+        } catch {
+          return
+        }
+        if (msg.type === 'sentence') {
+          text += String(msg.text || '')
+        } else if (msg.type === 'error') {
+          finish(new Error(msg.error || '语音识别失败'))
+        }
+      }
+      ws.onerror = () => finish(new Error('语音识别连接失败'))
+      ws.onclose = () => finish()
+    })
+  }
+
+  /** 停采集并释放本次录音（保留 AudioContext 供下次快速启动）。 */
+  function stopHoldCapture() {
+    holdRecording.value = false
+    if (holdSource) { holdSource.disconnect(); holdSource = null }
+    if (holdStream) {
+      holdStream.getTracks().forEach(t => t.stop())
+      holdStream = null
+    }
+    level.value = 0
+  }
+
+  /** 彻底释放长按模式资源（退出语音 / 卸载 / 出错）。 */
+  function releaseHoldTalk() {
+    stopHoldCapture()
+    holdTranscribing.value = false
+    if (holdSocket) {
+      const ws = holdSocket
+      holdSocket = null
+      try { ws.close() } catch { /* 已关闭 */ }
+    }
+    holdChunks = []
+    holdSamples = 0
+    holdFrames = []
+    if (holdWorklet) {
+      holdWorklet.port.onmessage = null
+      holdWorklet.disconnect()
+      holdWorklet = null
+    }
+    if (holdSink) { holdSink.disconnect(); holdSink = null }
+    if (holdCtx) {
+      holdCtx.close().catch(() => {})
+      holdCtx = null
+    }
   }
 
   // MARK: 句级朗读流水线
@@ -796,11 +1095,19 @@ export function useVoiceChat({ onSentence, onError, onNotice, isBusy } = {}) {
     speechSentences,
     speechIndex,
     holding,
+    mode,
+    holdRecording,
+    holdTranscribing,
+    switching,
     hasHeld,
     refresh,
+    enter,
+    switchMode,
     start,
     startHold,
     endHold,
+    startHoldTalk,
+    stopHoldTalk,
     stop,
     cancel,
     appendReplyDelta,

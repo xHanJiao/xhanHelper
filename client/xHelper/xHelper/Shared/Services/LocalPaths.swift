@@ -179,4 +179,7 @@ enum VoicePreference {
     /// 近场电平闸档位（off / loose / standard / near）。默认 standard。
     static var nearFieldKey: String { LocalPaths.scoped("xhan_voice_nearfield") }
     static let nearFieldDefault = "standard"
+    /// 语音模式（continuous / hold）。默认 continuous。
+    static var modeKey: String { LocalPaths.scoped("xhan_voice_mode") }
+    static let modeDefault = "continuous"
 }

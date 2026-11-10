@@ -130,6 +130,24 @@ sentence 到达（判停后 0.2–1s）
 - **已知挡不住**：摸麦克风的接触噪声（0.15–0.3 持续几百毫秒）照样会触发打断。
   要彻底解决只能走"先压低音量 → 验声纹 → 再决定停不停"（`voiceprint/design.md` 的 C1/C2）
 
+### 闸门 3：续命闸（解决"远处噪声让会话永不收口"）
+
+空闲收口（30 秒没人说话就结束会话）靠服务端的 `voice` 事件续命。`voice` 的触发条件是
+「ASR 识别出非空文本」，**隔壁嗑瓜子、收拾桌子的声音也会被识别成文本**，于是远处噪声一直
+刷新空闲计时器，会话永远不收口（`docs/bugs/055`）。
+
+```
+收到 voice（ASR 听到人声）
+  → 取最近 400ms 的「未门控」电平帧
+  → 不足 2 帧 → 不续命
+  → 中位数 >= 阈值 ? 续命 : 不续命
+```
+
+- **用 400ms 短窗**：`voice` 是 partial，开口后一小段就发，等不到提交闸的 2 秒窗
+- **帧不足不续命**：播报期门控帧被排除后窗口为空，而播报期本来就有 `speaking` 保护，不需要靠 `voice`
+- **关闭档恒续命**：与加闸之前完全一致
+- 提交闸（闸门 1）管「远处的话不变成一轮」，续命闸管「远处的话不拖着会话不收口」，两者帧集相同、窗口不同
+
 ### 分档
 
 | 输入 | 策略 |
@@ -212,6 +230,7 @@ xcrun swiftc -O -parse-as-library -o /tmp/level-sweep \
 | 4 | 四选一设置（关闭 / 宽松 / 标准 / 近场） | `front-end/src/views/SettingsView.vue`（localStorage）、`xHelperMac/App.swift` + `Shared/Views/SettingsView.swift`（UserDefaults） |
 | 5 | 被忽略轻提示（限频 10s） | PWA `onNotice`、Swift `ToastCenter` |
 | 6 | 单测：窗口不足放行、门控帧被排除、混合说话人 | `front-end/src/utils/nearFieldGate.test.js`、`Tests/NearFieldGateCoreTests/` |
+| 7 | 续命闸：`voice` 只在最近 400ms 未门控帧中位数 ≥ 阈值时才顺延空闲收口 | `nearFieldGate.js` / `NearFieldGate.swift` 的 `shouldKeepAlive` + 两端 `voice` 分支 |
 
 **估时**：6–9 小时 + 2 次真机往返
 
@@ -224,6 +243,7 @@ xcrun swiftc -O -parse-as-library -o /tmp/level-sweep \
 2. 开启标准档：你说的话 100% 通过；隔壁会议声 0 提交
 3. 灵敏度切「近场」：你 50cm 说话被拒（证明阈值真的在起作用，不是恰好没触发）
 4. 播报中 CJ 说话不再停朗读（真机校准后）
+5. 标准档下隔壁持续噪声（说话/嗑瓜子/收拾桌子）：30–35 秒内自动收口，不再无限续命
 
 ## 后续变更
 
@@ -250,3 +270,7 @@ xcrun swiftc -O -parse-as-library -o /tmp/level-sweep \
   Swift 侧 `VoiceChatService` 读不到值时兜底从 `.off` 改成 `.standard`（`@AppStorage` 的默认值
   不写进 UserDefaults，只靠它不会生效）。影响文件：`front-end/src/utils/voicePref.js`、
   `front-end/src/utils/voicePref.test.js`、`LocalPaths.swift`、`VoiceChatService.swift`。
+- 2026-11-09：真机发现远处噪声（隔壁说话/嗑瓜子/收拾桌子）仍给会话无限续命 —— 近场闸只挡了
+  提交（`sentence`），没挡续命（`voice`）。补**闸门 3 续命闸**：`voice` 只在最近 400ms
+  未门控帧中位数 ≥ 阈值时才顺延空闲收口。详见 `docs/bugs/055`；影响 `nearFieldGate.js`、
+  `NearFieldGate.swift`、`useVoiceChat.js`、`VoiceChatService.swift`。

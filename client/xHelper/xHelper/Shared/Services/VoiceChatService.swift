@@ -7,6 +7,12 @@ extension Notification.Name {
     static let voicePreviewWillStart = Notification.Name("VoicePreviewWillStart")
 }
 
+/// 语音模式：连续对话（常驻 ASR 连接）/ 长按说话（本地录音，松手整段灌入）。
+enum VoiceMode: String {
+    case continuous
+    case hold
+}
+
 /// 语音聊天客户端：麦克风采集 → 自家后端 WebSocket → 豆包流式 ASR；
 /// 回复文本 → 自家后端 TTS → 同一个 AVAudioEngine（VPIO 回声消除）播放。
 @MainActor
@@ -27,6 +33,8 @@ final class VoiceChatService: ObservableObject {
     var onFinalTranscript: ((String) -> Void)?
     /// C 模式：服务端下发一条已判停的分句，客户端直接提交一轮对话。
     var onSentence: ((String) -> Void)?
+    /// 长按说话：松手整段识别出文本，客户端提交一轮（不朗读）。
+    var onHoldSentence: ((String) -> Void)?
     /// C3：播报期间用户开口，立即停生成（由 ChatView 接 /api/chat/stop）。
     var onBargeIn: (() -> Void)?
     /// 正在流式回答（C 模式的空闲计时器据此顺延，别在 AI 说话时把会话收掉）。
@@ -72,6 +80,31 @@ final class VoiceChatService: ObservableObject {
     private var heldCapTask: Task<Void, Never>?
     private let holdTailSeconds: Double = 1.5
     private let holdMaxSeconds: Double = 3
+
+    /// 语音模式（continuous / hold）。默认 continuous：老用户升级后行为不变。
+    @Published private(set) var mode: VoiceMode = VoiceMode(
+        rawValue: UserDefaults.standard.string(forKey: VoicePreference.modeKey) ?? VoicePreference.modeDefault
+    ) ?? .continuous
+    /// 长按档：语音条开着（不代表正在录音）
+    @Published private(set) var holdModeActive = false
+    /// 切档过渡：旧链路已拆、新档还没就绪（连续档要等 ticket + 建连）。
+    /// 界面靠它别把语音条整排换回普通按钮 —— 否则切一下闪一下。
+    @Published private(set) var isSwitchingMode = false
+    /// 长按说话：正在本地录音
+    @Published private(set) var isHoldRecording = false
+    /// 长按说话：松手后正在整段识别
+    @Published private(set) var isHoldTranscribing = false
+    /// 语音条是否开着（两档共用）。切档过渡期也算开着。
+    var voiceBarActive: Bool { continuousActive || holdModeActive || isSwitchingMode }
+    private var holdCapturing = false
+    private var holdPCM = Data()
+    private var holdFrames: [NearFieldGate.Frame] = []
+    private var holdStartedAt = Date()
+    private var holdGen = 0
+    private var holdBaseURL = ""
+    private var holdToken = ""
+    private let holdTalkMaxSeconds = 60
+    private let holdTalkMinSeconds: Double = 0.3
     private var speakEndTask: Task<Void, Never>?
     // 句级 TTS 流水线（代次复用 speakEpoch）
     private var speechFrozen: [String] = []
@@ -174,10 +207,12 @@ final class VoiceChatService: ObservableObject {
         vlog("start requested mode=\(continuous ? "continuous" : "single") state=\(state) active=\(continuousActive) base=\(baseURL)")
         guard state == .idle, !continuousActive else {
             vlog("start ignored: state=\(state) continuousActive=\(continuousActive)")
+            isSwitchingMode = false
             return
         }
         guard !baseURL.isEmpty, !token.isEmpty else {
             vlog("start ignored: empty baseURL/token")
+            isSwitchingMode = false
             return
         }
 
@@ -218,6 +253,7 @@ final class VoiceChatService: ObservableObject {
             }
             transcript = ""
             continuousActive = continuous
+            isSwitchingMode = false
             sentBytes = 0
             sentChunks = 0
             droppedChunks = 0
@@ -280,6 +316,10 @@ final class VoiceChatService: ObservableObject {
         levelHistory.append(NearFieldGate.Frame(at: now, level: value, gated: micGated))
         let cutoff = now.addingTimeInterval(-(NearFieldGate.windowSeconds + 0.5))
         levelHistory.removeAll { $0.at < cutoff }
+        // 长按说话：整段帧单独留一份，松手后离线判定（不受 2 秒窗裁剪）
+        if holdCapturing {
+            holdFrames.append(NearFieldGate.Frame(at: now, level: value, gated: false))
+        }
 
         if !(continuousActive && micGated) {
             loudFrames = 0
@@ -416,6 +456,9 @@ final class VoiceChatService: ObservableObject {
         vlog("cancel: state=\(state) active=\(continuousActive) sent=\(sentBytes)B")
         generation += 1
         continuousActive = false
+        holdModeActive = false
+        isSwitchingMode = false
+        abortHold()
         clearHeld()
         cancelTimers()
         _ = detachCapture()
@@ -522,6 +565,220 @@ final class VoiceChatService: ObservableObject {
         heldAwaitingTail = false
         cancelHeldTasks()
         heldSentences = []
+    }
+
+    // MARK: 长按说话（本地录音 + 松手整段灌入）
+
+    /// 进入长按档的语音条（不碰麦克风、不建连接）。
+    func enterHoldMode() {
+        guard !voiceBarActive else { return }
+        generation += 1
+        holdGen += 1
+        holdModeActive = true
+        vlog("enter voice (hold)")
+    }
+
+    /// 退出语音条：连续档先收会话，长按档直接释放。
+    func exitVoiceMode() {
+        // 切档过渡期还没有会话：硬收口，别让在飞的 startContinuous 又把语音条开起来
+        if isSwitchingMode { cancel() }
+        if continuousActive { stopContinuous() }
+        if holdModeActive {
+            holdGen += 1
+            holdModeActive = false
+            abortHold()
+            vlog("exit voice (hold)")
+        }
+    }
+
+    /// 切档：两档互斥。语音条开着时直接拆旧链路，按新档位重开。
+    func switchMode(_ next: VoiceMode, baseURL: String, token: String) {
+        guard next != mode else { return }
+        mode = next
+        UserDefaults.standard.set(next.rawValue, forKey: VoicePreference.modeKey)
+        vlog("mode switched: \(next.rawValue)")
+        guard voiceBarActive else { return }
+        cancel()
+        // 连续档要等 ticket + 建连才 continuousActive，这段里靠它保持语音条不拆
+        isSwitchingMode = true
+        holdModeActive = false
+        if next == .hold {
+            holdGen += 1
+            holdModeActive = true
+            isSwitchingMode = false
+            return
+        }
+        Task { await startContinuous(baseURL: baseURL, token: token) }
+    }
+
+    /// 按下：只本地录音（累积 PCM + 电平帧），不建连接。
+    func startHoldTalk(baseURL: String, token: String) async {
+        guard mode == .hold, holdModeActive, !isHoldRecording, !isHoldTranscribing else { return }
+        guard state == .idle else {
+            vlog("hold start ignored: state=\(state)")
+            return
+        }
+        guard !baseURL.isEmpty, !token.isEmpty else { return }
+        holdBaseURL = baseURL
+        holdToken = token
+        holdGen += 1
+        let gen = holdGen
+        guard await ensureMicrophonePermission() else {
+            vlog("hold microphone permission denied")
+            ToastCenter.shared.show("没有麦克风权限，请在系统设置中允许 xhanHelper 使用麦克风")
+            return
+        }
+        guard gen == holdGen, holdModeActive, mode == .hold else { return }
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio,
+                                                         options: [.defaultToSpeaker, .allowBluetooth])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        configureAudio()
+        holdPCM = Data()
+        holdFrames.removeAll(keepingCapacity: true)
+        holdStartedAt = Date()
+        do {
+            try audio.startCapture()
+            state = .recording
+            holdCapturing = true
+            isHoldRecording = true
+            vlog("hold start")
+        } catch {
+            vlog("hold capture failed: \(error.localizedDescription)")
+            ToastCenter.shared.show("麦克风采集失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 松手：整段判定 → 灌入流式 ASR → 出字提交（不朗读）。
+    func finishHoldTalk(cancelled: Bool) async {
+        guard isHoldRecording else {
+            // 只作废「按下还没落到录音」的那次启动（权限弹窗期间松手）；
+            // 识别进行中再被调一次（60 秒自动提交后抬手/失焦）不能加代次，否则会把已识别文本丢掉
+            if !isHoldTranscribing { holdGen += 1 }
+            return
+        }
+        isHoldRecording = false
+        holdCapturing = false
+        if let tail = audio.stopCapture() { holdPCM.append(tail) }
+        waveLevel = 0
+        state = .idle
+        let gen = holdGen
+        let pcm = holdPCM
+        let frames = holdFrames
+        holdPCM = Data()
+        holdFrames.removeAll(keepingCapacity: true)
+        if cancelled {
+            vlog("hold cancelled")
+            return
+        }
+        let duration = Date().timeIntervalSince(holdStartedAt)
+        guard duration >= holdTalkMinSeconds else {
+            ToastCenter.shared.show("说话时间太短")
+            return
+        }
+        switch NearFieldGate.judgeHoldSpan(frames: frames, sensitivity: nearFieldSensitivity) {
+        case .tooShort:
+            vlog("hold too short: frames=\(frames.count) duration=\(fmt3(duration))s")
+            ToastCenter.shared.show("说话时间太短")
+            return
+        case .reject:
+            vlog("hold dropped: near-field gate frames=\(frames.count)")
+            notifyNearFieldIgnored()
+            return
+        case .accept:
+            break
+        }
+        guard !pcm.isEmpty else {
+            ToastCenter.shared.show("说话时间太短")
+            return
+        }
+        isHoldTranscribing = true
+        defer { if gen == holdGen { isHoldTranscribing = false } }
+        do {
+            let text = try await transcribeHold(pcm, baseURL: holdBaseURL, token: holdToken)
+            guard gen == holdGen, holdModeActive else { return }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            vlog("hold done chars=\(trimmed.count) audio=\(fmt3(Double(pcm.count) / 32000))s")
+            guard !trimmed.isEmpty else {
+                ToastCenter.shared.show("没有听清，请再说一次")
+                return
+            }
+            onHoldSentence?(trimmed)
+        } catch {
+            guard gen == holdGen else { return }
+            LogBuffer.shared.error("voice hold transcribe failed: \(error.localizedDescription)")
+            ToastCenter.shared.show("语音识别失败")
+        }
+    }
+
+    /// 把整段 PCM 灌进一条短连接：松手才建连，吐完即断。
+    private func transcribeHold(_ pcm: Data, baseURL: String, token: String) async throws -> String {
+        let ticket = try await APIClient(baseURL: baseURL, token: token).createVoiceASRTicket().ticket
+        guard let url = websocketURL(baseURL: baseURL, ticket: ticket, continuous: true) else {
+            throw NSError(domain: "VoiceChatService", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "服务地址无效"])
+        }
+        let task = URLSession.shared.webSocketTask(with: url)
+        task.resume()
+        defer { task.cancel(with: .normalClosure, reason: nil) }
+        // 灌入不按实时节拍：豆包接受快于实时的音频（6.2s 音频 0.79s 出 final）
+        let chunkSize = 6400
+        var offset = 0
+        while offset < pcm.count {
+            let end = min(offset + chunkSize, pcm.count)
+            try await task.send(.data(pcm.subdata(in: offset..<end)))
+            offset = end
+        }
+        try await task.send(.string("{\"type\":\"end\"}"))
+        // 兜底：服务端吐完会主动关连接；真卡住也不能把 UI 挂死
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(15))
+            task.cancel(with: .normalClosure, reason: nil)
+        }
+        defer { watchdog.cancel() }
+        var text = ""
+        while true {
+            let message: URLSessionWebSocketTask.Message
+            do {
+                message = try await task.receive()
+            } catch {
+                // 服务端吐完分句后主动关连接：正常收尾
+                vlog("hold ws closed: \(error.localizedDescription)")
+                break
+            }
+            guard case .string(let raw) = message, let data = raw.data(using: .utf8) else { continue }
+            let parsed: VoiceSocketMessage
+            do {
+                parsed = try JSONDecoder().decode(VoiceSocketMessage.self, from: data)
+            } catch {
+                LogBuffer.shared.warning("voice hold frame undecodable: \(error.localizedDescription)")
+                continue
+            }
+            switch parsed.type {
+            case "sentence":
+                if let value = parsed.text { text += value }
+            case "error":
+                throw NSError(domain: "VoiceChatService", code: -2,
+                              userInfo: [NSLocalizedDescriptionKey: parsed.error ?? "语音识别失败"])
+            default:
+                break
+            }
+        }
+        return text
+    }
+
+    /// 硬拆长按采集（退出语音 / 切档）：丢掉本次录音。
+    private func abortHold() {
+        holdCapturing = false
+        isHoldRecording = false
+        isHoldTranscribing = false
+        holdPCM = Data()
+        holdFrames.removeAll(keepingCapacity: true)
+        if state == .recording {
+            _ = detachCapture()
+        }
+        waveLevel = 0
     }
 
     /// 空闲收口：一直没人说话就别占着豆包并发、白扣音频时长。
@@ -828,6 +1085,15 @@ final class VoiceChatService: ObservableObject {
     // MARK: 内部
 
     private func sendAudio(_ data: Data) {
+        // 长按说话：本地累积，松手才建连整段灌入
+        if holdCapturing {
+            holdPCM.append(data)
+            if holdPCM.count >= 16000 * 2 * holdTalkMaxSeconds {
+                ToastCenter.shared.show("已到 60 秒，自动发送")
+                Task { await self.finishHoldTalk(cancelled: false) }
+            }
+            return
+        }
         // 只接受 recording：stop() 之后的音频帧（含排队中的 Task）一律丢弃，
         // 尾巴由 stop() 通过 sendTailThenEnd 保证排在 end 之前。
         guard state == .recording, let socket else {
@@ -945,9 +1211,11 @@ final class VoiceChatService: ObservableObject {
             if let value = msg.text { transcript = value }
             if msg.final == true { finishTurn() }
         case "voice":
-            // 服务端听到非空识别结果（含未判停的 partial）才发这个：空闲收口据此顺延。
-            // 不用麦克风电平猜——环境噪声会一直续命，远场长句又会被误收。
-            lastVoiceAt = Date()
+            // 服务端听到非空识别结果（含未判停的 partial）才发这个：只有近处的人声才顺延空闲收口。
+            // 远处噪声（隔壁说话/嗑瓜子/收拾桌子）也会被 ASR 识别成文本，不能给它续命。
+            if NearFieldGate.shouldKeepAlive(frames: levelHistory, sensitivity: nearFieldSensitivity) {
+                lastVoiceAt = Date()
+            }
             // 松手后 partial 还在变，说明最后半句没吐完：重置 1.5s 尾巴窗口
             if heldAwaitingTail { armHeldTail() }
         case "limit":
@@ -987,6 +1255,7 @@ final class VoiceChatService: ObservableObject {
 
     private func fail(_ message: String) {
         vlog("fail: \(message) state=\(state) active=\(continuousActive)")
+        isSwitchingMode = false
         if continuousActive {
             endContinuous(reason: message)
             return

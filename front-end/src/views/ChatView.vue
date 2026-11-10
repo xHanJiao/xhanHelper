@@ -98,8 +98,11 @@ const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream } = useChatSSE()
 const nMessage = useMessage()
-// 语音：连续对话。点麦克风开一条连续会话，判停一句就提交一轮、回复自动朗读；
-// 浮层「打断」只停朗读（会话保留），「结束对话」才收会话。
+const { isMobile } = useMobile()
+const { isIOS } = useDevice()
+// 语音：连续对话 / 录音发送（移动端长按说话、桌面端点击说话）两档。
+// 连续档点麦克风开一条连续会话，判停一句就提交一轮、回复自动朗读；
+// 录音档只在本地录音、松手/再点一下整段识别出字，不朗读。浮层「打断」只停朗读（会话保留），「结束对话」才收会话。
 const {
   available: voiceAvailable,
   active: voiceActive,
@@ -108,30 +111,42 @@ const {
   speaking: voiceSpeaking,
   preparing: voicePreparing,
   refresh: refreshVoice,
-  start: startVoice,
+  enter: enterVoice,
+  switchMode: switchVoiceMode,
   stop: stopVoice,
   cancel: cancelVoice,
   speechSentences: voiceSpeechSentences,
   speechIndex: voiceSpeechIndex,
   holding: voiceHolding,
+  mode: voiceMode,
+  holdRecording: voiceHoldRecording,
+  holdTranscribing: voiceHoldTranscribing,
+  switching: voiceSwitching,
   hasHeld: voiceHasHeld,
   startHold: startVoiceHold,
   endHold: endVoiceHold,
+  startHoldTalk: startVoiceHoldTalk,
+  stopHoldTalk: stopVoiceHoldTalk,
   appendReplyDelta: appendVoiceReply,
   endReplyStream: endVoiceReply,
   stopSpeaking
 } = useVoiceChat({
   onSentence: submitVoiceSentence,
+  onHoldSentence: submitHoldSentence,
   onError: (message) => nMessage.error(message),
   onNotice: (message) => nMessage.info(message),
   isBusy: () => chat.isStreaming
 })
 
-// 音波条状态：说 > 想 > 听。「想」包含 TTS 合成期（preparing），
+// 语音条是否"占着"输入区。切档过渡期（旧链路已拆、新档还在建连）active 会是 false，
+// 这时不能把波形条换回输入框，否则切一下闪一下。
+const voiceBarOpen = computed(() => voiceActive.value || voiceSwitching.value)
+
+// 音波条状态：说 > 想 > 听。「想」包含 TTS 合成期（preparing）与长按松手后的识别期，
 // 否则回复流刚结束、音频还没到时会先闪回「听」。
 const voicePhase = computed(() => {
   if (voiceSpeaking.value) return 'speaking'
-  if (chat.isStreaming || voicePreparing.value) return 'thinking'
+  if (chat.isStreaming || voicePreparing.value || voiceHoldTranscribing.value) return 'thinking'
   return 'listening'
 })
 
@@ -161,37 +176,51 @@ function endVoiceSession() {
   voiceExitFlush = false
 }
 
-// 按住说：空格按住/松开，按钮点击切换。两者共用同一对 startHold/endHold。
-function toggleVoiceHold() {
-  if (voiceHolding.value) endVoiceHold()
-  else startVoiceHold()
-}
-
+// 空格接管：连续档按住/松开暂存；录音档按一下开始、再按一下发送（桌面端）。
+// 空格只在「不是在跟界面控件打交道」时接管：输入框、可编辑区、按钮、链接都算
 function isTextEntryTarget(target) {
-  if (!(target instanceof HTMLElement)) return false
-  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+  if (!(target instanceof Element)) return false
+  if (target.isContentEditable) return true
+  return !!target.closest('input, textarea, button, a, [role="button"], [contenteditable="true"]')
 }
 
 function onVoiceKeyDown(e) {
-  if (!voiceActive.value || e.code !== 'Space' || e.isComposing) return
+  if (!voiceActive.value) return
+  // Esc：录音中丢弃本次（移动端有上滑，桌面端靠它）
+  if (e.key === 'Escape') {
+    if (voiceHoldRecording.value) {
+      e.preventDefault()
+      holdCancelArmed.value = false
+      stopVoiceHoldTalk({ cancelled: true })
+    }
+    return
+  }
+  if (e.code !== 'Space' || e.isComposing) return
   if (e.repeat) {
     // 按住期间的空格自动重复也要拦下，别漏给页面滚动
-    if (voiceHolding.value) e.preventDefault()
+    if (voiceHolding.value || voiceHoldRecording.value) e.preventDefault()
     return
   }
   if (isTextEntryTarget(e.target)) return
   e.preventDefault()
+  if (voiceMode.value === 'hold') {
+    // 桌面端是两态按钮：空格也按「一下开始 / 一下发送」
+    if (voiceHoldRecording.value) stopVoiceHoldTalk({ cancelled: false })
+    else startVoiceHoldTalk()
+    return
+  }
   if (!voiceHolding.value) startVoiceHold()
 }
 
 function onVoiceKeyUp(e) {
   if (!voiceActive.value || e.code !== 'Space') return
-  // 先收本监听器开出的 hold，再看焦点：按住中途焦点移进输入框时，松开也必须收尾
+  // 连续档：先收本监听器开出的 hold，再看焦点：按住中途焦点移进输入框时，松开也必须收尾
   if (voiceHolding.value) {
     e.preventDefault()
     endVoiceHold()
     return
   }
+  if (voiceMode.value === 'hold') return
   if (isTextEntryTarget(e.target)) return
   e.preventDefault()
   endVoiceHold()
@@ -199,9 +228,72 @@ function onVoiceKeyUp(e) {
 
 function onVoiceWindowBlur() {
   if (voiceHolding.value) endVoiceHold()
+  // 移动端按住录音时切走 = 手指不在了，丢弃；桌面端是两态录音，切窗口不能把录了一半的话丢掉
+  if (isMobile.value) onHoldTalkCancel()
 }
-const { isMobile } = useMobile()
-const { isIOS } = useDevice()
+
+// 录音发送档：移动端按住录音、松手整段识别，上滑 60px 进取消区（松手丢弃）；
+// 桌面端是两态按钮，点一下开始、再点一下发送，录音中左侧出现取消钮（Esc 同取消）。
+const holdPointerStartY = ref(0)
+const holdCancelArmed = ref(false)
+
+function onHoldTalkPointerDown(e) {
+  if (!isMobile.value || voiceMode.value !== 'hold') return
+  // 只在移动端拦默认行为：桌面端靠 click 切两态，别把 click 也一并拦掉
+  e.preventDefault()
+  holdPointerStartY.value = e.clientY
+  holdCancelArmed.value = false
+  // 没有指针捕获的话，手指移出按钮后 pointerup 会丢（iOS PWA 尤其明显）
+  e.currentTarget?.setPointerCapture?.(e.pointerId)
+  startVoiceHoldTalk()
+}
+
+function onHoldTalkPointerMove(e) {
+  if (!isMobile.value || !voiceHoldRecording.value) return
+  holdCancelArmed.value = holdPointerStartY.value - e.clientY > 60
+}
+
+function onHoldTalkPointerUp() {
+  if (!isMobile.value || !voiceHoldRecording.value) return
+  const cancelled = holdCancelArmed.value
+  holdCancelArmed.value = false
+  stopVoiceHoldTalk({ cancelled })
+}
+
+function onHoldTalkPointerCancel() {
+  if (!isMobile.value || !voiceHoldRecording.value) return
+  holdCancelArmed.value = false
+  stopVoiceHoldTalk({ cancelled: true })
+}
+
+// 桌面端两态按钮：点一下开始录音，再点一下停止并发送
+function onHoldTalkToggle() {
+  if (isMobile.value || voiceMode.value !== 'hold') return
+  if (voiceHoldRecording.value) stopVoiceHoldTalk({ cancelled: false })
+  else startVoiceHoldTalk()
+}
+
+function onHoldTalkCancel() {
+  if (!voiceHoldRecording.value) return
+  holdCancelArmed.value = false
+  stopVoiceHoldTalk({ cancelled: true })
+}
+
+const holdTalkLabel = computed(() => {
+  if (voiceHoldRecording.value) {
+    if (!isMobile.value) return '点击发送'
+    return holdCancelArmed.value ? '松开手指取消发送' : '松开发送'
+  }
+  return isMobile.value ? '长按说话' : '点击开始录音'
+})
+
+const holdTalkTooltip = computed(() => {
+  if (voiceHoldRecording.value) {
+    if (!isMobile.value) return '点击发送（Esc 取消）'
+    return holdCancelArmed.value ? '松开手指，取消发送' : '松开发送'
+  }
+  return isMobile.value ? '长按说话：按住录音，松手出字（上滑取消）' : '点击开始录音（再点发送，Esc 取消）'
+})
 
 onMounted(() => {
   fetchAgents()
@@ -555,6 +647,8 @@ function onVisibilityChange() {
   if (document.visibilityState === 'hidden') {
     // 冻结期间浏览器会攒着定时器、恢复时立刻补触发：先暂停看门狗，别误报超时
     setSuspended(true)
+    // 移动端按住录音时切后台/锁屏（iOS PWA 不一定触发 window blur）：丢掉这段并放掉麦克风
+    if (isMobile.value) onHoldTalkCancel()
     return
   }
   setSuspended(false)
@@ -888,8 +982,8 @@ async function handleSend() {
   })
 }
 
-// 麦克风按钮 = 连续对话开关。会话中再点是「结束」（发 end，让最后一句识别完），
-// 不是 cancel：cancel 会把已经识别出来的文本整段丢掉（见 docs/bugs/049）。
+// 麦克风按钮 = 进入语音条（按上次的档位）。语音条里再点是「结束」：
+// 连续档发 end 让最后一句识别完；cancel 会把已经识别出来的文本整段丢掉（见 docs/bugs/049）。
 async function toggleVoice() {
   if (voiceActive.value) {
     endVoiceSession()
@@ -898,10 +992,15 @@ async function toggleVoice() {
   if (voiceCalling.value) return
   if (voiceSpeaking.value) stopSpeaking()
   try {
-    await startVoice()
+    await enterVoice()
   } catch (err) {
     nMessage.error(`无法开始语音对话：${err?.message || '麦克风不可用'}`)
   }
+}
+
+// 两段式胶囊只切档，不录音。切档时如果语音条开着，composable 会拆旧链路按新档位重开。
+function onSwitchVoiceMode(next) {
+  switchVoiceMode(next)
 }
 
 /// 停掉本地 SSE 流，保留已经生成的部分。
@@ -941,6 +1040,31 @@ async function submitVoiceSentence(text) {
       onAssistantReplyDelta: (text) => appendVoiceReply(text),
       onAssistantReply: (reply, ok = true) => (ok ? endVoiceReply(reply) : stopSpeaking())
     })
+  })
+}
+
+// 长按说话：一次松手 = 一轮。与连续档的区别是**不挂 TTS 回调**，回复只进气泡不朗读。
+async function submitHoldSentence(text) {
+  const content = String(text || '').trim()
+  if (!content) return
+  // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
+  stopSpeaking()
+  if (chat.isStreaming) stopLocalStream()
+  chat.addMessage({
+    id: `voice-${Date.now()}`,
+    role: 'user',
+    content,
+    imageIds: [],
+    created_at: new Date().toISOString()
+  })
+  await sendMessage(content, {
+    conversationId: chat.conversationId,
+    agentId: chat.agentId,
+    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+    initMode: chat.conversationId ? undefined : chat.mode,
+    ephemeral: chat.conversationId ? false : chat.ephemeral,
+    // 仍走语音轮的短回答约束，但不出声
+    voiceMode: true
   })
 }
 
@@ -1276,7 +1400,7 @@ function handleContainerClick(e) {
           borderTop: 'none',
           flexShrink: 0,
           height: inputVisible ? 'auto' : '0',
-          overflow: 'hidden',
+          overflow: inputVisible ? 'visible' : 'hidden',
           opacity: inputVisible ? 1 : 0,
           transform: inputVisible ? 'scaleY(1)' : 'scaleY(0.8)',
           transformOrigin: 'bottom right',
@@ -1287,7 +1411,7 @@ function handleContainerClick(e) {
           borderTop: 'none',
           flexShrink: 0,
           height: inputVisible ? 'auto' : '0',
-          overflow: 'hidden',
+          overflow: inputVisible ? 'visible' : 'hidden',
           opacity: inputVisible ? 1 : 0,
           transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out'
         }
@@ -1302,6 +1426,10 @@ function handleContainerClick(e) {
         @change="onFilesChosen"
       />
       <div class="chat-composer-card" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
+        <!-- 移动端上滑取消提示：浮在输入卡上方，不占布局 -->
+        <div v-if="isMobile && voiceHoldRecording" class="hold-hint" :class="{ armed: holdCancelArmed }">
+          {{ holdCancelArmed ? '松开取消' : '上滑取消' }}
+        </div>
         <AttachmentTray
           v-if="draftImages.length"
           :items="draftImages"
@@ -1312,7 +1440,7 @@ function handleContainerClick(e) {
           @clear="clearDrafts"
         />
         <VoiceWaveLine
-          v-if="voiceActive"
+          v-if="voiceBarOpen"
           :phase="voicePhase"
           :level="voiceLevel"
           @interrupt="voiceInterrupt"
@@ -1329,8 +1457,8 @@ function handleContainerClick(e) {
           :bordered="false"
           style="background: transparent; flex: 1;"
         />
-        <div class="composer-row" :class="{ 'voice-row': voiceActive }">
-          <template v-if="!voiceActive">
+        <div class="composer-row" :class="{ 'voice-row': voiceBarOpen }">
+          <template v-if="!voiceBarOpen">
             <div class="composer-left">
               <NTooltip v-if="voiceAvailable" :disabled="isMobile" placement="top">
                 <template #trigger>
@@ -1342,7 +1470,7 @@ function handleContainerClick(e) {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
                   </button>
                 </template>
-                {{ voiceActive ? '结束语音对话' : '语音对话（连续对话）' }}
+                {{ voiceActive ? '结束语音对话' : (voiceMode === 'hold' ? (isMobile ? '语音对话（长按说话）' : '语音对话（点击说话）') : '语音对话（连续对话）') }}
               </NTooltip>
               <NTooltip :disabled="isMobile" placement="top">
                 <template #trigger>
@@ -1391,17 +1519,49 @@ function handleContainerClick(e) {
             </div>
           </template>
           <div v-else class="voice-group">
-            <NTooltip :disabled="isMobile" placement="top">
+            <!-- 录音发送档：移动端「长按说话」小手；桌面端「点击说话」两态按钮 -->
+            <NTooltip v-if="voiceMode === 'hold'" :disabled="isMobile" placement="top">
               <template #trigger>
-                <button class="icon-pill hold-btn" :class="{ holding: voiceHolding }" type="button"
-                  :aria-label="voiceHolding ? '松开后整段提交' : '按住说'"
-                  :aria-pressed="voiceHolding"
-                  @click="toggleVoiceHold">
-                  <span class="hold-icon" aria-hidden="true"></span>
-                </button>
+                <span class="hold-slot">
+                  <!-- 桌面端：录音中才出现，点它丢弃本次 -->
+                  <button v-if="!isMobile && voiceHoldRecording" class="icon-pill hold-cancel" type="button"
+                    aria-label="取消本次发送" @click="onHoldTalkCancel">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round">
+                      <path d="M7 7l10 10M17 7L7 17"/>
+                    </svg>
+                  </button>
+                  <button class="icon-pill hold-btn"
+                    :class="{ holding: voiceHoldRecording, cancel: isMobile && holdCancelArmed, recording: !isMobile && voiceHoldRecording }"
+                    type="button"
+                    :aria-label="holdTalkLabel"
+                    :aria-pressed="voiceHoldRecording"
+                    :disabled="voiceHoldTranscribing"
+                    @pointerdown="onHoldTalkPointerDown"
+                    @pointermove="onHoldTalkPointerMove"
+                    @pointerup="onHoldTalkPointerUp"
+                    @pointercancel="onHoldTalkPointerCancel"
+                    @click="onHoldTalkToggle"
+                    @contextmenu.prevent>
+                    <span v-if="isMobile" class="hold-icon" aria-hidden="true"></span>
+                    <svg v-else-if="!voiceHoldRecording" class="hold-mic" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="9" y="3" width="6" height="11" rx="3"/>
+                      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/>
+                      <path d="M12 18v3"/>
+                    </svg>
+                    <span v-else class="stop-core" aria-hidden="true"></span>
+                  </button>
+                </span>
               </template>
-              {{ voiceHolding ? '松开后整段提交' : '按住期间停顿不触发提交，松开后整段提交' }}
+              {{ holdTalkTooltip }}
             </NTooltip>
+            <!-- 两段式胶囊：只切档，不录音 -->
+            <div class="mode-switch" role="group" aria-label="语音模式">
+              <button class="seg" :class="{ on: voiceMode === 'continuous' }" type="button"
+                :aria-pressed="voiceMode === 'continuous'" @click="onSwitchVoiceMode('continuous')">连续对话</button>
+              <button class="seg" :class="{ on: voiceMode === 'hold' }" type="button"
+                :aria-pressed="voiceMode === 'hold'" @click="onSwitchVoiceMode('hold')">{{ isMobile ? '长按说话' : '点击说话' }}</button>
+            </div>
             <NTooltip v-if="!chat.isStreaming" :disabled="isMobile" placement="top">
               <template #trigger>
                 <button class="icon-pill voice-continuous" type="button" aria-label="退出语音对话" @click="endVoiceSession">
@@ -1472,6 +1632,7 @@ function handleContainerClick(e) {
   position: relative;
 }
 .chat-composer-card {
+  position: relative;
   border: 0.5px solid var(--color-border);
   border-radius: 22px;
   padding: 8px 10px;
@@ -1528,8 +1689,40 @@ function handleContainerClick(e) {
 .icon-pill.hold-btn,
 .icon-pill.voice-continuous,
 .icon-pill.voice-stop { width: 36px; height: 36px; }
-.icon-pill.hold-btn { position: relative; color: var(--color-primary); }
-.icon-pill.hold-btn:hover:not(:disabled) { background: var(--color-primary-soft); }
+.icon-pill.hold-btn { position: relative; color: var(--color-primary); background: var(--color-primary-soft); border-color: var(--color-border); touch-action: none; }
+.icon-pill.hold-btn:hover:not(:disabled) { background: var(--color-primary-soft); border-color: var(--color-primary); }
+/* 模式切换：两段式胶囊，当前档高亮（只切档，不录音） */
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-primary-soft);
+}
+.seg {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+.seg:hover { color: var(--color-primary); }
+.seg.on {
+  background: var(--color-surface-strong);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+[data-theme="dark"] .seg.on { background: rgba(255, 255, 255, 0.12); }
 /* SF Symbol hand.tap 的位图蒙版，跟随 currentColor（与 mockup 同源） */
 .hold-icon {
   width: 21px;
@@ -1555,6 +1748,64 @@ function handleContainerClick(e) {
 @keyframes hold-pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 42%, transparent); }
   50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+}
+/* 移动端滑进取消区 / 桌面端录音中：红底白图标，停掉绿色呼吸（必须写在 .holding 之后才盖得住） */
+.icon-pill.hold-btn.cancel,
+.icon-pill.hold-btn.cancel:hover:not(:disabled),
+.icon-pill.hold-btn.recording,
+.icon-pill.hold-btn.recording:hover:not(:disabled) {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+  animation: none;
+}
+.icon-pill.hold-btn.cancel::before,
+.icon-pill.hold-btn.recording::before { border-color: rgba(255, 255, 255, 0.5); }
+.icon-pill.hold-btn .hold-mic { width: 20px; height: 20px; display: block; }
+.icon-pill.hold-btn .stop-core { width: 13px; height: 13px; border-radius: 3px; background: currentColor; }
+/* 桌面端：录音中才出现在麦克风左边的「取消本次」（绝对定位，不挤动按钮） */
+.hold-slot { position: relative; display: inline-flex; }
+.icon-pill.hold-cancel {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 6px);
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0.5px solid color-mix(in srgb, var(--color-danger) 34%, transparent);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.icon-pill.hold-cancel:hover:not(:disabled) {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+.icon-pill.hold-cancel svg { width: 17px; height: 17px; }
+/* 移动端：上滑取消提示（浮在输入卡上方，不占布局） */
+.hold-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-surface-strong);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  /* 高于「↓ 回到底部」按钮（101），否则看历史时它正好盖住提示 */
+  z-index: 102;
+}
+.hold-hint.armed {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
 }
 .icon-pill.voice-continuous { color: var(--color-danger); }
 .icon-pill.voice-continuous:hover:not(:disabled) {

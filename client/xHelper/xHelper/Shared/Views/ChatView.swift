@@ -122,7 +122,7 @@ struct ChatView: View {
     /// 否则回复流刚结束、音频还没到时会先闪回「听」。
     private var voiceWavePhase: VoiceWaveLine.Phase {
         if voice.isSpeaking { return .speaking }
-        if viewModel.isStreaming || voice.isPreparingSpeech { return .thinking }
+        if viewModel.isStreaming || voice.isPreparingSpeech || voice.isHoldTranscribing { return .thinking }
         return .listening
     }
 
@@ -132,9 +132,9 @@ struct ChatView: View {
         return SpeechProgress(sentences: voice.speechSentences, index: voice.speechIndex)
     }
 
-    /// 语音会话期间顶替输入栏文本行的音波条（iOS 没有连续对话入口，恒为 nil）。
+    /// 语音会话期间顶替输入栏文本行的音波条（两档共用；iOS 没有连续对话入口，恒为 nil）。
     private var voiceStripSlot: AnyView? {
-        guard voice.continuousActive else { return nil }
+        guard voice.voiceBarActive else { return nil }
         return AnyView(VoiceWaveLine(phase: voiceWavePhase, level: { voice.waveLevel },
                                      onInterrupt: { voice.stopSpeaking() }))
     }
@@ -255,6 +255,19 @@ struct ChatView: View {
                 viewModel.sendMessage(text, baseURL: baseURL, token: token,
                                       agentId: selectedAgentID ?? agentId,
                                       speakReply: !exitingVoice)
+            }
+            // 长按说话：一次松手 = 一轮，回复只进气泡不朗读（speakReply: false + voiceMode: true）
+            voice.onHoldSentence = { text in
+                LogBuffer.shared.diag("[voice] submit hold sentence: chars=\(text.count) " +
+                                      "streaming=\(viewModel.isStreaming)")
+                // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
+                voice.stopSpeaking()
+                if viewModel.isStreaming {
+                    viewModel.stopStreaming(notifyServer: false)
+                }
+                viewModel.sendMessage(text, baseURL: baseURL, token: token,
+                                      agentId: selectedAgentID ?? agentId,
+                                      speakReply: false, voiceMode: true)
             }
             // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
             voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
@@ -484,26 +497,60 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.18), value: inputBarExtrasExpanded)
     }
 
-    /// 空格按住/松开：只在当前 tab、连续对话开着、且焦点不在文本输入时接管。
-    /// 接管时吞掉事件，避免空格滚动页面。
+    /// 空格：连续档按住/松开暂存，录音档按一下开始 / 再按一下发送；Esc 取消本次录音。
+    /// 只在当前 tab、语音条开着、且焦点不在文本输入时接管；接管时吞掉事件，避免空格滚动页面。
     #if os(macOS)
     private func installSpaceHoldMonitor() {
         guard spaceKeyMonitor == nil else { return }
         spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
             var swallow = false
             MainActor.assumeIsolated {
-                guard event.keyCode == 49, event.window === hostWindow,
-                      isCurrentTab, voice.continuousActive else { return }
-                // 按住期间的空格自动重复也要吞掉，别漏给响应链去滚页面
+                guard event.window === hostWindow,
+                      isCurrentTab, voice.voiceBarActive else { return }
+                // 切档过渡期还没有会话：空格既不暂存也不吞，交给响应链
+                if voice.isSwitchingMode { return }
+                let holdMode = voice.mode == .hold
+
+                // Esc：录音中丢弃本次（移动端有上滑，桌面端靠它）
+                if event.type == .keyDown, event.keyCode == 53 {
+                    if voice.isHoldRecording {
+                        swallow = true
+                        Task { await voice.finishHoldTalk(cancelled: true) }
+                    }
+                    return
+                }
+
+                guard event.keyCode == 49 else { return }
+
+                if holdMode {
+                    // 焦点在文本框时完全放行（长按空格要能连续输入）
+                    if let responder = NSApp.keyWindow?.firstResponder,
+                       responder is NSText || responder is NSTextView {
+                        return
+                    }
+                    // 两态按钮：空格按一下开始、再按一下发送。抬手与自动重复一律吞掉，别漏给响应链。
+                    if event.isARepeat || event.type == .keyUp {
+                        swallow = true
+                        return
+                    }
+                    swallow = true
+                    if voice.isHoldRecording {
+                        Task { await voice.finishHoldTalk(cancelled: false) }
+                    } else {
+                        Task { await voice.startHoldTalk(baseURL: baseURL, token: token) }
+                    }
+                    return
+                }
+
+                // 连续档：按住暂存、松手提交
                 if event.isARepeat {
                     if voice.isHolding { swallow = true }
                     return
                 }
-                // keyUp 先收 hold 再看焦点：按住中途焦点移进文本框时，松开也必须能收尾
                 if event.type == .keyUp {
                     if voice.isHolding {
-                        voice.endHold()
                         swallow = true
+                        voice.endHold()
                     }
                     return
                 }
@@ -517,6 +564,7 @@ struct ChatView: View {
             return swallow ? nil : event
         }
         // 切走窗口会丢 keyUp：强制收 hold，避免回来还卡在暂存态
+        // （录音档是两态按钮，切窗口不取消录音——录到一半切个窗口不该丢）
         resignActiveObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { _ in
@@ -539,17 +587,52 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        if voice.continuousActive {
-            // 始终保持两个按钮：按住说 + （生成中？停止 : 退出语音对话）
+        if voice.voiceBarActive {
+            // 两档共用一行：录音档多一个麦克风（两态：开始/发送），录音中它左边浮出「取消本次」；
+            // 胶囊只切档；第三个按钮生成中变停止，否则退出语音。
+            // 三个键都用 IconButton：22pt 字形 + 34pt 命中区，与行里其它按钮同尺寸。
+            // 录音中用 stop.circle.fill 而不是 stop.fill：生成中的「停止生成」是 stop.fill，
+            // 同一行两个同形同色的键容易点错。
             HStack(spacing: 4) {
-                HoldToTalkButton(
-                    context: ctx,
-                    isHolding: voice.isHolding,
-                    isEnabled: !voice.isBusy,
-                    action: {
-                        if voice.isHolding { voice.endHold() } else { voice.startHold() }
+                if voice.mode == .hold {
+                    IconButton(
+                        visibility: .always,
+                        context: ctx,
+                        symbol: voice.isHoldRecording ? "stop.circle.fill" : "mic",
+                        tint: voice.isHoldRecording ? .red : Color("appAccent"),
+                        isEnabled: !voice.isHoldTranscribing,
+                        tooltip: voice.isHoldRecording
+                            ? "点击发送（Esc 取消）"
+                            : "点击开始录音（再点发送，Esc 取消）",
+                        pulsing: voice.isHoldRecording,
+                        hoverBackground: (voice.isHoldRecording ? Color.red : Color("appAccent")).opacity(0.12)
+                    ) {
+                        if voice.isHoldRecording {
+                            Task { await voice.finishHoldTalk(cancelled: false) }
+                        } else {
+                            Task { await voice.startHoldTalk(baseURL: baseURL, token: token) }
+                        }
                     }
-                )
+                    .overlay(alignment: .leading) {
+                        // 不占布局：占位会让录音键在开始录音时从鼠标底下右移
+                        if voice.isHoldRecording {
+                            IconButton(
+                                visibility: .always,
+                                context: ctx,
+                                symbol: "xmark",
+                                tint: .red,
+                                tooltip: "取消本次发送（Esc）",
+                                hoverBackground: Color.red.opacity(0.12)
+                            ) {
+                                Task { await voice.finishHoldTalk(cancelled: true) }
+                            }
+                            .offset(x: -38)
+                        }
+                    }
+                }
+                VoiceModeCapsule(mode: voice.mode) { next in
+                    voice.switchMode(next, baseURL: baseURL, token: token)
+                }
                 if viewModel.isStreaming {
                     IconButton(
                         visibility: .always,
@@ -592,7 +675,7 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarExtrasRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        if !voice.continuousActive && inputBarExtrasExpanded && !collapsedInExtras.isEmpty {
+        if !voice.voiceBarActive && inputBarExtrasExpanded && !collapsedInExtras.isEmpty {
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
                 ForEach(collapsedInExtras, id: \.self) { id in
@@ -789,7 +872,7 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarBottomLeading(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        if !voice.continuousActive {
+        if !voice.voiceBarActive {
             // 上下文占用圆环：底部左侧，hover 出自定义浮层（token + 金额）。
             ContextRingBadge(
                 contextTokens: viewModel.contextTokens,
@@ -825,7 +908,7 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarTrailingActions(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        if voice.continuousActive {
+        if voice.voiceBarActive {
             // 语音模式：停止键放进居中的按钮组（状态行），这里留空
             EmptyView()
         } else {
@@ -865,22 +948,26 @@ struct ChatView: View {
         #endif
     }
 
-    /// 连续对话开关：正常模式是绿色波形圈；语音模式变成红色「退出语音对话」。
+    /// 语音条开关：正常模式是绿色波形圈；语音模式变成红色「退出语音对话」。
+    /// 进入按上次的档位（连续对话 / 长按说话）。
     @ViewBuilder
     private func voiceContinuousButton(_ ctx: InputBarContext) -> some View {
-        let inVoice = voice.continuousActive
+        let inVoice = voice.voiceBarActive
         IconButton(
             visibility: .always,
             context: ctx,
             symbol: "waveform.circle",
             tint: inVoice ? .red : Color("appAccent"),
-            isEnabled: !voice.isBusy,
-            tooltip: inVoice ? "退出语音对话" : "连续对话",
+            // 切档过渡期（state 已到 .requestingPermission）也要能退出；其余沿用原来的忙禁
+            isEnabled: voice.isSwitchingMode || !voice.isBusy,
+            tooltip: inVoice ? "退出语音对话" : (voice.mode == .hold ? "点击说话" : "连续对话"),
             pulsing: !inVoice && voice.state == .finishing,
             hoverBackground: inVoice ? .red.opacity(0.12) : nil,
             action: {
-                if voice.continuousActive {
-                    endContinuousVoice()
+                if voice.voiceBarActive {
+                    endVoiceSession()
+                } else if voice.mode == .hold {
+                    voice.enterHoldMode()
                 } else {
                     Task { await voice.startContinuous(baseURL: baseURL, token: token) }
                 }
@@ -888,9 +975,9 @@ struct ChatView: View {
         )
     }
 
-    /// 结束连续语音会话：停采集、停生成、停朗读。
+    /// 结束语音条（两档共用）：停采集、停生成、停朗读。
     /// 输入栏按钮和浮层「结束」必须走同一条路径——只调 stopContinuous 会让正在播的回复继续念完。
-    private func endContinuousVoice() {
+    private func endVoiceSession() {
         // 先停退出前那轮，再 flush 暂存；否则刚提交的新轮会被随后的 stopStreaming 一起停掉。
         // flush 会产出一轮时不发 /api/chat/stop（迟到的 stop 会误杀新轮），交给服务端 Register 顶掉旧 loop。
         // flush 期间 exitingVoice = true，onSentence 用 speakReply: false 提交，不朗读。
@@ -899,7 +986,7 @@ struct ChatView: View {
             viewModel.stopStreaming(notifyServer: !willFlush)
         }
         exitingVoice = true
-        voice.stopContinuous()
+        voice.exitVoiceMode()
         exitingVoice = false
         voice.stopSpeaking()
     }

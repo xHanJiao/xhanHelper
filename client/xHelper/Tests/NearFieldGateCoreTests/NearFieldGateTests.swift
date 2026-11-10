@@ -100,6 +100,59 @@ final class NearFieldGateTests: XCTestCase {
                                                  now: t0.addingTimeInterval(2.0)))
     }
 
+    func testKeepAliveFarFieldRejectedNearFieldAccepted() {
+        let now = t0.addingTimeInterval(0.5)
+        XCTAssertFalse(NearFieldGate.shouldKeepAlive(frames: frames(0.006, 10),
+                                                    sensitivity: .standard, now: now))
+        XCTAssertTrue(NearFieldGate.shouldKeepAlive(frames: frames(0.21, 10),
+                                                    sensitivity: .standard, now: now))
+    }
+
+    func testKeepAliveOffAlwaysTrue() {
+        XCTAssertTrue(NearFieldGate.shouldKeepAlive(frames: frames(0.001, 10),
+                                                    sensitivity: .off,
+                                                    now: t0.addingTimeInterval(0.5)))
+    }
+
+    func testKeepAliveGatedFramesIgnored() {
+        XCTAssertFalse(NearFieldGate.shouldKeepAlive(frames: frames(0.3, 10, gated: true),
+                                                     sensitivity: .standard,
+                                                     now: t0.addingTimeInterval(0.5)))
+    }
+
+    func testKeepAliveStaleFramesRejected() {
+        XCTAssertFalse(NearFieldGate.shouldKeepAlive(frames: frames(0.21, 10),
+                                                     sensitivity: .standard,
+                                                     now: t0.addingTimeInterval(5)))
+    }
+
+    // MARK: 长按说话：整段判定（帧不够 = 太短，不是 fail-open）
+
+    func testHoldSpanOffAlwaysAccepts() {
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: frames(0.001, 40), sensitivity: .off), .accept)
+    }
+
+    func testHoldSpanNearFieldAcceptedFarFieldRejected() {
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: frames(0.21, 40), sensitivity: .standard), .accept)
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: frames(0.006, 40), sensitivity: .standard), .reject)
+    }
+
+    func testHoldSpanAllSilenceRejected() {
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: frames(0.003, 40), sensitivity: .standard), .reject)
+    }
+
+    func testHoldSpanTooShortWhenSpanUnderMinimum() {
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: frames(0.21, 10), sensitivity: .standard), .tooShort)
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: [], sensitivity: .standard), .tooShort)
+    }
+
+    func testHoldSpanWithTrailingSilence() {
+        let far = frames(0.006, 8) + frames(0.003, 12, from: t0.addingTimeInterval(0.4))
+        let near = frames(0.21, 8) + frames(0.003, 12, from: t0.addingTimeInterval(0.4))
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: far, sensitivity: .standard), .reject)
+        XCTAssertEqual(NearFieldGate.judgeHoldSpan(frames: near, sensitivity: .standard), .accept)
+    }
+
     func testMedianAndPercentile() {
         XCTAssertEqual(NearFieldGate.median([]), 0)
         XCTAssertEqual(NearFieldGate.median([3, 1, 2]), 2)

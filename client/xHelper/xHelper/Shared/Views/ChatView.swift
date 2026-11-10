@@ -626,67 +626,11 @@ struct ChatView: View {
     private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
         if voice.voiceBarActive {
-            // 两档共用一行：录音档多一个麦克风（两态：开始/发送），录音中它左边浮出「取消本次」；
-            // 胶囊只切档；第三个按钮生成中变停止，否则退出语音。
-            // 三个键都用 IconButton：22pt 字形 + 34pt 命中区，与行里其它按钮同尺寸。
-            // 录音中用 stop.circle.fill 而不是 stop.fill：生成中的「停止生成」是 stop.fill，
-            // 同一行两个同形同色的键容易点错。
-            HStack(spacing: 4) {
-                if voice.mode == .hold {
-                    IconButton(
-                        visibility: .always,
-                        context: ctx,
-                        symbol: voice.isHoldRecording ? "stop.circle.fill" : "mic",
-                        tint: voice.isHoldRecording ? .red : Color("appAccent"),
-                        isEnabled: !voice.isHoldTranscribing,
-                        tooltip: voice.isHoldRecording
-                            ? "点击发送（Esc 取消）"
-                            : "点击开始录音（再点发送，Esc 取消）",
-                        pulsing: voice.isHoldRecording,
-                        hoverBackground: (voice.isHoldRecording ? Color.red : Color("appAccent")).opacity(0.12)
-                    ) {
-                        if voice.isHoldRecording {
-                            Task { await voice.finishHoldTalk(cancelled: false) }
-                        } else {
-                            Task { await voice.startHoldTalk(baseURL: baseURL, token: token) }
-                        }
-                    }
-                    .overlay(alignment: .leading) {
-                        // 不占布局：占位会让录音键在开始录音时从鼠标底下右移
-                        if voice.isHoldRecording {
-                            IconButton(
-                                visibility: .always,
-                                context: ctx,
-                                symbol: "xmark",
-                                tint: .red,
-                                tooltip: "取消本次发送（Esc）",
-                                hoverBackground: Color.red.opacity(0.12)
-                            ) {
-                                Task { await voice.finishHoldTalk(cancelled: true) }
-                            }
-                            .offset(x: -38)
-                        }
-                    }
-                }
-                VoiceModeCapsule(mode: voice.mode) { next in
-                    voice.switchMode(next, baseURL: baseURL, token: token)
-                }
-                if viewModel.isStreaming {
-                    IconButton(
-                        visibility: .always,
-                        context: ctx,
-                        symbol: "stop.fill",
-                        tint: .red,
-                        tooltip: "停止生成",
-                        hoverBackground: .red.opacity(0.12),
-                        action: {
-                            voice.stopSpeaking()
-                            viewModel.stopStreaming()
-                        }
-                    )
-                } else {
-                    voiceContinuousButton(ctx)
-                }
+            // 窄窗（中间栏最窄 380 → 内容区 304pt）塞不下文本胶囊，退成图标档保住切档；
+            // 两个变体的键位完全一致，只是胶囊宽 160 / 62。
+            ViewThatFits(in: .horizontal) {
+                voiceStatusRow(ctx, compactCapsule: false)
+                voiceStatusRow(ctx, compactCapsule: true)
             }
         } else {
             HStack(spacing: 4) {
@@ -706,6 +650,73 @@ struct ChatView: View {
             }
         }
         #endif
+    }
+
+    /// 语音模式的状态行（两档共用）：录音档多一个取消键与麦克风（两态：开始/发送），
+    /// 胶囊只切档，退出语音恒在胶囊右侧（生成中也不收起），最右留一个 34pt 停止键槽位。
+    /// 两个常驻空槽（取消、停止）让这一行在任何状态下宽度恒定：这一行是居中的，
+    /// 增删按钮会让整行横跳，录音中点发送可能落空。
+    /// 红色只表示停止 / 取消 / 挂断；发送键用主输入栏同款绿色 arrow.up。
+    @ViewBuilder
+    private func voiceStatusRow(_ ctx: InputBarContext, compactCapsule: Bool) -> some View {
+        HStack(spacing: 4) {
+            if voice.mode == .hold {
+                // 取消键不占布局会飘到胶囊外（窄窗越界），占位又会让麦克风从鼠标底下挪走，
+                // 所以给一个常驻空槽：只有里面的图标随录音状态出现/消失。
+                if voice.isHoldRecording {
+                    IconButton(
+                        visibility: .always,
+                        context: ctx,
+                        symbol: "xmark",
+                        tint: .red,
+                        tooltip: "取消本次发送（Esc）",
+                        hoverBackground: Color.red.opacity(0.12)
+                    ) {
+                        Task { await voice.finishHoldTalk(cancelled: true) }
+                    }
+                } else {
+                    Color.clear.frame(width: 34, height: 34)
+                }
+                IconButton(
+                    visibility: .always,
+                    context: ctx,
+                    symbol: voice.isHoldRecording ? "arrow.up" : "mic",
+                    tint: Color("appAccent"),
+                    isEnabled: !voice.isHoldTranscribing,
+                    tooltip: voice.isHoldRecording
+                        ? "点击发送（Esc 取消）"
+                        : "点击开始录音（再点发送，Esc 取消）",
+                    pulsing: voice.isHoldRecording,
+                    hoverBackground: Color("appAccent").opacity(0.12)
+                ) {
+                    if voice.isHoldRecording {
+                        Task { await voice.finishHoldTalk(cancelled: false) }
+                    } else {
+                        Task { await voice.startHoldTalk(baseURL: baseURL, token: token) }
+                    }
+                }
+            }
+            VoiceModeCapsule(mode: voice.mode, compact: compactCapsule) { next in
+                voice.switchMode(next, baseURL: baseURL, token: token)
+            }
+            voiceContinuousButton(ctx)
+            if viewModel.isStreaming {
+                IconButton(
+                    visibility: .always,
+                    context: ctx,
+                    symbol: "stop.fill",
+                    tint: .red,
+                    tooltip: "停止生成",
+                    hoverBackground: .red.opacity(0.12),
+                    action: {
+                        voice.stopSpeaking()
+                        viewModel.stopStreaming()
+                    }
+                )
+            } else {
+                Color.clear.frame(width: 34, height: 34)
+            }
+        }
     }
 
     /// InputBar 折叠的更多操作行：展开时出现在按钮行上方，同胶囊内右对齐——
@@ -986,7 +997,8 @@ struct ChatView: View {
         #endif
     }
 
-    /// 语音条开关：正常模式是绿色波形圈；语音模式变成红色「退出语音对话」。
+    /// 语音条开关：正常模式是绿色波形圈；语音模式变成红色「挂断」（`phone.down.fill`）——
+    /// 同一行里红色只表示「取消 / 结束」，挂断用通话条惯例的字形，别再用波形圈冒充退出键。
     /// 进入按上次的档位（连续对话 / 长按说话）。
     @ViewBuilder
     private func voiceContinuousButton(_ ctx: InputBarContext) -> some View {
@@ -994,7 +1006,7 @@ struct ChatView: View {
         IconButton(
             visibility: .always,
             context: ctx,
-            symbol: "waveform.circle",
+            symbol: inVoice ? "phone.down.fill" : "waveform.circle",
             tint: inVoice ? .red : Color("appAccent"),
             // 切档过渡期（state 已到 .requestingPermission）也要能退出；其余沿用原来的忙禁
             isEnabled: voice.isSwitchingMode || !voice.isBusy,

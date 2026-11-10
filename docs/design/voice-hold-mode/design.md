@@ -314,3 +314,33 @@
   中间停止键尤其突兀。两个自定义按钮整体删除，改用 `IconButton`：录音键 `mic` ↔ `stop.circle.fill`（红 + 脉冲），
   取消键 `xmark`（红）。三个键（麦克风 / 取消 / 退出语音）尺寸与字形重量完全一致。
   录音中用带圈的 `stop.circle.fill` 而不是 `stop.fill`：生成中的「停止生成」是后者，同形同色会点错。
+- 2026-11-10（用户拍板：语音条按钮语义重排，推翻上一条的 `stop.circle.fill`）：
+  - **发送键改绿**：长按档录音中原是红色 `stop.circle.fill`，与左侧同样红色的「取消」`xmark` 并排，
+    一个取消一个提交、只差一个圆框；而本项目红色一贯表示「停止 / 危险」，用它表示提交自相矛盾。
+    改成主输入栏 `SendStopButton` 同款 `arrow.up` + `appAccent`，`mic → arrow.up` 走现成的
+    `.symbolEffect(.replace)` 过渡；「正在录」改由脉冲 + 左侧浮出的取消键表达。
+  - **退出键改挂断**：原来是同一个 `waveform.circle` 只靠颜色翻转（绿=进、红=出），用户读到的是
+    「语音开着呢」而不是「点我退出」。改成 `phone.down.fill`（红），与同一行的「停止生成」（方块）
+    形状完全不同，整行读作通话条。tooltip 仍为「退出语音对话」。
+  - **生成中退出常驻**：原来 `if isStreaming { 停止生成 } else { 退出 }`，想退出得先停生成、再点退出。
+    改成退出恒在模式胶囊右侧、生成中也不收起；「停止生成」占它右侧一个**常驻 34pt 槽位**
+    （不生成时是透明空位）。
+    槽位常驻是因为这一行由两侧 `Spacer` 居中：增删按钮会让整行横跳 19pt，录音中点发送可能落空。
+    红色在本行只表示停止 / 取消 / 挂断。
+  - 影响文件：`client/xHelper/xHelper/Shared/Views/ChatView.swift`（`inputBarStatusRow`、`voiceContinuousButton`）。
+    iOS 不受影响（语音条只存在于 macOS 与 PWA，PWA 见下一条）。
+- 2026-11-10（真机反馈：最窄窗口越界 + PWA 未同步）：
+  - **越界根因**：中间栏最窄 `Layout.middleMinWidth = 380` → 输入胶囊内容区只剩
+    `380 - 2*24(chatHorizontalPadding) - 2*14(胶囊内边距) = 304pt`。这一行要
+    `34(✕) + 4 + 34(麦克风) + 4 + 160(文本胶囊) + 4 + 34(挂断) + 4 + 34(停止槽) = 312pt`，
+    超出 8pt；而 ✕ 是 `.offset(x: -38)` 的 overlay、不占布局，于是直接飘到胶囊外。
+  - **修法一（取消键）**：不再用绝对定位/overlay，改成**常驻 34pt 空槽**（只有里面的图标随录音状态出现），
+    既不会飘出去，也不会让麦克风从鼠标底下挪走。
+  - **修法二（窄窗降级）**：`VoiceModeCapsule` 增加 `compact` 图标档（`waveform` / `mic`，
+    160pt → 62pt），`inputBarStatusRow` 用 `ViewThatFits` 先试文本档、放不下再退图标档。
+    两个变体键位一致，只是胶囊宽度不同；`help` + `accessibilityLabel` 补回被省掉的文字。
+  - **PWA 同步**（`front-end/src/views/ChatView.vue`）：发送键 `.stop-core` 红方块 → 绿色上箭头
+    （`.hold-send`，`.recording` 不再染红）；退出键波形圈 → Material `call_end` 实心话筒；
+    生成中退出与停止键并列，停止键放在常驻 `.voice-stop-slot` 里（居中行增删按钮会横跳）；
+    取消键从 `position: absolute` 改常驻 `.hold-cancel-slot`；胶囊加 `.seg-ico` 图标档 +
+    `@container (max-width: 340px)` 降级（容器上下文挂在 `.chat-composer-card`）。

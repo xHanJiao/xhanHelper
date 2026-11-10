@@ -306,6 +306,12 @@ func (h *VoiceHandler) ASR(c *gin.Context) {
 	} else {
 		log.Printf("[voice] asr session closed (user=%s, continuous=%v, results=%d, elapsed=%s)",
 			userID, continuous, resultCount, elapsed)
+		// 正常收尾要发关闭帧：gorilla 的 Close() 直接关 TCP，WebKit（iOS Safari）
+		// 会把这种异常关闭当 onerror，客户端会把已经识别出来的句子丢掉（docs/bugs/059）
+		if err := client.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second)); err != nil {
+			log.Printf("[voice] asr close frame failed (user=%s): %v", userID, err)
+		}
 	}
 }
 

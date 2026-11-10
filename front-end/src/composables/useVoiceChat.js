@@ -902,7 +902,10 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
         if (timer) clearTimeout(timer)
         if (holdSocket === ws) holdSocket = null
         try { ws.close() } catch { /* 已关闭 */ }
-        if (err) reject(err)
+        // 已经拿到最终句就按成功算：服务端收尾是直接关 TCP（或关闭帧还没到），
+        // WebKit 会先发 onerror 再 onclose，不能把识别出来的话当失败丢掉（docs/bugs/059）
+        if (text) resolve(text)
+        else if (err) reject(err)
         else resolve(text)
       }
       timer = setTimeout(() => finish(new Error('语音识别超时')), HOLD_TRANSCRIBE_TIMEOUT_MS)

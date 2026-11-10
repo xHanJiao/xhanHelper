@@ -33,8 +33,9 @@ final class VoiceChatService: ObservableObject {
     var onFinalTranscript: ((String) -> Void)?
     /// C 模式：服务端下发一条已判停的分句，客户端直接提交一轮对话。
     var onSentence: ((String) -> Void)?
-    /// 长按说话：松手整段识别出文本，客户端提交一轮（不朗读）。
-    var onHoldSentence: ((String) -> Void)?
+    /// 长按说话：松手整段识别出文本，客户端提交一轮。
+    /// `speakReply` = 全局热键触发时朗读回复；语音条里的按住说话不朗读（保持现状）。
+    var onHoldSentence: ((String, Bool) -> Void)?
     /// C3：播报期间用户开口，立即停生成（由 ChatView 接 /api/chat/stop）。
     var onBargeIn: (() -> Void)?
     /// 正在流式回答（C 模式的空闲计时器据此顺延，别在 AI 说话时把会话收掉）。
@@ -99,6 +100,16 @@ final class VoiceChatService: ObservableObject {
     /// 语音条开着时不释放 VPIO：释放后再开会丢掉按下瞬间的音频（docs/bugs/057）
     private func syncVoiceBarPin() { audio.setVoiceBarOpen(voiceBarActive) }
     private var holdCapturing = false
+    /// 全局热键按住说话：不进语音条、不置 holdModeActive（只影响这轮是否朗读回复）
+    private var pushToTalkActive = false
+    /// 这轮热键说话已经提交过（含 60 秒自动发送）：松手时别再误报失败
+    private var pushToTalkSubmitted = false
+    /// 全局热键这一轮由谁接管：按下时定，松手按它路由（不能看松手瞬间的状态，
+    /// 连续会话可能在按住期间结束）。nil = 这次按下没被接管。
+    private enum HotKeyPath { case continuousHold, pushToTalk }
+    private var hotKeyPath: HotKeyPath?
+    /// 按下代次：权限弹窗期间「按下→松开→再按下」时，旧 continuation 不能动新一次
+    private var hotKeyAttempt = 0
     private var holdPCM = Data()
     private var holdFrames: [NearFieldGate.Frame] = []
     private var holdStartedAt = Date()
@@ -717,6 +728,105 @@ final class VoiceChatService: ObservableObject {
             return
         }
         guard gen == holdGen, holdModeActive, mode == .hold else { return }
+        beginHoldCapture()
+    }
+
+    /// 全局热键按下：不进语音条、不置 holdModeActive 的本地录音。
+    /// 返回是否真的开录（权限弹窗期间松手、已有会话等情况返回 false）。
+    func startPushToTalk(baseURL: String, token: String) async -> Bool {
+        guard !continuousActive, !isSwitchingMode, !isHoldRecording, !isHoldTranscribing else {
+            return false
+        }
+        pushToTalkSubmitted = false
+        // 语音条已经开着（录音档）：沿用那条采集链路，只是这轮回复要朗读
+        if holdModeActive {
+            await startHoldTalk(baseURL: baseURL, token: token)
+            pushToTalkActive = isHoldRecording
+            return isHoldRecording
+        }
+        guard state == .idle else {
+            vlog("ptt start ignored: state=\(state)")
+            return false
+        }
+        guard !baseURL.isEmpty, !token.isEmpty else { return false }
+        holdBaseURL = baseURL
+        holdToken = token
+        holdGen += 1
+        let gen = holdGen
+        guard await ensureMicrophonePermission() else {
+            vlog("ptt microphone permission denied")
+            return false
+        }
+        guard gen == holdGen, state == .idle else { return false }
+        pushToTalkActive = true
+        beginHoldCapture()
+        if !isHoldRecording { pushToTalkActive = false }
+        return isHoldRecording
+    }
+
+    enum HotKeyStartResult { case started, failed, ignored }
+
+    /// 全局热键按下：连续会话开着就按住暂存，否则一次性采集。
+    /// `.ignored` = 重复按下 / 已被松手作废（调用方不要发声）。
+    func hotKeyPress(baseURL: String, token: String) async -> HotKeyStartResult {
+        // 松开事件丢了（⌘-Tab / 安全输入）：60 秒兜底收完录音后清掉残留路径，
+        // 否则之后每次按下都会被当成重复按下，热键静默失效
+        if hotKeyPath == .pushToTalk, !isHoldRecording, !isHoldTranscribing { hotKeyPath = nil }
+        if hotKeyPath == .continuousHold, !isHolding, !continuousActive { hotKeyPath = nil }
+        guard hotKeyPath == nil, !isHoldRecording, !isHolding, !isHoldTranscribing else {
+            return .ignored
+        }
+        hotKeyAttempt += 1
+        let attempt = hotKeyAttempt
+        // 打断上一轮朗读：否则录进去的会是 TTS
+        stopSpeaking()
+        if continuousActive {
+            hotKeyPath = .continuousHold
+            startHold()
+            guard isHolding else {
+                hotKeyPath = nil
+                return .failed
+            }
+            return .started
+        }
+        hotKeyPath = .pushToTalk
+        let started = await startPushToTalk(baseURL: baseURL, token: token)
+        // 权限弹窗期间松手 / 已经开了新一次按下：别把它当启动失败，也别动新的路径
+        guard hotKeyPath == .pushToTalk, attempt == hotKeyAttempt else { return .ignored }
+        guard started else {
+            hotKeyPath = nil
+            return .failed
+        }
+        return .started
+    }
+
+    /// 全局热键松开。返回 false 表示这轮没提交（调用方 beep）。
+    func hotKeyRelease() async -> Bool {
+        guard let path = hotKeyPath else { return true }
+        hotKeyPath = nil
+        switch path {
+        case .continuousHold:
+            if isHolding { endHold() }
+            return true
+        case .pushToTalk:
+            return await finishPushToTalk()
+        }
+    }
+
+    /// 全局热键松开：整段识别并提交。返回是否提交了一轮（false → 调用方 beep）。
+    func finishPushToTalk() async -> Bool {
+        // 60 秒自动发送 / 上一轮已经提交：松手只是收尾，别当失败
+        if isHoldTranscribing || pushToTalkSubmitted {
+            pushToTalkSubmitted = false
+            return true
+        }
+        // 不能因为「还没开录」直接 return：权限弹窗期间松手必须 bump holdGen，
+        // 否则在飞的 startPushToTalk 续体仍会开麦，没人再收（P1）
+        return await finishHoldCapture(cancelled: false)
+    }
+
+    /// 采集内核：iOS 会话配置 + 清空缓冲 + 开 tap。
+    private func beginHoldCapture() {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio,
                                                          options: [.defaultToSpeaker, .allowBluetooth])
@@ -738,13 +848,20 @@ final class VoiceChatService: ObservableObject {
         }
     }
 
-    /// 松手：整段判定 → 灌入流式 ASR → 出字提交（不朗读）。
-    func finishHoldTalk(cancelled: Bool) async {
+    /// 松手：整段判定 → 灌入流式 ASR → 出字提交（语音条里的按住说话不朗读）。
+    @discardableResult
+    func finishHoldTalk(cancelled: Bool) async -> Bool {
+        await finishHoldCapture(cancelled: cancelled)
+    }
+
+    /// 按住说话 / 全局热键共用的收尾内核。返回是否提交了一轮。
+    private func finishHoldCapture(cancelled: Bool) async -> Bool {
+        defer { pushToTalkActive = false }
         guard isHoldRecording else {
             // 只作废「按下还没落到录音」的那次启动（权限弹窗期间松手）；
             // 识别进行中再被调一次（60 秒自动提交后抬手/失焦）不能加代次，否则会把已识别文本丢掉
             if !isHoldTranscribing { holdGen += 1 }
-            return
+            return false
         }
         isHoldRecording = false
         holdCapturing = false
@@ -758,45 +875,48 @@ final class VoiceChatService: ObservableObject {
         holdFrames.removeAll(keepingCapacity: true)
         if cancelled {
             vlog("hold cancelled")
-            return
+            return false
         }
         let duration = Date().timeIntervalSince(holdStartedAt)
         guard duration >= holdTalkMinSeconds else {
             ToastCenter.shared.show("说话时间太短")
-            return
+            return false
         }
         switch NearFieldGate.judgeHoldSpan(frames: frames, sensitivity: nearFieldSensitivity) {
         case .tooShort:
             vlog("hold too short: frames=\(frames.count) duration=\(fmt3(duration))s")
             ToastCenter.shared.show("说话时间太短")
-            return
+            return false
         case .reject:
             vlog("hold dropped: near-field gate frames=\(frames.count)")
             notifyNearFieldIgnored()
-            return
+            return false
         case .accept:
             break
         }
         guard !pcm.isEmpty else {
             ToastCenter.shared.show("说话时间太短")
-            return
+            return false
         }
         isHoldTranscribing = true
         defer { if gen == holdGen { isHoldTranscribing = false } }
         do {
             let text = try await transcribeHold(pcm, baseURL: holdBaseURL, token: holdToken)
-            guard gen == holdGen, holdModeActive else { return }
+            guard gen == holdGen, holdModeActive || pushToTalkActive else { return false }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             vlog("hold done chars=\(trimmed.count) audio=\(fmt3(Double(pcm.count) / 32000))s")
             guard !trimmed.isEmpty else {
                 ToastCenter.shared.show("没有听清，请再说一次")
-                return
+                return false
             }
-            onHoldSentence?(trimmed)
+            if pushToTalkActive { pushToTalkSubmitted = true }
+            onHoldSentence?(trimmed, pushToTalkActive)
+            return true
         } catch {
-            guard gen == holdGen else { return }
+            guard gen == holdGen else { return false }
             LogBuffer.shared.error("voice hold transcribe failed: \(error.localizedDescription)")
             ToastCenter.shared.show("语音识别失败")
+            return false
         }
     }
 
@@ -861,6 +981,9 @@ final class VoiceChatService: ObservableObject {
         holdCapturing = false
         isHoldRecording = false
         isHoldTranscribing = false
+        pushToTalkActive = false
+        hotKeyPath = nil
+        holdGen += 1
         holdPCM = Data()
         holdFrames.removeAll(keepingCapacity: true)
         if state == .recording {

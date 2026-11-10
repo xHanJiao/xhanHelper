@@ -308,8 +308,8 @@ struct ChatView: View {
                                   agentId: selectedAgentID ?? agentId,
                                   speakReply: !exitingVoice)
         }
-        // 长按说话：一次松手 = 一轮，回复只进气泡不朗读（speakReply: false + voiceMode: true）
-        voice.onHoldSentence = { text in
+        // 长按说话：一次松手 = 一轮。语音条里按的不朗读；全局热键按的朗读回复
+        voice.onHoldSentence = { text, speakReply in
             LogBuffer.shared.diag("[voice] submit hold sentence: chars=\(text.count) " +
                                   "streaming=\(viewModel.isStreaming)")
             // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
@@ -319,7 +319,7 @@ struct ChatView: View {
             }
             viewModel.sendMessage(text, baseURL: baseURL, token: token,
                                   agentId: selectedAgentID ?? agentId,
-                                  speakReply: false, voiceMode: true)
+                                  speakReply: speakReply, voiceMode: true)
         }
         // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
         voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
@@ -336,12 +336,47 @@ struct ChatView: View {
         }
         viewModel.replyOwner = ObjectIdentifier(voice)
         Task { await voice.refresh(baseURL: baseURL, token: token) }
+#if os(macOS)
+        wireVoiceHotKey()
+#endif
     }
+
+#if os(macOS)
+    /// 全局 ⌃⌥V 按住说话。没有连续会话时走一次性采集（不弹语音条、不改档位偏好）；
+    /// 连续会话开着就退回现有的「按住暂存、松手提交」。
+    private func wireVoiceHotKey() {
+        AppShortcutBridge.shared.onVoicePress = { [weak voice] in
+            guard let voice else { return }
+            Task {
+                switch await voice.hotKeyPress(baseURL: baseURL, token: token) {
+                case .started: NSSound(named: "Tink")?.play()
+                case .failed: NSSound.beep()
+                case .ignored: break
+                }
+            }
+        }
+        AppShortcutBridge.shared.onVoiceRelease = { [weak voice] in
+            guard let voice else { return }
+            Task {
+                if !(await voice.hotKeyRelease()) { NSSound.beep() }
+            }
+        }
+        AppShortcutBridge.shared.voiceHotKeyOwner = ObjectIdentifier(voice)
+    }
+#endif
 
     /// 摘掉上一轮接线：视图消失后同一 VM 的流式尾巴不能继续把正文念出来
     /// （`voice` 已被 `cancel`，但闭包还挂在 VM 上会重新开一轮朗读）。
     /// 只摘自己占着的槽：同一个 VM 可能同时被中栏与 PiP 两个 ChatView 使用。
     private func unwireVoice() {
+#if os(macOS)
+        // 热键槽只摘自己占的（中栏与 PiP 各有一份 voice）
+        if AppShortcutBridge.shared.voiceHotKeyOwner == ObjectIdentifier(voice) {
+            AppShortcutBridge.shared.onVoicePress = nil
+            AppShortcutBridge.shared.onVoiceRelease = nil
+            AppShortcutBridge.shared.voiceHotKeyOwner = nil
+        }
+#endif
         guard let vm = wiredViewModel, vm.replyOwner == ObjectIdentifier(voice) else {
             wiredViewModel = nil
             return

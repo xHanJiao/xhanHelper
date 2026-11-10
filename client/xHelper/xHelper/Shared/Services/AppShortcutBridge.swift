@@ -1,5 +1,6 @@
 import Foundation
 #if os(macOS)
+import Carbon.HIToolbox
 
 /// App 级快捷键桥：AppDelegate 的 NSEvent monitor 无法直接访问 SwiftUI 的
 /// @State/@StateObject，通过本单例把命令分发给注册者（ContentView onAppear 注册）。
@@ -9,6 +10,7 @@ import Foundation
 /// - Cmd+N               新建对话（焦点无关）
 /// - Cmd+Shift+↑ / ↓     会话列表上/下切换（焦点无关，delta -1/+1）
 /// - Tab / Esc           有 L3 工具确认待处理时：Tab=允许，Esc=拒绝（无需 Command）
+/// - Ctrl+Option+V       全局按住说话（Carbon 热键，按住/松开各回调一次）
 @MainActor
 final class AppShortcutBridge {
     static let shared = AppShortcutBridge()
@@ -28,7 +30,87 @@ final class AppShortcutBridge {
     /// 解析 L3 工具确认：true=允许，false=拒绝（由 ContentView 注册）
     var resolveConfirmation: ((Bool) -> Void)?
 
+    /// 全局按住说话：按下开始录音、松开发送（由当前活跃 ChatView 注册）
+    var onVoicePress: (() -> Void)?
+    var onVoiceRelease: (() -> Void)?
+    /// 谁占着全局语音热键（中栏与 PiP 各有自己的 VoiceChatService，只让活着的那个接热键）
+    var voiceHotKeyOwner: ObjectIdentifier?
+
     private init() {}
+}
+
+/// 全局热键（Carbon）：不需要辅助功能授权，且能吞掉按键（不会漏给前台 app）。
+/// 同时监听 pressed / released —— 按住说话靠 released 收尾；万一系统不派发，
+/// `VoiceChatService` 里有 60 秒自动发送兜底。
+@MainActor
+final class GlobalHotKey {
+    private static var current: GlobalHotKey?
+    private var hotKeyRef: EventHotKeyRef?
+    private var handlerRef: EventHandlerRef?
+    private let onPress: () -> Void
+    private let onRelease: () -> Void
+
+    private init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+        self.onPress = onPress
+        self.onRelease = onRelease
+    }
+
+    /// ⌃⌥V。注册失败（`-9878` = 键位被别的 app 占了）返回 false，由调用方记日志。
+    @discardableResult
+    static func registerVoicePushToTalk(onPress: @escaping () -> Void,
+                                        onRelease: @escaping () -> Void) -> Bool {
+        unregister()
+        let hotKey = GlobalHotKey(onPress: onPress, onRelease: onRelease)
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                          eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                          eventKind: UInt32(kEventHotKeyReleased)),
+        ]
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, _ in
+                guard let event else { return noErr }
+                let kind = GetEventKind(event)
+                MainActor.assumeIsolated {
+                    guard let hotKey = GlobalHotKey.current else { return }
+                    if kind == UInt32(kEventHotKeyPressed) {
+                        hotKey.onPress()
+                    } else if kind == UInt32(kEventHotKeyReleased) {
+                        hotKey.onRelease()
+                    }
+                }
+                return noErr
+            },
+            eventTypes.count,
+            &eventTypes,
+            nil,
+            &hotKey.handlerRef
+        )
+        guard installStatus == noErr else {
+            LogBuffer.shared.warning("[hotkey] InstallEventHandler failed: \(installStatus)")
+            return false
+        }
+        let hotKeyID = EventHotKeyID(signature: OSType(0x58484C50), id: 1) // 'XHLP'
+        let registerStatus = RegisterEventHotKey(
+            UInt32(kVK_ANSI_V), UInt32(controlKey | optionKey),
+            hotKeyID, GetApplicationEventTarget(), 0, &hotKey.hotKeyRef
+        )
+        guard registerStatus == noErr else {
+            LogBuffer.shared.warning("[hotkey] RegisterEventHotKey failed: \(registerStatus)")
+            if let handler = hotKey.handlerRef { RemoveEventHandler(handler) }
+            return false
+        }
+        current = hotKey
+        return true
+    }
+
+    static func unregister() {
+        guard let hotKey = current else { return }
+        if let ref = hotKey.hotKeyRef { UnregisterEventHotKey(ref) }
+        if let handler = hotKey.handlerRef { RemoveEventHandler(handler) }
+        current = nil
+    }
 }
 
 #endif

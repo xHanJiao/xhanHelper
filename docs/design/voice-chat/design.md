@@ -602,3 +602,18 @@ location = /api/voice/asr {
     `front-end/src/composables/useVoiceChat.js`。
   - 同时加观察探针（只写日志，不改上行音频）：`nearfield probe: chars=… span=… holes=…% maxHole=…`，
     用于评估「本地逐帧近场门（前处理）」是否值得做；判据与理由见 `docs/design/voice-nearfield/design.md`。
+
+- 2026-11-10（全局按住说话）：
+  - macOS 新增全局热键 `⌃⌥V`：按住本地录音、松手整段识别并提交一轮，**回复朗读**；
+    app 不在前台（窗口在）也能用。用 Carbon `RegisterEventHotKey`，不需要辅助功能授权，
+    且能吞键（不会漏给前台 app）。
+  - 没有语音会话时走一次性采集：不置 `holdModeActive`、不弹语音条、不改用户档位偏好，
+    也不 pin VPIO（录完 3 秒后整机音量自动恢复）。连续会话开着时退回现有
+    `startHold` / `endHold`（按住暂存、松手提交），回复本来就会朗读。
+  - 采集真正开始后才播 `Tink`（VPIO 重建那几百毫秒里说的话进不了 tap）；短按、近场闸拒绝、
+    识别为空、松开时还没开录 → beep（后台看不到 Toast）。
+  - 60 秒自动发送兜底保留：松开事件丢失（例如按住时 ⌘-Tab 切走）不至于一直录。
+  - 诊断探针：`client/xHelper/scripts/hotkey-release-probe.swift`（验 Carbon 是否派发
+    `kEventHotKeyReleased`）；影响文件：`AppShortcutBridge.swift`（`GlobalHotKey`）、
+    `xHelperMac/App.swift`、`VoiceChatService.swift`（`startPushToTalk` / `finishPushToTalk`）、
+    `ChatView.swift`、`ShortcutGuideView.swift`。

@@ -368,3 +368,16 @@
     `76 + 62 + 72`，胶囊 x 固定；左右两侧各 76/72 宽，视觉仍对称。
   - 影响文件：`client/xHelper/xHelper/Shared/Views/ChatView.swift`（`voiceStatusRow`）、
     `front-end/src/views/ChatView.vue`（`.hold-slot-ghost`）。
+- 2026-11-10（语音档去掉输入框外框）：
+  - 用户要求：进语音模式后输入框的外框消失，音波条与按钮直接浮在消息上。
+  - 两个候选出了对比图（现状 / A 全透明 / B 无框 + 模糊），用户选 **B**：正文会从浮层
+    后面穿过，全透明时文字会横穿波形与按钮（红色挂断键糊在正文上），所以留一层模糊防糊。
+  - 实现：两端语音档都**完全不铺底**（描边 / 底色 / 投影 / 材质全无），padding 保留
+    （进出语音高度不跳）。Mac `InputBar` 的胶囊底按 `voiceStrip == nil` 条件化，
+    投影同条件置空；PWA 用 `.chat-composer-card.voice-open`（`:class="{ 'voice-open': voiceBarOpen }"`）。
+  - **为什么不是「无框 + 模糊」**：真机反馈 `.ultraThinMaterial` 仍然画出可见玻璃板
+    —— macOS 26 的 Material 自带高光边，"只有模糊没有面"用公开 API 做不到。
+    另外两端都不需要模糊：PWA 输入卡在流内（`.chat-card` 是 flex column，消息区 `flex:1`
+    在它上方），正文不会从它后面穿过；Mac 是 `safeAreaInset` 浮层，滚到底时正文停在它上方，
+    只有中途滚动会从控件后面穿过。
+  - 影响文件：`client/xHelper/xHelper/Shared/Views/InputBar.swift`、`front-end/src/views/ChatView.vue`。

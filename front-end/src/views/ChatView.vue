@@ -1425,7 +1425,7 @@ function handleContainerClick(e) {
         class="file-input"
         @change="onFilesChosen"
       />
-      <div class="chat-composer-card" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
+      <div class="chat-composer-card" :class="{ 'voice-open': voiceBarOpen }" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
         <!-- 移动端上滑取消提示：浮在输入卡上方，不占布局 -->
         <div v-if="isMobile && voiceHoldRecording" class="hold-hint" :class="{ armed: holdCancelArmed }">
           {{ holdCancelArmed ? '松开取消' : '上滑取消' }}
@@ -1671,6 +1671,13 @@ function handleContainerClick(e) {
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-sm);
+}
+/* 语音档不要外框：输入卡在流内（消息列表 flex:1 在它上方），正文不会从它后面穿过，
+   所以直接去掉描边/底色/投影，控件落在聊天卡自己的背景上 */
+.chat-composer-card.voice-open {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 .composer-row {
   display: flex;

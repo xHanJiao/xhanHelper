@@ -163,10 +163,15 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             )
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.regularMaterial)
-            )
+            .background {
+                // 语音档不要外框。macOS 26 的 Material 本身就是一块带高光的玻璃（连 .ultraThinMaterial
+                // 也会画出可见的板子），拿不到"只有模糊没有面"，所以语音档直接不铺底。
+                // 语音行是 safeAreaInset 浮层，滚到底时正文停在它上方，只有中途滚动会从控件后面穿过。
+                if voiceStrip == nil {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(.regularMaterial)
+                }
+            }
             // 整颗胶囊（含 14/6 留白）都可点聚焦：留白区点击走此手势把焦点移入编辑器，
             // 按钮/编辑器本体由子视图优先消费（SwiftUI 子视图手势优先），不受影响。
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -176,7 +181,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 isFocused = true
             }
             .shadow(
-                color: containerTint.opacity(0.18 + streamingGlow * 0.14),
+                color: voiceStrip == nil ? containerTint.opacity(0.18 + streamingGlow * 0.14) : .clear,
                 radius: 10 + streamingGlow * 7
             )
         }

@@ -26,6 +26,8 @@ private struct HostWindowReader: NSViewRepresentable {
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @StateObject private var voice = VoiceChatService()
+    /// 上一次接过语音链路的 viewModel：换会话时要先把它的朗读回调摘掉（见 `wireVoice`）
+    @State private var wiredViewModel: ChatViewModel?
     @State private var isEditing = false
     @State private var dismissKeyboardToken: UUID?
     @State private var scrollPosition = ScrollPosition(edge: .top)
@@ -227,62 +229,14 @@ struct ChatView: View {
             Task { await reloadAgentPicker() }
             installSpaceHoldMonitor()
 #endif
-            voice.onFinalTranscript = { text in
-                viewModel.draftText = text
-                viewModel.pendingVoiceReply = true
-                inputFocused = true
-            }
-            // C3：播报期间用户开口 → 立刻停生成（朗读与门控已在 service 里处理）
-            voice.onBargeIn = {
-                // 打断的主场景是「本轮已流完、TTS 正在念」：这时发 stop 会误杀下一轮刚注册的
-                // stop channel（还会 killAll 本地 shell），交给 stopSpeaking 停朗读就够
-                LogBuffer.shared.diag("[voice] barge-in: stop streaming=\(viewModel.isStreaming)")
-                if viewModel.isStreaming {
-                    viewModel.stopStreaming()
-                }
-            }
-            // C 模式：每句判停就直接提交一轮；上一轮还在跑就先停掉，避免两个 loop 交叉写库
-            voice.onSentence = { text in
-                LogBuffer.shared.diag("[voice] submit sentence: chars=\(text.count) " +
-                                      "streaming=\(viewModel.isStreaming) cid=\(viewModel.conversationId ?? "-")")
-                // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
-                voice.stopSpeaking()
-                if viewModel.isStreaming {
-                    // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
-                    viewModel.stopStreaming(notifyServer: false)
-                }
-                // 退出语音时 flush 的话按普通消息提交（exitingVoice），不朗读
-                viewModel.sendMessage(text, baseURL: baseURL, token: token,
-                                      agentId: selectedAgentID ?? agentId,
-                                      speakReply: !exitingVoice)
-            }
-            // 长按说话：一次松手 = 一轮，回复只进气泡不朗读（speakReply: false + voiceMode: true）
-            voice.onHoldSentence = { text in
-                LogBuffer.shared.diag("[voice] submit hold sentence: chars=\(text.count) " +
-                                      "streaming=\(viewModel.isStreaming)")
-                // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
-                voice.stopSpeaking()
-                if viewModel.isStreaming {
-                    viewModel.stopStreaming(notifyServer: false)
-                }
-                viewModel.sendMessage(text, baseURL: baseURL, token: token,
-                                      agentId: selectedAgentID ?? agentId,
-                                      speakReply: false, voiceMode: true)
-            }
-            // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
-            voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
-            // 正文边到边切句合成：首句一到就出声，不再等整段回复 + 整段 mp3
-            viewModel.onAssistantReplyDelta = { text in
-                voice.appendReplyDelta(text, baseURL: baseURL, token: token)
-            }
-            viewModel.onAssistantReplyDone = { text in
-                LogBuffer.shared.diag("[voice] assistant reply done, tts chars=\(text.count)")
-                voice.endReplyStream(text, baseURL: baseURL, token: token)
-            }
-            viewModel.onAssistantReplyAborted = {
-                voice.stopSpeaking()
-            }
-            Task { await voice.refresh(baseURL: baseURL, token: token) }
+            wireVoice()
+        }
+        // 换会话：macOS 换 tab 只是换 viewModel（ChatView 的身份不变、onAppear 不会再跑），
+        // 不重接的话语音还绑在上一个会话的 VM 上，分句会提交进旧会话（docs/bugs/056）。
+        .onChange(of: ObjectIdentifier(viewModel)) { _, _ in
+            voice.stopSpeaking()
+            voice.cancel()
+            wireVoice()
         }
         .onDisappear {
 #if os(macOS)
@@ -290,6 +244,7 @@ struct ChatView: View {
 #endif
             voice.cancel()
             voice.stopSpeaking()
+            unwireVoice()
         }
         .onReceive(NotificationCenter.default.publisher(for: .voicePreviewWillStart)) { _ in
             // 设置页试听前先停朗读，别让两路音频叠在一起。
@@ -313,6 +268,89 @@ struct ChatView: View {
             }
         }
 #endif
+    }
+
+    /// 把语音链路接到「当前」会话的 viewModel。
+    /// 必须在 `onAppear` 和换 `viewModel` 时都跑一遍：macOS 只渲染 currentTab 的那一个 ChatView，
+    /// 换 tab 只是换参数、视图身份不变，`@StateObject voice` 和这里装的闭包都会跨会话存活，
+    /// 闭包捕获的是当时的 viewModel —— 不重接就会把语音提交进上一个会话（docs/bugs/056）。
+    private func wireVoice() {
+        // 旧会话的朗读回调先摘掉：切走时它可能还在流式，留着会把旧会话的正文念出来
+        unwireVoice()
+        wiredViewModel = viewModel
+
+        voice.onFinalTranscript = { text in
+            viewModel.draftText = text
+            viewModel.pendingVoiceReply = true
+            inputFocused = true
+        }
+        // C3：播报期间用户开口 → 立刻停生成（朗读与门控已在 service 里处理）
+        voice.onBargeIn = {
+            // 打断的主场景是「本轮已流完、TTS 正在念」：这时发 stop 会误杀下一轮刚注册的
+            // stop channel（还会 killAll 本地 shell），交给 stopSpeaking 停朗读就够
+            LogBuffer.shared.diag("[voice] barge-in: stop streaming=\(viewModel.isStreaming)")
+            if viewModel.isStreaming {
+                viewModel.stopStreaming()
+            }
+        }
+        // C 模式：每句判停就直接提交一轮；上一轮还在跑就先停掉，避免两个 loop 交叉写库
+        voice.onSentence = { text in
+            LogBuffer.shared.diag("[voice] submit sentence: chars=\(text.count) " +
+                                  "streaming=\(viewModel.isStreaming) cid=\(viewModel.conversationId ?? "-")")
+            // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
+            voice.stopSpeaking()
+            if viewModel.isStreaming {
+                // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
+                viewModel.stopStreaming(notifyServer: false)
+            }
+            // 退出语音时 flush 的话按普通消息提交（exitingVoice），不朗读
+            viewModel.sendMessage(text, baseURL: baseURL, token: token,
+                                  agentId: selectedAgentID ?? agentId,
+                                  speakReply: !exitingVoice)
+        }
+        // 长按说话：一次松手 = 一轮，回复只进气泡不朗读（speakReply: false + voiceMode: true）
+        voice.onHoldSentence = { text in
+            LogBuffer.shared.diag("[voice] submit hold sentence: chars=\(text.count) " +
+                                  "streaming=\(viewModel.isStreaming)")
+            // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
+            voice.stopSpeaking()
+            if viewModel.isStreaming {
+                viewModel.stopStreaming(notifyServer: false)
+            }
+            viewModel.sendMessage(text, baseURL: baseURL, token: token,
+                                  agentId: selectedAgentID ?? agentId,
+                                  speakReply: false, voiceMode: true)
+        }
+        // 空闲/会话计时器要知道「正在回答」，否则会在 AI 说话时把会话收掉
+        voice.isChatBusy = { [weak viewModel] in viewModel?.isStreaming ?? false }
+        // 正文边到边切句合成：首句一到就出声，不再等整段回复 + 整段 mp3
+        viewModel.onAssistantReplyDelta = { text in
+            voice.appendReplyDelta(text, baseURL: baseURL, token: token)
+        }
+        viewModel.onAssistantReplyDone = { text in
+            LogBuffer.shared.diag("[voice] assistant reply done, tts chars=\(text.count)")
+            voice.endReplyStream(text, baseURL: baseURL, token: token)
+        }
+        viewModel.onAssistantReplyAborted = {
+            voice.stopSpeaking()
+        }
+        viewModel.replyOwner = ObjectIdentifier(voice)
+        Task { await voice.refresh(baseURL: baseURL, token: token) }
+    }
+
+    /// 摘掉上一轮接线：视图消失后同一 VM 的流式尾巴不能继续把正文念出来
+    /// （`voice` 已被 `cancel`，但闭包还挂在 VM 上会重新开一轮朗读）。
+    /// 只摘自己占着的槽：同一个 VM 可能同时被中栏与 PiP 两个 ChatView 使用。
+    private func unwireVoice() {
+        guard let vm = wiredViewModel, vm.replyOwner == ObjectIdentifier(voice) else {
+            wiredViewModel = nil
+            return
+        }
+        vm.onAssistantReplyDelta = nil
+        vm.onAssistantReplyDone = nil
+        vm.onAssistantReplyAborted = nil
+        vm.replyOwner = nil
+        wiredViewModel = nil
     }
 
     /// 底部浮层栈：AskUserBar / 子任务状态条 / L3 确认条 / 输入栏。

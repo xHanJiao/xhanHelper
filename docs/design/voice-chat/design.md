@@ -380,6 +380,17 @@ location = /api/voice/asr {
 
 ## 后续变更
 
+- 2026-11-10（macOS 换 tab 后语音仍绑旧会话）：
+  - macOS 只有一个 `ChatView` 被复用（换 tab 只换 `viewModel`，`onAppear` 不重跑），
+    语音回调闭包捕获旧 `ChatViewModel`，分句被提交进上一个会话。
+  - 接线抽成 `ChatView.wireVoice()`，`onChange(of: ObjectIdentifier(viewModel))` 里
+    `stopSpeaking` + `cancel` + 重接；重接前摘掉旧 VM 的 `onAssistantReply*` 回调。
+  - 详见 `docs/bugs/056-macos-voice-submits-to-previous-conversation.md`；
+    影响文件：`client/xHelper/xHelper/Shared/Views/ChatView.swift`（`wireVoice` / `unwireVoice`）、
+    `client/xHelper/xHelper/Shared/ViewModels/ChatViewModel.swift`（新增 `replyOwner`）。
+  - **取舍**：换 tab 视为结束本轮语音 —— `voice.cancel()` 会拆掉连续档会话，录音发送档里正在录的
+    那段直接丢弃、语音条关闭（回来要重新点麦克风）。不这么做就得把「谁的语音会话」跟着 tab 走，代价更大。
+
 - 2026-11-08：API Key 环境变量由 `DOUBAO_API_KEY` 改为 `DOUBAO_VOICE_API_KEY`（避免与其它豆包用途撞名）；
   `voice.enabled` 默认开启；新增 `cmd/voice-smoke` 联调工具。真实 key 下 TTS 与 ASR 已跑通。
 - 2026-11-08（第二轮复审后）：

@@ -184,6 +184,9 @@ class ChatViewModel: ObservableObject {
     var onAssistantReplyDelta: ((String) -> Void)?
     /// 语音轮异常收尾（停止/出错/空回复）：已开始的朗读流水线要停掉
     var onAssistantReplyAborted: (() -> Void)?
+    /// 上面三个朗读槽的占用者（`ObjectIdentifier(voice)`）：中栏与 PiP 两个 ChatView 可能共用
+    /// 同一个 VM，槽只有一个，摘回调时必须确认自己仍是占用者，否则会把另一处的朗读摘没。
+    var replyOwner: ObjectIdentifier?
 
     // MARK: 无痕（ephemeral）
 

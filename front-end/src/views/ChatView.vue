@@ -1562,22 +1562,31 @@ function handleContainerClick(e) {
               </template>
               {{ holdTalkTooltip }}
             </NTooltip>
-            <!-- 两段式胶囊：只切档，不录音。窄窗（容器 ≤340px）收成图标档，保住切档 -->
+            <!-- 连续档没有左侧录音键，但留同宽空位：这一行居中，少了它会整行横跳，胶囊跟着挪位 -->
+            <span v-else class="hold-slot-ghost" aria-hidden="true"></span>
+            <!-- 两段式胶囊：只切档，不录音。恒用图标（文字胶囊约 150px，最窄容器放不下），
+                 功能靠桌面端 hover 说明；档位名留在 aria-label -->
             <div class="mode-switch" role="group" aria-label="语音模式">
-              <button class="seg" :class="{ on: voiceMode === 'continuous' }" type="button"
-                :aria-pressed="voiceMode === 'continuous'" aria-label="连续对话" @click="onSwitchVoiceMode('continuous')">
-                <svg class="seg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-                  stroke-linecap="round" aria-hidden="true"><path d="M4 12h2M9 7v10M14 4v16M19 9v6"/></svg>
-                <span class="seg-text">连续对话</span>
-              </button>
-              <button class="seg" :class="{ on: voiceMode === 'hold' }" type="button"
-                :aria-pressed="voiceMode === 'hold'" :aria-label="isMobile ? '长按说话' : '点击说话'" @click="onSwitchVoiceMode('hold')">
-                <svg class="seg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3"/>
-                </svg>
-                <span class="seg-text">{{ isMobile ? '长按说话' : '点击说话' }}</span>
-              </button>
+              <NTooltip :disabled="isMobile" placement="top">
+                <template #trigger>
+                  <button class="seg" :class="{ on: voiceMode === 'continuous' }" type="button"
+                    :aria-pressed="voiceMode === 'continuous'" aria-label="连续对话" @click="onSwitchVoiceMode('continuous')">
+                    <svg class="seg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                      stroke-linecap="round" aria-hidden="true"><path d="M4 12h2M9 7v10M14 4v16M19 9v6"/></svg>
+                  </button>
+                </template>
+                连续对话 · 一直收音，说完自动发送
+              </NTooltip>
+              <NTooltip :disabled="isMobile" placement="top">
+                <template #trigger>
+                  <button class="seg" :class="{ on: voiceMode === 'hold' }" type="button"
+                    :aria-pressed="voiceMode === 'hold'" :aria-label="isMobile ? '长按说话' : '点击说话'" @click="onSwitchVoiceMode('hold')">
+                    <!-- 与录音键同一份 SF Symbol hand.tap 蒙版：手绘版在 15px 下读作「举手/停止」 -->
+                    <span class="seg-ico-mask" aria-hidden="true"></span>
+                  </button>
+                </template>
+                点击说话 · 按一下开始录音，再按一下发送
+              </NTooltip>
             </div>
             <NTooltip :disabled="isMobile" placement="top">
               <template #trigger>
@@ -1654,8 +1663,6 @@ function handleContainerClick(e) {
 }
 .chat-composer-card {
   position: relative;
-  /* 语音行的窄窗降级（模式胶囊收成图标）按这个容器宽度判断 */
-  container-type: inline-size;
   border: 0.5px solid var(--color-border);
   border-radius: 22px;
   padding: 8px 10px;
@@ -1735,23 +1742,18 @@ function handleContainerClick(e) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
   height: 30px;
-  padding: 0 12px;
+  padding: 0 9px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--color-text-muted);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
 }
 .seg:hover { color: var(--color-primary); }
-.seg-ico { display: none; width: 15px; height: 15px; }
+.seg-ico { display: block; width: 15px; height: 15px; }
 .seg.on {
   background: var(--color-surface-strong);
   color: var(--color-primary);
@@ -1759,14 +1761,15 @@ function handleContainerClick(e) {
 }
 [data-theme="dark"] .seg.on { background: rgba(255, 255, 255, 0.12); }
 /* SF Symbol hand.tap 的位图蒙版，跟随 currentColor（与 mockup 同源） */
-.hold-icon {
-  width: 21px;
-  height: 21px;
+.hold-icon,
+.seg-ico-mask {
   display: block;
   background: currentColor;
   -webkit-mask: url("data:image/png;base64,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") center / contain no-repeat;
   mask: url("data:image/png;base64,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") center / contain no-repeat;
 }
+.hold-icon { width: 21px; height: 21px; }
+.seg-ico-mask { width: 15px; height: 15px; }
 .icon-pill.hold-btn.holding {
   background: var(--color-primary);
   color: #fff;
@@ -1803,6 +1806,8 @@ function handleContainerClick(e) {
 .icon-pill.hold-btn .hold-send { width: 20px; height: 20px; display: block; }
 /* 桌面端：录音中的「取消本次」占一个常驻槽位（绝对定位会飘到胶囊外，窄窗直接越界） */
 .hold-slot { display: inline-flex; align-items: center; gap: 4px; }
+/* 连续档左侧空位：桌面＝取消槽 36 + gap 4 + 按钮 36；移动端没有取消槽＝按钮 36 */
+.hold-slot-ghost { display: block; width: 76px; height: 34px; }
 .hold-cancel-slot {
   width: 36px;
   height: 36px;
@@ -1942,17 +1947,13 @@ function handleContainerClick(e) {
   font-size: 12px;
   cursor: pointer;
 }
-/* 语音行窄窗降级：文本胶囊（~150px）放不下整行时收成图标档（~62px），
-   保住切档能力，同时不让任何键越出输入卡 */
-@container (max-width: 340px) {
-  .seg { padding: 0 8px; }
-  .seg-text { display: none; }
-  .seg-ico { display: block; }
-}
 @media (max-width: 1099px) {
   .chat-composer-card { border-radius: 18px; padding: 6px 8px; }
   .composer-row { margin-top: 6px; }
   .icon-pill { width: 34px; height: 34px; }
+  /* 图标档每段只有 33px 宽，撑到 40px 让手指好点（胶囊总宽仍远小于原来的文字档） */
+  .seg { min-width: 40px; }
+  .hold-slot-ghost { width: 36px; }
   .chat-card {
     width: 100%;
     margin: 0;

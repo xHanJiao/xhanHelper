@@ -173,16 +173,17 @@
 
 见 `mockup.html`（控制条可切形态 / 状态），要点：
 
-**同一档、两套交互**：移动端按住说话（触摸），桌面端两态按钮（鼠标）。档位 id 仍是 `hold`，
-胶囊文案跟着形态走 —— 移动端「长按说话」、桌面端「点击说话」。判定用 PWA 的 `isMobile`（宽度 < 1100），
-与项目其它地方一致。
+**同一档、两套交互**：移动端按住说话（触摸），桌面端两态按钮（鼠标）。档位 id 仍是 `hold`。
+胶囊**恒为图标**（连续 = 波形，说话 = 点按手势 `hand.tap`），功能说明走桌面 hover
+（移动端「长按说话」/ 桌面端「点击说话」只出现在 `aria-label` 与 tooltip 文案里）。
+判定用 PWA 的 `isMobile`（宽度 < 1100），与项目其它地方一致。
 
 ### 移动端（触摸）
 
 | 状态 | 语音条 |
 |---|---|
-| 连续对话 | `[连续对话 \| 长按说话] [退出]`，连续侧高亮，无录音按钮 |
-| 待录 | 胶囊高亮「长按说话」，左侧出现小手按钮 |
+| 连续对话 | `[波形 \| 点按] [退出]`，连续侧高亮，无录音按钮 |
+| 待录 | 胶囊高亮点按档（`hand.tap`），左侧出现小手按钮 |
 | 按住中 | 小手实心绿 + 脉冲；输入卡上方浮出提示条「上滑取消」 |
 | 上滑 > 60px | 小手与提示条变红「松开取消」，松手丢弃 |
 | 滑回原位 | 恢复「上滑取消」，松手正常发送 |
@@ -192,7 +193,7 @@
 
 | 状态 | 语音条 |
 |---|---|
-| 待录 | 胶囊高亮「点击说话」，麦克风圆钮（绿） |
+| 待录 | 胶囊高亮点按档（`hand.tap`），麦克风圆钮（绿） |
 | 录音中 | 麦克风变红底 + 停止方块；左侧浮出取消钮（×）；再点一下 = 停止并发送 |
 | 点取消 / Esc | 丢弃本次录音，不建连、不提交 |
 | 空格 | 同点击：一下开始、一下发送（焦点在文本框时不接管） |
@@ -275,7 +276,8 @@
 5. 移动端短按（<300ms）→ 提示「说话时间太短」，无连接
 6. 桌面端点麦克风 → 再点一下发送 → 出字不朗读；录音中点取消钮 / 按 Esc → 无提交、无连接
 7. 桌面端录音中切走窗口再回来 → 录音还在，可继续点发送（不丢）
-8. 胶囊文案：移动端「长按说话」、桌面端「点击说话」；刷新页面 / 重开 App 沿用档位
+8. 胶囊恒为图标（波形 / 点按手势）：桌面 hover 出「连续对话 · 一直收音，说完自动发送」/
+   「点击说话 · 按一下开始录音，再按一下发送」；`aria-label` 仍是档位名；刷新页面 / 重开 App 沿用档位
 9. 连续对话模式：行为与改动前完全一致（含 30 秒收口、续命闸、朗读）
 10. 松手到出字的耗时：WiFi 下 ≤1.5 秒，4G 下 ≤3 秒（超出则加加载态）
 
@@ -336,11 +338,33 @@
     超出 8pt；而 ✕ 是 `.offset(x: -38)` 的 overlay、不占布局，于是直接飘到胶囊外。
   - **修法一（取消键）**：不再用绝对定位/overlay，改成**常驻 34pt 空槽**（只有里面的图标随录音状态出现），
     既不会飘出去，也不会让麦克风从鼠标底下挪走。
-  - **修法二（窄窗降级）**：`VoiceModeCapsule` 增加 `compact` 图标档（`waveform` / `mic`，
-    160pt → 62pt），`inputBarStatusRow` 用 `ViewThatFits` 先试文本档、放不下再退图标档。
-    两个变体键位一致，只是胶囊宽度不同；`help` + `accessibilityLabel` 补回被省掉的文字。
+  - **修法二（窄窗降级，已于同日被「恒图标」取代，见下一条）**：`VoiceModeCapsule` 增加 `compact`
+    图标档（`waveform` / `mic`，160pt → 62pt），`inputBarStatusRow` 用 `ViewThatFits` 先试文本档、
+    放不下再退图标档。两个变体键位一致，只是胶囊宽度不同；`help` + `accessibilityLabel` 补回被省掉的文字。
   - **PWA 同步**（`front-end/src/views/ChatView.vue`）：发送键 `.stop-core` 红方块 → 绿色上箭头
     （`.hold-send`，`.recording` 不再染红）；退出键波形圈 → Material `call_end` 实心话筒；
     生成中退出与停止键并列，停止键放在常驻 `.voice-stop-slot` 里（居中行增删按钮会横跳）；
     取消键从 `position: absolute` 改常驻 `.hold-cancel-slot`；胶囊加 `.seg-ico` 图标档 +
     `@container (max-width: 340px)` 降级（容器上下文挂在 `.chat-composer-card`）。
+- 2026-11-10（模式胶囊改恒图标）：
+  - 用户反馈文字胶囊（「连续对话 / 点击说话」）难看，且窄窗下「文字档 ↔ 图标档」随档位跳变。
+    改为**恒用图标**：连续对话 = `waveform`，说话 = `hand.tap`（PWA 复用录音键同一份
+    SF Symbol `hand.tap` 位图蒙版，不再手绘）。
+    胶囊 160pt → 62pt，语音行 312pt → 214pt，最窄内容区 304pt 富余 90pt。
+  - 功能说明改由 hover 承担：Mac `.help("连续对话 · 一直收音，说完自动发送" / "点击说话 · 按一下开始录音，再按一下发送")`，
+    PWA 每个 `.seg` 包 `NTooltip :disabled="isMobile"`。档位名保留在 `accessibilityLabel` / `aria-label`。
+  - **顺带删掉的死代码**：`VoiceModeCapsule.compact`、`inputBarStatusRow` 的 `ViewThatFits`、
+    PWA 的 `.seg-text` / `@container (max-width: 340px)` / `.chat-composer-card { container-type: inline-size }`。
+  - **移动端不额外加引导**（用户拍板）：没有 hover，靠 `hand.tap` 手势图标 + 录音时的「上滑取消」提示；
+    胶囊文字「长按说话」是这次唯一被去掉的触屏提示。
+  - 影响文件：`InputBarButtons.swift`、`client/xHelper/xHelper/Shared/Views/ChatView.swift`、
+    `front-end/src/views/ChatView.vue`。
+- 2026-11-10（切档时胶囊不挪位）：
+  - 用户反馈点胶囊切档时它会左右移动。根因：语音行是居中的（Mac 两侧 `Spacer`、PWA
+    `justify-content: center`），而录音档左侧那组键（取消槽 + 麦克风，Mac 34+4+34、
+    PWA 桌面 36+4+36 / 移动端 36）是整块 `v-if`，切到连续档就消失，行宽少 76 → 居中的胶囊被挤走。
+  - 修法：连续档在左侧留**同宽常驻空槽**（Mac 两个 `Color.clear.frame(width: 34)`；
+    PWA `<span class="hold-slot-ghost">`，桌面 76px / 移动端 36px）。行宽恒为
+    `76 + 62 + 72`，胶囊 x 固定；左右两侧各 76/72 宽，视觉仍对称。
+  - 影响文件：`client/xHelper/xHelper/Shared/Views/ChatView.swift`（`voiceStatusRow`）、
+    `front-end/src/views/ChatView.vue`（`.hold-slot-ghost`）。

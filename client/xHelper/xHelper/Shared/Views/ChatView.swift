@@ -661,12 +661,8 @@ struct ChatView: View {
     private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
         if voice.voiceBarActive {
-            // 窄窗（中间栏最窄 380 → 内容区 304pt）塞不下文本胶囊，退成图标档保住切档；
-            // 两个变体的键位完全一致，只是胶囊宽 160 / 62。
-            ViewThatFits(in: .horizontal) {
-                voiceStatusRow(ctx, compactCapsule: false)
-                voiceStatusRow(ctx, compactCapsule: true)
-            }
+            // 胶囊恒图标（62pt），整行约 214pt，最窄内容区 304pt 富余，不需要降级分支。
+            voiceStatusRow(ctx)
         } else {
             HStack(spacing: 4) {
                 ForEach(InputBarButtonID.allCases.filter { !inputBarLayout.isCollapsed($0) || isPinnedInStatusRow($0) }, id: \.self) { id in
@@ -690,10 +686,11 @@ struct ChatView: View {
     /// 语音模式的状态行（两档共用）：录音档多一个取消键与麦克风（两态：开始/发送），
     /// 胶囊只切档，退出语音恒在胶囊右侧（生成中也不收起），最右留一个 34pt 停止键槽位。
     /// 两个常驻空槽（取消、停止）让这一行在任何状态下宽度恒定：这一行是居中的，
-    /// 增删按钮会让整行横跳，录音中点发送可能落空。
+    /// 增删按钮会让整行横跳，录音中点发送可能落空。连续档左侧两个键位也按同宽空槽占住，
+    /// 否则切档时胶囊会左右挪位。
     /// 红色只表示停止 / 取消 / 挂断；发送键用主输入栏同款绿色 arrow.up。
     @ViewBuilder
-    private func voiceStatusRow(_ ctx: InputBarContext, compactCapsule: Bool) -> some View {
+    private func voiceStatusRow(_ ctx: InputBarContext) -> some View {
         HStack(spacing: 4) {
             if voice.mode == .hold {
                 // 取消键不占布局会飘到胶囊外（窄窗越界），占位又会让麦克风从鼠标底下挪走，
@@ -730,8 +727,12 @@ struct ChatView: View {
                         Task { await voice.startHoldTalk(baseURL: baseURL, token: token) }
                     }
                 }
+            } else {
+                // 连续档没有左侧两键，但留同宽空槽：这一行居中，少了它会整行横跳，胶囊跟着挪位。
+                Color.clear.frame(width: 34, height: 34)
+                Color.clear.frame(width: 34, height: 34)
             }
-            VoiceModeCapsule(mode: voice.mode, compact: compactCapsule) { next in
+            VoiceModeCapsule(mode: voice.mode) { next in
                 voice.switchMode(next, baseURL: baseURL, token: token)
             }
             voiceContinuousButton(ctx)

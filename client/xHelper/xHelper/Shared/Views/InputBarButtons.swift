@@ -176,45 +176,39 @@ struct ExpandPill: View {
 }
 
 /// 两段式语音模式胶囊：只切档，不录音。当前档高亮。
+/// 恒用图标（文字胶囊 160pt，最窄窗口内容区只有 304pt；图标档 62pt 富余），
+/// 功能靠 hover tooltip 说明，档位名留在无障碍标签里。
 /// macOS 只有桌面形态，所以录音档叫「点击说话」（移动端 PWA 那边叫「长按说话」）。
 struct VoiceModeCapsule: View {
     let mode: VoiceMode
-    /// 图标档：中间栏最窄（380）时内容区只剩 304pt，文本胶囊放不下整行，
-    /// 退成图标（160pt → 62pt）保住切档能力。见 docs/design/voice-hold-mode。
-    var compact: Bool = false
     let onSelect: (VoiceMode) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
-            segment(.continuous, label: "连续对话", symbol: "waveform")
-            segment(.hold, label: "点击说话", symbol: "mic")
+            segment(.continuous, label: "连续对话", hint: "一直收音，说完自动发送", symbol: "waveform")
+            segment(.hold, label: "点击说话", hint: "按一下开始录音，再按一下发送", symbol: "hand.tap")
         }
         .padding(2)
         .background(Capsule().fill(Color.primary.opacity(0.06)))
         .overlay(Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
     }
 
-    private func segment(_ value: VoiceMode, label: String, symbol: String) -> some View {
+    private func segment(_ value: VoiceMode, label: String, hint: String, symbol: String) -> some View {
         Button {
             onSelect(value)
         } label: {
-            Group {
-                if compact {
-                    Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
-                } else {
-                    Text(label).font(.system(size: 12, weight: .semibold))
-                }
-            }
-            .foregroundColor(mode == value ? Color("appAccent") : .secondary)
-            .padding(.horizontal, compact ? 8 : 10)
-            .frame(height: 26)
-            .background(
-                Capsule().fill(mode == value ? Color("appAccent").opacity(0.16) : .clear)
-            )
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(mode == value ? Color("appAccent") : .secondary)
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .background(
+                    Capsule().fill(mode == value ? Color("appAccent").opacity(0.16) : .clear)
+                )
         }
         .buttonStyle(.plain)
-        // 图标档看不出是哪个档，tooltip 与无障碍标签补上
-        .help(label)
+        // 图标看不出档位，hover 说明功能、读屏念档位名
+        .help("\(label) · \(hint)")
         .accessibilityLabel(label)
         .accessibilityAddTraits(mode == value ? .isSelected : [])
     }

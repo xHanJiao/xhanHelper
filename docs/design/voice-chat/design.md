@@ -581,3 +581,14 @@ location = /api/voice/asr {
     `AudioWorkletNode` 经 `GainNode(gain=0)` 接 destination（WebKit 不接就不跑 `process()`）。
   - 详见 `docs/bugs/054-voice-ws-upgrade-missing-nginx.md`；影响文件：`server/nginx-helper.conf`、
     `front-end/src/composables/useVoiceChat.js`。
+
+- 2026-11-10（VPIO 空闲释放：整机音量被压）：
+  - `output` 端 VPIO 是设备级的：引擎停了但 VPIO 还开着，整机输出就一直在 AEC 通道上，
+    音量被压到约 1/6，要退出 app 才恢复。`ensureGraph()` 只开不关是根因。
+  - `VoiceAudioEngine` 改为「按需开 VPIO」：引擎空闲 3 秒后自动关掉两端 VPIO，下次播放/采集再开；
+    「停引擎后 3 秒内又开始播放」的抢窗口问题靠启动时取消待执行的释放解决。
+  - 语音条开着时不释放（`VoiceChatService` 把 `voiceBarActive` 同步给引擎）：释放后再开会丢掉
+    录音发送档按下瞬间的音频，短句容易被判「说话时间太短」；退出语音 3 秒后才还回去。
+  - 两端分开记（`inputVPIO` / `outputVPIO`）：一端释放失败时另一端不会跟着「以为还开着」。
+  - 诊断探针：`client/xHelper/scripts/vpio-release-probe.swift`；详见
+    `docs/bugs/057-vpio-locks-system-output-volume.md`。

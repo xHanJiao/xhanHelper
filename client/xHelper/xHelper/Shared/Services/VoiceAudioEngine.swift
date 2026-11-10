@@ -23,6 +23,15 @@ final class VoiceAudioEngine: @unchecked Sendable {
     /// 采集源（可能是 VPIO 的多声道）先混成单声道的中间格式
     private var monoFormat: AVAudioFormat?
     private var graphReady = false
+    /// 两端 VPIO 是否开着（分开记：一端释放失败时另一端不能跟着「以为还开着」）。
+    /// VPIO 是**设备级**的：开着的时候系统输出走 AEC 通道，整机音量被压到约 1/6
+    /// （要退出 app 才恢复），所以空闲后必须关掉，见 docs/bugs/057。
+    private var inputVPIO = false
+    private var outputVPIO = false
+    /// 语音条开着时钉住 VPIO：释放后再开要重建音频图，按下瞬间的音频会进不了 tap
+    private var voiceBarOpen = false
+    private var releaseTask: Task<Void, Never>?
+    private var releaseAttempts = 0
     private var capturing = false
     private var gated = false
     /// TTS 是否在播。只在主线程读写（play / completion / stopPlayback / stopCapture）。
@@ -200,41 +209,128 @@ final class VoiceAudioEngine: @unchecked Sendable {
     // MARK: 内部
 
     private func ensureGraph() throws {
-        guard !graphReady else { return }
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        if !graphReady {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+            graphReady = true
+        }
         // VPIO 必须在装 tap 之前开，且 input/output 都开
-        do {
-            try engine.inputNode.setVoiceProcessingEnabled(true)
-            log("vpio input enabled")
-        } catch {
-            throw NSError(domain: "VoiceAudioEngine", code: -3, userInfo: [
-                NSLocalizedDescriptionKey: "无法开启回声消除：\(error.localizedDescription)"
-            ])
+        let enabling = !inputVPIO || !outputVPIO
+        if !inputVPIO {
+            do {
+                try engine.inputNode.setVoiceProcessingEnabled(true)
+                inputVPIO = true
+                log("vpio input enabled")
+            } catch {
+                // input 开不起来本轮就废了，但之前开着的 output 端不能跟着没人关
+                scheduleDeviceRelease()
+                throw NSError(domain: "VoiceAudioEngine", code: -3, userInfo: [
+                    NSLocalizedDescriptionKey: "无法开启回声消除：\(error.localizedDescription)"
+                ])
+            }
         }
-        do {
-            try engine.outputNode.setVoiceProcessingEnabled(true)
-            log("vpio output enabled")
-        } catch {
-            // 只有 input 开也能工作，但残留回声会更多；记日志，不让整个语音功能不可用
-            log("vpio output failed: \(error.localizedDescription)")
-            onError?("输出端回声消除不可用：\(error.localizedDescription)")
+        if !outputVPIO {
+            do {
+                try engine.outputNode.setVoiceProcessingEnabled(true)
+                log("vpio output enabled")
+            } catch {
+                // 只有 input 开也能工作，但残留回声会更多。这里只记日志：`onError` 在
+                // VoiceChatService 里等于「终止整轮语音」，为一个可降级的能力报上去只会把会话打掉。
+                log("vpio output failed: \(error.localizedDescription)")
+            }
+            // 开失败也记成「已尝试」：不重试（每次开都会失败、只刷日志），释放时照样调一次 disable
+            outputVPIO = true
         }
-        graphReady = true
-        log("graph ready: in=\(fmt(engine.inputNode.inputFormat(forBus: 0))) out=\(fmt(engine.outputNode.inputFormat(forBus: 0)))")
+        if enabling {
+            releaseAttempts = 0
+            // 兜底：调用方拿到 graph 后可能就地抛错（麦克风不可用、engine.start 失败），
+            // 那些路径不会走 stopCapture/stopPlayback，先挂一次释放，真启动起来时会被取消。
+            scheduleDeviceRelease()
+            log("graph ready: in=\(fmt(engine.inputNode.inputFormat(forBus: 0))) out=\(fmt(engine.outputNode.inputFormat(forBus: 0)))")
+        }
     }
 
     private func startEngineIfNeeded() throws {
+        releaseTask?.cancel()
+        releaseTask = nil
         guard !engine.isRunning else { return }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // 起不来也要把 VPIO 还回去，否则整机音量一直压着
+            scheduleDeviceRelease()
+            throw error
+        }
         log("engine started: running=\(engine.isRunning) in=\(fmt(engine.inputNode.inputFormat(forBus: 0)))")
     }
 
     private func stopEngineIfIdle() {
-        guard !capturing, !playbackActive, engine.isRunning else { return }
-        engine.stop()
-        log("engine stopped")
+        guard !capturing, !playbackActive else { return }
+        if engine.isRunning {
+            engine.stop()
+            releaseAttempts = 0   // 新的空闲周期：失败重试重新计数
+            log("engine stopped")
+        }
+        scheduleDeviceRelease()
+    }
+
+    /// 语音条开着时钉住 VPIO（不释放）：释放后再开要重建音频图，
+    /// 按下/开口的头几十~几百毫秒会进不了 tap，短句可能被判「说话时间太短」。
+    /// 关掉后交给空闲释放（3 秒后还回去）。
+    func setVoiceBarOpen(_ open: Bool) {
+        voiceBarOpen = open
+        if open {
+            releaseTask?.cancel()
+            releaseTask = nil
+        } else {
+            scheduleDeviceRelease()
+        }
+    }
+
+    /// 空闲后把 VPIO 关掉，否则系统输出一直停在低声压的 AEC 通道上。
+    /// 留给下一句 TTS 的窗口，避免每播完一句就重建一次（重建约几百毫秒）。
+    private func scheduleDeviceRelease() {
+        releaseTask?.cancel()
+        releaseTask = nil
+        guard !voiceBarOpen else { return }
+        releaseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self else { return }
+            self.releaseDevice()
+        }
+    }
+
+    private func releaseDevice() {
+        releaseTask = nil
+        guard inputVPIO || outputVPIO, !capturing, !playbackActive, !voiceBarOpen else { return }
+        if inputVPIO {
+            do {
+                try engine.inputNode.setVoiceProcessingEnabled(false)
+                inputVPIO = false
+            } catch {
+                log("vpio input release failed: \(error.localizedDescription)")
+            }
+        }
+        if outputVPIO {
+            do {
+                try engine.outputNode.setVoiceProcessingEnabled(false)
+                outputVPIO = false
+            } catch {
+                // 标记照样清：留着 true 会让 ensureGraph 永不重开输出端 AEC，
+                // 而下一轮空闲还会再试一次 disable（失败只刷一行日志）
+                outputVPIO = false
+                log("vpio output release failed: \(error.localizedDescription)")
+            }
+        }
+        if !inputVPIO && !outputVPIO {
+            releaseAttempts = 0
+            log("vpio released: ok=true engineRunning=\(engine.isRunning)")
+            return
+        }
+        releaseAttempts += 1
+        log("vpio release failed: attempt=\(releaseAttempts)")
+        if releaseAttempts < 3 { scheduleDeviceRelease() }
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {

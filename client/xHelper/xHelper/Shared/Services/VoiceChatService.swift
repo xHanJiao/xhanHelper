@@ -56,7 +56,7 @@ final class VoiceChatService: ObservableObject {
     private var sessionSeconds = 600
 
     /// C 模式（连续对话）会话进行中；state 为 .recording 表示正在收音频
-    @Published private(set) var continuousActive = false
+    @Published private(set) var continuousActive = false { didSet { syncVoiceBarPin() } }
     /// 波形用的瞬时音量 0...1（≈60Hz 更新）。
     /// **刻意不是 @Published**：Canvas 每帧自己读它，不必让整棵 ChatView 跟着刷新。
     private(set) var waveLevel: Double = 0
@@ -86,16 +86,18 @@ final class VoiceChatService: ObservableObject {
         rawValue: UserDefaults.standard.string(forKey: VoicePreference.modeKey) ?? VoicePreference.modeDefault
     ) ?? .continuous
     /// 长按档：语音条开着（不代表正在录音）
-    @Published private(set) var holdModeActive = false
+    @Published private(set) var holdModeActive = false { didSet { syncVoiceBarPin() } }
     /// 切档过渡：旧链路已拆、新档还没就绪（连续档要等 ticket + 建连）。
     /// 界面靠它别把语音条整排换回普通按钮 —— 否则切一下闪一下。
-    @Published private(set) var isSwitchingMode = false
+    @Published private(set) var isSwitchingMode = false { didSet { syncVoiceBarPin() } }
     /// 长按说话：正在本地录音
     @Published private(set) var isHoldRecording = false
     /// 长按说话：松手后正在整段识别
     @Published private(set) var isHoldTranscribing = false
     /// 语音条是否开着（两档共用）。切档过渡期也算开着。
     var voiceBarActive: Bool { continuousActive || holdModeActive || isSwitchingMode }
+    /// 语音条开着时不释放 VPIO：释放后再开会丢掉按下瞬间的音频（docs/bugs/057）
+    private func syncVoiceBarPin() { audio.setVoiceBarOpen(voiceBarActive) }
     private var holdCapturing = false
     private var holdPCM = Data()
     private var holdFrames: [NearFieldGate.Frame] = []

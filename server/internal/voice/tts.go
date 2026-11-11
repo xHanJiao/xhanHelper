@@ -155,6 +155,11 @@ func (c *TTSClient) Synthesize(ctx context.Context, text, speaker string) ([]byt
 			}
 			audio = append(audio, chunk...)
 		case item.Code == ttsEndCode:
+			// 结束标记前一个字节都没给：豆包认为这句没啥可念（billed=0）。空音频当成功
+			// 下发会让浏览器 <audio> 直接报错（docs/bugs/064）
+			if len(audio) == 0 {
+				return nil, 0, fmt.Errorf("tts: 结束标记前没有音频（billed=%d, chars=%d）", textWords, len([]rune(text)))
+			}
 			return audio, textWords, nil
 		default:
 			return nil, 0, fmt.Errorf("tts: code %d: %s", item.Code, item.Message)
@@ -163,8 +168,7 @@ func (c *TTSClient) Synthesize(ctx context.Context, text, speaker string) ([]byt
 	if err := scanner.Err(); err != nil {
 		return nil, 0, fmt.Errorf("tts: read stream: %w", err)
 	}
-	if len(audio) == 0 {
-		return nil, 0, fmt.Errorf("tts: 未返回音频")
-	}
-	return audio, textWords, nil
+	// 没等到结束标记：上游中途断流但 EOF 是干净的，拿到的是残缺 mp3，
+	// 浏览器会念到断点就报错。成功只认「见到结束标记」。
+	return nil, 0, fmt.Errorf("tts: 流未收到结束标记（bytes=%d, billed=%d）", len(audio), textWords)
 }

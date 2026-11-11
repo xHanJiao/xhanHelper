@@ -1074,6 +1074,8 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     const el = ensureAudio()
     let index = 0
     let playing = false
+    // 连续几句都放不出来（设备/浏览器级故障）才整轮中断；单句音频坏了只跳过这句
+    let brokenInRow = 0
     try {
       for (;;) {
         if (epoch !== speakEpoch) return
@@ -1085,7 +1087,15 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
             if (!playing) { setGate(true); playing = true }
             preparing.value = false
             speaking.value = true
-            await playBlob(el, blob)
+            try {
+              await playBlob(el, blob)
+              brokenInRow = 0
+            } catch (err) {
+              if (epoch !== speakEpoch) return
+              brokenInRow += 1
+              if (brokenInRow >= 2) throw err
+              console.error('[voice] sentence playback skipped', err)
+            }
             if (epoch !== speakEpoch) return
           }
           index += 1

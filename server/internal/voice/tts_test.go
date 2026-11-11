@@ -74,6 +74,36 @@ func TestSynthesizeRejectsTooLong(t *testing.T) {
 	}
 }
 
+// 豆包对念不出来的句子会回 0 字节音频（billed=0）再发结束标记：必须判失败，
+// 否则前端拿到空 blob 交给 <audio> 会报错并掐断整轮朗读（docs/bugs/064）。
+func TestSynthesizeEmptyAudioOnEndCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"message":"OK","data":"","usage":{"text_words":0}}` + "\n"))
+		_, _ = w.Write([]byte(`{"code":20000000,"message":"OK"}` + "\n"))
+	}))
+	defer server.Close()
+	client := NewTTSClient("k", config.VoiceTTSConfig{Endpoint: server.URL, Speaker: "s", MaxChars: 100, TimeoutSeconds: 5})
+	got, _, err := client.Synthesize(context.Background(), "热水池叫 お風呂 或 湯船（ゆぶね）。", "")
+	if err == nil {
+		t.Fatalf("expected error, got %d bytes", len(got))
+	}
+	if !strings.Contains(err.Error(), "结束标记前没有音频") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// 上游中途断流但 EOF 干净（没发结束标记）：拿到的是残缺 mp3，也得判失败。
+func TestSynthesizeMissingEndCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"message":"OK","data":"` + base64.StdEncoding.EncodeToString([]byte("fake-mp3")) + `"}` + "\n"))
+	}))
+	defer server.Close()
+	client := NewTTSClient("k", config.VoiceTTSConfig{Endpoint: server.URL, Speaker: "s", MaxChars: 100, TimeoutSeconds: 5})
+	if got, _, err := client.Synthesize(context.Background(), "你好", ""); err == nil {
+		t.Fatalf("expected error, got %d bytes", len(got))
+	}
+}
+
 func TestSynthesizeUsesExplicitSpeaker(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ttsRequest

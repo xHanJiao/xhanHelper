@@ -135,6 +135,17 @@ final class VoiceChatService: ObservableObject {
     private var gateTask: Task<Void, Never>?
     /// 麦克风门是否生效（播报期间 + 播报结束后的 600ms 尾音窗口）
     private var micGated = false
+    /// 在屏使用者计数：中栏与 PiP 里的 ChatView 先后接管同一个服务（进出 PiP 时新旧视图的
+    /// onAppear / onDisappear 先后不定），最后一个走的人才真正收尾（见 docs/bugs/062）。
+    private(set) var viewHolders = 0
+
+    func attachView() { viewHolders += 1 }
+
+    /// 返回 true 表示当前视图是最后一个在屏使用者，调用方负责收尾（延后复查一次再收）
+    func detachView() -> Bool {
+        viewHolders = max(0, viewHolders - 1)
+        return viewHolders == 0
+    }
     /// 打断判定：连续 3 帧（tap 3200 帧 @48k，约 200ms）超过阈值才算真的开口
     private var loudFrames = 0
     /// 近场闸开启时的打断判定：连续 5 帧（约 330ms），滤掉碰一下手机的瞬时尖峰。

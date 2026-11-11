@@ -25,7 +25,12 @@ private struct HostWindowReader: NSViewRepresentable {
 
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @StateObject private var voice = VoiceChatService()
+    /// 语音服务挂在 VM 上（不是本视图的 @StateObject）：进出 PiP 会拆掉并重建 ChatView，
+    /// 服务留在视图里会连带结束语音会话、掐断朗读（见 docs/bugs/062）。VM 会把它的
+    /// objectWillChange 转发过来，视图照常跟着刷新。
+    private var voice: VoiceChatService { viewModel.voice }
+    /// 本视图是否对 `voice` 计过一次在屏占用（见 `releaseVoiceIfLast`）
+    @State private var voiceHolding = false
     /// 上一次接过语音链路的 viewModel：换会话时要先把它的朗读回调摘掉（见 `wireVoice`）
     @State private var wiredViewModel: ChatViewModel?
     @State private var isEditing = false
@@ -229,22 +234,29 @@ struct ChatView: View {
             Task { await reloadAgentPicker() }
             installSpaceHoldMonitor()
 #endif
+            holdVoice()
             wireVoice()
         }
         // 换会话：macOS 换 tab 只是换 viewModel（ChatView 的身份不变、onAppear 不会再跑），
         // 不重接的话语音还绑在上一个会话的 VM 上，分句会提交进旧会话（docs/bugs/056）。
+        // 语音服务随 tab 走（在 VM 上）：要先把旧 tab 的服务收干净，再登记新服务。
         .onChange(of: ObjectIdentifier(viewModel)) { _, _ in
-            voice.stopSpeaking()
-            voice.cancel()
+            let previous = wiredViewModel?.voice
+            unwireVoice()
+            if voiceHolding {
+                voiceHolding = false
+                previous?.detachView()
+            }
+            previous?.stopSpeaking()
+            previous?.cancel()
+            holdVoice()
             wireVoice()
         }
         .onDisappear {
 #if os(macOS)
             removeSpaceHoldMonitor()
 #endif
-            voice.cancel()
-            voice.stopSpeaking()
-            unwireVoice()
+            releaseVoiceIfLast()
         }
         .onReceive(NotificationCenter.default.publisher(for: .voicePreviewWillStart)) { _ in
             // 设置页试听前先停朗读，别让两路音频叠在一起。
@@ -270,10 +282,37 @@ struct ChatView: View {
 #endif
     }
 
+    /// 本视图出现：登记一个语音服务使用者
+    private func holdVoice() {
+        guard !voiceHolding else { return }
+        voiceHolding = true
+        voice.attachView()
+    }
+
+    /// 本视图离开：只有没有别的 ChatView（PiP ⇄ 中栏）接着用同一个语音服务时才收尾。
+    /// 延后 200ms 复查一次 —— 进出 PiP 时新旧视图的 onAppear / onDisappear 先后 SwiftUI 不保证，
+    /// 当场就停会把正在朗读的回复掐断（见 docs/bugs/062）。
+    /// shortcut: 200ms 是固定超时（新视图若晚于它 onAppear 仍会误停），真机出现误停再改成
+    /// 「等一次 attach / 200ms 兜底」。
+    private func releaseVoiceIfLast() {
+        guard voiceHolding else { return }
+        voiceHolding = false
+        guard voice.detachView() else { return }
+        let service = voice
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard service.viewHolders == 0 else { return }
+            service.cancel()
+            service.stopSpeaking()
+            unwireVoice()
+        }
+    }
+
     /// 把语音链路接到「当前」会话的 viewModel。
     /// 必须在 `onAppear` 和换 `viewModel` 时都跑一遍：macOS 只渲染 currentTab 的那一个 ChatView，
-    /// 换 tab 只是换参数、视图身份不变，`@StateObject voice` 和这里装的闭包都会跨会话存活，
-    /// 闭包捕获的是当时的 viewModel —— 不重接就会把语音提交进上一个会话（docs/bugs/056）。
+    /// 换 tab 只是换参数、视图身份不变，这里装的闭包会跨会话存活，闭包捕获的是当时的 viewModel
+    /// —— 不重接就会把语音提交进上一个会话（docs/bugs/056）。
+    /// 语音服务本身随 tab 挂在 VM 上（`viewModel.voice`），换 tab 时要连带换服务（见 onChange）。
     private func wireVoice() {
         // 旧会话的朗读回调先摘掉：切走时它可能还在流式，留着会把旧会话的正文念出来
         unwireVoice()
@@ -373,11 +412,12 @@ struct ChatView: View {
 
     /// 摘掉上一轮接线：视图消失后同一 VM 的流式尾巴不能继续把正文念出来
     /// （`voice` 已被 `cancel`，但闭包还挂在 VM 上会重新开一轮朗读）。
-    /// 只摘自己占着的槽：同一个 VM 可能同时被中栏与 PiP 两个 ChatView 使用。
+    /// 只摘自己占着的槽：同一个 VM 只有一份 `voice`（随 tab 挂在 VM 上），中栏与 PiP 共用它；
+    /// 换 tab 时 `wiredViewModel` 才是旧的那份，所以身份从它取。
     private func unwireVoice() {
 #if os(macOS)
-        // 热键槽只摘自己占的（中栏与 PiP 各有一份 voice）
-        if AppShortcutBridge.shared.voiceHotKeyOwner == ObjectIdentifier(voice) {
+        // 热键槽只摘自己占的（同一时刻只有一份 voice 接线）
+        if let vm = wiredViewModel, AppShortcutBridge.shared.voiceHotKeyOwner == ObjectIdentifier(vm.voice) {
             AppShortcutBridge.shared.onVoicePress = nil
             AppShortcutBridge.shared.onVoiceRelease = nil
             AppShortcutBridge.shared.voiceBarActive = nil
@@ -386,7 +426,8 @@ struct ChatView: View {
             AppShortcutBridge.shared.voiceHotKeyOwner = nil
         }
 #endif
-        guard let vm = wiredViewModel, vm.replyOwner == ObjectIdentifier(voice) else {
+        // 身份从 `wiredViewModel` 取而不是从 `viewModel`：换 tab 时 `viewModel` 已经是新的了
+        guard let vm = wiredViewModel, vm.replyOwner == ObjectIdentifier(vm.voice) else {
             wiredViewModel = nil
             return
         }

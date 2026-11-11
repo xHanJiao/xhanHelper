@@ -215,3 +215,4 @@ func pipLog(_ message: String, file: String = #file, line: Int = #line) {
 - 2026-10-31：修「最大化侧栏时输入框里的图丢失」。进出 PiP 会拆掉并重建中栏 `ChatView`，`@State` 随之销毁——草稿类状态（`draftAttachments`）必须放 `ChatViewModel`（与 `draftText` 同层），不能留在视图里。同理 `isUploadingAttachments`（上传闸门）也挪进 VM：上传 Task 不随视图取消，标志留在视图会被重建复位，闸门失效。影响 `ChatView.swift` / `ChatViewModel.swift`。
 - 2026-10-31（已知未修）：重建后 `inputFocused` 复位为 false，⌘V 的 `pastedImages` 会暂存在 VM，等新输入框重新上报焦点才被消费；不丢数据，属现有设计。
 
+- 2026-11-11：修「切 PiP / 折叠成圆点会掐断正在朗读的语音」。同一根因（进出 PiP 重建 `ChatView`）再次咬到：语音服务当时还是视图的 `@StateObject`，重建即销毁 → TTS 队列连同音频一起没了，流式中的回复还会从头重念；折叠面板同理（`if pipCollapsed` 把内容树一起拆了）。修法：`VoiceChatService` 挪进 `ChatViewModel`（随 tab 存活，视图用计算属性取、VM 转发 `objectWillChange`），加「在屏使用者计数 + 离场 200ms 复查」（新旧视图 `onAppear`/`onDisappear` 先后不定），折叠改成隐藏而不拆（仍按上次展开尺寸布局，避免消息列表重排丢滚动位置）。详见 `docs/bugs/062-pip-toggle-cuts-tts.md`；影响 `ChatViewModel.swift`、`VoiceChatService.swift`、`ChatView.swift`、`FloatingChatPanel.swift`。

@@ -174,6 +174,9 @@ class ChatViewModel: ObservableObject {
     /// 精炼回答开关，会话级：默认关。开=服务端往 system prompt 注入「≤500 字」输出约束，
     /// 用于让回答短到能整段存进文档批注。不走 max_tokens（那是静默硬截断）。
     @Published var briefAnswer = false
+    /// 语音服务（连续对话 / 长按说话的采集、ASR、TTS）。**必须随 tab 存活**：进出 PiP 会拆掉并
+    /// 重建 ChatView，服务留在视图里就会连带结束语音会话、掐断正在朗读的回复（见 docs/bugs/062）。
+    let voice = VoiceChatService()
     /// 语音输入识别完成后置位：下一次发送携带 speakReply=true（朗读回复）
     var pendingVoiceReply = false
     /// 本轮是否为语音来源（发送时快照，done 后消费）
@@ -820,10 +823,16 @@ class ChatViewModel: ObservableObject {
     #if os(iOS)
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     #endif
+    /// 语音服务的状态转发（语音已挪进 VM，见 `voice`）
+    private var voiceObserver: AnyCancellable?
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
         applyLLMDefaults()
+        // ChatView 只观察 VM：语音的 @Published（说/想/句级进度等）要能驱动它刷新
+        voiceObserver = voice.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     // MARK: Load

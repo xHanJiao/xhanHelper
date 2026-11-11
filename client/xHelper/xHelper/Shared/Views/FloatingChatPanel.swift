@@ -190,36 +190,48 @@ struct FloatingChatPanel: View {
 
     // MARK: - Body
 
+    /// 折叠时仍按（上次）展开尺寸给内容布局：缩到圆点大小会让消息列表 / 输入框重排、丢滚动位置。
+    private var contentSize: CGSize {
+        manager.pipCollapsed
+            ? clampSize(manager.pipSize, container: containerSize, collapsed: false)
+            : size
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // 面板本体（拖拽帧静止）
-            Group {
-                if manager.pipCollapsed {
-                    collapsedDot
-                        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
-                } else {
-                    expandedBody
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(.white.opacity(0.15), lineWidth: 0.5)
-                        )
-                        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+            // 面板本体（拖拽帧静止）。**折叠成圆点时也不拆**：里层是 ChatView，拆掉会连带结束
+            // 语音会话、掐断正在朗读的回复（见 docs/bugs/062）。折叠 = 隐藏 + 不接收点击。
+            expandedBody
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(.white.opacity(0.15), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+                .frame(width: contentSize.width, height: contentSize.height)
+                .opacity(manager.pipCollapsed ? 0 : 1)
+                .allowsHitTesting(!manager.pipCollapsed)
+                // 也关掉键盘可达：全键盘控制下隐藏的 header 按钮 / 输入框还能被 Space/Return 激活
+                .disabled(manager.pipCollapsed)
+                .frame(width: size.width, height: size.height)
+                // 缩放把手钉在面板自身 frame 的右下角（不随内容 VStack 溢出偏移）。
+                // 此前把手挂在 expandedBody 上，内容溢出（计划便签/两行输入框/L3 确认条）
+                // 会把把手顶出可见区，被下方 clipShape 裁掉 → 缩到太小后调不回来。
+                .overlay(alignment: .bottomTrailing) {
+                    if !manager.pipCollapsed {
+                        resizeHandle
+                    }
                 }
+                // 用 .position 定位而非 .offset：macOS 上 .offset 包裹 TextEditor 会破坏
+                // first responder（点击输入框不出光标、无法输入）。
+                .position(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+
+            if manager.pipCollapsed {
+                collapsedDot
+                    .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                    .position(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
             }
-            .frame(width: size.width, height: size.height)
-            // 缩放把手钉在面板自身 frame 的右下角（不随内容 VStack 溢出偏移）。
-            // 此前把手挂在 expandedBody 上，内容溢出（计划便签/两行输入框/L3 确认条）
-            // 会把把手顶出可见区，被下方 clipShape 裁掉 → 缩到太小后调不回来。
-            .overlay(alignment: .bottomTrailing) {
-                if !manager.pipCollapsed {
-                    resizeHandle
-                }
-            }
-            // 用 .position 定位而非 .offset：macOS 上 .offset 包裹 TextEditor 会破坏
-            // first responder（点击输入框不出光标、无法输入）。
-            .position(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
 
             // 幽灵外框：拖动/缩放中跟随光标，松手才落位
             if let go = dragGhostOffset {
@@ -235,7 +247,15 @@ struct FloatingChatPanel: View {
         .frame(width: containerSize.width, height: containerSize.height)
         .onAppear { onAppearSetup() }
         .onChange(of: containerSize) { _, new in reClamp(container: new) }
-        .onChange(of: manager.pipCollapsed) { _, _ in reClamp(container: containerSize) }
+        .onChange(of: manager.pipCollapsed) { _, collapsed in
+            reClamp(container: containerSize)
+            // 折叠后内容树仍然在（见 body 注释）：隐藏的输入框若还持焦点会继续吃键盘、独吞 ⌘V。
+            // PiP 里只有这一个输入框，ChatInputFocus 为真就说明焦点在它身上。放在 onChange 而不是
+            // toggleCollapse：⌘⇧E 与进 PiP 自动折叠都直接写 pipCollapsed，走不到按钮那条路。
+            if collapsed, ChatInputFocus.shared.isFocused {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+        }
     }
 
     private func ghostRect(width: CGFloat, height: CGFloat) -> some View {

@@ -617,3 +617,13 @@ location = /api/voice/asr {
     `kEventHotKeyReleased`）；影响文件：`AppShortcutBridge.swift`（`GlobalHotKey`）、
     `xHelperMac/App.swift`、`VoiceChatService.swift`（`startPushToTalk` / `finishPushToTalk`）、
     `ChatView.swift`、`ShortcutGuideView.swift`。
+
+- 2026-11-11（网页端语音提交丢图）：
+  - 用户反馈「手机网页端语音模式长按录音发送，带图时图发不出去」。根因：`submitHoldSentence` /
+    `submitVoiceSentence` 写死 `imageIds: []`、不传 `attachments`，草稿图托盘却在语音条打开时
+    照常显示。详见 `docs/bugs/061-voice-submit-drops-images.md`。
+  - 两条语音提交改为 `takeVoiceImages()` 取托盘里已上传完成的图，写进本地气泡 `imageIds`
+    并传 `attachments`。长按档 `wait: true`：松手后等图传完再发（15 秒兜底，超时/失败提示后跳过），
+    等图期间用 `holdSubmitting` 挡掉新的按下（识别收尾后 `holdTranscribing` 已清，挡不住并发提交）；
+    连续档不等待，未传完的图留给下一句，避免拖慢分句对话。失败提示同一张草稿只弹一次。
+  - 影响文件：`front-end/src/views/ChatView.vue`、`front-end/src/utils/voiceImages.js`。

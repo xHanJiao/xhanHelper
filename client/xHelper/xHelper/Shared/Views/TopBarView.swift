@@ -208,6 +208,9 @@ struct TopBarView: View {
         .padding(.horizontal, 12)
         .frame(height: Layout.topBarCapsuleHeight)
         .fixedSize(horizontal: true, vertical: false)
+        // `.buttonStyle(.plain)` 只认画出来的形状：chevron 笔画只有几 pt，点箭头/右侧 padding 全落空。
+        // 兜住整颗胶囊，点哪儿都开（与 plusButtonLabel 的 contentShape(Circle()) 同理）。
+        .contentShape(Capsule())
     }
 
     private var plusButtonLabel: some View {

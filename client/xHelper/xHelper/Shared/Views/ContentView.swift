@@ -318,6 +318,17 @@ struct ContentView: View {
         AppShortcutBridge.shared.resolveConfirmation = { allow in
             self.activeChatViewModel?.resolveTopToolConfirmation(allow: allow)
         }
+        // 全局语音热键（app 级常驻）：窗口关着 / PiP 收起时也要能拿到当前会话和后端凭据
+        let tabs = chatTabManager
+        AppShortcutBridge.shared.currentChatViewModel = { [weak tabs] in
+            tabs?.currentTab?.viewModel
+        }
+        let device = deviceManager
+        AppShortcutBridge.shared.voiceCredentials = {
+            let token = device.token ?? ""
+            guard !token.isEmpty else { return nil }
+            return (baseURL: device.baseURL, token: token)
+        }
     }
 #endif
 

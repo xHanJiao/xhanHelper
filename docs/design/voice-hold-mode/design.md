@@ -381,3 +381,66 @@
     在它上方），正文不会从它后面穿过；Mac 是 `safeAreaInset` 浮层，滚到底时正文停在它上方，
     只有中途滚动会从控件后面穿过。
   - 影响文件：`client/xHelper/xHelper/Shared/Views/InputBar.swift`、`front-end/src/views/ChatView.vue`。
+- 2026-11-10（全局按住说话改「双 ⌘」+ app 级常驻 + 玻璃浮层）：
+  - 用户反馈两件事：⌃⌥V 三个键难按；PiP 模式下热键不生效。
+  - **根因**：热键接线挂在 `ChatView` 的 `onAppear/onDisappear`（`wireVoiceHotKey`）。PiP 下中栏
+    ChatView 被 `if !rightSidebar.isPipChat` 整个不渲染；面板**收起成小圆点**时 `PipChatContent`
+    也不建 → 热键槽被 `unwireVoice` 清空后再没人重新占，按下去调的是
+    `AppShortcutBridge.shared.onVoicePress?()` = nil，静默空转。红叉关窗同理（ContentView 整个销毁）。
+  - **改法**：热键挪到 app 级 `VoiceHotKeyController`（App 启动即注册，与视图生命周期无关）。
+    用 `CGEventSource.flagsState` 20Hz 轮询左右 Cmd 的**设备位**（0x8 / 0x10；探针实测
+    `keyState(key: 54)` 读不到右 ⌘），两个同时按住
+    120ms 开录、松开提交；**不吞键**（Cmd+C / Cmd+Tab / Cmd+点击 照常发给前台 app）。
+    开录前若旁边还有别的键 / 鼠标按下 / 滚轮 / 第三个修饰键 → 本次作废，等两个 ⌘ 都松开才重新武装。
+  - **路由**：语音条开着（`voiceBarActive`）仍交给视图那套「按住暂存、松手整段提交」；
+    否则走控制器自己的 `VoiceChatService`（一次性采集）。无任何语音视图活着
+    （`voiceHotKeyOwner == nil`，即关窗 / PiP 收起）时，控制器自己接管这一轮 TTS
+    （`onAssistantReplyDelta/Done/Aborted` 喂给自己的服务）——所以**关窗也能听到回复**。
+  - **浮层** `VoiceHUDPanel`：nonactivating NSPanel，不吃鼠标、不抢焦点、
+    `[.canJoinAllSpaces, .fullScreenAuxiliary]`（别的 app 全屏也浮得出来），屏幕底部居中（跟鼠标屏）。
+    内容是 `VoiceHUDContent` = 玻璃胶囊 + 输入框同一条 `VoiceWaveLine`，**不显示文字**，
+    只表达 听 / 想 / 说；松手后停留 1.2s 自动收。尺寸定稿 76 × 56（候选 100 / 76 / 56 中选中间）。
+  - **玻璃怎么做（macOS 26 实测）**：`NSVisualEffectView` 的 `.behindWindow` 在 Tahoe 上已经
+    **不再采样窗口后面的内容**——`.underWindowBackground` / `.popover` / `.menu` / `.hudWindow`
+    四种 material 全是实心灰（纯 AppKit 最小工程也复现，不是 SwiftUI 包一层的问题）。
+    系统自己的玻璃在 26 换成了 `NSGlassEffectView`（Liquid Glass，`style = .clear`）。
+    浮层改用它：`style = .clear` + `tintColor = .clear` + `alphaValue = 0.7`，能透出底下的
+    桌面/网页（1.0 偏奶白，0.7 最清透，用户拍板）。`NSGlassEffectView` 不可用时回退
+    `NSVisualEffectView`（只在 26 以下才有意义）。
+    另外去掉了 `.shadow`：真面板里它会画出一个明显的灰色方影，比胶囊本身还显眼。
+  - ⌃⌥V 保留作备用键（Carbon 免授权、且能吞键）。
+  - 影响文件：新增 `Services/VoiceHotKeyController.swift`、`Views/VoiceHUD.swift`；
+    `Services/AppShortcutBridge.swift`、`Views/ChatView.swift`、`Views/ContentView.swift`、
+    `xHelperMac/App.swift`、`xHelperMac/ShortcutGuideView.swift`；
+    自查脚本 `scripts/cmd-chord-probe.swift`（键位探针）。浮层定稿前用过一个真面板预览脚本
+    （`hud-preview.sh`，摆多档材质/透度真 NSPanel 截图挑），定稿后已删。
+  - **待真机验收**：PiP 收起态、红叉关窗态、全屏 app 上方的浮层。
+    （左右 ⌘ 的读取已在真机探针验过：两个同时按住时 `flagsState = 0x100118`。）
+- 2026-11-11（浮层可拖 + 位置记忆）：
+  - 用户要求「能拖到想要的位置」。做法：`panel.ignoresMouseEvents = false` +
+    `isMovableByWindowBackground = true`，整块胶囊当把手；`VoiceHUDContent` 加
+    `.allowsHitTesting(false)`（`VoiceWaveLine` 自带 `.contentShape` + `onTapGesture`，
+    不关掉会把 mouseDown 吃掉，窗口就拖不动）。
+  - 位置存 `UserDefaults`（`voiceHUD.originX/Y`）。`place()` 有存档就用、并钳进
+    包含它的屏幕可视区；没存档才回落到「鼠标所在屏底部居中」。用 `placedOrigin`
+    和 `didMove` 比对，区分「程序摆放」与「用户拖动」，默认位置不会被当成用户选择存下来。
+  - 已知代价（用户拍板的取舍）：浮层在的这几秒（录音/想/说）那 76×56 区域会吃掉点击，
+    点它＝拖它，不会传给它后面的 app；正常聊天时的点击穿透不受影响（浮层不在）。
+- 2026-11-11（按住说话结尾丢字 → 松手后多收 300ms 尾巴）：
+  - 用户反馈「说完立刻松手，句尾的字稳定丢」。根因与修法见
+    `docs/bugs/060-hold-talk-tail-truncated.md`：松手即 `removeTap` + `engine.stop()`，
+    而 VPIO + tap 缓冲有 150~300ms 延迟，最后一段话还在设备缓冲里就被丢了。
+  - 现在 `finishHoldCapture` 松手后先留 tap 再收 `holdTailGraceMs = 300ms` 才停；
+    「说话时间太短」用松手时的 `held` 判定，不把这段静音算进去。
+  - `hold done` 日志补 `held=`，与 `audio=` 对比即可判断尾巴还丢不丢。
+- 2026-11-11（按下吞开头：VPIO 空闲释放 3s → 8s，去抖 50ms → 0）：
+  - 用户反馈「有的时候按下要等一小下才能说话，按下立刻说会吞字」。根因是
+    `VoiceAudioEngine` 空闲 3 秒就把 VPIO 释放掉，下一轮要重建音频图（几百毫秒），
+    这段时间的音频进不了 tap。语音条开着时有 `setVoiceBarOpen(true)` 钉住，全局热键没有，
+    所以「刚说完再按」是热的、「隔一会儿再按」吞开头。
+  - `deviceReleaseDelay = 8`（原 3）：覆盖连续几轮说话的间隔，又不会长时间把系统输出
+    留在 AEC 通道上（影响别的 app 音量音质、蓝牙耳机可能掉通话档）。
+    计时从「本轮最后一段音频活动结束」起算（TTS 念完也算），下一次按下/播放会重置。
+  - 双 ⌘ 去抖 `armDelay` 50ms → 0：双 ⌘ 本身没有正常用途，误触由「旁边还有别的键/鼠标
+    → 本次作废」兜底，省掉 33~50ms。
+  - 影响文件：`Services/VoiceAudioEngine.swift`、`Services/VoiceHotKeyController.swift`。

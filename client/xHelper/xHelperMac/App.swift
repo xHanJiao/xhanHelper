@@ -238,13 +238,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return event
         }
 
-        // ⌃⌥V：全局按住说话（Carbon 热键，不需要辅助功能授权）。
-        // 注册失败多半是键位被别的 app 占了（-9878）：记日志，不静默。
+        // 全局按住说话：双 ⌘（app 级常驻，关窗 / PiP 收起也活着）；
+        // ⌃⌥V 保留作备用（Carbon 免辅助功能授权，也能吞键）。
+        VoiceHotKeyController.shared.start()
         if !GlobalHotKey.registerVoicePushToTalk(
-            onPress: { AppShortcutBridge.shared.onVoicePress?() },
-            onRelease: { AppShortcutBridge.shared.onVoiceRelease?() }
+            onPress: { VoiceHotKeyController.shared.hotKeyDown() },
+            onRelease: { VoiceHotKeyController.shared.hotKeyUp() }
         ) {
-            LogBuffer.shared.warning("[hotkey] ⌃⌥V 注册失败（可能被其它 app 占用），全局按住说话不可用")
+            LogBuffer.shared.warning("[hotkey] ⌃⌥V 注册失败（可能被其它 app 占用），备用热键不可用")
         }
     }
 

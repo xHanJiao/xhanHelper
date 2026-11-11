@@ -185,6 +185,12 @@ server {
         try_files $uri $uri/ /index.html;  # SPA fallback
     }
 
+    # 入口页每次回源校验：iOS 主屏 PWA 会长期缓存 index.html，部署后不刷新就一直是旧包
+    # （用 expires -1，即 Cache-Control: no-cache；别用 add_header，它会顶掉 server 级安全头）
+    location = /index.html {
+        expires -1;
+    }
+
     # 单图上限 32 MiB，留余量；默认 1M 会让大图上传 413
     client_max_body_size 40M;
 }

@@ -23,7 +23,7 @@ let coldStartPending = true
  *     【分支 A】切换到新会话 (newId !== convId)
  *       → loadHistory(newId)          GET messages-v2        拉取最近 7 条消息
  *       → fetchAssociatedMemories()   POST /memories/batch   批量获取关联记忆详情
- *       → nextTick + scrollToBottom   滚动到底部
+ *       → stickToBottom = true + nextTick + scrollToBottom   滚动到底部（跟随意图重置为贴底）
  *       → setTimeout 200ms            激活上滑加载监听（防误触发）
  *       → fetchLlmConfig()            根据智能体重拉 LLM 参数
  *     【分支 B】同会话重载 (needsRefetch=true)
@@ -52,8 +52,9 @@ let coldStartPending = true
  *     → fetchLlmConfig()                     刷新 LLM 配置
  *
  * ── 六、流式响应期间（被动触发） ──────────────────────────────────────────────
- *   watch(chat.streamingMessage?.content)   (L450)  → scrollToBottom()
- *   watch(chat.streamingMessage?.reasoning) (L451)  → scrollToBottom()
+ *   watch(chat.streamingMessage?.content)   (L953)  → scrollToBottom()（贴底才跟随）
+ *   watch(chat.streamingMessage?.reasoning) (L954)  → scrollToBottom()（贴底才跟随）
+ *   ResizeObserver(chat-column)             (L319)  → 内容异步长高（图片/markdown）时贴底
  *   watch(chat.llmParams)                   (L107)  → 同步更新 llmSettings
  *
  * ── 七、输入框收起 ──────────────────────────────────────────────────────────
@@ -313,6 +314,13 @@ onMounted(() => {
     composerObserver = new ResizeObserver(onLayoutResize)
     composerObserver.observe(mobileInputRef.value)
   }
+  // 消息内容长高（图片加载完、markdown 异步渲染）也要贴底：这类变化没有任何 watcher 会触发
+  if (messagesColumnRef.value) {
+    contentObserver = new ResizeObserver(() => {
+      if (stickToBottom) pinToBottom()
+    })
+    contentObserver.observe(messagesColumnRef.value)
+  }
   window.addEventListener('resize', onLayoutResize)
   window.addEventListener('keydown', onVoiceKeyDown)
   window.addEventListener('keyup', onVoiceKeyUp)
@@ -329,10 +337,10 @@ onMounted(() => {
 
 const inputValue = ref('')
 const messagesEndRef = ref(null)
-const streamingBubbleRef = ref(null)
+const messagesContainerRef = ref(null)
+const messagesColumnRef = ref(null)
 const isLoadingHistory = ref(false)
 const isFirstLoad = ref(true)
-const messagesContainerRef = ref(null)
 const mobileInputRef = ref(null)
 const isInitialScrollDone = ref(false)
 const isAwayFromBottom = ref(false)
@@ -415,6 +423,7 @@ const inputVisible = ref(true)
 // 按钮绝对定位在 .chat-card 内，基准取卡片底边，键盘弹出缩壳时也不会错位。
 const scrollBtnBottom = ref(120)
 let composerObserver = null
+let contentObserver = null
 function updateScrollBtnBottom() {
   const el = mobileInputRef.value
   if (!el) return
@@ -431,10 +440,27 @@ function updateAwayFromBottom() {
 function onLayoutResize() {
   updateScrollBtnBottom()
   updateAwayFromBottom()
+  // 视口/输入卡变矮（挂图、键盘、拖窗口）会让最新内容落到可视区下方：贴底时跟上
+  if (stickToBottom) pinToBottom()
 }
 let hideCooldownTimer = null
 let showCooldownActive = false
 let scrollRafPending = false
+
+// 「要不要跟着底部走」只由用户意图决定：scrollTop 变小 = 用户把视图往上挪了（在读历史）。
+// 不能用「距底距离」判断——内容变高也会让距离变大，把自己撑高的那一帧误判成上滑，
+// 结果整轮流式都不再跟随（见 docs/bugs/063）。
+let stickToBottom = true
+let lastScrollTop = 0
+const STICK_SLACK = 80
+
+function pinToBottom() {
+  const el = messagesContainerRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+  lastScrollTop = el.scrollTop
+  stickToBottom = true
+}
 
 watch(inputVisible, async (val) => {
   if (val) {
@@ -515,26 +541,17 @@ function scrollToBottom() {
     scrollRafPending = true
     requestAnimationFrame(() => {
       scrollRafPending = false
-      if (chat.isStreaming && streamingBubbleRef.value) {
-        const container = messagesContainerRef.value
-        if (!container) return
-        const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-        if (distFromBottom > 80) return
-        container.scrollTop = container.scrollHeight
-      } else {
-        const container = messagesContainerRef.value
-        if (container) container.scrollTop = container.scrollHeight
-      }
+      // 一视同仁地看跟随意图：用户自己在读历史就不拽回去（流式结束、内容长高都不例外）
+      if (!stickToBottom) return
+      pinToBottom()
     })
   })
 }
 
 function handleScrollToBottomBtn() {
+  stickToBottom = true
   nextTick(() => {
-    requestAnimationFrame(() => {
-      const el = messagesContainerRef.value
-      if (el) el.scrollTop = el.scrollHeight
-    })
+    requestAnimationFrame(() => pinToBottom())
   })
 }
 
@@ -579,6 +596,8 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
             }
             const newScrollHeight = scrollContainer.scrollHeight
             scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
+            // 程序化滚动要同步基线，否则下次 scroll 事件会拿旧值比较
+            lastScrollTop = scrollContainer.scrollTop
             resolve()
           })
         })
@@ -623,10 +642,7 @@ async function syncCurrentConversation({ force = false } = {}) {
   // 拉历史成功 = 连接没问题：把「网络层」断流错误收掉（服务端 error 保留，用户需要知道）
   if (ok) clearNetworkError()
   await nextTick()
-  requestAnimationFrame(() => {
-    const el = messagesContainerRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  requestAnimationFrame(() => pinToBottom())
 }
 
 // 回前台：在流式中就续传（补发断点后的事件并继续跟流），否则拉一次历史。
@@ -827,11 +843,10 @@ watch(() => route.params.id, async (newId) => {
     if (seq !== routeSeq) return
 
     // ② 等 DOM 渲染完新消息后，把滚动条直接定位到底部（最新消息处）
+    stickToBottom = true
+    lastScrollTop = 0
     await nextTick()
-    requestAnimationFrame(() => {
-      const el = messagesContainerRef.value
-      if (el) el.scrollTop = el.scrollHeight
-    })
+    requestAnimationFrame(() => pinToBottom())
     // 恢复输入框 CSS 过渡
     await nextTick()
     skipInputTransition.value = false
@@ -865,11 +880,10 @@ watch(() => route.params.id, async (newId) => {
     isInitialScrollDone.value = false
     await loadHistory(newId)
     if (seq !== routeSeq) return
+    stickToBottom = true
+    lastScrollTop = 0
     await nextTick()
-    requestAnimationFrame(() => {
-      const el = messagesContainerRef.value
-      if (el) el.scrollTop = el.scrollHeight
-    })
+    requestAnimationFrame(() => pinToBottom())
     await nextTick()
     skipInputTransition.value = false
 
@@ -913,6 +927,9 @@ watch(() => route.params.id, async (newId) => {
     }
 
     chat.reset()
+    // 空白新对话：没有历史可读，从「贴底」开始
+    stickToBottom = true
+    lastScrollTop = 0
     // 新对话没有在途的历史请求，旧请求的 spinner 不该继续顶着（它的 finally 还要等网络）
     isLoadingHistory.value = false
   }
@@ -921,6 +938,7 @@ watch(() => route.params.id, async (newId) => {
 onBeforeUnmount(() => {
   clearTimeout(hideCooldownTimer)
   composerObserver?.disconnect()
+  contentObserver?.disconnect()
   window.removeEventListener('resize', onLayoutResize)
   window.removeEventListener('keydown', onVoiceKeyDown)
   window.removeEventListener('keyup', onVoiceKeyUp)
@@ -970,6 +988,7 @@ function clearComposer() {
 function enqueueOutgoing(outgoing) {
   chat.enqueuePendingSend(outgoing)
   clearComposer()
+  stickToBottom = true      // 刚发过消息，排队块出现也必须贴底
   scrollToBottom()
 }
 
@@ -988,6 +1007,7 @@ async function dispatchOutgoing(outgoing) {
   if (chat.conversationId && conv?.title) {
     convs.prepend({ id: chat.conversationId, title: conv.title })
   }
+  stickToBottom = true
   scrollToBottom()
 
   // 打字发送不朗读（语音轮才带 voice_mode + onAssistantReply）
@@ -1242,10 +1262,7 @@ async function retryAfterError() {
   await loadHistory(chat.conversationId)
   if (seq !== routeSeq) return
   await nextTick()
-  requestAnimationFrame(() => {
-    const el = messagesContainerRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  requestAnimationFrame(() => pinToBottom())
 }
 
 // 会话的模式/无痕状态来自列表接口（mode / ephemeral）；冷启动时列表可能晚于
@@ -1424,6 +1441,14 @@ async function toggleEphemeral() {
 
 function handleScroll(e) {
   const container = e.target
+  const dist = container.scrollHeight - container.scrollTop - container.clientHeight
+  // 先认「已在底部」：键盘弹出 / 输入卡变高 / 缩窗口会让视口变小，浏览器把 scrollTop 夹小，
+  // 那不是用户上滑（否则整轮不再跟随，正是 063 的症状）。
+  if (dist <= STICK_SLACK) stickToBottom = true
+  // 否则只认用户把视图往上挪：内容长高不改 scrollTop，不能拿距底距离当判据。
+  // 容差取 0.5px：HiDPI 触控板每个事件可能只降 0.5px，容差过大就永远判不出上滑
+  else if (container.scrollTop < lastScrollTop - 0.5) stickToBottom = false
+  lastScrollTop = container.scrollTop
   updateAwayFromBottom()
 
   const threshold = container.clientHeight * 0.15
@@ -1473,7 +1498,7 @@ function handleContainerClick(e) {
       @click="handleContainerClick"
       class="chat-messages"
     >
-      <div class="chat-column">
+      <div class="chat-column" ref="messagesColumnRef">
 
         <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
           <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
@@ -1492,7 +1517,7 @@ function handleContainerClick(e) {
           :speech="!chat.streamingMessage && voiceSpeech && msg.id === lastAssistantId ? voiceSpeech : null"
         />
         <div style="position: relative;">
-          <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
+          <div v-if="chat.streamingMessage">
             <MessageBubble
               :message="chat.streamingMessage"
               :is-history="false"
@@ -1838,6 +1863,8 @@ function handleContainerClick(e) {
   width: 100%;
   max-width: 960px;
   position: relative;
+  /* 不拉伸到容器高度：否则盒子高度恒等于视口、内容长高不触发 ResizeObserver（贴底靠它兜图片/异步渲染） */
+  align-self: flex-start;
 }
 .chat-composer-card {
   position: relative;

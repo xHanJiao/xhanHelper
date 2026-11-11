@@ -9,6 +9,11 @@ import AppKit
 
 struct MessageListView: View {
     let messages: [Message]
+    /// 流式中排队的消息：只渲染在列表底部，不混进 messages（done 按最后一条 user 回填真实 id）
+    let pendingSends: [PendingSend]
+    let pendingPaused: Bool
+    let onDeletePending: (UUID) -> Void
+    let onResumePending: () -> Void
     let isStreaming: Bool
     let isInitialLoading: Bool
     let errorMessage: String?
@@ -29,6 +34,7 @@ struct MessageListView: View {
     let token: String
     /// 句级朗读进度（只给最后一条 assistant 消息，其余传 nil）
     let speech: SpeechProgress?
+    @ObservedObject private var fontSizeManager = FontSizeManager.shared
     @State private var initialLoadDone = false
     @State private var activeTimeBubbleId: String? = nil
     @State private var autoDismissTask: Task<Void, Never>? = nil
@@ -194,11 +200,90 @@ struct MessageListView: View {
         }
     }
 
+    // MARK: Pending queue
+
+    /// 流式中排队的消息：虚线气泡 + 「继续」入口。整组在倒序列表里翻转一次，
+    /// 内部保持正常从上到下（与 statusMessage 同一套做法）。
+    @ViewBuilder
+    private var pendingQueueSection: some View {
+        if !pendingSends.isEmpty {
+            VStack(alignment: .trailing, spacing: 10) {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.18))
+                        .frame(height: 0.5)
+                    Text(pendingPaused
+                         ? "已暂停 · 上一条发送失败"
+                         : "当前轮结束后依次发送 · \(pendingSends.count) 条")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(pendingPaused ? .orange : .secondary)
+                        .fixedSize()
+                    if pendingPaused {
+                        Button("继续发送") { onResumePending() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(Color("appAccent"))
+                    }
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.18))
+                        .frame(height: 0.5)
+                }
+                .padding(.horizontal, Layout.chatHorizontalPadding)
+
+                ForEach(pendingSends) { item in
+                    pendingBubble(item)
+                }
+            }
+            .scaleEffect(y: -1)
+        }
+    }
+
+    @ViewBuilder
+    private func pendingBubble(_ item: PendingSend) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("排队中")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
+                if !item.text.isEmpty {
+                    Text(item.text)
+                        .font(.system(size: fontSizeManager.scaledSize))
+                        .foregroundColor(Color("assistantText").opacity(0.66))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !item.attachments.isEmpty {
+                    Text("\(item.attachments.count) 张图")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("删除") { onDeletePending(item.id) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color("assistantText").opacity(0.22),
+                                  style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            )
+            .frame(maxWidth: 560, alignment: .trailing)
+        }
+        .padding(.horizontal, Layout.chatHorizontalPadding)
+    }
+
     // MARK: ScrollView
 
     private var messageScrollView: some View {
         ScrollView {
             VStack(spacing: 18) {
+                // 排队气泡：倒序列表的「最底部」，紧跟流式回复之后
+                pendingQueueSection
                 if let status = statusMessage {
                     HStack {
                         Image(systemName: "brain.head.profile")

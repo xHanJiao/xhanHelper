@@ -211,7 +211,8 @@ final class VoiceHotKeyController {
         lastViewModel = vm
         if vm.isStreaming {
             // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
-            vm.stopStreaming(notifyServer: false)
+            // 这是「立刻接一轮语音」，不是用户停止：保留排队消息
+            vm.stopStreaming(notifyServer: false, clearPending: false)
         }
         // 没有任何语音视图活着（关窗 / PiP 收起）时自己接管朗读，否则视图那套已经接好了
         if AppShortcutBridge.shared.voiceHotKeyOwner == nil {

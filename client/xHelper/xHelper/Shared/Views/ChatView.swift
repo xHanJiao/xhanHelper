@@ -77,10 +77,12 @@ struct ChatView: View {
     /// 是否正在「退出语音」触发的 flush：这一轮按普通消息提交，不朗读
     @State private var exitingVoice = false
     /// macOS 空格监听 / 失焦兜底
+    #if os(macOS)
     @State private var spaceKeyMonitor: Any?
     @State private var resignActiveObserver: NSObjectProtocol?
     /// 本视图所在窗口（空格监听只接管发给它的按键）
     @State private var hostWindow: NSWindow?
+    #endif
     @ObservedObject private var artifactOpener = ArtifactOpenCoordinator.shared
 
     var body: some View {
@@ -147,6 +149,8 @@ struct ChatView: View {
     }
 #else
     private var voiceStripSlot: AnyView? { nil }
+    /// iOS 没有连续对话 / 句级朗读进度（TTS 只在 macOS 侧接入）
+    private var voiceSpeechProgress: SpeechProgress? { nil }
 #endif
 
     private var content: some View {
@@ -154,6 +158,10 @@ struct ChatView: View {
         ZStack(alignment: .bottom) {
             MessageListView(
                 messages: viewModel.messages,
+                pendingSends: viewModel.pendingSends,
+                pendingPaused: viewModel.pendingPaused,
+                onDeletePending: { viewModel.removePendingSend(id: $0) },
+                onResumePending: { viewModel.resumePendingQueue() },
                 isStreaming: viewModel.isStreaming,
                 isInitialLoading: viewModel.isInitialLoading,
                 errorMessage: viewModel.errorMessage,
@@ -340,7 +348,7 @@ struct ChatView: View {
             voice.stopSpeaking()
             if viewModel.isStreaming {
                 // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
-                viewModel.stopStreaming(notifyServer: false)
+                viewModel.stopStreaming(notifyServer: false, clearPending: false)
             }
             // 退出语音时 flush 的话按普通消息提交（exitingVoice），不朗读
             viewModel.sendMessage(text, baseURL: baseURL, token: token,
@@ -354,7 +362,7 @@ struct ChatView: View {
             // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
             voice.stopSpeaking()
             if viewModel.isStreaming {
-                viewModel.stopStreaming(notifyServer: false)
+                viewModel.stopStreaming(notifyServer: false, clearPending: false)
             }
             viewModel.sendMessage(text, baseURL: baseURL, token: token,
                                   agentId: selectedAgentID ?? agentId,
@@ -522,58 +530,13 @@ struct ChatView: View {
     /// 文字和图片同一帧一起清掉（图片只在上传期间不可能留下、避免「文字先走、图片后走」的时差）；
     /// 上传失败时两者一起还原。
     private func sendDraft() {
-        guard !viewModel.isUploadingAttachments else { return }
-        let text = viewModel.draftText
-        let attachments = viewModel.draftAttachments
-        let hasText = !text.trimmingCharacters(in: .whitespaces).isEmpty
-        guard hasText || !attachments.isEmpty else { return }
-        let speakReply = viewModel.pendingVoiceReply
-        viewModel.pendingVoiceReply = false
+        let hasText = !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty
+        guard hasText || !viewModel.draftAttachments.isEmpty else { return }
 
         dismissKeyboardToken = UUID()
-        viewModel.draftText = ""
-        viewModel.draftAttachments = []
+        viewModel.sendDraft(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
         withAnimation(.easeOut(duration: 0.3)) {
             scrollPosition.scrollTo(edge: .top)
-        }
-
-        guard !attachments.isEmpty else {
-            viewModel.sendMessage(text, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId, speakReply: speakReply)
-            return
-        }
-
-        // 带图：先上传拿 image_id，再发送
-        viewModel.isUploadingAttachments = true
-        Task { @MainActor in
-            defer { viewModel.isUploadingAttachments = false }
-            let api = viewModel.apiClient
-            var ids: [String] = []
-            for item in attachments {
-                do {
-                    let uploaded = try await api.uploadImage(item.data, filename: item.filename)
-                    ids.append(uploaded.imageId)
-                    // 手上就有解码好的图，直接进共享缓存：消息重载后不用再拉一次
-                    AttachmentImageLoader.shared.seed(id: uploaded.imageId, image: item.image)
-                } catch {
-                    LogBuffer.shared.error("ChatView.uploadImage failed: \(error)")
-                    ToastCenter.shared.show("图片上传失败：\((error as NSError).localizedDescription)")
-                }
-            }
-            guard !ids.isEmpty else {
-                // 全失败：文字和待发图一起还给用户，别让打好的字白丢
-                viewModel.draftText = text
-                viewModel.draftAttachments = attachments
-                return
-            }
-            viewModel.sendMessage(
-                text,
-                baseURL: baseURL,
-                token: token,
-                agentId: selectedAgentID ?? agentId,
-                attachmentIds: ids,
-                localImages: attachments.map(\.image),
-                speakReply: speakReply
-            )
         }
     }
 
@@ -932,7 +895,7 @@ struct ChatView: View {
                 context: ctx,
                 symbol: "paperclip",
                 tint: Color("appAccent"),
-                isEnabled: !viewModel.isStreaming && !viewModel.isUploadingAttachments,
+                isEnabled: !viewModel.isUploadingAttachments,
                 tooltip: "添加图片",
                 action: { showFileImporter = true }
             )
@@ -1042,16 +1005,15 @@ struct ChatView: View {
     /// 顶到类型检查预算上限（再加一个参数就报 "unable to type-check in reasonable time"）。
     @ViewBuilder
     private func inputBarTrailingActions(_ ctx: InputBarContext) -> some View {
-        #if os(macOS)
         if voice.voiceBarActive {
             // 语音模式：停止键放进居中的按钮组（状态行），这里留空
             EmptyView()
         } else {
-            // 只留发送/停止；语音（连续对话）在状态行挨着「更多操作」。
+            // 流式中且草稿非空时同时给「停止 + 发送（排队）」
             SendStopButton(
                 context: ctx,
                 isStreaming: viewModel.isStreaming,
-                canSend: ctx.canSend && !viewModel.isUploadingAttachments,
+                canSend: ctx.canSend,
                 onSend: sendDraft,
                 onStop: {
                     voice.stopSpeaking()
@@ -1059,28 +1021,6 @@ struct ChatView: View {
                 }
             )
         }
-        #else
-        if ctx.isStreaming {
-            IconButton(
-                visibility: .always,
-                context: ctx,
-                symbol: "stop.circle.fill",
-                tint: .red,
-                tooltip: "停止生成",
-                action: { viewModel.stopStreaming() }
-            )
-        } else {
-            IconButton(
-                visibility: .always,
-                context: ctx,
-                symbol: "arrow.up.circle.fill",
-                tint: ctx.canSend ? Color("appAccent") : .gray,
-                isEnabled: ctx.canSend && !viewModel.isUploadingAttachments,
-                tooltip: "发送",
-                action: sendDraft
-            )
-        }
-        #endif
     }
 
     /// 语音条开关：正常模式是绿色波形圈；语音模式变成红色「挂断」（`phone.down.fill`）——
@@ -1119,7 +1059,8 @@ struct ChatView: View {
         // flush 期间 exitingVoice = true，onSentence 用 speakReply: false 提交，不朗读。
         let willFlush = voice.hasHeldText
         if viewModel.isStreaming {
-            viewModel.stopStreaming(notifyServer: !willFlush)
+            // flush 要接新轮：保留排队消息；不 flush（真正结束）按停止语义清空
+            viewModel.stopStreaming(notifyServer: !willFlush, clearPending: !willFlush)
         }
         exitingVoice = true
         voice.exitVoiceMode()

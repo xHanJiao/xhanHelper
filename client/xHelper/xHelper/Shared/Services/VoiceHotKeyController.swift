@@ -249,8 +249,10 @@ final class VoiceHotKeyController {
             followTurn = false
             return
         }
-        // 连续档松手后浮层就收（会话本身在视图里继续跑）
-        guard followTurn else {
+        // 连续档（语音条开着）followTurn=false：松手就收、不跟着会话念完。
+        // 但**按住期间**必须留着浮层 —— 那一路的录音在视图服务里，浮层消失会让人以为
+        // 没进语音（原来直接 idle，表现成「按下去一秒半浮层自己没了」）。
+        if !followTurn, !armed {
             hud.idle(now: now)
             return
         }
@@ -259,7 +261,7 @@ final class VoiceHotKeyController {
             hud.setPhase(.speaking)
         } else if ptt.isHoldTranscribing || (lastViewModel?.isStreaming ?? false) {
             hud.setPhase(.thinking)
-        } else if ptt.isHoldRecording {
+        } else if ptt.isHoldRecording || armed {
             hud.setPhase(.listening)
         } else {
             hud.idle(now: now)

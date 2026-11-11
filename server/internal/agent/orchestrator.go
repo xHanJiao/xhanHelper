@@ -1172,8 +1172,8 @@ func (o *Orchestrator) runOneRound(
 			if se.Usage != nil && se.Usage.PromptTokens > state.maxPromptTokens {
 				state.maxPromptTokens = se.Usage.PromptTokens
 			}
-			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
-				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
+			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d, voice=%v",
+				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls), req.VoiceMode)
 			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(), req, systemPrompt, retrieveResult, state)
 		case "error":
 			state.outcome = activity.OutcomeFailed
@@ -1184,6 +1184,12 @@ func (o *Orchestrator) runOneRound(
 	return false
 }
 
+// voiceToolRoundReminder — 语音轮在工具返回后补的一句提醒（只进本次请求，不落库）。
+// 工具轮的大段 tool 结果是上下文末尾离模型最近的内容，最容易诱发复述；
+// system prompt 里的语音约束此时已隔了几万 token，靠尾巴这句把注意力拉回来。
+const voiceToolRoundReminder = "（语音轮）只回 1–3 句结论，不要复述上面的工具返回细节。"
+
+// mkLlmChatReq 组装单轮 LLM 请求。
 func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state *reactState) *llm.ChatRequest {
 	isProMode := req.DeepMode && o.proClient != nil
 	temperature := req.Temperature
@@ -1219,9 +1225,16 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		tools = append(tools, filterExposedFuncDefs(buildClientToolDefs(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), exposed)...)
 		tools = filterToolDefs(tools, o.toolExcludes)
 	}
+	// 语音轮：最后一次工具返回后补一句「只回结论」。只改本次请求的副本，
+	// state.msgs 与落库内容都不动；消息序列仍是 assistant(tool_calls) → tool，不插 user 消息。
+	msgs := state.msgs
+	if req.VoiceMode && len(msgs) > 0 && msgs[len(msgs)-1].Role == "tool" {
+		msgs = append([]llm.Message(nil), msgs...)
+		msgs[len(msgs)-1].Content += "\n\n" + voiceToolRoundReminder
+	}
 	return &llm.ChatRequest{
 		SystemPrompt: systemPrompt,
-		Messages:     state.msgs,
+		Messages:     msgs,
 		Tools:        tools,
 		Temperature:  temperature,
 		MaxTokens:    maxTokens,

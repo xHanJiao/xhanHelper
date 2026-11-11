@@ -137,3 +137,4 @@
 - 已知未做（评审 P3）：`trimEventGroup` 二分「部分保留」分支缺测试；总预算路径仍是逐条降级/丢弃（规模假设：per-type 已封顶，超限很小）；summary 逐条降级时整组重编码（假设 14 天内活跃事件数不大）。
 - 2026-11-09 行为准则：新增第 9 条「事件全貌」——用户在谈论某事件而注入形态不是 full（index/summary/hit）时，必须先 `event.enable` 钉住再回答；已 full 不重复钉，钉满 3 个先 disable 无关的。`DescEvents` 同步补「正在深入谈这件事就 event.enable 钉住」。影响文件：`server/internal/agent/promptbuilder/{static,builder_test}.go`、`server/internal/agent/retrieval/types.go`。
 - 2026-11-09 术语：用户可见的「钉住」统一改为「关注」（工具标签 `关注事件` / `取消关注`、上限报错、准则 9、`DescEvents`、调试页徽标）。代码标识符与 XML 协议（`mode="full"`、`pinned="1"`）不变。
+- 2026-11-11 位置调整：「事件全貌」规则内容不变，从行为准则第 9 条移到工具规则区（渲染在工具目录之后）；行为准则收窄为 1–7 的纯人格准则。影响文件：`server/internal/agent/promptbuilder/{static.go,builder.go,builder_test.go}`。

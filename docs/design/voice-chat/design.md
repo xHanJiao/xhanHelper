@@ -245,7 +245,7 @@ C 模式说明：
 
 ### C2b 朗读节奏：句级流水线 + 字幕跟随
 
-- 问题：TTS 原本在 `done` 后才拿整段回复合成、且要等整个 mp3 下完才开播；语音轮回复只有 80–120 字，
+- 问题：TTS 原本在 `done` 后才拿整段回复合成、且要等整个 mp3 下完才开播；语音轮回复很短（当前约束 ≤60 汉字），
   用户 3 秒读完，再干等 1~2 秒才听到第一句——「都看完了才开始念」。
 - 修法（后端不改，复用现有 `POST /api/voice/tts`）：
   - 正文 delta 一进来就切句：句末 `。！？!?；;…\n`；**第一句额外在 12 字后的 `，,、` 处先切一刀**，
@@ -322,8 +322,12 @@ C 模式说明：
 
 新增 `voice_mode` 请求参数（照 `brief_answer` 路径）：
 
-- 服务端在 system prompt 注入：口语化、不要 markdown/列表/代码块、同语言、中文约 80–120 字。
+- 服务端在 system prompt **末尾**（Layer 5，位置贴近用户消息、遵循度最高）注入：口语化、不要
+  markdown/列表/代码块、同语言、1–3 句 / 最多 60 个汉字；显式声明与「回复形态」的篇幅分档冲突时
+  以本段为准、「调用了工具只回结论一句」。
 - 仅语音轮注入；接受前缀缓存分叉（低频动作）。
+- 工具轮额外补救：最后一次工具返回后，`mkLlmChatReq` 在**本次请求的消息副本**尾部补一句
+  「只回 1–3 句结论，不复述工具返回细节」（`state.msgs` 与落库内容不动，见文末 2026-11-11 条目）。
 - 客户端只朗读最终回复；剥离 markdown/代码块；纯代码/表格回复改播一句提示。
 
 ## 后续 C（连续对话）
@@ -635,3 +639,17 @@ location = /api/voice/asr {
   第二个采集 owner 被拒并提示「正在语音输入，请先松手」。
   详见 `docs/design/voice-audio-engine/design.md`。影响文件：`VoiceAudioEngine.swift`、
   `VoiceAudioLease.swift`（新）、`VoiceChatService.swift`。
+
+- 2026-11-11（语音回答还是偏长）：
+  - 反馈「有时候还是会说一大堆」。链路已确认没问题（两端都带 `voice_mode`、服务端已解析），
+    是约束被稀释：原约束排在 system prompt 的 Layer 1，后面压着角色定义 + 工具目录 +
+    稳定上下文；且与常驻 `reply_form` 的 300/500 字档并列，模型偶尔挑宽松那条；
+    工具轮的大段 tool 结果在上下文末尾，最容易诱发复述。
+  - `voiceModeNotice` 收紧为「1–3 句 / 最多 60 个汉字」，显式声明「与回复形态冲突时以本段为准」、
+    「调用了工具只回结论一句」，并从 Layer 1 挪到 Build 末尾（Layer 5，位置贴近用户消息）。
+    非语音轮输出逐字节不变，前缀缓存不受影响。
+  - `mkLlmChatReq`：语音轮且最后一条消息是 `tool` 时，往**本次请求的消息副本**尾部补一句
+    「只回 1–3 句结论，不复述工具返回细节」；`state.msgs` 与落库内容不动，消息序列不变。
+  - `[orch] round … response` 日志加 `voice=` 标记，便于定位长回复出现在哪类轮次。
+  - 影响文件：`server/internal/agent/promptbuilder/{static.go,builder.go,builder_test.go}`、
+    `server/internal/agent/{orchestrator.go,orchestrator_test.go}`。

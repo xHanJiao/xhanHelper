@@ -3,6 +3,7 @@ import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
+import { saveUnsentDraft } from '@/utils/unsentDraft'
 import { createIdleWatchdog, createSSEParser } from '@/utils/sse'
 
 // 流式空闲上限：服务端每 15s 发一次 `: ping`，60s 没收到任何字节就按半死连接处理。
@@ -71,6 +72,18 @@ export function useChatSSE() {
   // failStream 本次收尾的消息 id：done 只认它，避免把真实 id/灵阅卡片
   // 补到上一轮「停止」遗留的 local- 消息上（那条永远不会有真实 id）。
   let failedLocalId = null
+
+  // 会话失效：先留下未发内容再登出。current 传 null 表示本轮已发出（续传 401），只存剩余队列。
+  function expireSession(current, attachments) {
+    const items = []
+    if (current != null) items.push({ content: current, imageIds: attachments || [] })
+    for (const p of chat.pendingSends) {
+      items.push({ content: p.content || '', imageIds: p.imageIds || [] })
+    }
+    saveUnsentDraft(chat.conversationId, items)
+    auth.markSessionExpired()
+    auth.logout()
+  }
 
   function isCurrent(controller) {
     return abortController === controller
@@ -207,7 +220,7 @@ export function useChatSSE() {
 
       if (!res.ok) {
         if (res.status === 401) {
-          auth.logout()
+          expireSession(message, attachments)
           return
         }
         throw new Error(`HTTP ${res.status}`)
@@ -225,7 +238,7 @@ export function useChatSSE() {
         return
       }
       if (err.name === 'AuthError') {
-        auth.logout()
+        expireSession(message, attachments)
         return
       }
       console.error('Chat error', err)
@@ -277,7 +290,7 @@ export function useChatSSE() {
     } catch (err) {
       if (err.name === 'AbortError' || !isCurrent(controller)) return 'aborted'
       if (err.name === 'AuthError') {
-        auth.logout()
+        expireSession(null)
         return 'aborted'
       }
       console.error('Chat resume error', err)

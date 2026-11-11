@@ -14,6 +14,9 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var chatViewModel: ChatViewModel
     @State private var conversationLoadError: String?
+    /// iOS：恢复未发草稿时打开的会话；默认会话随后到达时别把它顶掉。
+    @State private var restoredConversationOverride: String?
+    @State private var restoredConversationTitle: String?
 
     @StateObject private var notificationManager = NotificationManager()
     @State private var showAckLoading = false
@@ -241,6 +244,7 @@ struct ContentView: View {
     /// 回到前台：正在流式的会话优先续传（补发断点后的事件并继续跟流）；
     /// 续不上（没有 turn id / 老后端）时由 resumeStreaming 自己收尾，再走拉历史。
     private func onReturnedToForeground() {
+        Task { await deviceManager.verifySessionOnForeground() }
         #if os(macOS)
         // 多 tab：每个在流式的 tab 各自续（hub buffer 按会话区分，不会串台）
         for tab in chatTabManager.tabs where tab.viewModel.isStreaming {
@@ -263,8 +267,71 @@ struct ContentView: View {
         #endif
     }
 
-    private func syncActiveChat() async {
+    /// 会话失效后登录回来：恢复未发消息（只填输入框/排队区，不自动发送）。
+    @MainActor
+    private func restoreUnsentDraftIfAny() async {
+        guard let draft = UnsentDraftStore.take() else { return }
+
         #if os(macOS)
+        if let cid = draft.conversationId {
+            await chatTabManager.openConversation(id: cid, title: draft.title ?? "会话")
+        }
+        guard let vm = chatTabManager.currentTab?.viewModel else { return }
+        #else
+        if let cid = draft.conversationId, cid != chatViewModel.conversationId {
+            restoredConversationOverride = cid
+            restoredConversationTitle = draft.title ?? "会话"
+            await chatViewModel.loadConversation(id: cid, title: draft.title ?? "会话")
+        }
+        let vm = chatViewModel
+        #endif
+
+        let client = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+        if let first = draft.items.first {
+            vm.draftText = first.text
+            for imageID in first.imageIds {
+                guard let data = try? await client.fetchImageData(id: imageID),
+                      let image = PlatformImage(data: data) else { continue }
+                vm.draftAttachments.append(
+                    DraftAttachment(data: data, image: image, filename: "\(imageID).png"))
+            }
+        }
+        // 队列里剩余的消息：文本入队并暂停，等用户点「继续」，避免一登录就连发。
+        for item in draft.items.dropFirst() where !item.text.isEmpty {
+            vm.pendingSends.append(PendingSend(
+                text: item.text,
+                attachments: [],
+                baseURL: deviceManager.baseURL,
+                token: deviceManager.token ?? "",
+                agentId: nil,
+                speakReply: false))
+        }
+        if !vm.pendingSends.isEmpty { vm.pendingPaused = true }
+        LogBuffer.shared.info("restored unsent draft: \(draft.items.count) item(s)")
+    }
+
+    /// 会话失效前抓取当前会话的未发内容（回前台校验等不经过 SSE 的 401 路径）。
+    @MainActor
+    private func captureUnsentBeforeLogout() {
+        guard !UnsentDraftStore.hasDraft else { return }
+        #if os(macOS)
+        guard let vm = chatTabManager.currentTab?.viewModel else { return }
+        #else
+        let vm = chatViewModel
+        #endif
+        var items: [UnsentDraftItem] = []
+        if !vm.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append(UnsentDraftItem(text: vm.draftText, imageIds: []))
+        }
+        for pending in vm.pendingSends where !pending.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append(UnsentDraftItem(text: pending.text, imageIds: []))
+        }
+        guard !items.isEmpty else { return }
+        let cid = (vm.conversationId ?? "").isEmpty ? nil : vm.conversationId
+        UnsentDraftStore.save(UnsentDraft(conversationId: cid, title: vm.conversationTitle, items: items))
+    }
+
+    private func syncActiveChat() async {        #if os(macOS)
         // 激活时刷新当前所在对话（而非默认会话），避免劫持其他会话 tab
         guard let tab = chatTabManager.currentTab,
               !tab.isBlank,
@@ -560,8 +627,11 @@ struct ContentView: View {
                 }
 #endif
             }
-            .onChange(of: scenePhase) { _, newPhase in
-                #if os(macOS)
+            .onAppear {
+                // 会话失效时（任意 401 路径）先把当前未发内容截下来
+                deviceManager.onSessionExpiring = { captureUnsentBeforeLogout() }
+            }
+            .onChange(of: scenePhase) { _, newPhase in                #if os(macOS)
                 // 前台周期刷新会话列表；离开激活态停止，避免后台空转
                 if newPhase == .active { conversationListVM.startAutoRefresh() }
                 else { conversationListVM.stopAutoRefresh() }
@@ -579,15 +649,29 @@ struct ContentView: View {
             // 启动开新对话（空白 tab，发首条消息才落库），不再自动打开默认会话
             .task {
                 chatTabManager.newChat()
+                await restoreUnsentDraftIfAny()
             }
 #else
             .task(id: deviceManager.defaultConversation?.id) {
-                guard let conv = deviceManager.defaultConversation else {
-                    chatViewModel.isInitialLoading = false
-                    return
+                // 恢复草稿时已打开原会话：默认会话随后到达时别把它顶掉（会清空刚恢复的队列）。
+                // 这个 task 可能因 defaultConversation 变化被取消，所以这里要补一次加载，
+                // 不能只 return，否则会停在「加载消息失败」的空会话。
+                if let override = restoredConversationOverride {
+                    let title = restoredConversationTitle ?? "会话"
+                    restoredConversationOverride = nil
+                    restoredConversationTitle = nil
+                    if deviceManager.defaultConversation?.id != override {
+                        await chatViewModel.loadConversation(id: override, title: title)
+                        return
+                    }
                 }
-                LogBuffer.shared.debug("loading conversation \(conv.id)")
-                await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
+                if let conv = deviceManager.defaultConversation {
+                    LogBuffer.shared.debug("loading conversation \(conv.id)")
+                    await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
+                } else {
+                    chatViewModel.isInitialLoading = false
+                }
+                await restoreUnsentDraftIfAny()
             }
 #endif
             .onReceive(NotificationCenter.default.publisher(for: .reminderTapped)) { notification in

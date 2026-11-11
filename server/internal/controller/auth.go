@@ -18,6 +18,7 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, a
 		var req struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
+			DeviceID string `json:"device_id"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
 			view.JSONError(c, 400, "username and password required")
@@ -46,7 +47,7 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, a
 				return
 			}
 		}
-		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password)
+		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password, req.DeviceID)
 		if err != nil {
 			if errors.Is(err, service.ErrUsernameTaken) {
 				limiter.Fail(key)
@@ -69,6 +70,7 @@ func loginUser(userRepo *service.UserRepo, adminUsers []string, limiter *authFai
 		var req struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
+			DeviceID string `json:"device_id"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
 			view.JSONError(c, 400, "username and password required")
@@ -80,7 +82,7 @@ func loginUser(userRepo *service.UserRepo, adminUsers []string, limiter *authFai
 			view.JSONError(c, 429, "too many attempts, try again later")
 			return
 		}
-		user, token, err := userRepo.Login(c.Request.Context(), req.Username, req.Password)
+		user, token, err := userRepo.Login(c.Request.Context(), req.Username, req.Password, req.DeviceID)
 		if err != nil {
 			if errors.Is(err, service.ErrInvalidCredentials) {
 				limiter.Fail(key)

@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { peekUnsentDraft } from '@/utils/unsentDraft'
 import {
   NCard,
   NForm,
@@ -35,7 +36,9 @@ async function handleSubmit() {
 
   if (res.success) {
     message.success(isLoginMode.value ? '登录成功' : '注册成功')
-    router.push('/chat')
+    // 被踢前所在的会话：回去继续，别把未发消息带错地方
+    const draft = peekUnsentDraft()
+    router.push(draft?.conversationId ? `/chat/${draft.conversationId}` : '/chat')
   } else {
     message.error(res.message)
   }
@@ -49,6 +52,9 @@ function toggleMode() {
 <template>
   <div style="height: 100dvh; display: flex; align-items: center; justify-content: center; background: transparent;">
     <NCard title="xhanHelper" style="width: 400px; text-align: center;">
+      <div v-if="auth.sessionExpired" style="margin-bottom: 12px; padding: 8px 10px; border-radius: 8px; background: rgba(240, 160, 80, 0.12); color: #b8742b; font-size: 13px;">
+        登录已失效，请重新登录
+      </div>
       <NForm>
         <NFormItem label="用户名">
           <NInput v-model:value="username" placeholder="请输入用户名" :disabled="loading" />

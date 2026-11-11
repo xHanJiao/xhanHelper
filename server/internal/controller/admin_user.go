@@ -29,7 +29,7 @@ func createUserByAdmin(userRepo *service.UserRepo) gin.HandlerFunc {
 			view.JSONError(c, 400, err.Error())
 			return
 		}
-		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password)
+		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password, "")
 		if err != nil {
 			if errors.Is(err, service.ErrUsernameTaken) {
 				view.JSONError(c, 409, "用户名已存在")

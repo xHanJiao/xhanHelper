@@ -7,6 +7,8 @@ class DeviceManager: ObservableObject {
     @Published var userId: String?
     @Published var username: String?
     @Published var isLoggedIn = false
+    /// 被动失效（401）标记：登录页据此提示；手动退出不置位。
+    @Published var sessionExpired = false
     @Published var isVerifying = false
     @Published var defaultConversation: ConversationData?
     @Published var knownUsernames: [String] = []
@@ -22,10 +24,16 @@ class DeviceManager: ObservableObject {
     private let userIdKey = "xhan_user_id"
     private let usernameKey = "xhan_username"
     private let knownUsernamesKey = "xhan_known_usernames"
+    private let deviceIDKey = "xhan_device_id"
     private let maxKnownUsernames = 10
     private let defaultConvKey = "xhan_default_conversation_id"
     private var refreshTimer: Timer?
     private let refreshInterval: TimeInterval = 3600
+    /// 回前台校验节流：被踢后不必等到下一次整点续期。
+    private var lastForegroundCheck = Date.distantPast
+    private var authCancellable: AnyCancellable?
+    /// 会话失效前由 ContentView 注入：抓取当前未发内容（前台校验等非 SSE 路径）。
+    var onSessionExpiring: (() -> Void)?
 
     #if DEBUG
     static let defaultBaseURL = "http://localhost:8080"
@@ -82,6 +90,7 @@ class DeviceManager: ObservableObject {
     }
 
     init() {
+        observeAuthFailures()
         #if os(macOS)
         if LocalBackendManager.isActive {
             // 本地模式：无登录流程，token 由 app 生成、与后端共享；等后端 ready 再载默认会话。
@@ -115,8 +124,47 @@ class DeviceManager: ObservableObject {
         }
     }
 
-    // MARK: Activity（活动埋点）
+    // MARK: 设备标识 / 会话失效
 
+    /// 设备标识：首次生成后持久化，服务端据此「同设备重登替换旧 token」。
+    var deviceID: String {
+        if let id = UserDefaults.standard.string(forKey: deviceIDKey), !id.isEmpty {
+            return id
+        }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: deviceIDKey)
+        return id
+    }
+
+    private func observeAuthFailures() {
+        authCancellable = NotificationCenter.default.publisher(for: .authUnauthorized)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] note in
+                let notified = note.userInfo?["token"] as? String
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    // 只认当前 token：后台旧 token 快照（活动埋点等）不能把刚登录的会话踢掉
+                    guard let notified, let current = self.token, notified == current else { return }
+                    LogBuffer.shared.error("session invalidated by server (401), logging out")
+                    self.onSessionExpiring?()
+                    self.sessionExpired = true
+                    self.clearAuthState()
+                }
+            }
+    }
+
+    /// 回前台补一次续期校验（节流 5 分钟）。本地模式无登录概念，直接返回。
+    func verifySessionOnForeground() async {
+        #if os(macOS)
+        if LocalBackendManager.isActive { return }
+        #endif
+        guard token != nil else { return }
+        guard Date().timeIntervalSince(lastForegroundCheck) >= 300 else { return }
+        lastForegroundCheck = Date()
+        await performTokenRefresh()
+    }
+
+    // MARK: Activity（活动埋点）
     /// 本地模式必采；云端按服务端 `/api/health` 能力探测结果（iOS 不采集，monitors 为 macOS-only）。
     private var activityCollectionActive: Bool {
         #if os(macOS)
@@ -193,6 +241,7 @@ class DeviceManager: ObservableObject {
             startTokenRefresh()
         } catch {
             LogBuffer.shared.error("verifyToken failed: \(error)")
+            onSessionExpiring?()
             clearAuthState()
         }
         isVerifying = false
@@ -246,6 +295,7 @@ class DeviceManager: ObservableObject {
             return
         }
         #endif
+        sessionExpired = false
         if let t = token {
             do {
                 var req = URLRequest(url: try requestURL("/api/auth/logout"))
@@ -270,7 +320,7 @@ class DeviceManager: ObservableObject {
     }
 
     func login(username: String, password: String) async throws {
-        let body = ["username": username, "password": password]
+        let body = ["username": username, "password": password, "device_id": deviceID]
         let data = try JSONEncoder().encode(body)
         var req = URLRequest(url: try requestURL("/api/auth/login"))
         req.httpMethod = "POST"
@@ -293,7 +343,7 @@ class DeviceManager: ObservableObject {
     }
 
     func register(username: String, password: String) async throws {
-        let body = ["username": username, "password": password]
+        let body = ["username": username, "password": password, "device_id": deviceID]
         let data = try JSONEncoder().encode(body)
         var req = URLRequest(url: try requestURL("/api/auth/register"))
         req.httpMethod = "POST"
@@ -328,6 +378,7 @@ class DeviceManager: ObservableObject {
         self.userId = result.userId
         self.username = username
         self.isLoggedIn = true
+        self.sessionExpired = false
         #if os(macOS)
         // 先探测云端埋点能力再启停搬运（refreshActivityCapability 内部按 token 启停）。
         Task { await refreshActivityCapability() }
@@ -403,6 +454,8 @@ class DeviceManager: ObservableObject {
             LogBuffer.shared.info("token refreshed ok")
         } catch let error as NSError where error.code == 401 {
             LogBuffer.shared.error("token refresh rejected (401), logging out")
+            onSessionExpiring?()
+            sessionExpired = true
             clearAuthState()
         } catch {
             LogBuffer.shared.error("token refresh failed: \(error)")

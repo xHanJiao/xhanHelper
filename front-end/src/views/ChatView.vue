@@ -90,6 +90,8 @@ import AttachmentTray from '@/components/chat/AttachmentTray.vue'
 import { prepareImage } from '@/utils/image'
 import { waitForUploads } from '@/utils/voiceImages'
 import { shouldDrainQueue } from '@/utils/promptQueue'
+import { peekUnsentDraft, saveUnsentDraft, takeUnsentDraft } from '@/utils/unsentDraft'
+import { useAuthStore } from '@/stores/auth'
 
 import PageTopBar from '@/components/PageTopBar.vue'
 import { useMobile } from '@/composables/useMobile'
@@ -98,6 +100,7 @@ const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
 const convs = useConversationsStore()
+const auth = useAuthStore()
 const { sendMessage, cancel, resumeStream, setSuspended, clearNetworkError, finishStream } = useChatSSE()
 const nMessage = useMessage()
 const { isMobile } = useMobile()
@@ -795,6 +798,17 @@ function normalizeMessage(msg) {
   return [normalized]
 }
 
+// 会话失效后登录回来：把未发消息恢复成暂停的排队区（不自动发送）。
+function restoreUnsentDraft(newId) {
+  const draft = takeUnsentDraft(newId ? String(newId) : null)
+  if (!draft) return
+  for (const item of draft.items) {
+    chat.enqueuePendingSend({ content: item.content || '', imageIds: item.imageIds || [] })
+  }
+  chat.queuePaused = true
+  nMessage.info('已恢复未发送的消息')
+}
+
 // 监听路由中的会话 ID 变化，这是 ChatView 的核心入口逻辑。
 // 只要路由 /chat/:id 中的 id 发生变化，就会触发此 watcher。
 // 通过 { immediate: true } 确保页面首次加载时也会立即执行。
@@ -933,9 +947,30 @@ watch(() => route.params.id, async (newId) => {
     // 新对话没有在途的历史请求，旧请求的 spinner 不该继续顶着（它的 finally 还要等网络）
     isLoadingHistory.value = false
   }
+
+  restoreUnsentDraft(newId)
 }, { immediate: true })
 
+// 登出前保存输入框 + 排队项（非 SSE 401 路径）。同会话已有草稿则跳过（SSE 路径已存过）。
+function saveUnsentBeforeUnmount() {
+  const existing = peekUnsentDraft()
+  if (existing && (existing.conversationId || null) === (chat.conversationId || null)) return
+  const content = inputValue.value.trim()
+  const imageIds = draftImages.value
+    .filter(d => d.status === 'done' && d.imageId)
+    .map(d => d.imageId)
+  const items = []
+  if (content || imageIds.length) items.push({ content, imageIds })
+  for (const p of chat.pendingSends) {
+    items.push({ content: p.content || '', imageIds: p.imageIds || [] })
+  }
+  saveUnsentDraft(chat.conversationId, items)
+}
+
 onBeforeUnmount(() => {
+  // 会话失效（回前台校验/心跳/上传等非 SSE 路径）也要保留未发内容：
+  // SSE 401 分支已经存过就不覆盖，避免空输入冲掉刚存的那条。
+  if (auth.sessionExpired) saveUnsentBeforeUnmount()
   clearTimeout(hideCooldownTimer)
   composerObserver?.disconnect()
   contentObserver?.disconnect()

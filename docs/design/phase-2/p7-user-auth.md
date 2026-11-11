@@ -102,3 +102,9 @@ Authorization: Bearer <token>
   - 错误码拆分：登录未知用户或密码错 401、注册重名 409、管理员重置未知用户 404；其余数据库故障记日志后回 500，不再伪装成 401/409/404。
   - 认证中间件与心跳续期只对「token 过期/无效」回 401；数据库故障回 500 并记日志，避免一次抖动把所有客户端踢下线。
   - 影响文件：`server/internal/model/user.go`、`server/internal/service/user_repo.go`、`server/internal/controller/auth.go`、`server/internal/controller/password.go`、`server/internal/controller/admin_user.go`、`server/internal/app/init_db.go`。
+- 2026-11-11：多设备登录体验（详见 `../auth-device-sessions/design.md`）。
+  - `UserToken` 新增 `device_id`（size 64，空串=老客户端）；登录时先删同 user + 同 device 的旧 token，再走条数上限，避免同一台设备重登挤掉别的设备。
+  - `max_tokens_per_user` 4 → 8（dev/test 覆盖项删除，统一走 base）。
+  - 淘汰旧 token 改为「先取 id 再按 IN 删」：SQLite 不支持 `DELETE ... LIMIT`，原来的 `Delete+Limit` 会误删全部命中行（仅测试库暴露）。
+  - 客户端三端补 401 统一登出与未发消息恢复，细节见 `../auth-device-sessions/design.md`。
+  - 影响文件：`server/internal/model/user.go`、`server/internal/service/user_repo.go`、`server/internal/controller/auth.go`、`server/internal/controller/admin_user.go`、`server/conf/config*.yaml`。

@@ -627,3 +627,11 @@ location = /api/voice/asr {
     等图期间用 `holdSubmitting` 挡掉新的按下（识别收尾后 `holdTranscribing` 已清，挡不住并发提交）；
     连续档不等待，未传完的图留给下一句，避免拖慢分句对话。失败提示同一张草稿只弹一次。
   - 影响文件：`front-end/src/views/ChatView.vue`、`front-end/src/utils/voiceImages.js`。
+
+- 2026-11-11（引擎单例化 / 按住说话后半句丢失）：VPIO 是设备级资源，但 `VoiceAudioEngine`
+  原来每个语音服务一份（视图每 tab 一份 + 双 ⌘ ptt 一份）。视图实例播完 TTS 后 8 秒关 VPIO，
+  会把正在采集的 ptt 实例一起停掉 → 按住超过约 7.5 秒，后半句静默丢失（`docs/bugs/063`）。
+  引擎收成进程级单例，采集 / 播放 / 语音条 pin 登记显式 owner（采集独占、播放抢占、pin 多 owner），
+  第二个采集 owner 被拒并提示「正在语音输入，请先松手」。
+  详见 `docs/design/voice-audio-engine/design.md`。影响文件：`VoiceAudioEngine.swift`、
+  `VoiceAudioLease.swift`（新）、`VoiceChatService.swift`。

@@ -42,8 +42,21 @@ final class VoiceChatService: ObservableObject {
     var isChatBusy: (() -> Bool)?
 
     private var socket: URLSessionWebSocketTask?
-    private let audio = VoiceAudioEngine()
-    private var audioConfigured = false
+    private let audio = VoiceAudioEngine.shared
+    /// 本 service 在音频引擎里的身份（采集/播放/语音条 pin 都按它记账）
+    private var owner: ObjectIdentifier { ObjectIdentifier(self) }
+
+    init() {
+        // 引擎是进程级单例：日志出口只装一次（诊断脚本会换成 print）。
+        // 每个 tab 都会新建 service，重复赋值会让音频线程读到被换掉的闭包。
+        if VoiceAudioEngine.logSink == nil {
+            VoiceAudioEngine.logSink = { message in
+                Task { @MainActor in
+                    LogBuffer.shared.diag("[voice] \(message)")
+                }
+            }
+        }
+    }
     private var receiveTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var maxTimer: Task<Void, Never>?
@@ -98,7 +111,7 @@ final class VoiceChatService: ObservableObject {
     /// 语音条是否开着（两档共用）。切档过渡期也算开着。
     var voiceBarActive: Bool { continuousActive || holdModeActive || isSwitchingMode }
     /// 语音条开着时不释放 VPIO：释放后再开会丢掉按下瞬间的音频（docs/bugs/057）
-    private func syncVoiceBarPin() { audio.setVoiceBarOpen(voiceBarActive) }
+    private func syncVoiceBarPin() { audio.setVoiceBarOpen(voiceBarActive, owner: owner) }
     private var holdCapturing = false
     /// 全局热键按住说话：不进语音条、不置 holdModeActive（只影响这轮是否朗读回复）
     private var pushToTalkActive = false
@@ -311,7 +324,6 @@ final class VoiceChatService: ObservableObject {
             vlog("ws resumed path=\(url.path) query=\(continuous ? "mode=continuous" : "-")")
             startReceiveLoop(task)
 
-            configureAudio()
             // 立刻开录：服务端要先连豆包（几百毫秒）才会 ready，等它会把开头吞掉；
             // 早于 ready 的帧由 socket 缓冲，服务端连上后照常读。
             startCapture()
@@ -321,30 +333,35 @@ final class VoiceChatService: ObservableObject {
         }
     }
 
-    /// 音频引擎回调只接一次：采集分片直接进 ASR，音量用于波纹与打断判定。
-    private func configureAudio() {
-        guard !audioConfigured else { return }
-        audioConfigured = true
-        audio.onChunk = { [weak self] data in
-            Task { @MainActor [weak self] in
-                self?.sendAudio(data)
+    /// 开采集：把喂音频/音量/错误三条回调随 owner 绑给引擎（原来在 init 里装，
+    /// 多份 service 会互相覆盖；引擎单例后回调只能跟 owner 走）。见 docs/bugs/063。
+    private func startAudioCapture() throws {
+        try audio.startCapture(
+            owner: owner,
+            onChunk: { [weak self] data in
+                Task { @MainActor [weak self] in
+                    self?.sendAudio(data)
+                }
+            },
+            onLevel: { [weak self] value in
+                Task { @MainActor [weak self] in
+                    self?.handleLevel(Double(value))
+                }
+            },
+            onError: { [weak self] message in
+                Task { @MainActor [weak self] in
+                    self?.fail("麦克风采集失败：\(message)")
+                }
             }
+        )
+    }
+
+    /// 采集起不来时的用户提示：麦克风被另一路语音输入占着要说清楚，别报成设备故障（见 docs/bugs/063）
+    private static func captureFailureMessage(_ error: Error) -> String {
+        if let engineError = error as? VoiceAudioEngineError, engineError == .busy {
+            return "正在语音输入，请先松手"
         }
-        audio.onError = { [weak self] message in
-            Task { @MainActor [weak self] in
-                self?.fail("麦克风采集失败：\(message)")
-            }
-        }
-        audio.onLevel = { [weak self] value in
-            Task { @MainActor [weak self] in
-                self?.handleLevel(Double(value))
-            }
-        }
-        audio.onLog = { message in
-            Task { @MainActor in
-                LogBuffer.shared.diag("[voice] \(message)")
-            }
-        }
+        return "麦克风采集失败：\(error.localizedDescription)"
     }
 
     /// 音量为波纹供数，同时做 C3 的打断判定（只在播报期间有效）。
@@ -497,7 +514,7 @@ final class VoiceChatService: ObservableObject {
             return
         }
         do {
-            try audio.startCapture()
+            try startAudioCapture()
             state = .recording
             lastVoiceAt = Date()
             vlog("capture started state=\(state)")
@@ -516,7 +533,7 @@ final class VoiceChatService: ObservableObject {
             }
         } catch {
             vlog("capture failed: \(error.localizedDescription)")
-            fail("麦克风采集失败：\(error.localizedDescription)")
+            fail(Self.captureFailureMessage(error))
         }
     }
 
@@ -841,24 +858,26 @@ final class VoiceChatService: ObservableObject {
 
     /// 采集内核：iOS 会话配置 + 清空缓冲 + 开 tap。
     private func beginHoldCapture() {
+        // 上一轮朗读还在播时不能开录：单引擎下门控按 owner 记账，播报方的门会压住这次采集，
+        // 开头一段就是静音（以前两份引擎各有一套门，才没暴露）
+        stopSpeaking()
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio,
                                                          options: [.defaultToSpeaker, .allowBluetooth])
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
-        configureAudio()
         holdPCM = Data()
         holdFrames.removeAll(keepingCapacity: true)
         holdStartedAt = Date()
         do {
-            try audio.startCapture()
+            try startAudioCapture()
             state = .recording
             holdCapturing = true
             isHoldRecording = true
             vlog("hold start")
         } catch {
             vlog("hold capture failed: \(error.localizedDescription)")
-            ToastCenter.shared.show("麦克风采集失败：\(error.localizedDescription)")
+            ToastCenter.shared.show(Self.captureFailureMessage(error))
         }
     }
 
@@ -886,7 +905,7 @@ final class VoiceChatService: ObservableObject {
         }
         isHoldRecording = false
         holdCapturing = false
-        if let tail = audio.stopCapture() { holdPCM.append(tail) }
+        if let tail = audio.stopCapture(owner: owner) { holdPCM.append(tail) }
         waveLevel = 0
         state = .idle
         let gen = holdGen
@@ -1036,8 +1055,8 @@ final class VoiceChatService: ObservableObject {
     /// 停止采集，返回不足 200ms 的尾巴（调用方负责在 end 之前发出）。
     private func detachCapture() -> Data? {
         micGated = false
-        audio.setGated(false)
-        let tail = audio.stopCapture()
+        audio.setGated(false, owner: owner)
+        let tail = audio.stopCapture(owner: owner)
         waveLevel = 0
         return tail
     }
@@ -1208,7 +1227,6 @@ final class VoiceChatService: ObservableObject {
                                                          options: [.defaultToSpeaker, .allowBluetooth])
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
-        configureAudio()
         // 播报期间压住麦克风（AEC 只削掉大部分回声，尾音还会漏进来）
         beginMicGate()
     }
@@ -1217,8 +1235,12 @@ final class VoiceChatService: ObservableObject {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             playContinuation = continuation
             do {
-                try audio.play(data) { [weak self] in
-                    Task { @MainActor [weak self] in self?.resumePlayback() }
+                try audio.play(data, owner: owner) { [weak self] interrupted in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        // 被另一路 TTS 抢占：按「停止朗读」收尾，别把流水线接着往下推
+                        if interrupted { self.stopSpeaking() } else { self.resumePlayback() }
+                    }
                 }
             } catch {
                 playContinuation = nil
@@ -1281,7 +1303,7 @@ final class VoiceChatService: ObservableObject {
         levelWindow.removeAll(keepingCapacity: true)
         gateStartedAt = Date()
         vlog("mic gate on (tts speaking)")
-        audio.setGated(true)
+        audio.setGated(true, owner: owner)
     }
 
     private func endMicGate(flushPreroll: Bool) {
@@ -1289,7 +1311,7 @@ final class VoiceChatService: ObservableObject {
         gateTask = nil
         micGated = false
         vlog("mic gate off flush=\(flushPreroll)")
-        audio.setGated(false, flushPreroll: flushPreroll)
+        audio.setGated(false, owner: owner, flushPreroll: flushPreroll)
     }
 
     func stopSpeaking() {
@@ -1312,7 +1334,7 @@ final class VoiceChatService: ObservableObject {
         let wasSpeaking = isSpeaking
         isSpeaking = false
         isPreparingSpeech = false
-        audio.stopPlayback()
+        audio.stopPlayback(owner: owner)
         resumePlayback()
         // 只要门还关着就开：仅在 wasSpeaking 时开会让「TTS 尾音门 600ms 窗口内启动新一轮」
         // 永久卡在门控里（一帧都不会发给 ASR，表现为麦克风亮着但毫无反应）

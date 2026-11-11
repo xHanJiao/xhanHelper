@@ -11,9 +11,40 @@ import Foundation
 /// 到 pre-roll；但上行流不能空闲——豆包 8 秒收不到音频包会断会话（45000081），所以门控期间
 /// 按原节拍补等长静音保活。检测到用户打断时把 pre-roll 冲回去，开头不会丢。
 final class VoiceAudioEngine: @unchecked Sendable {
+    /// 进程级单例：一个 `AVAudioEngine`、一份 VPIO。设备级资源只能有一个真源，
+    /// 多份实例会互相踩（一份空闲关 VPIO 会把另一份正在采集的引擎一起停掉，见 docs/bugs/063）。
+    static let shared = VoiceAudioEngine()
+
+    /// 诊断日志出口：app 在 `VoiceChatService.init` 里装 LogBuffer；独立编译的诊断脚本
+    /// （`scripts/voice-capture-probe.swift`）可以换成立即 print。引擎本身不依赖 LogBuffer，
+    /// 否则那个脚本没法单独编。
+    nonisolated(unsafe) static var logSink: (@Sendable (String) -> Void)?
+
+    private init() {
+        // 只记日志：切耳机 / 系统唤醒会让引擎自停，真机遇到再决定要不要自动重连
+        _ = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.log("engine config changed: running=\(self.engine.isRunning) capturing=\(self.capturing)")
+        }
+    }
+
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let lock = NSLock()
+
+    /// 谁在采 / 谁在播 / 谁 pin 着语音条。设备级资源的唯一真源。
+    /// shortcut: 租约不随 owner 销毁自动回收 —— 服务被释放前必须先 `cancel()`（现有 UI 路径都会走）；
+    /// 否则 `captureOwner` / `voiceBarOwners` 会永久留在引擎里（之后采集恒 busy、VPIO 不释放）。
+    /// 真出现「关 tab 后麦克风一直被占」再补 `releaseAll(owner:)` + `deinit`。
+    private var lease = VoiceAudioLease()
+    /// 播放完成回调（`interrupted=true` 表示被另一路 TTS 抢占，不是正常播完）
+    private var playCompletion: (@Sendable (Bool) -> Void)?
+    /// 采集回调随 owner 绑定（原来各 service 在 init 里装，多份会互相覆盖）
+    private var onChunk: (@Sendable (Data) -> Void)?
+    private var onLevel: (@Sendable (Float) -> Void)?
+    private var onError: (@Sendable (String) -> Void)?
 
     private var pending = Data()
     private var preroll = Data()
@@ -28,28 +59,21 @@ final class VoiceAudioEngine: @unchecked Sendable {
     /// （要退出 app 才恢复），所以空闲后必须关掉，见 docs/bugs/057。
     private var inputVPIO = false
     private var outputVPIO = false
-    /// 语音条开着时钉住 VPIO：释放后再开要重建音频图，按下瞬间的音频会进不了 tap
-    private var voiceBarOpen = false
     private var releaseTask: Task<Void, Never>?
     private var releaseAttempts = 0
-    private var capturing = false
-    private var gated = false
-    /// TTS 是否在播。只在主线程读写（play / completion / stopPlayback / stopCapture）。
-    /// 不能用 `player.isPlaying` 判断：buffer 播完后它仍是 true，engine 会永远不停，
-    /// 麦克风占用也就一直不退（菜单栏一直显示麦克风模式）。
-    private var playbackActive = false
+    /// 门控的持有者（谁要求「播报期间压住麦克风」）。只对**当前采集 owner** 生效，
+    /// 见 `isGatedLocked`：别人遗留的门不会把新采集闷哑。
+    private var gateOwners: Set<ObjectIdentifier> = []
     /// 播放代次：`player.stop()` 会触发上一个 buffer 的完成回调，靠它把迟到的回调丢掉，
-    /// 否则旧回调会把新一轮的 playbackActive 清成 false 并把 engine 停掉。
+    /// 否则旧回调会把新一轮的状态清掉并把 engine 停掉。
     private var playGeneration = 0
     private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
 
-    /// 每约 200ms 的 PCM 分片（6400 字节）；门控期间发的是等长静音。
-    var onChunk: (@Sendable (Data) -> Void)?
-    /// 每块音频的音量 0...1（门控期间仍触发，打断检测靠它）。
-    var onLevel: (@Sendable (Float) -> Void)?
-    var onError: (@Sendable (String) -> Void)?
-    /// 诊断日志（音频线程触发，调用方自行切主线程）。
-    var onLog: (@Sendable (String) -> Void)?
+    /// 「正在采」的唯一判据（原来是实例字段，多份实例会各说各话）
+    private var capturing: Bool { withLease { $0.captureOwner != nil } }
+    /// 「正在播」同上。不能用 `player.isPlaying` 判断：buffer 播完后它仍是 true，
+    /// engine 会永远不停，麦克风占用也就一直不退（菜单栏一直显示麦克风模式）。
+    private var playbackActive: Bool { withLease { $0.playbackOwner != nil } }
 
     // 诊断计数：音频线程写、主线程清零与读，统一走 statsLock（只用于日志）
     private struct CaptureStats {
@@ -68,13 +92,44 @@ final class VoiceAudioEngine: @unchecked Sendable {
         return body(&stats)
     }
 
-    func startCapture() throws {
-        try ensureGraph()
-        guard !capturing else {
+    /// 租约只在锁内读写：音频线程也会读 `captureOwner`（算门控），不能裸改
+    private func withLease<T>(_ body: (inout VoiceAudioLease) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&lease)
+    }
+
+    /// 开采集。同一时刻只允许一个 owner：别人在采 → 抛 `busy`（后到者被拒，见 docs/bugs/063）。
+    /// 回调随这一次绑定，`stopCapture` 时清空。
+    func startCapture(owner: ObjectIdentifier,
+                      onChunk: @escaping @Sendable (Data) -> Void,
+                      onLevel: @escaping @Sendable (Float) -> Void,
+                      onError: @escaping @Sendable (String) -> Void) throws {
+        switch withLease({ $0.beginCapture(owner) }) {
+        case .alreadyMine:
             log("capture start ignored: already capturing")
             return
+        case .busy:
+            throw VoiceAudioEngineError.busy
+        case .started:
+            break
         }
+        lock.lock()
+        self.onChunk = onChunk
+        self.onLevel = onLevel
+        self.onError = onError
+        lock.unlock()
+        do {
+            try beginCaptureIO()
+        } catch {
+            _ = withLease { $0.endCapture(owner) }
+            clearCaptureCallbacks()
+            throw error
+        }
+    }
 
+    private func beginCaptureIO() throws {
+        try ensureGraph()
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
         log("capture start: in=\(fmt(inputFormat)) tapFormat=\(fmt(input.outputFormat(forBus: 0))) " +
@@ -103,7 +158,6 @@ final class VoiceAudioEngine: @unchecked Sendable {
         self.monoFormat = monoFormat
         pending = Data()
         preroll = Data()
-        gated = false
         lock.unlock()
         withStats { $0 = CaptureStats() }
 
@@ -117,7 +171,6 @@ final class VoiceAudioEngine: @unchecked Sendable {
             log("capture start failed: \(error.localizedDescription)")
             throw error
         }
-        capturing = true
         log("capture started: engineRunning=\(engine.isRunning) tapFormat=\(fmt(input.inputFormat(forBus: 0)))")
         // 看门狗：2 秒内 tap 一次都没回调 = 麦克风/引擎没出帧（VPIO 配置失败最常见）
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -126,13 +179,31 @@ final class VoiceAudioEngine: @unchecked Sendable {
         }
     }
 
+    private func clearCaptureCallbacks() {
+        lock.lock()
+        onChunk = nil
+        onLevel = nil
+        onError = nil
+        lock.unlock()
+    }
+
     /// 停止采集，返回不足 200ms 的尾巴；调用方负责在发 end 之前把它发出去。
+    /// 不是自己的采集 → 不碰设备（多 owner 下防止误停别人的录音）。
     @discardableResult
-    func stopCapture() -> Data? {
-        guard capturing else { return nil }
-        capturing = false
+    func stopCapture(owner: ObjectIdentifier) -> Data? {
+        guard withLease({ $0.endCapture(owner) }) else {
+            // 空闲时这条路径天天走到（cancel / endContinuous），只在真有别人在采时留日志
+            if withLease({ $0.captureOwner != nil }) {
+                log("capture stop ignored: not the capture owner")
+            }
+            return nil
+        }
+        // 先摘 tap（此后音频线程不会再进来），再清回调，避免释放正在执行的闭包
         engine.inputNode.removeTap(onBus: 0)
         lock.lock()
+        onChunk = nil
+        onLevel = nil
+        onError = nil
         let tail = pending
         pending = Data()
         preroll = Data()
@@ -146,25 +217,44 @@ final class VoiceAudioEngine: @unchecked Sendable {
 
     /// 播放期间（以及播放结束后的一段）门控麦克风。
     /// `flushPreroll=true` 用于打断：把门控期间攒下的真实音频立即冲给 ASR。
-    func setGated(_ value: Bool, flushPreroll: Bool = false) {
+    ///
+    /// 门控**只对当前采集 owner 生效**（`isGatedLocked`）：播报方与采集方是同一路时才压麦。
+    /// 这样别的 service 遗留的门（例如它被销毁时没收干净）永远不会把新采集闷哑。
+    func setGated(_ value: Bool, owner: ObjectIdentifier, flushPreroll: Bool = false) {
         lock.lock()
-        let changed = gated != value
-        gated = value
+        let wasGated = isGatedLocked()
+        if value {
+            gateOwners.insert(owner)
+        } else {
+            gateOwners.remove(owner)
+        }
+        let nowGated = isGatedLocked()
+        let changed = wasGated != nowGated
         var flush: Data?
         let prerollBytes = preroll.count
-        if !value {
+        if !nowGated {
             if flushPreroll { flush = preroll }
             preroll = Data()
         }
+        let chunkSink = onChunk
         lock.unlock()
         if changed || flush != nil {
-            log("gate=\(value) changed=\(changed) flush=\(flush?.count ?? 0)B preroll=\(prerollBytes)B")
+            log("gate=\(nowGated) changed=\(changed) flush=\(flush?.count ?? 0)B preroll=\(prerollBytes)B")
         }
-        if let flush, !flush.isEmpty { onChunk?(flush) }
+        if let flush, !flush.isEmpty { chunkSink?(flush) }
+    }
+
+    /// 当前采集 owner 是否被门控（调用方需持有 `lock`）
+    private func isGatedLocked() -> Bool {
+        guard let owner = lease.captureOwner else { return false }
+        return gateOwners.contains(owner)
     }
 
     /// 播放整段 mp3；`completion` 在播放结束（或被 stopPlayback 打断）时回到主线程。
-    func play(_ data: Data, completion: @escaping @Sendable () -> Void) throws {
+    /// 另一路 TTS 正在播时**抢占**：被抢方 completion 收 `interrupted=true`，自己收尾
+    /// （以前两份引擎会同时念，音频叠在一起）。
+    func play(_ data: Data, owner: ObjectIdentifier,
+              completion: @escaping @Sendable (_ interrupted: Bool) -> Void) throws {
         try ensureGraph()
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("voice-tts-\(UUID().uuidString).mp3")
@@ -174,15 +264,24 @@ final class VoiceAudioEngine: @unchecked Sendable {
         let file = try AVAudioFile(forReading: url)
         let buffer = try Self.readBuffer(file: file, target: playbackFormat)
         try startEngineIfNeeded()
+        // 抢占：先作废旧代次再 stop，旧 completion 不会被当成正常播完
+        if withLease({ $0.beginPlayback(owner) }) != nil {
+            log("play preempted another owner")
+            player.stop()
+            playGeneration += 1
+            let prior = playCompletion
+            playCompletion = nil
+            prior?(true)
+        }
         player.stop()
         playGeneration += 1
         let generation = playGeneration
-        playbackActive = true
+        playCompletion = completion
         player.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
             Task { @MainActor in
                 guard let self, generation == self.playGeneration else { return }
-                self.markPlaybackFinished()
-                completion()
+                self.markPlaybackFinished(owner: owner)
+                completion(false)
             }
         }
         player.play()
@@ -191,19 +290,26 @@ final class VoiceAudioEngine: @unchecked Sendable {
 
     /// 播完一个 buffer：清播放标志并释放 engine（采集还开着时保持运行）。
     /// 不在这里调 `player.stop()`：stop 会再次触发完成回调，造成递归。
-    private func markPlaybackFinished() {
-        playbackActive = false
+    private func markPlaybackFinished(owner: ObjectIdentifier) {
+        if withLease({ $0.endPlayback(owner) }) {
+            playCompletion = nil
+        }
         stopEngineIfIdle()
     }
 
-    func stopPlayback() {
-        let wasPlaying = playbackActive
-        playbackActive = false
+    /// 只停自己那一路播放；不是自己的播放不动（多 owner 下防止误掐别人的朗读）。
+    func stopPlayback(owner: ObjectIdentifier) {
+        guard withLease({ $0.endPlayback(owner) }) else {
+            // 没人播时这是常态（stopSpeaking 会常调），只在真有别人在播时留一行
+            if withLease({ $0.playbackOwner != nil }) { log("play stop ignored: not the playback owner") }
+            return
+        }
+        playCompletion = nil
         // 这一代的完成回调随 stop 触发，代次一加就作废（状态已在这里收拾完）
         playGeneration += 1
         player.stop()
         stopEngineIfIdle()
-        if wasPlaying { log("play stop: engineRunning=\(engine.isRunning)") }
+        log("play stop: engineRunning=\(engine.isRunning)")
     }
 
     // MARK: 内部
@@ -278,9 +384,10 @@ final class VoiceAudioEngine: @unchecked Sendable {
     /// 语音条开着时钉住 VPIO（不释放）：释放后再开要重建音频图，
     /// 按下/开口的头几十~几百毫秒会进不了 tap，短句可能被判「说话时间太短」。
     /// 关掉后交给空闲释放（`deviceReleaseDelay` 后还回去）。
-    func setVoiceBarOpen(_ open: Bool) {
-        voiceBarOpen = open
-        if open {
+    /// 按 owner 记账：ptt 退出只清自己的 pin，不会把视图那套的钉住清掉。
+    func setVoiceBarOpen(_ open: Bool, owner: ObjectIdentifier) {
+        withLease { $0.setVoiceBar(owner, open: open) }
+        if withLease({ $0.voiceBarOpen }) {
             releaseTask?.cancel()
             releaseTask = nil
         } else {
@@ -299,7 +406,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
     private func scheduleDeviceRelease() {
         releaseTask?.cancel()
         releaseTask = nil
-        guard !voiceBarOpen else { return }
+        guard !withLease({ $0.voiceBarOpen }) else { return }
         let delay = deviceReleaseDelay
         releaseTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
@@ -310,7 +417,13 @@ final class VoiceAudioEngine: @unchecked Sendable {
 
     private func releaseDevice() {
         releaseTask = nil
-        guard inputVPIO || outputVPIO, !capturing, !playbackActive, !voiceBarOpen else { return }
+        // 别的 owner 还在采/播：这时候关 VPIO 会把它的引擎一起停掉（docs/bugs/063），
+        // 顺延到下一次空闲（最后一个使用者停止时会重新排这个定时器）
+        guard withLease({ $0.canReleaseDevice }) else {
+            scheduleDeviceRelease()
+            return
+        }
+        guard inputVPIO || outputVPIO else { return }
         if inputVPIO {
             do {
                 try engine.inputNode.setVoiceProcessingEnabled(false)
@@ -341,6 +454,12 @@ final class VoiceAudioEngine: @unchecked Sendable {
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {
+        // 回调会在 stopCapture 里被清空：音频线程取一次快照，不和主线程抢同一个变量
+        lock.lock()
+        let chunkSink = onChunk
+        let levelSink = onLevel
+        let errorSink = onError
+        lock.unlock()
         guard let converter, let outFormat, let monoFormat else { return }
         let bufferIndex = withStats { s -> Int in
             s.buffers += 1
@@ -380,7 +499,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
         if status == .error {
             if let error {
                 log("convert error: \(error.localizedDescription) (buffers=\(bufferIndex))")
-                onError?(error.localizedDescription)
+                errorSink?(error.localizedDescription)
             }
             statsLog(level: nil, gated: nil)
             return
@@ -396,7 +515,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
         let data = Data(bytes: samples, count: frameCount * MemoryLayout<Int16>.size)
 
         var levelValue: Float = 0
-        if let onLevel {
+        if let levelSink {
             var sum = 0.0
             for i in 0..<frameCount {
                 let v = Double(samples[i]) / 32768
@@ -405,12 +524,12 @@ final class VoiceAudioEngine: @unchecked Sendable {
             // 说话人的 RMS 通常在 0.02~0.2，×4 让波纹与打断检测都有可用幅度
             let rms = (sum / Double(frameCount)).squareRoot()
             levelValue = Float(min(1, rms * 4))
-            onLevel(levelValue)
+            levelSink(levelValue)
         }
 
         lock.lock()
-        let isGated = gated
-        if gated {
+        let isGated = isGatedLocked()
+        if isGated {
             preroll.append(data)
             if preroll.count > prerollLimit {
                 preroll.removeFirst(preroll.count - prerollLimit)
@@ -428,7 +547,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
         }
         lock.unlock()
         withStats { $0.chunks += chunks.count }
-        for chunk in chunks { onChunk?(chunk) }
+        for chunk in chunks { chunkSink?(chunk) }
         statsLog(level: levelValue, gated: isGated)
     }
 
@@ -476,7 +595,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
     }
 
     private func log(_ message: String) {
-        onLog?(message)
+        VoiceAudioEngine.logSink?(message)
     }
 
     private func fmt(_ format: AVAudioFormat) -> String {
@@ -517,5 +636,17 @@ final class VoiceAudioEngine: @unchecked Sendable {
         }
         if let error { throw error }
         return output
+    }
+}
+
+/// 采集被拒：另一路（双 ⌘ 按住说话 / 连续对话）正占着麦克风。
+/// 上层转成「正在语音输入，请先松手」，不要报成「麦克风采集失败」（见 docs/bugs/063）。
+enum VoiceAudioEngineError: LocalizedError {
+    case busy
+
+    var errorDescription: String? {
+        switch self {
+        case .busy: return "麦克风正被另一路语音输入占用"
+        }
     }
 }

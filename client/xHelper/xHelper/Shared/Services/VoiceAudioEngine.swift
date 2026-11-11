@@ -277,7 +277,7 @@ final class VoiceAudioEngine: @unchecked Sendable {
 
     /// 语音条开着时钉住 VPIO（不释放）：释放后再开要重建音频图，
     /// 按下/开口的头几十~几百毫秒会进不了 tap，短句可能被判「说话时间太短」。
-    /// 关掉后交给空闲释放（3 秒后还回去）。
+    /// 关掉后交给空闲释放（`deviceReleaseDelay` 后还回去）。
     func setVoiceBarOpen(_ open: Bool) {
         voiceBarOpen = open
         if open {
@@ -288,14 +288,21 @@ final class VoiceAudioEngine: @unchecked Sendable {
         }
     }
 
-    /// 空闲后把 VPIO 关掉，否则系统输出一直停在低声压的 AEC 通道上。
-    /// 留给下一句 TTS 的窗口，避免每播完一句就重建一次（重建约几百毫秒）。
+    /// 空闲后把 VPIO 关掉，否则系统输出一直停在低声压的 AEC 通道上
+    /// （别的 app 声音变小发闷，蓝牙耳机可能掉到通话档）。
+    ///
+    /// 延迟取 8 秒而不是 3 秒：重建音频图要几百毫秒，冷启动那一下会让「按下立刻说」
+    /// 吞掉开头几个字。8 秒能覆盖「连着说几句」的间隔，正常不再用之后又能及时把
+    /// 系统输出还回去（3 秒时第二句话仍常常要吃重建）。
+    private let deviceReleaseDelay: TimeInterval = 8
+
     private func scheduleDeviceRelease() {
         releaseTask?.cancel()
         releaseTask = nil
         guard !voiceBarOpen else { return }
+        let delay = deviceReleaseDelay
         releaseTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             self.releaseDevice()
         }

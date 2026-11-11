@@ -26,7 +26,8 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["⌘", "⇧", "E"], desc: "展开 / 收起 PiP 悬浮球"),
             ShortcutItem(keys: ["⌘", "="], desc: "增大字体（浏览器未聚焦时）"),
             ShortcutItem(keys: ["⌘", "-"], desc: "减小字体（浏览器未聚焦时）"),
-            ShortcutItem(keys: ["⌃", "⌥", "V"], desc: "按住说话，松手发送（全局，后台可用）"),
+            ShortcutItem(keys: ["⌘", "⌘"], desc: "按住左右两个 ⌘ 说话，松手发送（全局，关窗也能用）"),
+            ShortcutItem(keys: ["⌃", "⌥", "V"], desc: "同上（备用键）"),
         ]),
         ShortcutSection(icon: "menubar.rectangle", title: "面板导航", hint: "顶部工具栏", items: [
             ShortcutItem(keys: ["⌘", "1"], desc: "文档"),

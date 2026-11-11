@@ -35,6 +35,16 @@ final class AppShortcutBridge {
     var onVoiceRelease: (() -> Void)?
     /// 谁占着全局语音热键（中栏与 PiP 各有自己的 VoiceChatService，只让活着的那个接热键）
     var voiceHotKeyOwner: ObjectIdentifier?
+    /// 语音条是否开着（开着时全局热键走视图那套「按住暂存」，否则走一次性采集）
+    var voiceBarActive: (() -> Bool)?
+    /// 视图那套语音服务是否正在朗读（浮层「说」态要看它）
+    var voiceIsSpeaking: (() -> Bool)?
+    /// 立刻停掉视图那套的朗读（全局热键开录前先停，否则录进去的是 TTS）
+    var stopVoicePlayback: (() -> Void)?
+    /// 当前会话的 VM：窗口关着时全局热键也要能把话发出去
+    var currentChatViewModel: (() -> ChatViewModel?)?
+    /// 后端地址 + token：窗口关着时也要能建连
+    var voiceCredentials: (() -> (baseURL: String, token: String)?)?
 
     private init() {}
 }

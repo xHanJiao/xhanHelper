@@ -118,6 +118,9 @@ final class VoiceChatService: ObservableObject {
     private var holdToken = ""
     private let holdTalkMaxSeconds = 60
     private let holdTalkMinSeconds: Double = 0.3
+    /// 松手后再多收一段尾巴（毫秒）。VPIO 输入 + tap 缓冲有 150~300ms 延迟，
+    /// 立刻 `removeTap` 会把最后几个字丢在设备缓冲里。这段只有静音，ASR 会忽略。
+    private let holdTailGraceMs = 300
     private var speakEndTask: Task<Void, Never>?
     // 句级 TTS 流水线（代次复用 speakEpoch）
     private var speechFrozen: [String] = []
@@ -863,6 +866,13 @@ final class VoiceChatService: ObservableObject {
             if !isHoldTranscribing { holdGen += 1 }
             return false
         }
+        // 松手不代表音频已经到齐：先留着 tap 再收一段尾巴，否则结尾几个字留在设备缓冲里被丢掉
+        let held = Date().timeIntervalSince(holdStartedAt)
+        if !cancelled {
+            try? await Task.sleep(for: .milliseconds(holdTailGraceMs))
+            // 这 300ms 里可能被切档/退出语音打断（abortHold 已经把采集拆了）
+            guard isHoldRecording else { return false }
+        }
         isHoldRecording = false
         holdCapturing = false
         if let tail = audio.stopCapture() { holdPCM.append(tail) }
@@ -877,7 +887,7 @@ final class VoiceChatService: ObservableObject {
             vlog("hold cancelled")
             return false
         }
-        let duration = Date().timeIntervalSince(holdStartedAt)
+        let duration = held
         guard duration >= holdTalkMinSeconds else {
             ToastCenter.shared.show("说话时间太短")
             return false
@@ -904,7 +914,7 @@ final class VoiceChatService: ObservableObject {
             let text = try await transcribeHold(pcm, baseURL: holdBaseURL, token: holdToken)
             guard gen == holdGen, holdModeActive || pushToTalkActive else { return false }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            vlog("hold done chars=\(trimmed.count) audio=\(fmt3(Double(pcm.count) / 32000))s")
+            vlog("hold done chars=\(trimmed.count) audio=\(fmt3(Double(pcm.count) / 32000))s held=\(fmt3(duration))s")
             guard !trimmed.isEmpty else {
                 ToastCenter.shared.show("没有听清，请再说一次")
                 return false

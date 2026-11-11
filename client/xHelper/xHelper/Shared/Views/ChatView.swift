@@ -342,8 +342,11 @@ struct ChatView: View {
     }
 
 #if os(macOS)
-    /// 全局 ⌃⌥V 按住说话。没有连续会话时走一次性采集（不弹语音条、不改档位偏好）；
-    /// 连续会话开着就退回现有的「按住暂存、松手提交」。
+    /// 全局「按住左右 ⌘」的**视图侧**接线：热键本体在 `VoiceHotKeyController`（app 级常驻，
+    /// 关窗/ PiP 收起也活着）。这里只交出三件事：
+    /// - 语音条开着时把热键让给视图那套（连续档按住暂存、松手整段提交，行为与以前一致）
+    /// - 浮层「说」态要知道视图那套是不是在朗读
+    /// - 开录前先停掉视图那套的朗读，否则录进去的是 TTS
     private func wireVoiceHotKey() {
         AppShortcutBridge.shared.onVoicePress = { [weak voice] in
             guard let voice else { return }
@@ -361,6 +364,9 @@ struct ChatView: View {
                 if !(await voice.hotKeyRelease()) { NSSound.beep() }
             }
         }
+        AppShortcutBridge.shared.voiceBarActive = { [weak voice] in voice?.voiceBarActive ?? false }
+        AppShortcutBridge.shared.voiceIsSpeaking = { [weak voice] in voice?.isSpeaking ?? false }
+        AppShortcutBridge.shared.stopVoicePlayback = { [weak voice] in voice?.stopSpeaking() }
         AppShortcutBridge.shared.voiceHotKeyOwner = ObjectIdentifier(voice)
     }
 #endif
@@ -374,6 +380,9 @@ struct ChatView: View {
         if AppShortcutBridge.shared.voiceHotKeyOwner == ObjectIdentifier(voice) {
             AppShortcutBridge.shared.onVoicePress = nil
             AppShortcutBridge.shared.onVoiceRelease = nil
+            AppShortcutBridge.shared.voiceBarActive = nil
+            AppShortcutBridge.shared.voiceIsSpeaking = nil
+            AppShortcutBridge.shared.stopVoicePlayback = nil
             AppShortcutBridge.shared.voiceHotKeyOwner = nil
         }
 #endif

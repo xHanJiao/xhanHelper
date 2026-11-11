@@ -3,7 +3,7 @@ server:
   mode: debug # debug | release
   registration_enabled: false
   token_ttl_minutes: 2880 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
-  max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
+  max_tokens_per_user: 8 # 同一用户最多同时存在的 token 数，超出踢最老的；同设备重登只占一个
   memory_auto_extract: false
   # --- 记录循环（记忆两段式：抽取 + 逐候选决策循环）---
   record_loop_max_iterations: 8 # 决策循环轮数上限（含强制收敛轮）；留给「工具打回 + 补检索」余量

@@ -223,7 +223,7 @@ type ServerConfig struct {
 	DisableBackgroundTasks   *bool    `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/反思等）；nil=未显式配置，沿用 base
 	SidecarURL               string   `yaml:"sidecar_url"`              // Python sidecar MCP HTTP 地址
 	TokenTTLMinutes          int      `yaml:"token_ttl_minutes"`        // token 过期时间（分钟），默认 5
-	MaxTokensPerUser         int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 4
+	MaxTokensPerUser         int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 8
 	AdminUsers               []string `yaml:"admin_users"`              // 管理员用户 ID 列表
 	// —— 本地单用户模式（Mac 本地部署）——
 	LocalSingleUser bool   `yaml:"local_single_user"` // 免账号密码：凭 local_token 直接进

@@ -24,6 +24,7 @@ async function request(path, options = {}) {
 
   if (res.status === 401) {
     if (auth.token) {
+      auth.markSessionExpired()
       auth.logout()
     }
     throw new AuthError('未登录或 token 已过期', res.status)

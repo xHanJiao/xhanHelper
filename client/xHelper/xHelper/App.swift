@@ -61,6 +61,12 @@ struct LoginView: View {
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
+            if deviceManager.sessionExpired {
+                Text("登录已失效，请重新登录")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
             VStack(spacing: 12) {
                 TextField("用户名", text: $username)
                     .textFieldStyle(.roundedBorder)

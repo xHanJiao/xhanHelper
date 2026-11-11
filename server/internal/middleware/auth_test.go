@@ -66,7 +66,7 @@ func TestAuth_LocalTokenPassthrough(t *testing.T) {
 // 本地模式不再回落 user_tokens 表：库里存在有效 token 也不认（只会给越界留口子）。
 func TestAuth_LocalEnabledDoesNotFallBackToDB(t *testing.T) {
 	repo, _ := newAuthTestRepo(t)
-	_, dbToken, err := repo.Create(context.Background(), "xhan", "pw")
+	_, dbToken, err := repo.Create(context.Background(), "xhan", "pw", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestAuth_UnknownToken401(t *testing.T) {
 
 func TestAuth_ExpiredToken401(t *testing.T) {
 	repo, db := newAuthTestRepo(t)
-	_, token, err := repo.Create(context.Background(), "xhan", "pw")
+	_, token, err := repo.Create(context.Background(), "xhan", "pw", "")
 	if err != nil {
 		t.Fatal(err)
 	}

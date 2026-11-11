@@ -45,12 +45,12 @@ type UserRepo struct {
 
 func NewUserRepo(db *gorm.DB, tokenTTLMinutes, maxTokensPerUser int) *UserRepo {
 	if maxTokensPerUser <= 0 {
-		maxTokensPerUser = 4
+		maxTokensPerUser = 8
 	}
 	return &UserRepo{db: db, tokenTTLMinutes: tokenTTLMinutes, maxTokensPerUser: maxTokensPerUser}
 }
 
-func (r *UserRepo) Create(ctx context.Context, username, password string) (*model.User, string, error) {
+func (r *UserRepo) Create(ctx context.Context, username, password, deviceID string) (*model.User, string, error) {
 	// 预检只为友好报错：并发同名仍可能撞唯一索引落到 500。注册默认关闭，不值得为此开 TranslateError。
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&model.User{}).Where("username = ?", username).Count(&count).Error; err != nil {
@@ -75,7 +75,7 @@ func (r *UserRepo) Create(ctx context.Context, username, password string) (*mode
 			return err
 		}
 		var issueErr error
-		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLMinutes)
+		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLMinutes, deviceID)
 		return issueErr
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func (r *UserRepo) EnsureByUsername(ctx context.Context, username string) (*mode
 	return &user, nil
 }
 
-func (r *UserRepo) Login(ctx context.Context, username, password string) (*model.User, string, error) {
+func (r *UserRepo) Login(ctx context.Context, username, password, deviceID string) (*model.User, string, error) {
 	var user model.User
 	if err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -121,21 +121,35 @@ func (r *UserRepo) Login(ctx context.Context, username, password string) (*model
 
 	var token string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 同设备重登：先作废该设备的旧 token，避免它占用名额、挤掉别的设备。
+		if deviceID != "" {
+			if err := tx.Where("user_id = ? AND device_id = ?", user.ID, deviceID).
+				Delete(&model.UserToken{}).Error; err != nil {
+				return err
+			}
+		}
 		var count int64
 		if err := tx.Model(&model.UserToken{}).Where("user_id = ?", user.ID).Count(&count).Error; err != nil {
 			return err
 		}
 		if count >= int64(r.maxTokensPerUser) {
 			deleteCount := int(count) - r.maxTokensPerUser + 1
-			if err := tx.Where("user_id = ?", user.ID).
+			// 先取 id 再按 IN 删：SQLite 不支持 DELETE ... LIMIT，直接 Delete+Limit 会删掉全部命中行。
+			var ids []string
+			if err := tx.Model(&model.UserToken{}).Where("user_id = ?", user.ID).
 				Order("created_at ASC").
 				Limit(deleteCount).
-				Delete(&model.UserToken{}).Error; err != nil {
+				Pluck("id", &ids).Error; err != nil {
 				return err
+			}
+			if len(ids) > 0 {
+				if err := tx.Where("id IN ?", ids).Delete(&model.UserToken{}).Error; err != nil {
+					return err
+				}
 			}
 		}
 		var issueErr error
-		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLMinutes)
+		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLMinutes, deviceID)
 		return issueErr
 	})
 	if err != nil {
@@ -262,7 +276,7 @@ func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, 
 	return &u, nil
 }
 
-func issueTokenTx(db *gorm.DB, userID string, ttlMinutes int) (string, error) {
+func issueTokenTx(db *gorm.DB, userID string, ttlMinutes int, deviceID string) (string, error) {
 	if ttlMinutes <= 0 {
 		ttlMinutes = 5
 	}
@@ -271,6 +285,7 @@ func issueTokenTx(db *gorm.DB, userID string, ttlMinutes int) (string, error) {
 		ID:        uuid.New().String(),
 		UserID:    userID,
 		TokenHash: hashToken(raw),
+		DeviceID:  deviceID,
 		ExpiresAt: time.Now().Add(time.Duration(ttlMinutes) * time.Minute),
 	}
 	return raw, db.Create(ut).Error

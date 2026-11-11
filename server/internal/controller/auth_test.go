@@ -72,7 +72,7 @@ func TestRegisterDuplicateIs409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo, _, closeDB := newAuthTestRepo(t)
 	defer closeDB()
-	if _, _, err := repo.Create(t.Context(), "alice", "password-123"); err != nil {
+	if _, _, err := repo.Create(t.Context(), "alice", "password-123", ""); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	enabled := true

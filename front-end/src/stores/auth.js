@@ -1,16 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '@/api/client'
+import { getDeviceId } from '@/utils/deviceId'
 
 const STORAGE_KEY = 'xhanhelper_auth'
 
 // 心跳间隔：每 30 分钟续期一次（token TTL=2880min，不需要频繁刷新）
 const HEARTBEAT_INTERVAL = 30 * 60 * 1000
+// 回前台校验节流：被踢后不必等到下一次心跳
+const FOREGROUND_CHECK_INTERVAL = 5 * 60 * 1000
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(null)
   const user = ref(null)
   const loading = ref(false)
+  // 被动失效（401）标记：登录页据此提示，手动退出不置位
+  const sessionExpired = ref(false)
+
+  function markSessionExpired() {
+    sessionExpired.value = true
+  }
 
   // ---- localStorage ----
 
@@ -71,6 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
   // ---- 心跳续期 ----
 
   let heartbeatTimer = null
+  let lastForegroundCheck = 0
 
   async function doHeartbeat() {
     if (!token.value) return
@@ -82,6 +92,16 @@ export const useAuthStore = defineStore('auth', () => {
         await logout()
       }
     }
+  }
+
+  // 切回前台时补一次校验（节流）：被踢后不用等到发消息才发现
+  function checkSessionOnVisible() {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return
+    if (!token.value) return
+    const now = Date.now()
+    if (now - lastForegroundCheck < FOREGROUND_CHECK_INTERVAL) return
+    lastForegroundCheck = now
+    doHeartbeat()
   }
 
   function startHeartbeat() {
@@ -104,9 +124,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(username, password) {
     loading.value = true
     try {
-      const res = await api.post('/api/auth/login', { username, password })
+      const res = await api.post('/api/auth/login', { username, password, device_id: getDeviceId() })
       token.value = res.token
       user.value = { id: res.user_id, username, isAdmin: !!res.is_admin }
+      sessionExpired.value = false
+      lastForegroundCheck = Date.now()
       saveToStorage()
       startHeartbeat()
       return { success: true }
@@ -124,9 +146,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function register(username, password) {
     loading.value = true
     try {
-      const res = await api.post('/api/auth/register', { username, password })
+      const res = await api.post('/api/auth/register', { username, password, device_id: getDeviceId() })
       token.value = res.token
       user.value = { id: res.user_id, username, isAdmin: !!res.is_admin }
+      sessionExpired.value = false
+      lastForegroundCheck = Date.now()
       saveToStorage()
       startHeartbeat()
       return { success: true }
@@ -167,6 +191,7 @@ export const useAuthStore = defineStore('auth', () => {
   function restore() {
     loadFromStorage()
     if (token.value) {
+      lastForegroundCheck = Date.now()
       startHeartbeat()
     }
   }
@@ -174,6 +199,7 @@ export const useAuthStore = defineStore('auth', () => {
   // ---- 页面卸载时停止心跳 ----
   if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', stopHeartbeat)
+    document.addEventListener('visibilitychange', checkSessionOnVisible)
   }
 
   // 初始化
@@ -187,6 +213,8 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     loading,
+    sessionExpired,
+    markSessionExpired,
     login,
     register,
     logout,

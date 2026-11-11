@@ -1,5 +1,10 @@
 import Foundation
 
+extension Notification.Name {
+    /// Bearer token 被服务端判为无效/过期/被淘汰。userInfo["token"] = 发起请求用的 token。
+    static let authUnauthorized = Notification.Name("xhan.authUnauthorized")
+}
+
 class APIClient {
     let baseURL: String
     let token: String
@@ -7,6 +12,13 @@ class APIClient {
     init(baseURL: String, token: String) {
         self.baseURL = baseURL
         self.token = token
+    }
+
+    /// 统一 401 出口：通知 DeviceManager 清会话（带上本次 token，旧快照不会误伤新登录），再抛错。
+    private func unauthorizedError() -> NSError {
+        NotificationCenter.default.post(name: .authUnauthorized, object: nil, userInfo: ["token": token])
+        return NSError(domain: "APIClient", code: 401,
+            userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
     }
 
     // MARK: Conversations
@@ -116,6 +128,9 @@ class APIClient {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+        if statusCode == 401 {
+            throw unauthorizedError()
+        }
         guard statusCode == 200 else {
             let msg = String(data: data, encoding: .utf8) ?? "unknown"
             throw NSError(domain: "APIClient", code: statusCode,
@@ -184,8 +199,7 @@ class APIClient {
 		let (data, resp) = try await URLSession.shared.data(for: req)
 		let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
 		if statusCode == 401 {
-			throw NSError(domain: "APIClient", code: 401,
-				userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+			throw unauthorizedError()
 		}
 		// 非 2xx 时服务端返回的是错误 JSON，不能当成 CSV 写盘（否则用户拿到一个内容是
 		// {"status":"error"...} 的 bills.csv 还以为导出成功）。
@@ -271,8 +285,7 @@ class APIClient {
 			return ArtifactHTMLResponse(notModified: false, html: html,
 				etag: http?.value(forHTTPHeaderField: "ETag"))
 		case 401:
-			throw NSError(domain: "APIClient", code: 401,
-				userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+			throw unauthorizedError()
 		default:
 			let msg = String(data: data, encoding: .utf8) ?? "unknown"
 			throw NSError(domain: "APIClient", code: http?.statusCode ?? 500,
@@ -572,6 +585,9 @@ class APIClient {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+        if statusCode == 401 {
+            throw unauthorizedError()
+        }
         guard statusCode == 200 else {
             throw NSError(domain: "APIClient", code: statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "load image failed (status \(statusCode))"])
@@ -663,8 +679,7 @@ class APIClient {
         let (data, resp) = try await URLSession.shared.data(for: req)
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
         if statusCode == 401 {
-            throw NSError(domain: "APIClient", code: 401,
-                userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+            throw unauthorizedError()
         }
         guard statusCode == 200 else {
             let msg = String(data: data, encoding: .utf8) ?? "unknown"
@@ -684,8 +699,7 @@ class APIClient {
         let (data, resp) = try await URLSession.shared.data(for: req)
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
         if statusCode == 401 {
-            throw NSError(domain: "APIClient", code: 401,
-                userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+            throw unauthorizedError()
         }
         guard statusCode == 200 else {
             let msg = String(data: data, encoding: .utf8) ?? "unknown"

@@ -1289,6 +1289,18 @@ class ChatViewModel: ObservableObject {
         sseClient.onError = { [weak self] error in
             Task { @MainActor in
                 let nsError = error as NSError
+                // 401 = 会话失效（token 过期/被淘汰）：先留未发内容，再通知 DeviceManager 回登录页。
+                if nsError.domain == "XHANHTTP", nsError.code == 401 {
+                    LogBuffer.shared.error("ChatViewModel.sse: unauthorized (401), ending session")
+                    let resuming = self?.isResumeInFlight ?? false
+                    self?.preserveUnsentOnAuthFailure(
+                        text: text, attachmentIds: attachmentIds, includeCurrent: !resuming)
+                    NotificationCenter.default.post(name: .authUnauthorized, object: nil,
+                                                    userInfo: ["token": token])
+                    self?.finishStreaming()
+                    self?.detachStreamingMessage()
+                    return
+                }
                 // 续传窗口里的 404/501 = 后端没有 /api/chat/stream（老后端），
                 // 按「不支持续传」收尾并拉历史；别当成会话已销毁去关 tab。
                 if nsError.domain == "XHANHTTP", nsError.code == 404 || nsError.code == 501,
@@ -1702,6 +1714,21 @@ class ChatViewModel: ObservableObject {
     }
 
     // MARK: Streaming Lifecycle
+
+    /// 401 会话失效时保存未发内容：当前这轮（非续传）+ 排队中的文本。
+    /// 已上传的图片按 imageIds 保留；排队项未上传的本地图不保留（罕见路径）。
+    private func preserveUnsentOnAuthFailure(text: String, attachmentIds: [String], includeCurrent: Bool) {
+        var items: [UnsentDraftItem] = []
+        if includeCurrent, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentIds.isEmpty {
+            items.append(UnsentDraftItem(text: text, imageIds: attachmentIds))
+        }
+        for pending in pendingSends where !pending.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append(UnsentDraftItem(text: pending.text, imageIds: []))
+        }
+        guard !items.isEmpty else { return }
+        let cid = (conversationId ?? "").isEmpty ? nil : conversationId
+        UnsentDraftStore.save(UnsentDraft(conversationId: cid, title: conversationTitle, items: items))
+    }
 
     private func finishStreaming() {
         throttleTimer?.invalidate()

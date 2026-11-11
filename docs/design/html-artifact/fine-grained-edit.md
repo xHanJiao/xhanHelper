@@ -497,3 +497,7 @@ patch
   - 决定：`patch` 加可选 `title` / `summary`，不传＝不动，trim 后空串拒绝，长度沿用 80 / 200。与块编辑可同时给（同一条 `UPDATE` + `source_html` 乐观锁）；纯元数据走单条 `UPDATE`（`SetTags` 扩成 `SetMeta`），不重写正文，老页面也能改。
   - 决定：`Catalog().ShortDesc` 与工具 `Description` 明确写「灵阅就是它」，`create` 描述补「只想改标题/摘要用 patch，不用整页重传」。
   - 影响文件：`tool/html_artifact.go`（`patch` 参数/校验/结果、`Catalog`/`Description`/`create` 描述）+测试、`service/artifact_repo.go`（`SetTags` → `SetMeta`、`UpdateIfSourceUnchanged` 加 title/summary）+测试、`design.md`、本文件。
+- **2026-11-11 · 「HTML 页面改版」段挪进工具规则区**
+  - 起因：这段是「改页面选哪个动作」的工具规则，却和 `行为准则 / 回复形态` 排在一起；内容还与 `create` 的函数描述重复。它常驻的唯一理由是 `html` 工具走渐进暴露，规则必须在 `expose_tools.enable` 之前可见（§4.7 第一层）。
+  - 决定：内容不变，位置从 Layer 1 挪到工具目录之后（`PromptBuilder.toolRules`，Layer 3.5），与「子任务优先 / 事件全貌 / 用户信息深挖」同区；plan 模式不渲染（`html.patch` 是写操作）。行为准则同时收窄为 1–7（纯人格），原 8/9/10 一并移入该区。
+  - 影响文件：`server/internal/agent/promptbuilder/{static.go,builder.go,builder_test.go}`。

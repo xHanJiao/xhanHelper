@@ -24,7 +24,8 @@ func TestCorePrinciplesProvider(t *testing.T) {
 	}
 }
 
-// TestCorePrinciplesListStructure — 行为准则是一个连续的有序列表，每项单段。
+// TestCorePrinciplesListStructure — 行为准则只放人格准则（1–7），连续编号、每项单段。
+// 工具选择/页面改版规则在 toolRules（渲染于工具目录之后），别写回这里——写回来就会和工具目录重复。
 // 列表项里一旦夹空行，CommonMark 会把该项续段判成列表外（准则 4 内嵌含空行的 MemoryDefinition
 // 时就被劈到列表外，markdown 预览里 4 的正文飘在列表中间——见 docs/bugs/022）。
 // 渲染器在服务端之外，Go 侧只钉这条原始结构不变量。
@@ -32,7 +33,7 @@ func TestCorePrinciplesListStructure(t *testing.T) {
 	if strings.Contains(corePrinciples, "\n\n") {
 		t.Fatal("行为准则列表里出现空行：会把某一项劈成多段、续段掉出编号列表")
 	}
-	for n := 1; n <= 9; n++ {
+	for n := 1; n <= 7; n++ {
 		marker := fmt.Sprintf("%d. ", n)
 		if !strings.HasPrefix(corePrinciples, marker) &&
 			!strings.Contains(corePrinciples, "\n"+marker) {
@@ -45,10 +46,10 @@ func TestCorePrinciplesListStructure(t *testing.T) {
 			t.Errorf("准则 4 缺行为规则 %q", want)
 		}
 	}
-	// 准则 9（事件全貌）：非 full 形态必须先 event.enable 拉全貌，动作不能被删
-	for _, want := range []string{"event.enable", "mode=index"} {
-		if !strings.Contains(corePrinciples, want) {
-			t.Errorf("准则 9 缺行为规则 %q", want)
+	// 工具操作规则不得写回人格准则（会与工具目录重复）
+	for _, banned := range []string{"event.enable", "file_explore", "html.patch"} {
+		if strings.Contains(corePrinciples, banned) {
+			t.Errorf("行为准则里混入了工具规则 %q（应放 toolRules）", banned)
 		}
 	}
 }
@@ -73,8 +74,43 @@ func TestUserContextTriggerToggle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out2.Prompt, "10. 用户信息深挖") || !strings.Contains(out2.Prompt, "user_context") {
+	if !strings.Contains(out2.Prompt, "## 用户信息深挖") || !strings.Contains(out2.Prompt, "user_context") {
 		t.Error("开关开启时应注入 user_context 触发规则")
+	}
+}
+
+// TestToolRulesPlacement — 工具规则渲染在工具目录之后；plan 模式下这些动作都被拦，整块不注入。
+func TestToolRulesPlacement(t *testing.T) {
+	ctx := context.Background()
+	b := NewPromptBuilder("base", tool.NewRegistry(), nil, true)
+
+	work, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolIdx := strings.Index(work.Prompt, "## 工具使用")
+	if toolIdx < 0 {
+		t.Fatal("缺少工具使用章节")
+	}
+	for _, title := range []string{"## 子任务优先", "## 事件全貌", "## 用户信息深挖", "## HTML 页面改版"} {
+		idx := strings.Index(work.Prompt, title)
+		if idx < 0 {
+			t.Errorf("work 模式缺工具规则 %q", title)
+			continue
+		}
+		if idx < toolIdx {
+			t.Errorf("工具规则 %q 出现在工具目录之前", title)
+		}
+	}
+
+	plan, err := b.Build(ctx, BuildOptions{Mode: model.ConvModePlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range []string{"## 子任务优先", "## 事件全貌", "## 用户信息深挖", "## HTML 页面改版"} {
+		if strings.Contains(plan.Prompt, title) {
+			t.Errorf("plan 模式不应注入工具规则 %q", title)
+		}
 	}
 }
 
@@ -326,15 +362,16 @@ func TestBriefAnswerToggle(t *testing.T) {
 	if !strings.Contains(brief.Prompt, "## 回答长度") || !strings.Contains(brief.Prompt, "精简回答") {
 		t.Error("brief_answer 轮应注入长度约束章节")
 	}
-	// 追加，不是替换：行为准则与角色定义都还在
-	for _, want := range []string{"## 行为准则", "## 角色定义", "10. 用户信息深挖"} {
+	// 追加，不是替换：行为准则、角色定义、工具规则都还在
+	for _, want := range []string{"## 行为准则", "## 角色定义", "## 用户信息深挖"} {
 		if !strings.Contains(brief.Prompt, want) {
 			t.Errorf("brief_answer 轮丢了 %q", want)
 		}
 	}
-	// 长度约束不能插在行为准则编号列表中间（会把 9 截断）
-	if strings.Index(brief.Prompt, "10. 用户信息深挖") > strings.Index(brief.Prompt, "## 回答长度") {
-		t.Error("回答长度章节插到了行为准则编号列表中间")
+	// 长度约束不能插在行为准则编号列表中间
+	lenIdx := strings.Index(brief.Prompt, "## 回答长度")
+	if lenIdx < strings.Index(brief.Prompt, "## 回复形态") || lenIdx > strings.Index(brief.Prompt, "## 角色定义") {
+		t.Error("回答长度章节应排在回复形态之后、角色定义之前")
 	}
 	// 开与不开只差插入的那一块，其余逐字节相同
 	want := strings.Replace(base.Prompt, "\n## 角色定义",
@@ -366,11 +403,20 @@ func TestVoiceModeToggle(t *testing.T) {
 	if !strings.Contains(voice.Prompt, "## 语音回答") || !strings.Contains(voice.Prompt, "会被直接朗读") {
 		t.Error("语音轮应注入语音回答章节")
 	}
+	for _, want := range []string{"1–3 句", "最多 60 个汉字", "调用了工具只回结论一句", "以本段为准"} {
+		if !strings.Contains(voice.Prompt, want) {
+			t.Errorf("语音约束缺 %q", want)
+		}
+	}
+	// 语音章节必须是 prompt 最后一段（位置越靠后遵循度越高）
+	if !strings.HasSuffix(strings.TrimSpace(voice.Prompt), voiceModeNotice) {
+		t.Error("语音回答章节应在 system prompt 末尾")
+	}
 	if strings.Contains(voice.Prompt, "## 回答长度") || strings.Contains(voice.Prompt, "精简回答") {
 		t.Error("语音轮不应再注入 brief_answer 长度约束")
 	}
 	// 语音章节仍应在行为准则之后，不能截断编号列表
-	anchor := strings.Index(voice.Prompt, "10. 用户信息深挖")
+	anchor := strings.Index(voice.Prompt, "## 角色定义")
 	section := strings.Index(voice.Prompt, "## 语音回答")
 	if anchor < 0 || section < 0 || anchor > section {
 		t.Errorf("语音回答章节位置不对（anchor=%d, section=%d）", anchor, section)

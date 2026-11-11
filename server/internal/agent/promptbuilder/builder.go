@@ -13,6 +13,7 @@ import (
 type PromptBuilder struct {
 	preRoleStatic    []StaticProvider
 	postRoleStatic   []StaticProvider
+	toolRules        []StaticProvider  // Layer 3.5：工具选择/动作规则（work 模式渲染）
 	contextProviders []ContextProvider // 动态上下文注入（per-run 可变内容）
 	basePrompt       string
 	promptResolver   PromptResolver
@@ -26,26 +27,30 @@ func NewPromptBuilder(
 	enableUserContextTrigger bool,
 ) *PromptBuilder {
 	preRoleStatic := []StaticProvider{&corePrinciplesProvider{}}
-	if enableUserContextTrigger {
-		preRoleStatic = append(preRoleStatic, &userContextTriggerProvider{})
-	}
 	// reply_form 常驻（不随请求变化，保前缀缓存稳定）
-	// 必须排在 user_context_trigger 之后：那条「用户信息深挖」是行为准则编号列表的续写，
-	// 中间插一个带标题的章节会把它截断
 	preRoleStatic = append(preRoleStatic, &replyFormProvider{})
-	// HTML 页面改版的动作选择：常驻，不依赖渐进暴露（docs/design/html-artifact/fine-grained-edit.md）
-	preRoleStatic = append(preRoleStatic, &artifactEditProvider{})
 	// answer_length 排在最后，仍按 opts.BriefAnswer 条件注入
 	preRoleStatic = append(preRoleStatic, &answerLengthProvider{})
-	// voice_mode 仅语音轮注入；语音轮跳过 answer_length（语音约束更严格）
-	preRoleStatic = append(preRoleStatic, &voiceModeProvider{})
 	// 主聊天只走原生 FC：常驻渐进式工具目录（完整函数定义随请求体 tools 下发）
 	postRoleStatic := []StaticProvider{&toolCatalogProvider{registry: registry}}
+
+	// 工具规则：跟着工具目录走，不再混进行为准则（人格 ≠ 工具操作）。
+	// 这些规则对应的动作在 plan 模式都被拦（task 非只读、event.enable / html.patch 写操作），
+	// 因此只在 work 模式渲染，见 Build 的 Layer 3.5。
+	toolRules := []StaticProvider{&subagentPriorityProvider{}, &eventOverviewProvider{}}
+	if enableUserContextTrigger {
+		toolRules = append(toolRules, &userContextTriggerProvider{})
+	}
+	// HTML 页面改版的动作选择：不依赖渐进暴露，必须在 enable html 之前可见
+	// （docs/design/html-artifact/fine-grained-edit.md §4.7）
+	toolRules = append(toolRules, &artifactEditProvider{})
+
 	return &PromptBuilder{
 		basePrompt:     basePrompt,
 		promptResolver: promptResolver,
 		preRoleStatic:  preRoleStatic,
 		postRoleStatic: postRoleStatic,
+		toolRules:      toolRules,
 		contextProviders: []ContextProvider{
 			&stableContextProvider{},
 		},
@@ -64,11 +69,8 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 
 	// Layer 1: 行为准则
 	for _, sp := range b.preRoleStatic {
-		// 回答长度约束只在 brief_answer 轮注入；语音轮由 voice_mode 接管
+		// 回答长度约束只在 brief_answer 轮注入；语音轮由末尾的 voice_mode 段接管
 		if sp.Name() == "answer_length" && (!opts.BriefAnswer || opts.VoiceMode) {
-			continue
-		}
-		if sp.Name() == "voice_mode" && !opts.VoiceMode {
 			continue
 		}
 		if s := sp.Render(ctx); s != "" {
@@ -119,6 +121,24 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 		sb.WriteString("\n")
 	}
 
+	// Layer 3.5: 工具规则（work 模式）——子任务/事件全貌/用户信息深挖/HTML 改版。
+	// 紧跟工具目录，规则贴着它管的工具；plan 模式下这些动作都被拦，不渲染免得教模型撞墙。
+	if !plan {
+		for _, sp := range b.toolRules {
+			s := sp.Render(ctx)
+			if s == "" {
+				continue
+			}
+			if title := sp.SectionTitle(); title != "" {
+				sb.WriteString("## ")
+				sb.WriteString(title)
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(s)
+			sb.WriteString("\n")
+		}
+	}
+
 	// Layer 4: 动态上下文（稳定上下文，plan 模式同样注入——讨论也需要画像）
 	for _, cp := range b.contextProviders {
 		section := cp.Render(ctx, opts)
@@ -131,6 +151,17 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 			sb.WriteString("\n\n")
 		}
 		sb.WriteString(section)
+		sb.WriteString("\n")
+	}
+
+	// Layer 5: 语音约束（仅语音轮）——放最后一段，位置贴近用户消息，遵循度最高。
+	// 非语音轮整段不输出，system prompt 与平时逐字节相同（前缀缓存不受影响）。
+	if opts.VoiceMode {
+		sp := &voiceModeProvider{}
+		sb.WriteString("## ")
+		sb.WriteString(sp.SectionTitle())
+		sb.WriteString("\n\n")
+		sb.WriteString(sp.Render(ctx))
 		sb.WriteString("\n")
 	}
 

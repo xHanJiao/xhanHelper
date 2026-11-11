@@ -536,6 +536,52 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 	}
 }
 
+func TestMkLlmChatReq_VoiceToolRoundReminder(t *testing.T) {
+	newOrch := func() *Orchestrator {
+		return &Orchestrator{
+			registry:           tool.NewRegistry(),
+			defaultTemperature: ptr(0.5),
+			defaultMaxTokens:   ptr(2048),
+		}
+	}
+	toolMsgs := func() []llm.Message {
+		return []llm.Message{
+			{Role: "user", Content: "我上次说的方案是什么"},
+			{Role: "assistant", Content: "", ToolCalls: []llm.ToolCall{{ID: "call_1"}}},
+			{Role: "tool", Content: `{"success":true,"data":"方案 A"}`, ToolCallID: "call_1"},
+		}
+	}
+
+	t.Run("语音轮工具结果是最后一条时补提醒，state 不被修改", func(t *testing.T) {
+		msgs := toolMsgs()
+		cr := newOrch().mkLlmChatReq(&RunRequest{UserID: "u1", VoiceMode: true}, "sys", &reactState{msgs: msgs})
+
+		last := cr.Messages[len(cr.Messages)-1]
+		if last.Role != "tool" || !strings.Contains(last.Content, voiceToolRoundReminder) {
+			t.Fatalf("语音工具轮末条应含提醒，got role=%s content=%q", last.Role, last.Content)
+		}
+		if strings.Contains(msgs[len(msgs)-1].Content, voiceToolRoundReminder) {
+			t.Error("state.msgs 被就地修改了")
+		}
+	})
+
+	t.Run("非语音轮不改消息", func(t *testing.T) {
+		msgs := toolMsgs()
+		cr := newOrch().mkLlmChatReq(&RunRequest{UserID: "u1"}, "sys", &reactState{msgs: msgs})
+		if strings.Contains(cr.Messages[len(cr.Messages)-1].Content, voiceToolRoundReminder) {
+			t.Error("非语音轮不应补提醒")
+		}
+	})
+
+	t.Run("语音轮最后一条不是 tool 时不补", func(t *testing.T) {
+		msgs := []llm.Message{{Role: "user", Content: "hi"}}
+		cr := newOrch().mkLlmChatReq(&RunRequest{UserID: "u1", VoiceMode: true}, "sys", &reactState{msgs: msgs})
+		if strings.Contains(cr.Messages[0].Content, voiceToolRoundReminder) {
+			t.Error("首轮（末条是 user）不应补提醒")
+		}
+	})
+}
+
 func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter:   &mockFormatter{},

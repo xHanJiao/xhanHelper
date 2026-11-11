@@ -88,6 +88,7 @@ import ToolCallToast from '@/components/ToolCallToast.vue'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import AttachmentTray from '@/components/chat/AttachmentTray.vue'
 import { prepareImage } from '@/utils/image'
+import { waitForUploads } from '@/utils/voiceImages'
 
 import PageTopBar from '@/components/PageTopBar.vue'
 import { useMobile } from '@/composables/useMobile'
@@ -206,7 +207,7 @@ function onVoiceKeyDown(e) {
   if (voiceMode.value === 'hold') {
     // 桌面端是两态按钮：空格也按「一下开始 / 一下发送」
     if (voiceHoldRecording.value) stopVoiceHoldTalk({ cancelled: false })
-    else startVoiceHoldTalk()
+    else beginHoldTalk()
     return
   }
   if (!voiceHolding.value) startVoiceHold()
@@ -236,6 +237,14 @@ function onVoiceWindowBlur() {
 // 桌面端是两态按钮，点一下开始、再点一下发送，录音中左侧出现取消钮（Esc 同取消）。
 const holdPointerStartY = ref(0)
 const holdCancelArmed = ref(false)
+// 松手后可能还在等图上传（最长 15 秒）：这期间再按一次会并发提交，后一条被
+// sendMessage 的 isStreaming 静默丢掉（见 docs/bugs/061），所以先不接新的按下
+const holdSubmitting = ref(false)
+
+function beginHoldTalk() {
+  if (holdSubmitting.value) return
+  startVoiceHoldTalk()
+}
 
 function onHoldTalkPointerDown(e) {
   if (!isMobile.value || voiceMode.value !== 'hold') return
@@ -245,7 +254,7 @@ function onHoldTalkPointerDown(e) {
   holdCancelArmed.value = false
   // 没有指针捕获的话，手指移出按钮后 pointerup 会丢（iOS PWA 尤其明显）
   e.currentTarget?.setPointerCapture?.(e.pointerId)
-  startVoiceHoldTalk()
+  beginHoldTalk()
 }
 
 function onHoldTalkPointerMove(e) {
@@ -270,7 +279,7 @@ function onHoldTalkPointerCancel() {
 function onHoldTalkToggle() {
   if (isMobile.value || voiceMode.value !== 'hold') return
   if (voiceHoldRecording.value) stopVoiceHoldTalk({ cancelled: false })
-  else startVoiceHoldTalk()
+  else beginHoldTalk()
 }
 
 function onHoldTalkCancel() {
@@ -1013,6 +1022,28 @@ function stopLocalStream() {
   }
 }
 
+/// 取走托盘里已上传完成的图片，返回 imageId 列表（见 docs/bugs/061）。
+/// 只清走随消息发出去的，上传中/失败的留在托盘里等用户处理。
+/// `wait` 只给长按档用：松手后允许等图传完再发（此时不会有第二条提交）；
+/// 连续档每条分句都是一轮，等待会拖慢对话，所以只取已完成的，没传完的留给下一句。
+async function takeVoiceImages({ wait = false } = {}) {
+  if (wait && draftImages.value.some(d => d.status === 'uploading')) {
+    nMessage.info('图片上传中，完成后自动发送')
+    if (await waitForUploads(() => draftImages.value)) {
+      nMessage.warning('图片上传超时，未完成的图片已跳过')
+    }
+  }
+  // 失败提示每条草稿只弹一次：草稿不会被自动清掉，连续档每句都弹会很吵
+  const failed = draftImages.value.filter(d => d.status === 'error' && !d.notified)
+  if (failed.length) {
+    failed.forEach(d => { d.notified = true })
+    nMessage.warning('部分图片上传失败，已跳过')
+  }
+  const ready = draftImages.value.filter(d => d.status === 'done')
+  ready.forEach(removeDraft)
+  return ready.map(d => d.imageId)
+}
+
 // 连续对话：一条判停分句 = 一轮。上一轮还在跑就先停本地流，避免两个 loop 交叉写库。
 async function submitVoiceSentence(text) {
   const content = String(text || '').trim()
@@ -1020,11 +1051,12 @@ async function submitVoiceSentence(text) {
   // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
   stopSpeaking()
   if (chat.isStreaming) stopLocalStream()
+  const imageIds = await takeVoiceImages()
   chat.addMessage({
     id: `voice-${Date.now()}`,
     role: 'user',
     content,
-    imageIds: [],
+    imageIds,
     created_at: new Date().toISOString()
   })
   await sendMessage(content, {
@@ -1036,6 +1068,7 @@ async function submitVoiceSentence(text) {
     // 语音来源：服务端注入短回答约束；正文边到边切句合成，done 后收尾。
     // 退出语音时 flush 的话按普通消息提交（voiceExitFlush），不朗读。
     voiceMode: !voiceExitFlush,
+    ...(imageIds.length ? { attachments: imageIds } : {}),
     ...(voiceExitFlush ? {} : {
       onAssistantReplyDelta: (text) => appendVoiceReply(text),
       onAssistantReply: (reply, ok = true) => (ok ? endVoiceReply(reply) : stopSpeaking())
@@ -1050,11 +1083,19 @@ async function submitHoldSentence(text) {
   // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
   stopSpeaking()
   if (chat.isStreaming) stopLocalStream()
+  // 松手时图可能还在传：等传完再连同文字一起发（见 docs/bugs/061）
+  holdSubmitting.value = true
+  let imageIds
+  try {
+    imageIds = await takeVoiceImages({ wait: true })
+  } finally {
+    holdSubmitting.value = false
+  }
   chat.addMessage({
     id: `voice-${Date.now()}`,
     role: 'user',
     content,
-    imageIds: [],
+    imageIds,
     created_at: new Date().toISOString()
   })
   await sendMessage(content, {
@@ -1064,7 +1105,8 @@ async function submitHoldSentence(text) {
     initMode: chat.conversationId ? undefined : chat.mode,
     ephemeral: chat.conversationId ? false : chat.ephemeral,
     // 仍走语音轮的短回答约束，但不出声
-    voiceMode: true
+    voiceMode: true,
+    ...(imageIds.length ? { attachments: imageIds } : {})
   })
 }
 
@@ -1154,7 +1196,8 @@ async function addImages(files) {
       preview: URL.createObjectURL(prepared.blob),
       status: 'uploading',
       imageId: null,
-      error: ''
+      error: '',
+      notified: false
     })
     draftImages.value.push(item)
     enqueueUpload(item)
@@ -1180,6 +1223,7 @@ function pumpUploads() {
 async function uploadOne(item) {
   item.status = 'uploading'
   item.error = ''
+  item.notified = false
   try {
     const file = new File([item.blob], item.name, { type: item.blob.type || 'image/jpeg' })
     const res = await api.upload('/api/images/upload', file)

@@ -8,6 +8,7 @@ import Foundation
 ///   xcrun swiftc -o /tmp/voice-probe \
 ///     client/xHelper/scripts/voice-capture-probe.swift \
 ///     client/xHelper/xHelper/Shared/Services/VoiceAudioEngine.swift \
+///     client/xHelper/xHelper/Shared/Services/VoiceAudioLease.swift \
 ///     -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos26.3
 ///   /tmp/voice-probe [vpio|plain] [秒数]
 ///
@@ -133,19 +134,22 @@ struct VoiceCaptureProbe {
             }
         }
         let stats = Stats()
-        let audio = VoiceAudioEngine()
-        audio.onLog = { print("[engine] \($0)") }
-        audio.onError = { print("[engine error] \($0)") }
-        audio.onLevel = { stats.observe($0) }
-        audio.onChunk = { stats.addChunk($0.count) }
+        let audio = VoiceAudioEngine.shared
+        let owner = ObjectIdentifier(stats)
+        VoiceAudioEngine.logSink = { print("[engine] \($0)") }
         do {
-            try audio.startCapture()
+            try audio.startCapture(
+                owner: owner,
+                onChunk: { stats.addChunk($0.count) },
+                onLevel: { stats.observe($0) },
+                onError: { print("[engine error] \($0)") }
+            )
         } catch {
             print("vpio startCapture failed: \(error.localizedDescription)")
             exit(3)
         }
         report(buffers: { stats.snapshot().chunks }, peak: { stats.snapshot().peak }, seconds: seconds)
-        _ = audio.stopCapture()
+        _ = audio.stopCapture(owner: owner)
         let final = stats.snapshot()
         print("total: chunks=\(final.chunks) bytes=\(final.bytes) peak=\(String(format: "%.3f", final.peak))")
     }

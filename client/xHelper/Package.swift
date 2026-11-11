@@ -162,5 +162,17 @@ let package = Package(
             dependencies: ["NearFieldGateCore"],
             path: "Tests/NearFieldGateCoreTests"
         ),
+        // VoiceAudioLeaseCore — 音频设备所有权租约：采集独占 / 播放抢占 / 语音条 pin 多 owner。
+        // 「谁在用麦克风」只有这一处真源，跨 owner 释放 VPIO 的坑由它挡（见 docs/bugs/063）。
+        .target(
+            name: "VoiceAudioLeaseCore",
+            path: "xHelper/Shared",
+            sources: ["Services/VoiceAudioLease.swift"]
+        ),
+        .testTarget(
+            name: "VoiceAudioLeaseCoreTests",
+            dependencies: ["VoiceAudioLeaseCore"],
+            path: "Tests/VoiceAudioLeaseCoreTests"
+        ),
     ]
 )

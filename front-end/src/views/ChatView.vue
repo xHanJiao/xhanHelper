@@ -33,11 +33,10 @@ let coldStartPending = true
  *       → 其余情况：chat.reset()（空白欢迎页，会话由首条消息懒创建；顶栏＋不走这里，它先建会话）
  *
  * ── 三、用户发送消息 ─────────────────────────────────────────────────────────
- *   handleSend() (L459):
- *     → chat.addMessage(user msg)    本地添加用户消息到列表
- *     → convs.prepend()              当前会话置顶
- *     → nextTick + scrollToBottom    滚到底部
- *     → sendMessage(content, opts)   SSE 流式对话（来自 useChatSSE composable）
+ *   handleSend() (L935):
+ *     → 流式中 / 队列非空：enqueuePendingSend()  只进 pendingSends，等本轮结束再发
+ *     → 空闲且队列空：dispatchOutgoing()         本地添加用户消息 + 调 SSE
+ *     → 当前轮 done 后 drainQueue()              按序出队（失败则暂停）
  *
  * ── 四、用户上滑加载更多历史 ─────────────────────────────────────────────────
  *   handleScroll() (L497):
@@ -89,6 +88,7 @@ import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import AttachmentTray from '@/components/chat/AttachmentTray.vue'
 import { prepareImage } from '@/utils/image'
 import { waitForUploads } from '@/utils/voiceImages'
+import { shouldDrainQueue } from '@/utils/promptQueue'
 
 import PageTopBar from '@/components/PageTopBar.vue'
 import { useMobile } from '@/composables/useMobile'
@@ -802,6 +802,7 @@ watch(() => route.params.id, async (newId) => {
   // 那时旧流还在跑却已经没人拦它了。cancel() 对已结束的流是空操作，无条件调即可。
   // 懒创建场景不受影响：done 先写 chat.conversationId 再 router.replace，那时 newId === 当前会话。
   if (newId !== chat.conversationId) {
+    clearPendingWithNotice()
     cancel()
   }
 
@@ -927,14 +928,15 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   cancelVoice()
   stopSpeaking()
+  chat.clearPendingSends()
   if (chat.isStreaming) cancel()
 })
 
 watch(() => chat.streamingMessage?.content, () => scrollToBottom())
 watch(() => chat.streamingMessage?.reasoning, () => scrollToBottom())
-async function handleSend() {
-  if (chat.isStreaming) return
 
+// 收集当前草稿；校验不过返回 null（提示沿用原发送路径）
+function collectOutgoing() {
   const content = inputValue.value.trim()
   const ready = draftImages.value.filter(d => d.status === 'done')
   const failed = draftImages.value.some(d => d.status === 'error')
@@ -942,53 +944,147 @@ async function handleSend() {
 
   if (!content && !ready.length) {
     if (failed) nMessage.warning('有图片上传失败，请重试或移除')
-    return
+    return null
   }
   if (uploading) {
     nMessage.info('图片还在上传，稍等')
-    return
+    return null
   }
   if (failed) {
     nMessage.warning('有图片上传失败，请重试或移除')
-    return
+    return null
   }
-
-  exitSelectionMode()
-
-  const imageIds = ready.map(d => d.imageId)
-  chat.addMessage({
-    id: Date.now().toString(),
-    role: 'user',
+  return {
     content,
-    imageIds,
-    created_at: new Date().toISOString()
-  })
+    imageIds: ready.map(d => d.imageId)
+  }
+}
+
+function clearComposer() {
   inputValue.value = ''
   // 预览 URL 在这里回收：消息里的图改走鉴权接口读，不依赖本地 objectURL
   clearDrafts()
+}
+
+// 入队：只进 pendingSends，不碰 messages（done 会用最后一条 user 回填真实 id）
+function enqueueOutgoing(outgoing) {
+  chat.enqueuePendingSend(outgoing)
+  clearComposer()
+  scrollToBottom()
+}
+
+// 直发 / 出队共用：写正式消息 + 调 SSE
+async function dispatchOutgoing(outgoing) {
+  chat.addMessage({
+    id: Date.now().toString(),
+    role: 'user',
+    content: outgoing.content,
+    imageIds: outgoing.imageIds,
+    created_at: new Date().toISOString()
+  })
 
   // 把当前会话移到列表最前面
   const conv = convs.list.find(c => c.id === chat.conversationId)
   if (chat.conversationId && conv?.title) {
     convs.prepend({ id: chat.conversationId, title: conv.title })
   }
-  // 立即滚到底部（不管用户在浏览什么位置）
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      const el = messagesContainerRef.value
-      if (el) el.scrollTop = el.scrollHeight
-    })
-  })
+  scrollToBottom()
 
   // 打字发送不朗读（语音轮才带 voice_mode + onAssistantReply）
-  await sendMessage(content, {
+  await sendMessage(outgoing.content, {
     conversationId: chat.conversationId,
     agentId: chat.agentId,
-    attachments: imageIds,
+    attachments: outgoing.imageIds,
     // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
     initMode: chat.conversationId ? undefined : chat.mode,
     ephemeral: chat.conversationId ? false : chat.ephemeral
   })
+}
+
+// 语音/手动发送要立刻接一轮时，先挂起自动出队：stopLocalStream() 会把 isStreaming 置 false，
+// watcher 若抢先 drainQueue 就会把排队消息发出去，刚提交的语音轮反被 sendMessage 的
+// isStreaming 闸门静默丢弃（docs/bugs/061 同类问题）。
+let suppressQueueDrain = false
+function holdQueueForManualSend() {
+  if (chat.pendingSends.length) suppressQueueDrain = true
+}
+function releaseQueueAfterManualSend() {
+  if (!suppressQueueDrain) return
+  suppressQueueDrain = false
+  if (!chat.error) drainQueue()
+}
+
+// 按序出队。sendMessage 会等到整轮结束，循环天然按轮推进。
+let drainingQueue = false
+async function drainQueue() {
+  if (drainingQueue || suppressQueueDrain) return
+  drainingQueue = true
+  try {
+    while (shouldDrainQueue({
+      streaming: chat.isStreaming,
+      paused: chat.queuePaused,
+      held: suppressQueueDrain,
+      count: chat.pendingSends.length
+    })) {
+      const next = chat.takeNextPendingSend()
+      if (!next) break
+      await dispatchOutgoing(next)
+    }
+  } catch (err) {
+    // 发送层自己会处理网络/服务错误；这里兜的是入队后搬运消息这类意外，暂停避免连发
+    console.error('Queue dispatch failed', err)
+    chat.queuePaused = true
+  } finally {
+    drainingQueue = false
+  }
+}
+
+function clearPendingWithNotice() {
+  const n = chat.clearPendingSends()
+  if (n) nMessage.info(`已清空 ${n} 条排队消息`)
+}
+
+function resumePending() {
+  if (chat.isStreaming) return
+  chat.queuePaused = false
+  drainQueue()
+}
+
+// 当前轮结束自动出队；失败则暂停，保留队列等用户继续/手动发送
+watch(() => chat.isStreaming, (streaming) => {
+  if (streaming) return
+  if (chat.error) {
+    if (chat.pendingSends.length) chat.queuePaused = true
+    return
+  }
+  if (shouldDrainQueue({
+    streaming: false,
+    paused: chat.queuePaused,
+    held: suppressQueueDrain,
+    count: chat.pendingSends.length
+  })) {
+    drainQueue()
+  }
+})
+
+async function handleSend() {
+  const outgoing = collectOutgoing()
+  if (!outgoing) return
+  exitSelectionMode()
+
+  // 流式中、队列非空或暂停中：都按先来后到追加，避免插队/丢消息
+  if (chat.isStreaming || chat.pendingSends.length || chat.queuePaused) {
+    enqueueOutgoing(outgoing)
+    if (!chat.isStreaming) {
+      chat.queuePaused = false
+      drainQueue()
+    }
+    return
+  }
+
+  // 直发才清输入框；队列出队不能清，用户可能正在打下一句
+  clearComposer()
+  await dispatchOutgoing(outgoing)
 }
 
 // 麦克风按钮 = 进入语音条（按上次的档位）。语音条里再点是「结束」：
@@ -1048,6 +1144,8 @@ async function takeVoiceImages({ wait = false } = {}) {
 async function submitVoiceSentence(text) {
   const content = String(text || '').trim()
   if (!content) return
+  // 语音轮要立刻接一轮：先挂起自动出队，别让排队消息抢在它前面（见 drainQueue 的说明）
+  holdQueueForManualSend()
   // 无条件停朗读：上一轮已流完但还在念时，门还关着，不停就会把这句一起吞掉
   stopSpeaking()
   if (chat.isStreaming) stopLocalStream()
@@ -1059,27 +1157,33 @@ async function submitVoiceSentence(text) {
     imageIds,
     created_at: new Date().toISOString()
   })
-  await sendMessage(content, {
-    conversationId: chat.conversationId,
-    agentId: chat.agentId,
-    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
-    initMode: chat.conversationId ? undefined : chat.mode,
-    ephemeral: chat.conversationId ? false : chat.ephemeral,
-    // 语音来源：服务端注入短回答约束；正文边到边切句合成，done 后收尾。
-    // 退出语音时 flush 的话按普通消息提交（voiceExitFlush），不朗读。
-    voiceMode: !voiceExitFlush,
-    ...(imageIds.length ? { attachments: imageIds } : {}),
-    ...(voiceExitFlush ? {} : {
-      onAssistantReplyDelta: (text) => appendVoiceReply(text),
-      onAssistantReply: (reply, ok = true) => (ok ? endVoiceReply(reply) : stopSpeaking())
+  try {
+    await sendMessage(content, {
+      conversationId: chat.conversationId,
+      agentId: chat.agentId,
+      // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+      initMode: chat.conversationId ? undefined : chat.mode,
+      ephemeral: chat.conversationId ? false : chat.ephemeral,
+      // 语音来源：服务端注入短回答约束；正文边到边切句合成，done 后收尾。
+      // 退出语音时 flush 的话按普通消息提交（voiceExitFlush），不朗读。
+      voiceMode: !voiceExitFlush,
+      ...(imageIds.length ? { attachments: imageIds } : {}),
+      ...(voiceExitFlush ? {} : {
+        onAssistantReplyDelta: (text) => appendVoiceReply(text),
+        onAssistantReply: (reply, ok = true) => (ok ? endVoiceReply(reply) : stopSpeaking())
+      })
     })
-  })
+  } finally {
+    releaseQueueAfterManualSend()
+  }
 }
 
 // 长按说话：一次松手 = 一轮。与连续档的区别是**不挂 TTS 回调**，回复只进气泡不朗读。
 async function submitHoldSentence(text) {
   const content = String(text || '').trim()
   if (!content) return
+  // 同连续档：先挂起自动出队，语音轮自己占这一轮
+  holdQueueForManualSend()
   // 切档瞬间上一轮连续档的朗读可能还在播：先停掉，别叠音
   stopSpeaking()
   if (chat.isStreaming) stopLocalStream()
@@ -1098,21 +1202,27 @@ async function submitHoldSentence(text) {
     imageIds,
     created_at: new Date().toISOString()
   })
-  await sendMessage(content, {
-    conversationId: chat.conversationId,
-    agentId: chat.agentId,
-    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
-    initMode: chat.conversationId ? undefined : chat.mode,
-    ephemeral: chat.conversationId ? false : chat.ephemeral,
-    // 仍走语音轮的短回答约束，但不出声
-    voiceMode: true,
-    ...(imageIds.length ? { attachments: imageIds } : {})
-  })
+  try {
+    await sendMessage(content, {
+      conversationId: chat.conversationId,
+      agentId: chat.agentId,
+      // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+      initMode: chat.conversationId ? undefined : chat.mode,
+      ephemeral: chat.conversationId ? false : chat.ephemeral,
+      // 仍走语音轮的短回答约束，但不出声
+      voiceMode: true,
+      ...(imageIds.length ? { attachments: imageIds } : {})
+    })
+  } finally {
+    releaseQueueAfterManualSend()
+  }
 }
 
 function handleStop() {
   const convId = chat.conversationId
   stopSpeaking()
+  // 停止 = 全部停下：先清队列，避免 isStreaming 转 false 后 watcher 又把排队消息发出去
+  clearPendingWithNotice()
   // 语音会话不在这里收：停生成后麦克风还要继续听（用户可能接着说）
   // 先断 SSE 让 UI 立即停下，再通知服务端终止 ReAct（与 macOS 客户端顺序一致）。
   // shortcut: 新会话首条消息流式时前端还拿不到 conversation_id，只能断流，
@@ -1161,14 +1271,12 @@ let activeUploads = 0
 const uploadQueue = []
 
 const canSend = computed(() => {
-  if (chat.isStreaming) return false
   // 上传中不给发；失败态故意放行到这里，让 handleSend 弹出「有图片上传失败」的提示
   if (draftImages.value.some(d => d.status === 'uploading')) return false
   return !!inputValue.value.trim() || draftImages.value.length > 0
 })
 
 function pickImages() {
-  if (chat.isStreaming) return
   fileInputRef.value?.click()
 }
 
@@ -1394,6 +1502,24 @@ function handleContainerClick(e) {
           <ToolCallToast />
         </div>
 
+        <!-- 排队消息：只在 pendingSends 里，不写 messages（done 的 findLast(user) 要认本轮真实消息） -->
+        <div v-if="chat.pendingSends.length" class="pending-queue">
+          <div class="pending-divider">
+            <span :class="{ paused: chat.queuePaused }">
+              {{ chat.queuePaused ? '已暂停 · 上一条发送失败' : `当前轮结束后依次发送 · ${chat.pendingSends.length} 条` }}
+            </span>
+            <button v-if="chat.queuePaused" type="button" class="pending-resume" @click="resumePending">继续发送</button>
+          </div>
+          <div v-for="p in chat.pendingSends" :key="p.id" class="pending-bubble">
+            <div class="pending-tag">排队中</div>
+            <div class="pending-text">{{ p.content }}</div>
+            <div v-if="p.imageIds?.length" class="pending-meta">{{ p.imageIds.length }} 张图</div>
+            <div class="pending-actions">
+              <button type="button" class="pending-del" @click="chat.removePendingSend(p.id)">删除</button>
+            </div>
+          </div>
+        </div>
+
         <!-- PlanGraph 暂时隐藏，工具使用简单时图无意义 -->
         <!--
         <PlanGraph
@@ -1493,8 +1619,7 @@ function handleContainerClick(e) {
           v-else
           v-model:value="inputValue"
           type="textarea"
-          placeholder="发消息..."
-          :disabled="chat.isStreaming"
+          :placeholder="chat.isStreaming ? '继续输入，Enter 加入队列...' : '发消息...'"
           :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
           class="chat-input"
           @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
@@ -1518,7 +1643,7 @@ function handleContainerClick(e) {
               </NTooltip>
               <NTooltip :disabled="isMobile" placement="top">
                 <template #trigger>
-                  <button class="icon-pill" type="button" aria-label="添加图片" :disabled="chat.isStreaming" @click="pickImages">
+                  <button class="icon-pill" type="button" aria-label="添加图片" @click="pickImages">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
                   </button>
                 </template>
@@ -1553,13 +1678,22 @@ function handleContainerClick(e) {
                 @click="handleSend"
                 style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
               >↑</NButton>
-              <NButton
-                v-else
-                type="error"
-                size="small"
-                @click="handleStop"
-                style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
-              >■</NButton>
+              <template v-else>
+                <NButton
+                  type="error"
+                  size="small"
+                  @click="handleStop"
+                  style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
+                >■</NButton>
+                <NButton
+                  type="primary"
+                  size="small"
+                  :disabled="!canSend"
+                  title="加入队列（Enter）"
+                  @click="handleSend"
+                  style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
+                >↑</NButton>
+              </template>
             </div>
           </template>
           <div v-else class="voice-group">
@@ -1740,6 +1874,82 @@ function handleContainerClick(e) {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
+  gap: 6px;
+}
+
+/* 排队消息：虚线气泡紧跟流式回复后面，视觉在对话流里，数据不写 messages */
+.pending-queue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.pending-divider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+}
+.pending-divider::before,
+.pending-divider::after {
+  content: "";
+  flex: 1;
+  height: 0;
+  border-top: 1px dashed var(--color-border);
+}
+.pending-divider .paused { color: var(--color-danger); }
+.pending-resume {
+  border: 0.5px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.pending-bubble {
+  max-width: 85%;
+  padding: 9px 13px;
+  border-radius: 16px 16px 4px 16px;
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-text-secondary);
+  font-size: var(--chat-font-size);
+  line-height: 1.6;
+}
+.pending-tag {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  margin-bottom: 3px;
+}
+.pending-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pending-meta {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.pending-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.pending-del {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+.pending-del:hover {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
 }
 .composer-reopen {
   position: fixed;

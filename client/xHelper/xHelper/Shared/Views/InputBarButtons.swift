@@ -214,7 +214,8 @@ struct VoiceModeCapsule: View {
     }
 }
 
-/// 发送/停止按钮：仅展开态显示。流式时 morph 为红色停止，否则为发送箭头。
+/// 发送/停止按钮：仅展开态显示。流式中且可发送时同时给「停止 + 发送（排队）」，
+/// 否则按原逻辑 morph 成单一停止/发送键。
 struct SendStopButton: View {
     let context: InputBarContext
     let isStreaming: Bool
@@ -223,15 +224,38 @@ struct SendStopButton: View {
     let onStop: () -> Void
 
     var body: some View {
-        IconButton(
-            visibility: .always,
-            context: context,
-            symbol: isStreaming ? "stop.fill" : "arrow.up",
-            tint: isStreaming ? .red : Color("appAccent"),
-            isEnabled: isStreaming || canSend,
-            tooltip: isStreaming ? "停止生成" : "发送",
-            pulsing: isStreaming,
-            action: { isStreaming ? onStop() : onSend() }
-        )
+        if isStreaming {
+            HStack(spacing: 2) {
+                IconButton(
+                    visibility: .always,
+                    context: context,
+                    symbol: "stop.fill",
+                    tint: .red,
+                    tooltip: "停止生成",
+                    pulsing: true,
+                    action: onStop
+                )
+                if canSend {
+                    IconButton(
+                        visibility: .always,
+                        context: context,
+                        symbol: "arrow.up",
+                        tint: Color("appAccent"),
+                        tooltip: "加入队列（Enter）",
+                        action: onSend
+                    )
+                }
+            }
+        } else {
+            IconButton(
+                visibility: .always,
+                context: context,
+                symbol: "arrow.up",
+                tint: canSend ? Color("appAccent") : .gray,
+                isEnabled: canSend,
+                tooltip: "发送",
+                action: onSend
+            )
+        }
     }
 }

@@ -117,6 +117,20 @@ enum ChatMode: String {
 
 // MARK: - ChatViewModel
 
+// MARK: - Pending Send（流式中排队的一轮）
+
+/// 流式中输入的消息：等当前轮 `done` 后按顺序发送。
+/// **不写进 `messages`**：done 回填真实 user id 时按最后一条 user 找，混进队列会认错。
+struct PendingSend: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+    let attachments: [DraftAttachment]
+    let baseURL: String
+    let token: String
+    let agentId: String?
+    let speakReply: Bool
+}
+
 @MainActor
 class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
@@ -153,6 +167,11 @@ class ChatViewModel: ObservableObject {
     /// 待发图上传在途（发送闸门）。同样必须在 VM：上传 Task 不随视图销毁取消，
     /// 标志留在视图里会被重建复位成 false，闸门失效并可能让还原路径覆盖新草稿。
     @Published var isUploadingAttachments = false
+
+    /// 流式中排队发送的消息（只用于渲染与出队，不写 messages）。
+    @Published var pendingSends: [PendingSend] = []
+    /// 上一轮失败时暂停出队，等用户点「继续」或下次手动发送。
+    @Published var pendingPaused = false
 
     /// ⌘V 粘贴进来的图片字节（一次性投递箱）：剪贴板在 AppDelegate 里读，ChatView 消费后清空。
     @Published var pastedImages: [Data] = []
@@ -817,6 +836,10 @@ class ChatViewModel: ObservableObject {
     let apiClient: APIClient // 扩展（ChatViewModel+ClientTools）需要访问
     private let sseClient = SSEClient()
     private var streamingContent = ""
+    /// 排队出队的重入闸：上传/发送过程只允许一个在途。
+    private var isDispatchingPending = false
+    /// 排队代次：停止 / 切会话时前进，让在途上传作废。
+    private var pendingEpoch = 0
     private var throttleTimer: Timer?
     /// 本轮用户消息发出的时刻（用于「久等后回复完成」提示音；done/停止时清空）
     private var streamStartedAt: Date?
@@ -842,6 +865,11 @@ class ChatViewModel: ObservableObject {
     func loadConversation(id: String, title: String, mode: String? = nil, preserveTransientState: Bool = false) async {
         sseClient.disconnect()
         isStreaming = false
+        // 切会话 = 清排队（与网页端一致），避免把上一个会话的待发消息发进新会话；
+        // 同会话重试/刷新不清，排队消息还能继续。
+        if conversationId != id {
+            clearPendingQueue()
+        }
         conversationId = id
         pendingConversationID = "" // 切会话后不能再用上一轮 meta 给的 id
         conversationTitle = title
@@ -1018,6 +1046,136 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
+    /// 发送草稿：流式中（或队列非空）先入队，空闲时直接发。
+    /// 文字与草稿图在同一刻一起清空；带图上传失败时还原（立即发）或留在队列里暂停（排队发）。
+    func sendDraft(baseURL: String, token: String, agentId: String?) {
+        let text = draftText
+        let attachments = draftAttachments
+        let hasText = !text.trimmingCharacters(in: .whitespaces).isEmpty
+        guard hasText || !attachments.isEmpty else { return }
+        let speakReply = pendingVoiceReply
+        pendingVoiceReply = false
+        draftText = ""
+        draftAttachments = []
+
+        let item = PendingSend(text: text, attachments: attachments, baseURL: baseURL, token: token,
+                               agentId: agentId, speakReply: speakReply)
+
+        // 流式中、上传中、队列里已有消息、或暂停中：按先来后到追加，避免插队/丢消息
+        if isStreaming || isUploadingAttachments || !pendingSends.isEmpty || pendingPaused {
+            pendingPaused = false
+            pendingSends.append(item)
+            if !isStreaming, !isUploadingAttachments { dispatchNextPending() }
+            return
+        }
+        sendNow(item, restoreOnFailure: true)
+    }
+
+    func removePendingSend(id: UUID) {
+        pendingSends.removeAll { $0.id == id }
+    }
+
+    func resumePendingQueue() {
+        pendingPaused = false
+        dispatchNextPending()
+    }
+
+    /// 出队首发送。只由「当前轮 done」或「空闲时手动发送」触发，
+    /// 与后端「同会话只允许一个 ReAct 循环」的约束一致。
+    func dispatchNextPending() {
+        guard !isStreaming, !isUploadingAttachments, !pendingPaused, !isDispatchingPending,
+              let item = pendingSends.first else { return }
+        isDispatchingPending = true
+        scrollToBottomRequested = true
+        sendNow(item, restoreOnFailure: false, fromQueue: true) { [weak self] in
+            self?.isDispatchingPending = false
+        }
+    }
+
+    private func sendNow(_ item: PendingSend, restoreOnFailure: Bool, fromQueue: Bool = false,
+                         completion: @escaping () -> Void = {}) {
+        let epoch = pendingEpoch
+
+        func deliver(attachmentIds: [String], localImages: [PlatformImage]) {
+            guard epoch == pendingEpoch else { return } // 排队已被清空/切换会话：这次上传作废
+            // 上传期间用户删掉了这条：不再发出去（completion 仍要跑，放开发送闸）
+            if fromQueue, !pendingSends.contains(where: { $0.id == item.id }) {
+                completion()
+                return
+            }
+            // 上传期间语音/接力已经开了新轮：不能再 connect 掐断它，放回队列等下一轮
+            if isStreaming {
+                if restoreOnFailure, draftText.isEmpty, draftAttachments.isEmpty {
+                    draftText = item.text
+                    draftAttachments = item.attachments
+                } else {
+                    if !pendingSends.contains(where: { $0.id == item.id }) {
+                        pendingSends.insert(item, at: 0)
+                    }
+                    pendingPaused = true
+                }
+                completion()
+                return
+            }
+            pendingSends.removeAll { $0.id == item.id }
+            sendMessage(item.text, baseURL: item.baseURL, token: item.token, agentId: item.agentId,
+                        attachmentIds: attachmentIds, localImages: localImages, speakReply: item.speakReply)
+            completion()
+        }
+
+        guard !item.attachments.isEmpty else {
+            deliver(attachmentIds: [], localImages: [])
+            return
+        }
+
+        isUploadingAttachments = true
+        Task { @MainActor in
+            defer {
+                isUploadingAttachments = false
+                // 上传期间队列被清空又来了新消息：这次上传作废后，把新队首接上
+                if !isStreaming, !pendingPaused, !isDispatchingPending, !pendingSends.isEmpty {
+                    dispatchNextPending()
+                }
+            }
+            var ids: [String] = []
+            for att in item.attachments {
+                do {
+                    let uploaded = try await apiClient.uploadImage(att.data, filename: att.filename)
+                    ids.append(uploaded.imageId)
+                    // 手上就有解码好的图，直接进共享缓存：消息重载后不用再拉一次
+                    AttachmentImageLoader.shared.seed(id: uploaded.imageId, image: att.image)
+                } catch {
+                    LogBuffer.shared.error("ChatViewModel.uploadImage failed: \(error)")
+                    ToastCenter.shared.show("图片上传失败：\((error as NSError).localizedDescription)")
+                }
+            }
+            guard epoch == pendingEpoch else { return }
+            guard !ids.isEmpty else {
+                // 全失败：立即发且草稿区还空着就还给用户；否则放回队列并暂停，别把字丢掉
+                if restoreOnFailure, draftText.isEmpty, draftAttachments.isEmpty {
+                    draftText = item.text
+                    draftAttachments = item.attachments
+                } else {
+                    if !pendingSends.contains(where: { $0.id == item.id }) {
+                        pendingSends.insert(item, at: 0)
+                    }
+                    pendingPaused = true
+                }
+                completion()
+                return
+            }
+            deliver(attachmentIds: ids, localImages: item.attachments.map(\.image))
+        }
+    }
+
+    /// 清空排队（停止 / 切会话）：epoch 前进让在途上传作废，不再把消息发进新会话。
+    private func clearPendingQueue() {
+        pendingEpoch &+= 1
+        pendingSends.removeAll()
+        pendingPaused = false
+        isDispatchingPending = false
+    }
+
     func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = [], speakReply: Bool = false, voiceMode: Bool? = nil) {
         speakReplyForCurrentTurn = speakReply
         // 新会话第一轮还没 done 时插话：meta 帧已经给了 id，这一轮必须落回同一会话，
@@ -1139,12 +1297,13 @@ class ChatViewModel: ObservableObject {
                     self?.handleStreamEnded(reload: false)
                     return
                 }
-                // 会话不存在（如无痕会话已销毁）：SSEClient 以 HTTP 状态码上报
+                // 会话不存在（如无痕会话已销毁）：排队消息无处可发，直接清掉
                 if nsError.domain == "XHANHTTP", nsError.code == 404 {
                     LogBuffer.shared.warning("ChatViewModel.sse: conversation gone (404)")
                     self?.isResumeInFlight = false
                     self?.finishStreaming()
                     self?.detachStreamingMessage()
+                    self?.clearPendingQueue()
                     if let cid = self?.conversationId, !cid.isEmpty {
                         self?.onConversationGone?(cid)
                     }
@@ -1155,12 +1314,15 @@ class ChatViewModel: ObservableObject {
                    nsError.code == NSURLErrorNetworkConnectionLost || nsError.code == NSURLErrorCancelled {
                     self?.finishStreaming()
                     self?.detachStreamingMessage()
+                    // 断网/取消不是正常收尾：暂停队列，等回前台续传或用户继续
+                    self?.pendingPaused = !(self?.pendingSends.isEmpty ?? true)
                     return
                 }
                 LogBuffer.shared.error("ChatViewModel.sse onError: \(error)")
                 ToastCenter.shared.show(ToastCenter.friendlyErrorText(nsError, action: "发送"))
                 self?.finishStreaming()
                 self?.detachStreamingMessage()
+                self?.pendingPaused = !(self?.pendingSends.isEmpty ?? true)
             }
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）。
@@ -1173,7 +1335,10 @@ class ChatViewModel: ObservableObject {
 
     /// `notifyServer=false` 用于「同一会话立刻发下一句」：服务端 Register 本来就会取消旧 loop，
     /// 再发 stop 有可能赶在新一轮注册之后到达，把新轮停掉。
-    func stopStreaming(notifyServer: Bool = true) {
+    func stopStreaming(notifyServer: Bool = true, clearPending: Bool = true) {
+        // 用户点停止 = 全部停下：先清排队，避免 done/断流后继续发下一轮。
+        // 语音/立刻接下一轮的内部停止传 clearPending=false：排队消息保留到下一轮 done 后继续。
+        if clearPending { clearPendingQueue() }
         // 先立即断开 SSE + UI 收尾（思考框消失），再后台通知服务端显式终止 ReAct。
         // 顺序保证：UI 即时响应，stopChat 失败/慢速不影响停止体验。
         handoffActive = false
@@ -1241,6 +1406,8 @@ class ChatViewModel: ObservableObject {
         let cid = effectiveConversationID
         finishStreaming()
         detachStreamingMessage()
+        // 非 done 收尾（idle/reset/换轮）不自动出队：队列停在暂停态，避免把消息发进不明状态
+        pendingPaused = !pendingSends.isEmpty
         if reload {
             ToastCenter.shared.show("连接中断，已重新加载")
         }
@@ -1514,12 +1681,21 @@ class ChatViewModel: ObservableObject {
                     ToastCenter.shared.show("未检测到新文档，已取消接力")
                 }
             }
+            // 排队发送：正常完成才出下一条（顺带解除失败/断网留下的暂停）；
+            // done 带 error 视为本轮失败，暂停等用户继续
+            if doneError != nil {
+                pendingPaused = !pendingSends.isEmpty
+            } else {
+                pendingPaused = false
+                dispatchNextPending()
+            }
 
         case .error:
             LogBuffer.shared.error("ChatViewModel.sse error event: \(event.data)")
             ToastCenter.shared.show("服务出错：\(event.data)")
             finishStreaming()
             detachStreamingMessage()
+            pendingPaused = !pendingSends.isEmpty
         default:
             break
         }

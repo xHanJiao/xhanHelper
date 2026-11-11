@@ -42,7 +42,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
     var voiceStrip: AnyView? = nil
 
     @EnvironmentObject var fontSizeManager: FontSizeManager
-    @State private var shakeOffset: CGFloat = 0
 #if os(macOS)
     @FocusState private var isFocused: Bool
     @State private var idleTask: Task<Void, Never>?
@@ -177,7 +176,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .onTapGesture {
                 // 语音会话时编辑器被音波条顶替，焦点不能落到看不见的编辑器上
-                guard voiceStrip == nil, !isStreaming else { return }
+                guard voiceStrip == nil else { return }
                 isFocused = true
             }
             .shadow(
@@ -242,7 +241,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
         let contentHeight = measuredHeight(text, width: textWidth, font: font)
         let editorHeight = min(max(contentHeight, lineHeight), lineHeight * 4)
         return TextEditor(text: $text)
-            .offset(x: shakeOffset)
             .focused($isFocused)
             .onChange(of: text) {
                 idleTask?.cancel()
@@ -269,25 +267,13 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 ChatInputFocus.shared.isFocused = false
             }
             // Return：单独按发送；Shift+Return / Option+Return 换行（放行给 TextEditor）。
+            // 流式中也放行：由上层决定直接发还是排队（见 ChatViewModel.sendDraft）。
             .onKeyPress(.return, phases: .down) { keyPress in
                 let modifiers = keyPress.modifiers
                 guard !modifiers.contains(.shift), !modifiers.contains(.option) else { return .ignored }
                 // IME 组合态下交给输入法确认。
                 if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
                     return .ignored
-                }
-                if isStreaming {
-                    Task {
-                        for _ in 0..<3 {
-                            withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = 6 }
-                            try? await Task.sleep(nanoseconds: 60_000_000)
-                            withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = -6 }
-                            try? await Task.sleep(nanoseconds: 60_000_000)
-                        }
-                        withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = 0 }
-                        ToastCenter.shared.show("请等待上一条消息的回复接收完毕")
-                    }
-                    return .handled
                 }
                 if text.trimmingCharacters(in: .whitespaces).isEmpty {
                     return .handled
@@ -320,7 +306,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             .padding(.leading, 6)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
-            .disabled(isStreaming)
     }
 
     /// 用独立 TextKit 栈按宽度算折行高度，不依赖 TextEditor 内部视图（其 ideal
@@ -349,7 +334,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 CustomTextView(
                     text: $text,
                     dismissKeyboardToken: dismissKeyboardToken,
-                    isDisabled: isStreaming,
+                    isDisabled: false,
                     placeholder: "输入消息...",
                     fontSize: fontSizeManager.scaledSize,
                     onSubmit: {
@@ -363,7 +348,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 .padding(.vertical, 8)
                 .background(Color("surfaceInput"))
                 .cornerRadius(16)
-                .disabled(isStreaming)
 
                 trailingActions(context)
             }

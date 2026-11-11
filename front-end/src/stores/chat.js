@@ -9,6 +9,10 @@ export const useChatStore = defineStore('chat', () => {
   const deepMode = ref(true)
   const messages = ref([])
   const streamingMessage = ref(null)
+  // 流式中输入的待发消息：只在这份数组里，不写 messages（done 用 findLast(user) 回填真实 id）
+  const pendingSends = ref([])
+  const queuePaused = ref(false)
+  let pendingSeq = 0
   const planNodes = ref({})
   const planEdges = ref([])
   const isStreaming = ref(false)
@@ -45,6 +49,32 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = msgs
   }
 
+  // 流式中入队（entry: { content, imageIds }；agentId 在出队时取当前值）
+  function enqueuePendingSend(entry) {
+    pendingSends.value.push({
+      ...entry,
+      id: `pending-${Date.now()}-${++pendingSeq}`,
+      created_at: new Date().toISOString()
+    })
+  }
+
+  function removePendingSend(id) {
+    const i = pendingSends.value.findIndex(p => p.id === id)
+    if (i >= 0) pendingSends.value.splice(i, 1)
+  }
+
+  function takeNextPendingSend() {
+    return pendingSends.value.shift() || null
+  }
+
+  // 返回清掉的条数，调用方决定要不要 toast
+  function clearPendingSends() {
+    const n = pendingSends.value.length
+    pendingSends.value = []
+    queuePaused.value = false
+    return n
+  }
+
   // 前置历史消息（用于向上翻页）
   function prependMessages(msgs) {
     messages.value = [...msgs, ...messages.value]
@@ -59,6 +89,8 @@ export const useChatStore = defineStore('chat', () => {
     deepMode.value = true
     messages.value = []
     streamingMessage.value = null
+    pendingSends.value = []
+    queuePaused.value = false
     planNodes.value = {}
     planEdges.value = []
     isStreaming.value = false
@@ -79,6 +111,8 @@ export const useChatStore = defineStore('chat', () => {
     deepMode,
     messages,
     streamingMessage,
+    pendingSends,
+    queuePaused,
     planNodes,
     planEdges,
     isStreaming,
@@ -93,6 +127,10 @@ export const useChatStore = defineStore('chat', () => {
     addMessage,
     setMessages,
     prependMessages,
+    enqueuePendingSend,
+    removePendingSend,
+    takeNextPendingSend,
+    clearPendingSends,
     reset
   }
 })

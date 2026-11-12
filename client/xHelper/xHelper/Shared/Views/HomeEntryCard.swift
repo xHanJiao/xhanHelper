@@ -293,7 +293,7 @@ private struct HomeCardChrome: ViewModifier {
     }
 }
 
-/// 信息行：18pt 图标 chip + 标题 + 右侧弱化细节；hover 淡绿底 + 绿描边。
+/// 信息行：18pt 图标 chip + 标题 + 右侧弱化细节。常态无底无描边，hover 才浮出淡绿底 + 绿描边。
 private struct HomeInfoRowView: View {
     let row: HomeEntryCard.InfoRow
 
@@ -326,15 +326,15 @@ private struct HomeInfoRowView: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
+            // 常态不铺底也不描边：卡片本身已经浮起一层，行再套一层白卡会重得压过标题。
+            // 可点感交给 hover —— 鼠标进来才浮出淡绿底 + 绿描边。
             .background(
                 RoundedRectangle(cornerRadius: 9)
-                    .fill(hovered ? accent.opacity(dark ? 0.18 : 0.12)
-                                   : Color.white.opacity(dark ? 0.06 : 0.40))
+                    .fill(hovered ? accent.opacity(dark ? 0.18 : 0.12) : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(hovered ? accent.opacity(0.45) : Color.white.opacity(dark ? 0.08 : 0.55),
-                                  lineWidth: 0.5)
+                    .strokeBorder(hovered ? accent.opacity(0.45) : Color.clear, lineWidth: 0.5)
             )
             .contentShape(RoundedRectangle(cornerRadius: 9))
         }

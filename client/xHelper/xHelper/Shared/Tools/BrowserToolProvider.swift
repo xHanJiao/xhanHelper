@@ -177,14 +177,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 rs.keptAliveTabIds.remove(tabId)
                 continue
             }
-            session.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
+            // CEF 标签没有 JS 通道：保活由 CEF 自己维持，这里直接摘掉保活标记
+            guard let webView = session.webView else {
+                rs.keptAliveTabIds.remove(tabId)
+                continue
+            }
+            webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
                 let hasMedia = error == nil && (result as? Bool) == true
                 guard !hasMedia else { return }
                 DispatchQueue.main.async {
                     guard let self, self.activeTabId != tabId else { return }
                     LogBuffer.shared.info("[Browser] keep-alive tab \(tabId) 媒体已停止，摘除视图层级")
                     self.rightSidebar?.keptAliveTabIds.remove(tabId)
-                    session.webView.pauseAllMediaPlayback()
+                    webView.pauseAllMediaPlayback()
                 }
             }
         }
@@ -327,15 +332,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
             switch tool {
             case "agent_browser_get_url":
-                guard session.webView.url != nil else {
+                guard session.page.url != nil else {
                     return .init(serverResult: nil, serverError: "页面未加载", clientAction: nil)
                 }
-                return .init(serverResult: Self.jsonDict(["url": session.webView.url?.absoluteString ?? ""]), serverError: nil, clientAction: nil)
+                return .init(serverResult: Self.jsonDict(["url": session.page.url?.absoluteString ?? ""]), serverError: nil, clientAction: nil)
             case "agent_browser_get_title":
-                guard session.webView.url != nil else {
+                guard session.page.url != nil else {
                     return .init(serverResult: nil, serverError: "页面未加载", clientAction: nil)
                 }
-                let title = session.webView.title ?? ""
+                let title = session.page.title ?? ""
                 if isBlockedPageTitle(title) {
                     return .init(serverResult: nil, serverError: "页面被拦截（标题：\(title)）：该站存在人机验证/反爬墙，无法读取内容，请换源", clientAction: nil)
                 }
@@ -368,13 +373,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 }
             case "agent_browser_go_back":
                 return await withNavContext(session) {
-                    session.webView.goBack()
+                    session.page.goBack()
                     return .init(serverResult: Self.jsonDict(["back": true]), serverError: nil, clientAction: nil)
                 }
             case "agent_browser_go_forward":
                 return await withNavContext(session) {
-                    if session.webView.canGoForward { session.webView.goForward() }
-                    return .init(serverResult: Self.jsonDict(["forward": session.webView.canGoForward]), serverError: nil, clientAction: nil)
+                    if session.page.canGoForward { session.page.goForward() }
+                    return .init(serverResult: Self.jsonDict(["forward": session.page.canGoForward]), serverError: nil, clientAction: nil)
                 }
             case "agent_browser_get_media_sources":
                 return await handleGetMediaSources(session: session, arguments: arguments)
@@ -421,12 +426,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     // 特殊键（Enter/方向键/Tab/Escape 等）走真实键盘事件（仅 macOS，需辅助功能权限），
                     // 触发浏览器默认行为；iOS 无 CGEvent 注入，回退到 JS 合成键盘事件
                     #if os(macOS)
-                    if let code = CGEventInput.keyCode(for: key) {
+                    if let webView = session.webView, let code = CGEventInput.keyCode(for: key) {
                         #if DEBUG
                         print("[B-Press] key=\(key) vk=\(code)")
                         #endif
-                        CGEventInput.activateWindow(for: session.webView)
-                        session.webView.window?.makeFirstResponder(session.webView)
+                        CGEventInput.activateWindow(for: webView)
+                        webView.window?.makeFirstResponder(webView)
                         CGEventInput.pressKey(code)
                         return .init(serverResult: Self.jsonDict(["pressed": true, "real": true]), serverError: nil, clientAction: nil)
                     }
@@ -581,6 +586,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 真实系统级点击（CGEvent 兜底）：权限检查 → 定位元素中心 → 坐标转换 → 前置窗口 → 注入
     private func cgClick(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         #if os(macOS)
+        guard let webView = session.webView else {
+            return .init(serverResult: nil, serverError: TabSession.cefUnsupported, clientAction: nil)
+        }
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
             #if DEBUG
@@ -612,7 +620,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         guard let vp = viewportPoint else {
             return .init(serverResult: nil, serverError: "cgclick 需要 ref（@eN）或 x/y 坐标", clientAction: nil)
         }
-        guard let screenPoint = CGEventInput.screenPoint(for: vp, in: session.webView) else {
+        guard let screenPoint = CGEventInput.screenPoint(for: vp, in: webView) else {
             // Bad Case 17 诊断：窗口不可用时输出工具层上下文
             #if DEBUG
             print("[B-CGClick] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
@@ -626,7 +634,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return .init(serverResult: nil, serverError: "cgclick 目标超出屏幕范围 (screen=\(Int(screenSize.width))x\(Int(screenSize.height)), target=\(Int(screenPoint.x)),\(Int(screenPoint.y)))，请移动窗口或滚动页面后重试", clientAction: nil)
         }
 
-        CGEventInput.activateWindow(for: session.webView)
+        CGEventInput.activateWindow(for: webView)
         CGEventInput.click(at: screenPoint)
 
         // 拟人化诊断：回读页面焦点，确认点击命中
@@ -655,6 +663,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 真实系统级拖拽（CGEvent，地图/滑块/canvas）：起点定位 → 转换 → 逐点越界预检 → 注入
     private func cgDrag(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         #if os(macOS)
+        guard let webView = session.webView else {
+            return .init(serverResult: nil, serverError: TabSession.cefUnsupported, clientAction: nil)
+        }
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
             #if DEBUG
@@ -688,8 +699,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         let end = CGPoint(x: start.x + dx, y: start.y + dy)
-        guard let screenStart = CGEventInput.screenPoint(for: start, in: session.webView),
-              let screenEnd = CGEventInput.screenPoint(for: end, in: session.webView) else {
+        guard let screenStart = CGEventInput.screenPoint(for: start, in: webView),
+              let screenEnd = CGEventInput.screenPoint(for: end, in: webView) else {
             #if DEBUG
             print("[B-Drag] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
             #endif
@@ -705,7 +716,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
         }
 
-        CGEventInput.activateWindow(for: session.webView)
+        CGEventInput.activateWindow(for: webView)
         CGEventInput.drag(from: screenStart, to: screenEnd, steps: steps)
         return .init(serverResult: Self.jsonDict(["dragged": true, "target": "viewport(\(Int(start.x)),\(Int(start.y)))→(\(Int(end.x)),\(Int(end.y)))"]), serverError: nil, clientAction: nil)
         #else
@@ -773,8 +784,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         var lines: [String] = []
         lines.append(Self.pageContentDisclaimer)
-        lines.append("Page: \(session.webView.title ?? "")")
-        lines.append("URL: \(session.webView.url?.absoluteString ?? "")")
+        lines.append("Page: \(session.page.title ?? "")")
+        lines.append("URL: \(session.page.url?.absoluteString ?? "")")
         lines.append("")
         if arr.isEmpty {
             lines.append("（当前范围内无可交互元素）")
@@ -1154,7 +1165,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
             return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）", clientAction: nil)
         }
-        let session = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.webView === wv })?.value }
+        let session = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.page.wkWebView === wv })?.value }
         return await runDownload(url: url, preferredName: preferredName?.trimmingCharacters(in: .whitespaces),
                                  delay: false, enforceMedia: true, session: session)
     }
@@ -1169,14 +1180,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
               let host = url.host, !host.isEmpty else {
             return (nil, 0, "无效的 URL")
         }
-        let srcSession = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.webView === wv })?.value }
+        let srcSession = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.page.wkWebView === wv })?.value }
         var ua = Self.defaultBrowserUA
         var referer = ""
         var cookieHeader = ""
         if let session = srcSession {
             ua = (await session.jsResult("navigator.userAgent")).text ?? ua
-            referer = session.webView.url?.absoluteString ?? ""
-            let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+            referer = session.page.url?.absoluteString ?? ""
+            let allCookies = await session.webView?.configuration.websiteDataStore.httpCookieStore.allCookies() ?? []
             let matched = Self.matchingCookies(allCookies, for: url)
             if !matched.isEmpty {
                 cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
@@ -1218,11 +1229,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、Cookie（WebView 会话）
         let srcSession = session ?? activeSession
+        if srcSession?.webView == nil {
+            LogBuffer.shared.diag("[Browser] download on CEF tab: no WK session, UA/Cookie 降级为默认值")
+        }
         let ua = (await srcSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultBrowserUA
-        let referer = srcSession?.webView.url?.absoluteString ?? ""
+        let referer = srcSession?.page.url?.absoluteString ?? ""
         var cookieHeader = ""
-        if let session = srcSession {
-            let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        if let session = srcSession, let webView = session.webView {
+            let allCookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
             if !allCookies.isEmpty {
                 // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露
                 let matched = Self.matchingCookies(allCookies, for: url)
@@ -1472,7 +1486,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 交互操作统一附加 url/title/nav + 内容 hash/changed（供 LLM 判断页面是否变化，避免重复快照）
     private func withNavContext(_ session: TabSession, _ run: () async -> LocalToolResult) async -> LocalToolResult {
-        let beforeURL = session.webView.url?.absoluteString
+        let beforeURL = session.page.url?.absoluteString
         let beforeHash = session.lastContentHash
         let beforeTime = Date()
         var result = await run()
@@ -1480,15 +1494,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            var dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             // 短轮询等待异步导航开始（合成 click 后导航是异步的，URL 在 didStart 后同步）
             let deadline = Date().addingTimeInterval(1.0)
-            var url = session.webView.url?.absoluteString ?? ""
+            var url = session.page.url?.absoluteString ?? ""
             while url == beforeURL && Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
-                url = session.webView.url?.absoluteString ?? ""
+                url = session.page.url?.absoluteString ?? ""
             }
             // 导航判定：URL 对比（SPA 路由/pushState）+ didStart 事件兜底
             let navStarted = url != beforeURL || (session.lastNavStartAt ?? .distantPast) >= beforeTime
             dict["url"] = url
-            dict["title"] = session.webView.title ?? ""
+            dict["title"] = session.page.title ?? ""
             dict["nav"] = navStarted
             if navStarted {
                 // 导航发生：内容必然变化，重置 hash 基准（新页面加载中 hash 不稳定）；
@@ -1581,9 +1595,24 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return !userTabGrants.contains(owner)
     }
 
-    var activeURL: URL? { activeSession?.webView.url }
+    /// CEF 初始化失败过就不再重试（否则每开一个标签都重跑 CefInitialize + 弹一次 Toast）
+    private static var cefInitFailed = false
 
-    /// 激活 tab 的 webView（快捷键/焦点路由用）
+    /// 这台机器"能不能尝试 CEF"（平台层面）。真正起不来时由 `TabSession.makePage` 就地降级兼容引擎。
+    static var cefAvailable: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    var activeURL: URL? { activeSession?.page.url }
+
+    /// 激活 tab 的页面（快捷键/焦点路由用，WK 与 CEF 都覆盖）
+    var activePage: BrowserPage? { activeSession?.page }
+
+    /// 激活 tab 的 webView（**仅 WK**：页内查找/缩放这类 WK 专属能力用）
     var activeWebView: WKWebView? { activeSession?.webView }
 
     // MARK: - 风险分级（S2 高敏域 / G6 明文页）
@@ -1617,7 +1646,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         let targetURL: URL?
         if let tabId = arguments["tabId"] as? String, !tabId.isEmpty, let s = tabs[tabId] {
-            targetURL = s.webView.url
+            targetURL = s.page.url
         } else {
             targetURL = activeURL
         }
@@ -1683,8 +1712,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let quotaLeft = Self.agentTabQuotaLimit - agentTabs.count
         if quotaLeft <= 0 {
             let openList = agentTabs.map { id, session in
-                let title = session.webView.title?.prefix(40) ?? ""
-                return "\(id) \(session.webView.url?.host ?? "?") \(title)"
+                let title = session.page.title?.prefix(40) ?? ""
+                return "\(id) \(session.page.url?.host ?? "?") \(title)"
             }.joined(separator: "；")
             let errorMsg = "agent 标签页配额已满（上限 \(Self.agentTabQuotaLimit)，当前已用 \(agentTabs.count)）。请先调用 agent_browser_close_tab（close_tab）关闭不需要的页面腾出配额再打开，已有 agent 标签(tabId host 标题): \(openList)"
             return .init(serverResult: nil, serverError: errorMsg, clientAction: nil)
@@ -1693,7 +1722,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let isAgent = owner != nil
-        let session = TabSession()
+        // agent 标签在 B2 里仍走兼容引擎：agent 工具（快照/点击/JS）要等 B7 才接 CEF，
+        // 现在给它一个 CEF 标签会变成"页面能看、工具全哑"。用户自己开的（owner == nil，
+        // 含 Cmd+Shift+T 恢复）按 URL 判定，恢复出来的页才不会从 CEF 掉回 WK。B7 接入时统一。
+        let session = TabSession(engine: owner == nil
+            ? BrowserEngineRouter.resolveEngine(url: url, cefAvailable: Self.cefAvailable)
+            : .compat)
         session.isAgentTab = isAgent
         session.owner = owner
         tabs[tabId] = session
@@ -1707,7 +1741,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         bindSessionUI(session: session)
         refreshBrowserGroup()
 
-        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
+        session.page.load(url)
 
         let errorMsg = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             session.loadContinuation = cont
@@ -1725,18 +1759,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     Task { @MainActor in
                         await self?.retryOpen(session: session, tabId: tabId, url: url)
                     }
-                })), activate: activate, isAgentTab: isAgent, agentOwner: owner)
+                })), activate: activate, isAgentTab: isAgent, agentOwner: owner, engine: session.engine)
             // P0-1 失败传播：加载失败/超时必须是硬失败（serverError），
             // 否则 LLM 看到 success=true 会误判成功并无效重试。
             return .init(serverResult: nil, serverError: "打开失败: \(msg)（tabId: \(tabId)）。页面未加载成功，请换源或先 close_tab 关闭该页", clientAction: nil)
         }
 
-        let title = session.webView.title ?? url.host ?? urlStr
+        let title = session.page.title ?? url.host ?? urlStr
         // P0-2 拦截页识别：bot 墙（Cloudflare/403 等反爬墙）→ 硬失败止损，人解也无用，防止反复打断/重试
         if isBlockedPageTitle(title) {
             return .init(serverResult: nil, serverError: "页面被拦截（标题：\(title)）：该站存在人机验证/反爬墙，无法读取内容，请换源，不要再重试此站", clientAction: nil)
         }
-        let content: AnyView = AnyView(BrowserTabView(webView: session.webView,
+        let content: AnyView = AnyView(BrowserTabView(page: session.page,
                                                       onSetupErrorBinding: { [weak session] onError in
                                                           session?.onNavigationError = onError
                                                       }))
@@ -1744,7 +1778,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // agent 标签默认进工作区（不抢视图）；检测到人可解墙 → 自动手递手升主栏；
             // background:false（用户明确要求查看）→ 升主栏并激活。
             let reason = await wallReason(session: session)
-            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true, agentOwner: agentOwner)
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true, agentOwner: agentOwner, engine: session.engine)
             if let reason {
                 pendingHandoff[agentOwner] = (tabId: tabId, at: Date())
                 rightSidebar?.setTabNeedsAttention(id: tabId, needs: true)
@@ -1762,7 +1796,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 promoteAgentTab(tabId, activate: true)
             }
         } else {
-            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: activate, isAgentTab: false)
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: activate, isAgentTab: false, engine: session.engine)
         }
         return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId, "background": background,
                                                   "remainingAgentTabQuota": quotaLeft - 1]), serverError: nil, clientAction: nil)
@@ -1788,10 +1822,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     })()
     """
     private func wallReason(session: TabSession) async -> String? {
-        guard let url = session.webView.url else { return nil }
+        guard let url = session.page.url else { return nil }
         let js = (await session.jsResult(Self.wallProbeJS)).text ?? ""
         if !js.isEmpty { return js }
-        let t = (session.webView.title ?? "").lowercased()
+        let t = (session.page.title ?? "").lowercased()
         let host = (url.host ?? "").lowercased()
         let path = (url.path + (url.query ?? "")).lowercased()
         let strongTitle = ["验证码", "人机验证", "安全验证", "captcha"].contains { t.contains($0) }
@@ -1801,7 +1835,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     private func retryOpen(session: TabSession, tabId: String, url: URL) async {
-        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
+        session.page.load(url)
         let errorMsg = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             session.loadContinuation = cont
             session.loadTimeout = Task {
@@ -1821,10 +1855,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     }
                 })))
         } else {
-            let title = session.webView.title ?? url.host ?? url.absoluteString
+            let title = session.page.title ?? url.host ?? url.absoluteString
             rightSidebar?.updateTabTitle(id: tabId, title: title)
             rightSidebar?.replaceTabContent(id: tabId,
-                content: AnyView(BrowserTabView(webView: session.webView,
+                content: AnyView(BrowserTabView(page: session.page,
                                                 onSetupErrorBinding: { [weak session] onError in
                                                     session?.onNavigationError = onError
                                                 })))
@@ -1942,7 +1976,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             #if os(macOS)
             presentCloseConfirmation(
                 title: "关闭标签页",
-                message: "该页面有下载进行中（\(session.webView.title ?? session.webView.url?.host ?? "当前页面")），关闭页面将取消下载。确认关闭？"
+                message: "该页面有下载进行中（\(session.page.title ?? session.page.url?.host ?? "当前页面")），关闭页面将取消下载。确认关闭？"
             ) { [weak self, weak session] allow in
                 guard allow, let session, let self,
                       self.tabs[tabId] === session else { return }
@@ -1965,7 +1999,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let hadDownloads = session.hasActiveDownloads
         // 无下载的 tab 才进恢复栈；取消了下载的 tab 恢复无意义（重开会再次触发下载/确认）
         if !hadDownloads {
-            closedStack.append((url: session.webView.url, title: session.webView.title ?? session.webView.url?.host ?? "", artifactID: nil))
+            closedStack.append((url: session.page.url, title: session.page.title ?? session.page.url?.host ?? "", artifactID: nil))
         }
         session.cancelLoadWait()
         session.forceCancelDownloads()
@@ -2017,23 +2051,29 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #if os(macOS)
         // 活动埋点：关标签时收掉悬挂的 nav 与当前页 dwell
         if var browser = session.activityBrowser {
-            let events = browser.closed(pageTitle: session.webView.title)
+            let events = browser.closed(pageTitle: session.page.title)
             ActivityClient.emit(events)
             session.activityBrowser = nil // 已收尾：置空挡将来多出的 teardown 调用点双发 dwell
         }
         #endif
         session.cleanupObservations()
-        session.webView.stopLoading()
-        session.webView.evaluateJavaScript(
-            "document.querySelectorAll('video,audio').forEach(function(e){e.pause();e.removeAttribute('src')})",
-            completionHandler: nil)
-        session.webView.configuration.userContentController.removeAllUserScripts()
-        if let ruleList = ContentBlocker.ruleList {
-            session.webView.configuration.userContentController.remove(ruleList)
+        if let webView = session.webView {
+            session.page.stopLoading()
+            webView.evaluateJavaScript(
+                "document.querySelectorAll('video,audio').forEach(function(e){e.pause();e.removeAttribute('src')})",
+                completionHandler: nil)
+            webView.configuration.userContentController.removeAllUserScripts()
+            if let ruleList = ContentBlocker.ruleList {
+                webView.configuration.userContentController.remove(ruleList)
+            }
+            webView.uiDelegate = nil
+            webView.navigationDelegate = nil
+            webView.removeFromSuperview()
+        } else {
+            // CEF：CloseBrowser(force_close)，等 OnBeforeClose 回收 renderer 进程
+            session.page.close()
         }
-        session.webView.uiDelegate = nil
-        session.webView.navigationDelegate = nil
-        session.webView.removeFromSuperview()
+        session.page.onLoadFinish = nil
         session.onTitleChange = nil
         session.onURLChanged = nil
         session.onNewWindowRequest = nil
@@ -2138,18 +2178,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func openBlankTab(intoRight: Bool = false) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let session = TabSession()
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(url: nil, cefAvailable: Self.cefAvailable))
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
-        session.webView.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
+        session.page.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView,
+                              content: AnyView(BrowserTabView(page: session.page,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
                                                               })),
-                              intoRightPane: intoRight)
+                              intoRightPane: intoRight, engine: session.engine)
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
     }
@@ -2278,18 +2318,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func openURL(_ url: URL) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let session = TabSession()
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(url: url, cefAvailable: Self.cefAvailable))
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
         rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView,
+                              content: AnyView(BrowserTabView(page: session.page,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
-                                                              })))
-        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
+                                                              })), engine: session.engine)
+        session.page.load(url)
     }
 
     /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
@@ -2305,7 +2345,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// UI（tab 条右键菜单）重新加载指定 tab；特殊 tab（下载/收藏/历史/配置/本页资源）无 webView，静默忽略
     func reloadTab(_ id: String) {
-        tabs[id]?.webView.reload()
+        tabs[id]?.page.reload()
     }
 
     /// UI（tab 条 X 按钮）关闭指定 tab：与工具 close_tab 同路径（含 closedStack 记录），可被 Cmd+Shift+T 恢复。
@@ -2364,23 +2404,26 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 更新新 tab 最后访问时间。
     private func switchActiveTab(to id: String?) {
         if let prev = activeTabId, prev != id, let prevSession = tabs[prev] {
-            if prevSession.isAgentTab {
-                // agent 标签不保活：直接暂停（原有节能逻辑）
-                prevSession.webView.pauseAllMediaPlayback()
-            } else {
-                saveScrollPosition(prevSession)
-                // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
-                rightSidebar?.keptAliveTabIds.insert(prev)
-                prevSession.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
-                    let hasMedia = error == nil && (result as? Bool) == true
-                    if hasMedia {
-                        LogBuffer.shared.info("[Browser] keep-alive tab \(prev) 有媒体播放，后台续播")
-                    } else {
-                        // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
-                        DispatchQueue.main.async {
-                            guard let self, self.activeTabId != prev else { return }
-                            self.rightSidebar?.keptAliveTabIds.remove(prev)
-                            prevSession.webView.pauseAllMediaPlayback()
+            // CEF 标签没有 JS 通道：暂停/保活都由 CEF 自己管（B6 再接媒体保活）
+            if let prevWebView = prevSession.webView {
+                if prevSession.isAgentTab {
+                    // agent 标签不保活：直接暂停（原有节能逻辑）
+                    prevWebView.pauseAllMediaPlayback()
+                } else {
+                    saveScrollPosition(prevSession)
+                    // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
+                    rightSidebar?.keptAliveTabIds.insert(prev)
+                    prevWebView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
+                        let hasMedia = error == nil && (result as? Bool) == true
+                        if hasMedia {
+                            LogBuffer.shared.info("[Browser] keep-alive tab \(prev) 有媒体播放，后台续播")
+                        } else {
+                            // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
+                            DispatchQueue.main.async {
+                                guard let self, self.activeTabId != prev else { return }
+                                self.rightSidebar?.keptAliveTabIds.remove(prev)
+                                prevWebView.pauseAllMediaPlayback()
+                            }
                         }
                     }
                 }
@@ -2398,9 +2441,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 摘除层级前保存滚动位置与 marker（marker 在 reload 后消失，用于防止把恢复值打到新页面上）。
     private func saveScrollPosition(_ session: TabSession) {
-        session.webView.evaluateJavaScript(Self.scrollStateScript) { result, error in
+        // CEF 标签没有 JS 通道：滚动位置靠 CEF 自己维持（切 tab 会摘视图，真机核对表现）
+        guard let webView = session.webView else { return }
+        webView.evaluateJavaScript(Self.scrollStateScript) { result, error in
             if let error {
-                print("[BrowserDiag] saveScroll JS error url=\(session.webView.url?.absoluteString ?? "nil") err=\(error.localizedDescription)")
+                print("[BrowserDiag] saveScroll JS error url=\(session.page.url?.absoluteString ?? "nil") err=\(error.localizedDescription)")
                 return
             }
             guard let s = result as? String,
@@ -2420,23 +2465,24 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 故每 120ms 轮询一次，等视口/内容高度恢复正常再 scrollTo；最多 15 次。
     private func scheduleScrollRestore(_ session: TabSession, attempt: Int = 0) {
         guard attempt < 15 else {
-            print("[BrowserDiag] restore gave up (layout never ready) url=\(session.webView.url?.absoluteString ?? "nil")")
+            print("[BrowserDiag] restore gave up (layout never ready) url=\(session.page.url?.absoluteString ?? "nil")")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak session] in
             guard let self, let session else { return }
-            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else { return }
+            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker,
+                  let webView = session.webView else { return }
             let script = """
             (function(){if(window.__xhDiag!==\(Int(m)))return'reloaded';
             if(window.innerHeight<50||document.documentElement.scrollHeight<100)return'wait';
             window.scrollTo(0,\(Int(y)));return'ok:'+window.scrollY;})()
             """
-            session.webView.evaluateJavaScript(script) { result, error in
+            webView.evaluateJavaScript(script) { result, error in
                 if error == nil, let s = result as? String {
                     if s.hasPrefix("ok") {
                         // 正常恢复成功，不打日志
                     } else if s == "reloaded" {
-                        print("[BrowserDiag] restore skipped (page reloaded) url=\(session.webView.url?.absoluteString ?? "nil")")
+                        print("[BrowserDiag] restore skipped (page reloaded) url=\(session.page.url?.absoluteString ?? "nil")")
                     } else {
                         self.scheduleScrollRestore(session, attempt: attempt + 1)
                     }
@@ -2530,7 +2576,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         // 浏览历史：仅 http/https（about:blank 等被 HistoryStore scheme 过滤）
         HistoryStore.shared.record(
-            title: session.webView.title ?? host,
+            title: session.page.title ?? host,
             url: url.absoluteString,
             host: host
         )
@@ -2540,7 +2586,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             browser.setAgentContext(session.owner.flatMap { agentActivityContexts[$0] })
             let events = browser.urlChanged(
                 url: url.absoluteString, host: host, owner: session.owner,
-                finished: phase == .finished, pageTitle: session.webView.title)
+                finished: phase == .finished, pageTitle: session.page.title)
             session.activityBrowser = browser
             ActivityClient.emit(events)
         }
@@ -2550,15 +2596,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 提取当前页 favicon href 并交给 FaviconStore 缓存。host / pageURL 在 await 前一起捕获，
     /// JS 返回后页面若已跳走则作废，避免把上一页图标写到别的 host。
     private func refreshFavicon(for tabId: String) {
-        guard let session = tabs[tabId], let pageURL = session.webView.url, let host = pageURL.host else { return }
+        guard let session = tabs[tabId], let pageURL = session.page.url, let host = pageURL.host else { return }
         Task { @MainActor in
             let href = (await session.jsResult(BrowserToolProvider.faviconJS)).text ?? ""
             guard !href.isEmpty else {
                 LogBuffer.shared.diag("[Favicon] \(host) 无 <link rel=icon>，跳过")
                 return
             }
-            guard session.webView.url?.host == host else {
-                let now = session.webView.url?.host ?? "nil"
+            guard session.page.url?.host == host else {
+                let now = session.page.url?.host ?? "nil"
                 LogBuffer.shared.diag("[Favicon] \(host) 提取期间页面已跳走（现 host=\(now)），丢弃")
                 return
             }
@@ -2566,7 +2612,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 href: href,
                 pageURL: pageURL,
                 host: host,
-                userAgent: session.webView.customUserAgent
+                userAgent: session.webView?.customUserAgent ?? Self.defaultBrowserUA
             )
         }
     }
@@ -2599,7 +2645,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
             // window.open / form target=_blank → 弹确认
             let targetStr = targetURL?.absoluteString ?? "(未知)"
-            let sourceHost = session.webView.url?.host ?? "当前页面"
+            let sourceHost = session.page.url?.host ?? "当前页面"
 
             #if os(macOS)
             Self.presentJSDialog(
@@ -2607,7 +2653,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 message: "来源: \(sourceHost)\n目标: \(String(targetStr.prefix(160)))",
                 primary: "允许",
                 secondary: "取消",
-                onWindow: session.webView.window ?? NSApp.keyWindow,
+                onWindow: session.webView?.window ?? NSApp.keyWindow,
                 onDone: { [weak self, weak session] confirmed in
                     guard let self, confirmed else { return }
                     let agentTab = session?.isAgentTab ?? false
@@ -2641,7 +2687,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 title: "网页提示",
                 message: message,
                 primary: "好",
-                onWindow: session?.webView.window ?? NSApp.keyWindow,
+                onWindow: session?.webView?.window ?? NSApp.keyWindow,
                 onDone: { _ in completion() }
             )
             #else
@@ -2655,7 +2701,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 message: message,
                 primary: "确定",
                 secondary: "取消",
-                onWindow: session?.webView.window ?? NSApp.keyWindow,
+                onWindow: session?.webView?.window ?? NSApp.keyWindow,
                 onDone: { confirmed in completion(confirmed) }
             )
             #else
@@ -2699,7 +2745,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?, isAgentTab: Bool = false, owner: String? = nil) -> WKWebView? {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let newSession = TabSession(configuration: configuration)
+        // CEF 的 popup 走 CefLifeSpanHandler::OnBeforePopup（B4 接），这里只会从 WK 弹窗回调进来
+        let newSession = TabSession(engine: .compat, configuration: configuration)
         newSession.isAgentTab = isAgentTab
         newSession.owner = owner
         tabs[tabId] = newSession
@@ -2713,12 +2760,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 否则该 tab 内再点 target=_blank / window.open 会静默失败（createWebViewWith 返回 nil）。
         bindSessionUI(session: newSession)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: newSession.webView,
+                              content: AnyView(BrowserTabView(page: newSession.page,
                                                               onSetupErrorBinding: { [weak newSession] onError in
                                                                   newSession?.onNavigationError = onError
-                                                              })), isAgentTab: isAgentTab, agentOwner: owner)
+                                                              })), isAgentTab: isAgentTab, agentOwner: owner, engine: newSession.engine)
         if let targetURL {
-            newSession.webView.load(URLRequest(url: targetURL, timeoutInterval: 15))
+            newSession.page.load(targetURL)
         }
         return newSession.webView
     }
@@ -2795,7 +2842,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         return """
         <!DOCTYPE html>
-        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+        <html><head><meta charset="utf-8"><title>新标签页</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>
         html,body{height:100%}
         body{min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:0;background:#f5f5f7;color:#1d1d1f}
         h1{font-size:20px;font-weight:600;margin-bottom:32px}
@@ -2817,9 +2864,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func tabInfoList() -> [[String: Any]] {
         tabs.map { id, session in
             ["id": id,
-             "url": session.webView.url?.absoluteString ?? "",
-             "title": session.webView.title ?? "",
+             "url": session.page.url?.absoluteString ?? "",
+             "title": session.page.title ?? "",
              "isAgentTab": session.isAgentTab,
+             "engine": session.engine.rawValue,
              "owner": session.owner ?? "user"] // 归属标注：并发任务据此区分自己的标签，避免误关/误用
         }
     }
@@ -2834,7 +2882,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-        let webView: WKWebView
+        let engine: BrowserEngine
+        let page: BrowserPage
+        /// 过渡口（见 `BrowserPage.wkWebView`）：CEF 标签为 nil，WK 专属能力（JS/下载/查找/快照）
+        /// 的调用方必须显式失败。CEF 侧接入见 B6/B7。
+        var webView: WKWebView? { page.wkWebView }
         var loadContinuation: CheckedContinuation<String?, Never>?
         var loadTimeout: Task<Void, Never>?
         /// readyState 轮询兜底（SPA/懒加载页面 didFinish 可能不来）
@@ -2907,17 +2959,36 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             urlObservation = nil
         }
 
-        override init() {
-            webView = TabSession.makeWebView(configuration: WKWebViewConfiguration())
+        /// 建一个指定引擎的标签。`cef` 走 Chromium 主引擎（B2 起 dev 默认），`compat` 走 WKWebView。
+        convenience init(engine: BrowserEngine) {
+            self.init(engine: engine, configuration: WKWebViewConfiguration())
+        }
+
+        /// 新窗口（target=_blank / window.open）：外部传入 configuration（保留 opener 关系）。
+        /// 引擎跟 opener 一致（D17）——跨引擎会断 window.opener + cookie 域，登录弹窗必挂。
+        init(engine: BrowserEngine, configuration: WKWebViewConfiguration) {
+            let page = TabSession.makePage(engine: engine, configuration: configuration)
+            self.page = page
+            // 以实际造出来的页面为准：CEF 起不来会降级成 WKPage，engine 不能继续报 cef
+            self.engine = page.engine
             super.init()
             setupDelegates()
         }
 
-        /// 新窗口（target=_blank / window.open）：外部传入 configuration（保留 opener 关系）
-        init(configuration: WKWebViewConfiguration) {
-            webView = TabSession.makeWebView(configuration: configuration)
-            super.init()
-            setupDelegates()
+        /// 造页面：CEF 起不来（缺 framework / CefInitialize 失败）就地降级兼容引擎，
+        /// 不让"引擎选择"变成"浏览器打不开"。
+        private static func makePage(engine: BrowserEngine, configuration: WKWebViewConfiguration) -> BrowserPage {
+            #if os(macOS)
+            if engine == .cef, !cefInitFailed {
+                if XHCefRuntime.initialize(in: LocalPaths.dataRoot.path) {
+                    return CefPage(url: nil)
+                }
+                cefInitFailed = true
+                // 降级要说出来，不能"静默变回 WK 让人以为 CEF 生效了"（原因在 Console 的 [cef] 日志）
+                ToastCenter.shared.show("主引擎未启动，已切兼容模式")
+            }
+            #endif
+            return WKPage(webView: TabSession.makeWebView(configuration: configuration))
         }
 
         /// 站点脚本常探测的本机 App 协议：抖音会试探 `bitbrowser://`（比特指纹浏览器）这类
@@ -3057,6 +3128,36 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         private func setupDelegates() {
+            // CEF 没有 WK delegate：状态从 CefPage 的回调转成同一套 onTitleChange / onURLChanged
+            guard let webView else {
+                page.stateObservers.add { [weak self] in
+                    guard let self else { return }
+                    if let url = self.page.url { self.onURLChanged?(url, .provisional) }
+                    let title = self.page.title?.trimmingCharacters(in: .whitespaces) ?? ""
+                    if !title.isEmpty { self.onTitleChange?(title) }
+                }
+                page.onLoadFinish = { [weak self] ok in
+                    guard let self else { return }
+                    if ok {
+                        resumeLoad(nil, reason: "cef-didFinish")
+                        if let url = self.page.url { self.onURLChanged?(url, .finished) }
+                    } else {
+                        resumeLoad("加载失败", reason: "cef-didFail")
+                        self.onNavigationError?("加载失败")
+                    }
+                }
+                // target=_blank / window.open：CEF 原生弹窗已在桥里拦掉，这里开成我们自己的 tab。
+                // 引擎跟着判定函数走（当前默认 CEF）；opener 关系/无 URL 的 window.open 留给 B4。
+                #if os(macOS)
+                if let cefPage = page as? CefPage {
+                    cefPage.onPopupRequested = { url in
+                        LogBuffer.shared.diag("[Browser] cef popup → new tab: \(url.absoluteString.prefix(160))")
+                        BrowserToolProvider.shared.openURL(url)
+                    }
+                }
+                #endif
+                return
+            }
             webView.navigationDelegate = self
             webView.uiDelegate = self
 
@@ -3094,8 +3195,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 type: type,
                 timestamp: Date(),
                 appVersion: BrowserDiagnosticsCenter.appVersion(),
-                host: webView.url?.host,
-                url: webView.url?.absoluteString,
+                host: page.url?.host,
+                url: page.url?.absoluteString,
                 tabId: tabId,
                 isAgentTab: isAgentTab,
                 provCommitMs: provCommitMs,
@@ -3173,6 +3274,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             readyPollTask = nil
         }
 
+        /// CEF 标签上 WK 专属能力的统一失败文案（agent 工具在 B6/B7 才接 CEF）
+        static let cefUnsupported = "该标签由 CEF（Chromium）引擎承载，此能力暂未接入 CEF（见迁移批次 B6/B7）；需要时请用兼容引擎打开该页"
+
         /// 页面是否已就绪（readyState == complete）
         private func isPageReady() async -> Bool {
             let (ok, _) = await jsBool("document.readyState==='complete'")
@@ -3180,6 +3284,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func waitForLoad(timeoutMs: Int) async -> LocalToolResult {
+            guard webView != nil else {
+                return .init(serverResult: nil, serverError: Self.cefUnsupported, clientAction: nil)
+            }
             cancelLoadWait()
             // 快速路径：页面已就绪（open 后/无新导航时避免假 timeout）
             if await isPageReady() {
@@ -3219,6 +3326,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // MARK: - JS Helpers
 
         func jsResult(_ js: String) async -> (text: String?, jsError: String?) {
+            guard let webView else { return (nil, Self.cefUnsupported) }
             do {
                 let result = try await webView.evaluateJavaScript(js)
                 return ((result as? String), nil)
@@ -3229,6 +3337,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func jsBool(_ js: String) async -> (ok: Bool, jsError: String?) {
+            guard let webView else { return (false, Self.cefUnsupported) }
             do {
                 let result = try await webView.evaluateJavaScript(js)
                 return ((result as? Bool) ?? false, nil)
@@ -3253,6 +3362,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func eval(_ script: String) async -> LocalToolResult {
+            guard let webView else {
+                return .init(serverResult: nil, serverError: Self.cefUnsupported, clientAction: nil)
+            }
             do {
                 let result = try await webView.evaluateJavaScript(script)
                 let text: String
@@ -3459,7 +3571,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             #if os(macOS)
             guard var browser = activityBrowser else { return }
             let ns = error as NSError
-            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)", pageTitle: webView.title)
+            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)", pageTitle: page.title)
             activityBrowser = browser
             ActivityClient.emit(events)
             #endif

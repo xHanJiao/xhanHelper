@@ -404,6 +404,22 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **CEF 能否显示 PDF**（PDFium 是否随官方二进制分发未确认）→ 不能则 PDF / 本地文件固定 compat（判定函数第 1 条已预留）。
 - **CEF 全屏观感**（`CefWindowHandler` 自己实现）与 WK 原生是否差太多。
 
+#### 9.2.8 已拍板补充（2026-11-12，进开发前）
+
+| # | 决定 | 落地 |
+|---|---|---|
+| **D-a** | 回 WK 的隐藏开关 = **`UserDefaults` key + 设置页 dev 区块的 Picker**，不做连点彩蛋 | key `xhan_browser_engine_<env>`（值 `compat` / `cef`，与 `LocalPaths.scoped` 同形）；设置页仅 `#if DEBUG && LocalPaths.isDev` 露出 |
+| **D-b** | B2 期间**视频白名单不生效**：`resolveEngine` 全写完但 `videoWhitelistEnabled = false`，白名单 B5 才打开 | `BrowserEngineRouter.videoWhitelistEnabled`；B2 里视频站要回 WK 就靠 D-a 的开关 |
+
+**B2 实现口径（代码即事实，便于 B3 接着改）**
+
+- 协议：`BrowserPage`（`Shared/Services/BrowserPage.swift`）只放面板真的用到的六个读状态 + 七个动作 + `hostingView` + 状态广播。JS 求值 / 下载 / 页内查找 / 快照继续走 `wkWebView` 过渡口；CEF 标签那里是 `nil`，调用方必须给明确失败（`TabSession.cefUnsupported`）。
+- `TabSession` 持有 `page`，`webView` 变成 `page.wkWebView`（可选）。CEF 没有 delegate，标题 / URL / 加载态由 `CefPage` 转成同一套 `onTitleChange` / `onURLChanged` / `loadContinuation`。
+- **agent 标签在 B2 里固定走兼容引擎**（`TabSession(engine: .compat)`）：agent 工具（快照/点击/JS）要 B7 才接 CEF，先给它 CEF 会变成"页面能看、工具全哑"。B7 接入时改回 `resolveEngine`。
+- CEF 起不来（缺 framework / `CefInitialize` 失败）→ `TabSession.makePage` 就地降级 WK + Toast「主引擎未启动，已切兼容模式」，`engine` 以实际造出来的页面为准（不谎报 cef）。
+- 新标签页在 CEF 侧走 `data:text/html;base64,...`（CEF 没有 `loadHTMLString`）；地址栏对 `about/data/file` 一律显示空。
+- **`target=_blank` / `window.open`（从 B4 提前拉了一小块）**：不处理时 CEF 会自己开一个裸原生窗口，而且**复用 opener 的 client** → 弹窗的地址/标题会串到侧栏 tab 上（实测：页面还是百度首页、地址栏却是百度地图）。所以在 `CefLifeSpanHandler::OnBeforePopup` 一律拦掉，交给 Swift 用 `openURL` 开成我们自己的 tab。遗留（B4 做）：opener 关系、无 URL 的 `window.open`（先开窗再 document.write，目前丢弃并留痕）、windowFeatures/尺寸。
+
 ## 十、CEF 版本运维
 
 **为什么需要**：谷歌那条判定是黑盒，靠"名义层"伪装；内核太旧（落后一年）本身会被当旧浏览器，反而提高风控概率。所以既要能"该升就升"，又不能"每天发版被迫跟"。
@@ -620,5 +636,6 @@ main                       ← 继续每天发版（WK，现状不变）
 |---|---|---|---|
 | B0 | 2026-11-12 | `3c8940d3` | 待真机构建（脚本本机实跑通过：下载/编 wrapper/造 Helper×5/装包签名/增量跳过） |
 | B1 | 2026-11-12 | `5315d41d..d30dc5b2` | **通过**：真机 CEF 起、页面真实加载（`Default/History` 有「百度一下，你就知道」）、profile 落盘、无 `process_requirement`；合成外观人眼确认无灰闪/黑帧。review 2 轮（P1×2、P2×6、P3×6 已处理，剩 1 条 P3 留给 B2） |
+| B2 | 2026-11-12 | 待提交 | 待真机构建 + review（MINOR，P0/P1=0，P2×5 已修）。交付：`BrowserPage`/`WKPage`/`CefPage`、`BrowserEngineRouter`（swift test 7 条）、`RightSidebarTab.engine`、dev 默认 CEF + 设置页 dev 开关回 WK、CEF popup 拦成新 tab（B4 提前一块）；口径见 §9.2.8 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

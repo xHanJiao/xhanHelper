@@ -27,8 +27,23 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) void (^titleDidChange)(NSString *title);
 @property (nonatomic, copy, nullable) void (^urlDidChange)(NSString *url);
 @property (nonatomic, copy, nullable) void (^loadDidFinish)(BOOL ok);
+/// 加载状态 / 前进后退可用性变化（任一变化时调一次，宿主据此刷新地址栏）
+@property (nonatomic, copy, nullable) void (^stateDidChange)(void);
+/// `target=_blank` / `window.open`：CEF 默认会自己开一个裸原生窗口（还会复用本视图的 client，
+/// 把地址栏串成弹窗的 URL）。这里一律拦下，交给 Swift 开成我们自己的 tab。
+@property (nonatomic, copy, nullable) void (^popupRequested)(NSString *url);
+
+@property (nonatomic, readonly) BOOL isLoading;
+@property (nonatomic, readonly) BOOL canGoBack;
+@property (nonatomic, readonly) BOOL canGoForward;
 
 - (void)loadURLString:(NSString *)urlString;
+/// CEF 没有 loadHTMLString，用 data: URL 顶（新标签页那种本地 HTML）
+- (void)loadHTMLString:(NSString *)html;
+- (void)reload;
+- (void)stopLoading;
+- (void)goBack;
+- (void)goForward;
 
 /// 强回收：等 OnBeforeClose 才放掉 browser 引用（泄漏先例见 docs/bugs/2026-08-browser-webview-leak）
 - (void)closeBrowser;

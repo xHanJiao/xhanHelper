@@ -12,6 +12,7 @@
 #include "include/cef_browser_process_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_life_span_handler.h"
+#include "include/cef_values.h"
 #include "include/cef_load_handler.h"
 #include "include/wrapper/cef_library_loader.h"
 
@@ -138,6 +139,9 @@ class XHCefApp : public CefApp {
 @interface XHCefBrowserView ()
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser;
 - (void)cefBrowserDidClose;
+- (void)cefLoadingStateChanged:(BOOL)isLoading
+                     canGoBack:(BOOL)canGoBack
+                  canGoForward:(BOOL)canGoForward;
 @end
 
 namespace {
@@ -161,6 +165,33 @@ class XHCefClient : public CefClient,
     });
   }
 
+  // target=_blank / window.open：拒绝 CEF 自己的原生窗口（见 CefBridge.h 的注释）
+  bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefFrame> frame,
+                     int popup_id,
+                     const CefString &target_url,
+                     const CefString &target_frame_name,
+                     WindowOpenDisposition target_disposition,
+                     bool user_gesture,
+                     const CefPopupFeatures &popupFeatures,
+                     CefWindowInfo &windowInfo,
+                     CefRefPtr<CefClient> &client,
+                     CefBrowserSettings &settings,
+                     CefRefPtr<CefDictionaryValue> &extra_info,
+                     bool *no_javascript_access) override {
+    // 无 URL 的 window.open（先开窗再 document.write）没法用 tab 承接，直接拒绝并留痕
+    if (target_url.empty()) {
+      NSLog(@"[cef] popup without url (frame=%@) dropped", CefStringToNSString(target_frame_name));
+      return true;
+    }
+    NSString *url = CefStringToNSString(target_url);
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      if (view.popupRequested) view.popupRequested(url);
+    });
+    return true;
+  }
+
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
     XHCefBrowserView *view = view_;
     RunOnMain(^{
@@ -176,6 +207,16 @@ class XHCefClient : public CefClient,
     // 4xx/5xx 也算加载完（页面已经渲染出来了），失败由 OnLoadError 报
     RunOnMain(^{
       if (view.loadDidFinish) view.loadDidFinish(YES);
+    });
+  }
+
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                            bool isLoading,
+                            bool canGoBack,
+                            bool canGoForward) override {
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      [view cefLoadingStateChanged:isLoading canGoBack:canGoBack canGoForward:canGoForward];
     });
   }
 
@@ -354,6 +395,9 @@ static bool EnsureLibraryLoaded() {
   NSString *_startURL;
   NSString *_pendingURL;      // browser 还没 OnAfterCreated 时来的导航，等 created 再补
   BOOL _browserRequested;
+  BOOL _isLoading;
+  BOOL _canGoBack;
+  BOOL _canGoForward;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URLString:(NSString *)urlString {
@@ -416,11 +460,55 @@ static bool EnsureLibraryLoaded() {
 
 - (void)loadURLString:(NSString *)urlString {
   if (_browser) {
+    _isLoading = YES;
+    if (self.stateDidChange) self.stateDidChange();
     _browser->GetMainFrame()->LoadURL(urlString.UTF8String);
   } else {
     _startURL = [urlString copy] ?: @"about:blank";
     _pendingURL = [_startURL copy];
   }
+}
+
+- (void)loadHTMLString:(NSString *)html {
+  NSString *base64 = [[html dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
+  [self loadURLString:[@"data:text/html;charset=utf-8;base64," stringByAppendingString:base64]];
+}
+
+- (void)reload {
+  if (_browser) _browser->Reload();
+}
+
+- (void)stopLoading {
+  if (_browser) _browser->StopLoad();
+}
+
+- (void)goBack {
+  if (_browser && _browser->CanGoBack()) _browser->GoBack();
+}
+
+- (void)goForward {
+  if (_browser && _browser->CanGoForward()) _browser->GoForward();
+}
+
+- (BOOL)isLoading {
+  return _isLoading;
+}
+
+- (BOOL)canGoBack {
+  return _canGoBack;
+}
+
+- (BOOL)canGoForward {
+  return _canGoForward;
+}
+
+- (void)cefLoadingStateChanged:(BOOL)isLoading
+                     canGoBack:(BOOL)canGoBack
+                  canGoForward:(BOOL)canGoForward {
+  _isLoading = isLoading;
+  _canGoBack = canGoBack;
+  _canGoForward = canGoForward;
+  if (self.stateDidChange) self.stateDidChange();
 }
 
 - (void)closeBrowser {

@@ -28,8 +28,8 @@ enum BrowserFocus {
     static func isFocused() -> Bool {
         guard let rs = BrowserToolProvider.shared.rightSidebar,
               rs.activeTabId != nil,
-              let webView = BrowserToolProvider.shared.activeWebView,
-              let window = webView.window,
+              let page = BrowserToolProvider.shared.activePage,
+              let window = page.hostingView.window,
               window.isKeyWindow
         else { return false }
 

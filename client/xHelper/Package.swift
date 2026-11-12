@@ -186,5 +186,17 @@ let package = Package(
             dependencies: ["SidebarHomeCore"],
             path: "Tests/SidebarHomeCoreTests"
         ),
+        // BrowserEngineCore — 引擎判定（tab 粘性 / 视频白名单 / 显式指定 / opener 继承）。
+        // 判定错一次就是"视频放不了 / 登录弹窗挂了"，边界用 swift test 钉住。
+        .target(
+            name: "BrowserEngineCore",
+            path: "xHelper/Shared",
+            sources: ["Services/BrowserEngineRouter.swift"]
+        ),
+        .testTarget(
+            name: "BrowserEngineCoreTests",
+            dependencies: ["BrowserEngineCore"],
+            path: "Tests/BrowserEngineCoreTests"
+        ),
     ]
 )

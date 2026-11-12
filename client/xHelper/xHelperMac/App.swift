@@ -210,13 +210,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if BrowserFocus.isFocused() {
                 switch event.keyCode {
                 case 33: // Cmd+[ 后退
-                    BrowserToolProvider.shared.activeWebView?.goBack()
+                    BrowserToolProvider.shared.activePage?.goBack()
                     return nil
                 case 30: // Cmd+] 前进
-                    BrowserToolProvider.shared.activeWebView?.goForward()
+                    BrowserToolProvider.shared.activePage?.goForward()
                     return nil
                 case 15: // Cmd+R 刷新
-                    BrowserToolProvider.shared.activeWebView?.reload()
+                    BrowserToolProvider.shared.activePage?.reload()
                     return nil
                 case 24: // Cmd+= 页面放大
                     Self.zoomWebView(by: 0.1)
@@ -224,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case 27: // Cmd+- 页面缩小
                     Self.zoomWebView(by: -0.1)
                     return nil
-                case 3: // Cmd+F 页内查找
+                case 3: // Cmd+F 页内查找（仅 WK：CEF 的 Find 接口 B6 再接）
                     if let wv = BrowserToolProvider.shared.activeWebView {
                         BrowserFindCoordinator.shared.requestShow(wv)
                     }
@@ -279,11 +279,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 收藏/取消收藏当前页（Cmd+D，与地址栏星标按钮逻辑一致）
     private static func toggleBookmarkForActivePage() {
-        guard let wv = BrowserToolProvider.shared.activeWebView,
-              let url = wv.url,
+        guard let page = BrowserToolProvider.shared.activePage,
+              let url = page.url,
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else { return }
-        BookmarkStore.shared.toggle(title: wv.title ?? url.host ?? "", url: url.absoluteString)
+        BookmarkStore.shared.toggle(title: page.title ?? url.host ?? "", url: url.absoluteString)
     }
 
     /// 读剪贴板里的图片字节：Finder 复制的图片文件 → 位图（截图/网页复制）→ 都没有则 nil。
@@ -952,6 +952,8 @@ struct MacSettingsView: View {
     // 「使用本地后端」开关：默认关（dev/prod 一致）。仅在 serverURL 为空时生效。
     @AppStorage(LocalBackendPreference.useLocalKey) private var useLocalBackend = LocalBackendPreference.useLocalDefault
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
+    // D-a 隐藏开关：浏览器内核回退。只在 dev 设置页露出，值 "cef"/"wk"（见 BrowserEngineRouter）
+    @AppStorage(BrowserEngineRouter.defaultEngineKey) private var browserEngine = BrowserEngine.cef.rawValue
     // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
     @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
     @State private var calendarStatus = ""
@@ -1440,6 +1442,24 @@ struct MacSettingsView: View {
                 BrowseRow("已归档会话", icon: "archivebox", destination: ArchivedConversationListView(apiClient: apiClient))
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
             }
+
+            #if DEBUG
+            if LocalPaths.isDev {
+                Section {
+                    Picker("新标签页内核", selection: $browserEngine) {
+                        Text("Chromium（CEF）").tag(BrowserEngine.cef.rawValue)
+                        Text("兼容（WebKit）").tag(BrowserEngine.compat.rawValue)
+                    }
+                    .pickerStyle(.segmented)
+                    Text("只影响之后新开的标签；已打开的标签保持原内核（D15 引擎粘性）。CEF 起不来会自动降级兼容引擎。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text("浏览器内核（开发）")
+                }
+            }
+            #endif
 
             Section("帮助") {
                 BrowseRow("快捷键", icon: "keyboard", destination: ShortcutGuideView(), sheetSize: CGSize(width: 560, height: 640))

@@ -2,7 +2,8 @@ import SwiftUI
 import WebKit
 
 struct BrowserTabView: View {
-    let webView: WKWebView
+    /// 只认内核协议（`BrowserPage`）：WK 与 CEF 走同一份地址栏/工具栏。
+    let page: BrowserPage
     let onSetupErrorBinding: ((_ onError: @escaping (String) -> Void) -> Void)?
     @State private var urlText = ""
     @State private var isLoading = false
@@ -11,7 +12,8 @@ struct BrowserTabView: View {
     @State private var canGoBack = false
     @State private var canGoForward = false
     @State private var isHovered = false
-    @State private var observations: [NSKeyValueObservation] = []
+    /// 页面状态订阅（切走时撤销，避免 TabSession 与面板双份残留在旧视图上）
+    @State private var stateToken: UUID?
     @State private var loadError: String?
     @State private var suggestions: [URLSuggestion] = []
     @State private var selectedSuggestion = -1
@@ -52,7 +54,8 @@ struct BrowserTabView: View {
                     .padding(.horizontal, 8)
             }
             Divider()
-            if findCoordinator.isPresented {
+            // 页内查找是 WK 的能力，CEF 标签不显示查找条（避免"输入了没反应"）
+            if findCoordinator.isPresented, page.wkWebView != nil {
                 findBar
                 Divider()
             }
@@ -65,13 +68,13 @@ struct BrowserTabView: View {
             }
             if let error = loadError {
                 BrowserErrorPageView(
-                    url: urlText.isEmpty ? (webView.url?.absoluteString ?? "") : urlText,
+                    url: urlText.isEmpty ? (page.url?.absoluteString ?? "") : urlText,
                     error: error,
-                    onRetry: { webView.reload() }
+                    onRetry: { page.reload() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                BrowserWebView(webView: webView)
+                BrowserWebView(page: page)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             }
@@ -80,20 +83,17 @@ struct BrowserTabView: View {
             // 重置浏览器字段焦点标志（防旧 tab 残留；FocusState 初始 false 不触发 onChange）
             BrowserFocus.isUrlFieldFocused = false
             BrowserFocus.isFindFieldFocused = false
-            let initial = webView.url?.absoluteString ?? ""
-            urlText = initial == "about:blank" ? "" : initial
-            currentURL = webView.url
-            isLoading = webView.isLoading
-            canGoBack = webView.canGoBack
-            canGoForward = webView.canGoForward
-            onSetupErrorBinding?({ [weak webView] msg in
-                // 确保 error 只更新给当前 webView 对应的 tab
+            syncPageState()
+            onSetupErrorBinding?({ msg in
                 loadError = msg
             })
-            startObserving()
-            findCoordinator.attach(webView)
+            stateToken = page.stateObservers.add { syncPageState() }
+            // 页内查找只有 WK 有（CEF 的 Find 接口是另一套，B6 再接）
+            if let webView = page.wkWebView {
+                findCoordinator.attach(webView)
+            }
             // 新标签页自动聚焦地址栏
-            if webView.url == nil || webView.url?.absoluteString == "about:blank" {
+            if page.url == nil || Self.isLocalPlaceholder(page.url) {
                 DispatchQueue.main.async { urlFocused = true }
             }
         }
@@ -116,8 +116,8 @@ struct BrowserTabView: View {
         .onDisappear {
             BrowserFocus.isUrlFieldFocused = false
             BrowserFocus.isFindFieldFocused = false
-            for obs in observations { obs.invalidate() }
-            observations = []
+            if let stateToken { page.stateObservers.remove(stateToken) }
+            stateToken = nil
         }
     }
 
@@ -136,7 +136,7 @@ struct BrowserTabView: View {
         HStack(spacing: 6) {
             // 后退 / 前进
             Button {
-                webView.goBack()
+                page.goBack()
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .semibold))
@@ -149,7 +149,7 @@ struct BrowserTabView: View {
             .help("后退")
 
             Button {
-                webView.goForward()
+                page.goForward()
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
@@ -164,9 +164,9 @@ struct BrowserTabView: View {
             // 加载中显示停止，否则刷新（放在 < > 右边）
             Button {
                 if isLoading {
-                    webView.stopLoading()
+                    page.stopLoading()
                 } else {
-                    webView.reload()
+                    page.reload()
                 }
             } label: {
                 Image(systemName: isLoading ? "xmark" : "arrow.clockwise")
@@ -208,6 +208,7 @@ struct BrowserTabView: View {
     /// 仅 http(s) 页面可用；每次点击都重新绑定来源页并重扫。
     private var mediaPanelButton: some View {
         Button {
+            guard let webView = page.wkWebView else { return }
             BrowserToolProvider.shared.rightSidebar?.openMediaPanel(sourceWebView: webView)
         } label: {
             Image(systemName: "photo.on.rectangle.angled")
@@ -217,9 +218,10 @@ struct BrowserTabView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(currentPageURL() == nil)
-        .opacity(currentPageURL() == nil ? 0.3 : 1)
-        .help("本页媒体资源（视频/图片下载）")
+        // 媒体面板只认 WK 会话（Cookie/媒体嗅探都走 WK），CEF 标签暂不提供
+        .disabled(currentPageURL() == nil || page.wkWebView == nil)
+        .opacity(currentPageURL() == nil || page.wkWebView == nil ? 0.3 : 1)
+        .help(page.wkWebView == nil ? "本页资源仅兼容引擎可用" : "本页媒体资源（视频/图片下载）")
     }
 
     // MARK: - 地址栏建议（历史 + 收藏，前缀匹配，兼容有无协议头）
@@ -337,10 +339,10 @@ struct BrowserTabView: View {
     private var bookmarkButton: some View {
         let isBookmarked = currentPageBookmarked()
         return Button {
-            guard let url = currentURL ?? webView.url,
+            guard let url = currentURL ?? page.url,
                   let scheme = url.scheme?.lowercased(),
                   scheme == "http" || scheme == "https" else { return }
-            BookmarkStore.shared.toggle(title: webView.title ?? url.host ?? "", url: url.absoluteString)
+            BookmarkStore.shared.toggle(title: page.title ?? url.host ?? "", url: url.absoluteString)
         } label: {
             Image(systemName: isBookmarked ? "star.fill" : "star")
                 .font(.system(size: 12))
@@ -360,7 +362,7 @@ struct BrowserTabView: View {
     }
 
     private func currentPageURL() -> String? {
-        guard let url = (currentURL ?? webView.url)?.absoluteString,
+        guard let url = (currentURL ?? page.url)?.absoluteString,
               let scheme = URL(string: url)?.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else { return nil }
         return url
@@ -381,7 +383,7 @@ struct BrowserTabView: View {
             guard let u = URL(string: "https://cn.bing.com/search?q=\(q)") else { return }
             target = u
         }
-        webView.load(URLRequest(url: target, timeoutInterval: 15))
+        page.load(target)
         loadError = nil
     }
     /// 地址栏安全指示：https=锁 / http=警示 / 其他（空白页等）=globe
@@ -521,72 +523,53 @@ struct BrowserTabView: View {
         .background(.ultraThinMaterial)
     }
 
-    private func startObserving() {
-        observations = [
-            webView.observe(\.url, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    guard let url = change.newValue as? URL?,
-                          let u = url else { return }
-                    // currentURL 无条件跟随（媒体按钮/收藏等内部判断依赖它）。
-                    // 此前整段被 !urlFocused 拦截：新标签页 onAppear 自动聚焦地址栏，
-                    // 首次导航的 URL 更新被吞 → currentURL 永 nil → 按钮/收藏永远不可用。
-                    currentURL = u
-                    // 地址栏文本仅在未聚焦时同步（聚焦 = 用户可能正在输入，别覆盖）
-                    if !urlFocused {
-                        // 新标签页默认页（about:blank）不显示在地址栏
-                        urlText = u.absoluteString == "about:blank" ? "" : u.absoluteString
-                    }
-                }
-            },
-            webView.observe(\.isLoading, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { isLoading = v }
-                }
-            },
-            webView.observe(\.estimatedProgress, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { progress = v }
-                }
-            },
-            webView.observe(\.canGoBack, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { canGoBack = v }
-                }
-            },
-            webView.observe(\.canGoForward, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { canGoForward = v }
-                }
-            },
-        ]
+    /// 本地占位页（新标签页的 data: URL / about:blank）不该显示在地址栏里
+    private static func isLocalPlaceholder(_ url: URL?) -> Bool {
+        guard let scheme = url?.scheme?.lowercased() else { return true }
+        return scheme == "about" || scheme == "data" || scheme == "file"
+    }
+
+    /// 从内核读一次全量状态（URL/标题/加载/前进后退），面板不再各自 KVO。
+    private func syncPageState() {
+        let u = page.url
+        currentURL = u
+        // 地址栏文本仅在未聚焦时同步（聚焦 = 用户可能正在输入，别覆盖）
+        if !urlFocused {
+            urlText = u.map { Self.isLocalPlaceholder($0) ? "" : $0.absoluteString } ?? ""
+        }
+        isLoading = page.isLoading
+        canGoBack = page.canGoBack
+        canGoForward = page.canGoForward
+        // CEF 没有 estimatedProgress，进度条自然不显示（条件要求 progress > 0）
+        progress = page.wkWebView?.estimatedProgress ?? 0
     }
 }
 
 #if os(macOS)
 private struct BrowserWebView: NSViewRepresentable {
-    let webView: WKWebView
+    let page: BrowserPage
 
-    func makeNSView(context: Context) -> WKWebView {
-        return webView
+    func makeNSView(context: Context) -> XHPageView {
+        return page.hostingView
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {
-        if nsView !== webView {
-            pipLog("webview UPDATE (stale!): attached=\(ObjectIdentifier(nsView)) want=\(ObjectIdentifier(webView))")
+    func updateNSView(_ nsView: XHPageView, context: Context) {
+        if nsView !== page.hostingView {
+            pipLog("page hosting view UPDATE (stale!): attached=\(ObjectIdentifier(nsView)) want=\(ObjectIdentifier(page.hostingView))")
         }
     }
 }
 #else
 private struct BrowserWebView: UIViewRepresentable {
-    let webView: WKWebView
+    let page: BrowserPage
 
-    func makeUIView(context: Context) -> WKWebView {
-        return webView
+    func makeUIView(context: Context) -> XHPageView {
+        return page.hostingView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        if uiView !== webView {
-            pipLog("webview UPDATE (stale!): attached=\(ObjectIdentifier(uiView)) want=\(ObjectIdentifier(webView))")
+    func updateUIView(_ uiView: XHPageView, context: Context) {
+        if uiView !== page.hostingView {
+            pipLog("page hosting view UPDATE (stale!): attached=\(ObjectIdentifier(uiView)) want=\(ObjectIdentifier(page.hostingView))")
         }
     }
 }

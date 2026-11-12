@@ -15,7 +15,7 @@ final class CefSmokeWindowController: NSObject, NSWindowDelegate {
     private var browserView: XHCefBrowserView?
     private var addressField: NSTextField?
 
-    func show() {
+    func show(urlString: String? = nil) {
         if let window {
             window.makeKeyAndOrderFront(nil)
             return
@@ -30,7 +30,7 @@ final class CefSmokeWindowController: NSObject, NSWindowDelegate {
         }
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
-        let field = NSTextField(string: "https://www.baidu.com")
+        let field = NSTextField(string: urlString ?? "https://www.baidu.com")
         field.placeholderString = "输入地址，回车打开"
         field.target = self
         field.action = #selector(openTypedURL)

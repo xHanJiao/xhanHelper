@@ -32,10 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return nil
         }
 
-        // 同一个冒烟窗的免手按入口：`open <app> --args --cef-smoke`。
-        // 让 agent 能自己跑一遍（合成按键要系统自动化权限，跑不了）。
-        if ProcessInfo.processInfo.arguments.contains("--cef-smoke") {
-            DispatchQueue.main.async { CefSmokeWindowController.shared.show() }
+        // 同一个冒烟窗的免手按入口：`open <app> --args --cef-smoke[=https://某站]`。
+        // 让 agent 能自己跑一遍（合成按键要系统自动化权限，跑不了），也方便指定要验的站。
+        if let arg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--cef-smoke") }) {
+            let url = arg.split(separator: "=", maxSplits: 1).count == 2
+                ? String(arg.split(separator: "=", maxSplits: 1)[1])
+                : nil
+            DispatchQueue.main.async { CefSmokeWindowController.shared.show(urlString: url) }
         }
         #endif
 

@@ -55,6 +55,8 @@ enum BrowserFocus {
         let window = page?.hostingView.window
         let responder = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
         return "sidebar=\(rs != nil) open=\(rs?.isOpen == true) rsActive=\(rs?.activeTabId ?? "nil")"
+            + " split=\(rs?.splitTabIds.count ?? 0) left=\(rs?.leftDisplayTabId ?? "nil")"
+            + " right=\(rs?.rightDisplayTabId ?? "nil")"
             + " page=\(page != nil) window=\(window != nil) key=\(window?.isKeyWindow == true)"
             + " firstResponder=\(responder) urlField=\(isUrlFieldFocused) findField=\(isFindFieldFocused)"
     }

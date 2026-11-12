@@ -428,7 +428,7 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **agent 标签在 B2 里固定走兼容引擎**（`TabSession(engine: .compat)`）：agent 工具（快照/点击/JS）要 B7 才接 CEF，先给它 CEF 会变成"页面能看、工具全哑"。B7 接入时改回 `resolveEngine`。
 - CEF 起不来（缺 framework / `CefInitialize` 失败）→ `TabSession.makePage` 就地降级 WK + Toast「主引擎未启动，已切兼容模式」，`engine` 以实际造出来的页面为准（不谎报 cef）。
 - 新标签页在 CEF 侧走 `data:text/html;base64,...`（CEF 没有 `loadHTMLString`）；地址栏对 `about/data/file` 一律显示空。
-- **`target=_blank` / `window.open`（从 B4 提前拉了一小块）**：不处理时 CEF 会自己开一个裸原生窗口，而且**复用 opener 的 client** → 弹窗的地址/标题会串到侧栏 tab 上（实测：页面还是百度首页、地址栏却是百度地图）。所以在 `CefLifeSpanHandler::OnBeforePopup` 一律拦掉，交给 Swift 用 `openURL` 开成我们自己的 tab。遗留（B4 做）：opener 关系、无 URL 的 `window.open`（先开窗再 document.write，目前丢弃并留痕）、windowFeatures/尺寸。
+- **`target=_blank` / `window.open`（从 B4 提前拉了一小块）**：不处理时 CEF 会自己开一个裸原生窗口，而且**复用 opener 的 client** → 弹窗的地址/标题会串到侧栏 tab 上（实测：页面还是百度首页、地址栏却是百度地图）。所以在 `CefLifeSpanHandler::OnBeforePopup` 一律拦掉，交给 Swift 用 `openURL` 开成我们自己的 tab。B4 已定：引擎跟 opener（D17）；**opener 关系不保留**（兄弟 tab，`window.open()` 返回 null）— 已拍板先接受、B9 一起解决；无 URL 的 `window.open`（先开窗再 document.write）仍丢弃并留痕（`[cef] popup without url`）；windowFeatures/尺寸不适用（我们不开原生窗）。
 
 #### 9.2.9 B4 实现口径（多 tab 面）
 

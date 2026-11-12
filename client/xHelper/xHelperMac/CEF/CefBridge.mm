@@ -608,8 +608,11 @@ static bool EnsureLibraryLoaded() {
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
   if (_closeRequested) {
-    // tab 在 CreateBrowser 的异步窗口期就被关了：此刻才拿到 browser，就地收掉
-    _browser->GetHost()->CloseBrowser(true);
+    // tab 在 CreateBrowser 的异步窗口期就被关了：此刻才拿到 browser，就地收掉。
+    // 异步一拍再关，避免在 OnAfterCreated 回调栈里同步 CloseBrowser（CFE 没禁止，但没必要赌重入）。
+    dispatch_async(dispatch_get_main_queue(), ^{
+      browser->GetHost()->CloseBrowser(true);
+    });
     return;
   }
   [self syncBrowserFrame];

@@ -616,6 +616,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | **入口必须改 `static func main()`** | SwiftUI `@main` 无法在 `NSApplicationMain` 前跑 `CefExecuteProcess --type=` 分支 | 改入口；这条正好在 `swiftc -typecheck` 盲区，只能真机验 |
 | **Swift 6 严格并发 × ObjC++** | 项目带 `-default-isolation MainActor`，回调里的非 Sendable 类型会一片红 | 预计一批 `nonisolated(unsafe)` / `MainActor.assumeIsolated` 包装；不是难点但是实打实工作量（P1 可能从 3~5 天撑到 5~7 天） |
 | **遮挡 / Space 切换后黑帧** | 窗口模式下 `WasResized` / `WasHidden` / `NotifyScreenInfoChanged` 都是 **OSR 专用**（头文件原文 "only used when window rendering is disabled"），调了也是空操作 | 窗口模式交给 CEF 自己的 NSView 跟随尺寸；真出现黑帧别往这三个 API 上找，改查视图形状/材质叠加（`docs/bugs/030`） |
+| **后台 tab 根本不加载**（B7 实测） | CEF 的 `CreateBrowser` 要求父视图落在一个窗口里；agent 标签默认不进侧栏（`activate=false`），视图从没 `viewDidMoveToWindow` → 浏览器压根没建 → `open` 全部卡到 15s 超时（页面看着没问题，实际一个都没加载） | `createBrowserIfNeeded` 里若 `self.window == nil` 先停进进程内的隐藏 "parking window"（1280×800、alpha 0、永不 orderFront），真挂进侧栏时只是换父窗口，CEF 的子视图跟着走；`loadURLString:` 在浏览器未建时也主动触发一次创建 |
 | **后台 tab 被节流** | Chromium 对隐藏 renderer 降频，agent 自动化会莫名卡住 | `OnBeforeCommandLineProcessing` 加 `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows` |
 | **`Page.captureScreenshot` 对不可见 tab** | 可能出空白图 | P1 顺手验，结论决定 agent 截图工具的边界 |
 | **中文输入法** | 候选窗位置、`ImeSetComposition` | 内嵌 NSView 一般没问题，但要手打一句验证 |

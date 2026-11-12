@@ -661,6 +661,22 @@ static bool EnsureLibraryLoaded() {
 
 // MARK: - XHCefBrowserView
 
+/// 后台标签（agent 工作区）不会进任何窗口，但 CEF 的 `CreateBrowser` 要父视图落在一个窗口里才有渲染宿主。
+/// 给它们一个进程内共享的隐藏窗口当"停车位"：视图真正挂进侧栏时只是换父窗口，CEF 的子视图跟着走。
+static NSWindow *XHCefParkingWindow(void) {
+  static NSWindow *window = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    window = [[NSWindow alloc] initWithContentRect:NSMakeRect(-20000, -20000, 1280, 800)
+                                         styleMask:NSWindowStyleMaskBorderless
+                                           backing:NSBackingStoreBuffered
+                                             defer:NO];
+    window.releasedWhenClosed = NO;
+    window.alphaValue = 0;   // 永不 orderFront，只当父窗口用
+  });
+  return window;
+}
+
 @implementation XHCefBrowserView {
   CefRefPtr<CefBrowser> _browser;
   CefRefPtr<XHCefClient> _client;
@@ -705,6 +721,14 @@ static bool EnsureLibraryLoaded() {
 - (void)createBrowserIfNeeded {
   // 未就绪不置标记，等下次进窗口再试；已要求关闭就不再造（省一个白造的 renderer）
   if (_browserRequested || _closeRequested || !XHCefRuntime.isReady) return;
+  // 后台标签没有窗口：先停进隐藏窗口，否则 CEF 建不出渲染宿主（页面永远不 commit）
+  if (!self.window) {
+    NSView *parking = XHCefParkingWindow().contentView;
+    if (parking) {
+      self.frame = parking.bounds;
+      [parking addSubview:self];
+    }
+  }
   _browserRequested = YES;
 
   _client = new XHCefClient(self);
@@ -750,6 +774,8 @@ static bool EnsureLibraryLoaded() {
   } else {
     _startURL = [urlString copy] ?: @"about:blank";
     _pendingURL = [_startURL copy];
+    // 后台标签（agent 工作区）从来没进过窗口：就地建，CEF 不要求窗口可见，只要求父视图有窗口
+    [self createBrowserIfNeeded];
   }
 }
 

@@ -21,11 +21,10 @@ final class CefSmokeWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        var initError: NSError?
-        guard XHCefRuntime.initializeIn(LocalPaths.dataRoot.path, error: &initError) else {
+        guard XHCefRuntime.initialize(in: LocalPaths.dataRoot.path) else {
             let alert = NSAlert()
             alert.messageText = "CEF 起不来"
-            alert.informativeText = initError?.localizedDescription ?? "未知原因"
+            alert.informativeText = "原因在 Console 里（过滤 [cef]）：缺 framework / 缺 Helper / CefInitialize 失败"
             alert.runModal()
             return
         }

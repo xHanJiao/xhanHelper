@@ -91,12 +91,9 @@ static NSString *CefStringToNSString(const CefString &value) {
   return [NSString stringWithUTF8String:value.ToString().c_str()] ?: @"";
 }
 
-static void SetCefError(NSError **error, NSInteger code, NSString *message) {
-  if (error) {
-    *error = [NSError errorWithDomain:@"XHCefRuntime"
-                                code:code
-                            userInfo:@{NSLocalizedDescriptionKey : message}];
-  }
+// 初始化失败的原因只打一次日志（Swift 侧只看 BOOL，细节在 Console 里）
+static void LogInitFailure(NSInteger code, NSString *message) {
+  NSLog(@"[cef] 初始化失败(%ld)：%@", (long)code, message);
 }
 
 @interface XHCefRuntime ()
@@ -248,10 +245,10 @@ static bool EnsureLibraryLoaded() {
   return NO;
 }
 
-+ (BOOL)initializeIn:(NSString *)dataRoot error:(NSError **)error {
++ (BOOL)initializeIn:(NSString *)dataRoot {
   if (g_cef_ready) return YES;
   if (!EnsureLibraryLoaded()) {
-    SetCefError(error, 5, @"Chromium Embedded Framework 加载失败（看 Console）");
+    LogInitFailure(5, @"Chromium Embedded Framework 加载失败");
     return NO;
   }
 
@@ -266,11 +263,11 @@ static bool EnsureLibraryLoaded() {
 
   NSFileManager *fm = NSFileManager.defaultManager;
   if (![fm fileExistsAtPath:framework]) {
-    SetCefError(error, 1, [NSString stringWithFormat:@"缺 framework：%@（先跑 scripts/fetch-cef.sh）", framework]);
+    LogInitFailure(1, [NSString stringWithFormat:@"缺 framework：%@（先跑 scripts/fetch-cef.sh）", framework]);
     return NO;
   }
   if (![fm fileExistsAtPath:helper]) {
-    SetCefError(error, 2, [NSString stringWithFormat:@"缺 Helper：%@", helper]);
+    LogInitFailure(2, [NSString stringWithFormat:@"缺 Helper：%@", helper]);
     return NO;
   }
 
@@ -282,8 +279,8 @@ static bool EnsureLibraryLoaded() {
      withIntermediateDirectories:YES
                       attributes:nil
                            error:&dirError]) {
-    SetCefError(error, 3, [NSString stringWithFormat:@"建缓存目录失败：%@（%@）",
-                                                     cachePath, dirError.localizedDescription]);
+    LogInitFailure(3, [NSString stringWithFormat:@"建缓存目录失败：%@（%@）",
+                                                    cachePath, dirError.localizedDescription]);
     return NO;
   }
 
@@ -308,7 +305,7 @@ static bool EnsureLibraryLoaded() {
   CefString(&settings.cache_path) = cachePath.UTF8String;
 
   if (!CefInitialize(mainArgs, settings, new XHCefApp(), nullptr)) {
-    SetCefError(error, 4, @"CefInitialize 失败（看 Console 里的 CEF 日志）");
+    LogInitFailure(4, @"CefInitialize 失败（CEF 自己的日志见 Console）");
     return NO;
   }
   g_cef_ready = true;

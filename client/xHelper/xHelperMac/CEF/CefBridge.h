@@ -12,8 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// 命中 CEF 子进程分支时直接 `exit()`，不会返回；普通进程返回 NO。
 + (BOOL)executeSubprocessIfNeeded;
 
-/// 成功返回 YES，失败返回 NO 并把原因写进 `error`（缺 framework / 缺 Helper / 初始化失败）。
-+ (BOOL)initializeIn:(NSString *)dataRoot error:(NSError **)error;
+/// 成功返回 YES；失败返回 NO（缺 framework / 缺 Helper / CefInitialize 失败），原因打在 Console 的 `[cef]` 日志里。
++ (BOOL)initializeIn:(NSString *)dataRoot;
 
 + (BOOL)isReady;
 

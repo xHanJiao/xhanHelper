@@ -506,7 +506,7 @@ main                       ← 继续每天发版（WK，现状不变）
 - 为减少往返，按"一坨功能一起提、一次构建"的节奏，不做一行一构建。
 - `project.pbxproj` 的改动（Framework 嵌入、Helper 拷贝、签名/检查 Run Script）**集中成一个 commit 尽早完成**，之后不再碰，避免和 main 的工程改动撞车。
 - 第一次 P1 构建预计失败最多（链接、Helper 路径、签名），预算半天到一天。
-- **agent 能自己验的部分**（都不算 xcodebuild）：`.mm` 走 `xcrun clang++ -fsyntax-only -std=c++20 -fobjc-arc -I<CEF_CACHE>/dist`；再在 `/tmp` 里链一个小可执行文件验"只链 wrapper 能过"；Swift 侧照旧 `swiftc -typecheck`，但**必须带** `-import-objc-header xHelperMac/xHelperMac-Bridging-Header.h`（漏了会把 `XHCefRuntime` 报成 unresolved）。真机合成冒烟只能由你构建。
+- **agent 能自己验的部分**（都不算 xcodebuild）：`.mm` 走 `xcrun clang++ -fsyntax-only -std=c++20 -fobjc-arc -I<CEF_CACHE>/dist`；再在 `/tmp` 里链一个小可执行文件验"只链 wrapper 能过"；Swift 侧照旧 `swiftc -typecheck`，但**必须带** `-import-objc-header xHelperMac/xHelperMac-Bridging-Header.h`（漏了会把 `XHCefRuntime` 报成 unresolved）**且带 `-D DEBUG`**（冒烟窗整块在 `#if DEBUG` 里，漏了会把该文件整段跳过 —— B1 就这么漏过一次编译错误）。真机合成冒烟只能由你构建。
 
 ## 十二、验收
 

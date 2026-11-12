@@ -11,7 +11,6 @@
 #include "include/cef_client.h"
 #include "include/cef_browser_process_handler.h"
 #include "include/cef_display_handler.h"
-#include "include/cef_keyboard_handler.h"
 #include "include/cef_life_span_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/wrapper/cef_library_loader.h"
@@ -149,32 +148,9 @@ namespace {
 class XHCefClient : public CefClient,
                     public CefLifeSpanHandler,
                     public CefLoadHandler,
-                    public CefDisplayHandler,
-                    public CefKeyboardHandler {
+                    public CefDisplayHandler {
  public:
   explicit XHCefClient(XHCefBrowserView *view) : view_(view) {}
-
-  CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
-
-  // ⌘ 组合键默认会被网页吞掉（⌘K 聚焦输入、⌘W、⌘F、⌘+ 都进 Chromium）。
-  // 这里把 ⌘ 键交回 AppKit；**编辑键例外**（⌘C/V/X/Z/A/Y 必须留给网页里的输入框）。
-  // shortcut: 编辑键是硬编码白名单，B6 统一收口快捷键时改成"app 自有快捷键表"。
-  bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
-                     const CefKeyEvent &event,
-                     CefEventHandle os_event,
-                     bool *is_keyboard_shortcut) override {
-    if (event.type != KEYEVENT_RAWKEYDOWN || os_event == nullptr) return false;
-    NSEvent *nsEvent = (__bridge NSEvent *)os_event;
-    if ((nsEvent.modifierFlags & NSEventModifierFlagCommand) == 0) return false;
-
-    static NSSet<NSString *> *editingKeys =
-        [NSSet setWithObjects:@"c", @"v", @"x", @"z", @"a", @"y", nil];
-    NSString *key = nsEvent.charactersIgnoringModifiers.lowercaseString;
-    if (key.length == 0 || [editingKeys containsObject:key]) return false;
-
-    if (is_keyboard_shortcut) *is_keyboard_shortcut = true;
-    return true;
-  }
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -314,7 +290,7 @@ static bool EnsureLibraryLoaded() {
   CefMainArgs mainArgs = MakeMainArgs();
   CefSettings settings;
   settings.no_sandbox = true;              // 本机未开沙盒，用 CEF sandbox 还要 entitlement
-  settings.external_message_pump = true;   // 消息泵由 NSTimer 驱动，见 startPump
+  settings.external_message_pump = true;   // 消息泵由 OnScheduleMessagePumpWork 指导调度，见 schedulePumpWorkAfterMs
   settings.windowless_rendering_enabled = false;
   settings.persist_session_cookies = true;
   settings.background_color = 0xFFFFFFFF;  // 首帧前白底，避免黑闪
@@ -371,6 +347,7 @@ static bool EnsureLibraryLoaded() {
   CefRefPtr<CefBrowser> _browser;
   CefRefPtr<XHCefClient> _client;
   NSString *_startURL;
+  NSString *_pendingURL;      // browser 还没 OnAfterCreated 时来的导航，等 created 再补
   BOOL _browserRequested;
 }
 
@@ -437,6 +414,7 @@ static bool EnsureLibraryLoaded() {
     _browser->GetMainFrame()->LoadURL(urlString.UTF8String);
   } else {
     _startURL = [urlString copy] ?: @"about:blank";
+    _pendingURL = [_startURL copy];
   }
 }
 
@@ -449,6 +427,10 @@ static bool EnsureLibraryLoaded() {
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
   [self syncBrowserFrame];
+  if (_pendingURL) {
+    browser->GetMainFrame()->LoadURL(_pendingURL.UTF8String);
+    _pendingURL = nil;
+  }
 }
 
 - (void)cefBrowserDidClose {

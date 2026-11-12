@@ -3,8 +3,9 @@
 #
 # 两件事：
 #   1. prepare（默认）：按 CEF_VERSION 把发行包下到版本化共享缓存里，编 libcef_dll_wrapper，
-#      编 Helper 可执行文件并造 4 个 Helper.app。多 worktree 共用一份。
-#   2. install：把 framework + 4 个 Helper 拷进 .app 的 Frameworks 目录并 ad-hoc 签名。
+#      编 Helper 可执行文件并造 5 个 Helper.app（主 / Alerts / GPU / Plugin / Renderer）。
+#      多 worktree 共用一份。
+#   2. install：把 framework + 5 个 Helper 拷进 .app 的 Frameworks 目录并 ad-hoc 签名。
 #      Xcode 的两个 Run Script（"Prepare CEF" / "Bundle CEF"）就是这两件事。
 #
 # 手动用：scripts/fetch-cef.sh                 # 只准备缓存

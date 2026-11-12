@@ -109,7 +109,7 @@ Phase 0 已实测：**"真 Chromium 就自动过谷歌"不成立**，需要四�
 - bundle 里放 `Chromium Embedded Framework.framework` + 5 个 `Helper.app`（主 / Alerts / GPU / Plugin / Renderer；官方包不预置，见 6.1），**+250~350MB**。
 - **架构 `ARCHS=arm64`**（D14）：官方 CEF 包是单架构，Release 默认 universal 会链接失败；自用（M1）不需要 x86_64。Debug 的 `ONLY_ACTIVE_ARCH=YES` 本来就不受影响，只需补 Release/pbxproj 全局 `ARCHS`。
 - `CefSettings` 必须显式给：`browser_subprocess_path`（Helper 可执行）、`framework_dir_path`、`main_bundle_path`、`resources_dir_path`、`locales_dir_path`（只留 `zh-CN`/`en-US` 可省几十 MB）。
-- 签名顺序：Helper×4 → framework → Go 后端 → 主 app；`--options runtime --timestamp`。Renderer 需要 JIT 相关 entitlement（`allow-jit` 等），照 CEF 官方示例。**注意和 Xcode 自身签名的先后**：Run Script 提前签过再让 Xcode 整体签，容易出现 `code object is not signed at all` / 签名被覆盖，第一次构建预算半天（现有 `scripts/bundle-backend.sh` 的嵌套签名先例照它扩）。
+- 签名顺序：framework 内 `Libraries/*.dylib` → framework → Helper×5 → Go 后端 → 主 app；`--options runtime --timestamp`。Renderer 需要 JIT 相关 entitlement（`allow-jit` 等），照 CEF 官方示例。**注意和 Xcode 自身签名的先后**：Run Script 提前签过再让 Xcode 整体签，容易出现 `code object is not signed at all` / 签名被覆盖，第一次构建预算半天（现有 `scripts/bundle-backend.sh` 的嵌套签名先例照它扩）。
 - **不公证**（D13）：本机只有 `Apple Development` 证书，只自用不分发；跳过 `notarytool`，`--options runtime` + 本地签名足够。
 - 本机未沙盒，不受沙盒限制；一旦将来开沙盒，CEF 多进程要额外 entitlement。
 
@@ -232,7 +232,7 @@ CEF 升级分三层，只有中间那层是"必须重编"：
 
 | 层 | 升级动作 |
 |---|---|
-| CEF 二进制 | 换 `Chromium Embedded Framework.framework` + 4 个 `Helper.app` |
+| CEF 二进制 | 换 `Chromium Embedded Framework.framework` + 5 个 `Helper.app` |
 | CEF 的 C++ 封装 `libcef_dll_wrapper` | **必须跟着重编**（按头文件 ABI 编译，版本不匹配直接崩） |
 | 我们的 Swift/ObjC++ | 一般不动（除非用到的 API 跨版本改了签名） |
 
@@ -538,7 +538,7 @@ main                       ← 继续每天发版（WK，现状不变）
 
 | 坑 | 表现 | 处理方向 |
 |---|---|---|
-| **⌘ 快捷键被 CEF 吞** | ⌘K 聚焦聊天输入、⌘W、⌘F、⌘+ 落到网页里 | `CefKeyboardHandler::OnPreKeyEvent` 判为应用快捷键并交回 AppKit |
+| **⌘ 快捷键被 CEF 吞** | ⌘K 聚焦聊天输入、⌘W、⌘F、⌘+ 落到网页里 | **已由现有机制覆盖**：`AppDelegate` 的局部 `NSEvent` monitor 在 `sendEvent:` 之前拿到事件（B1 未加 `CefKeyboardHandler`，因为它的 `return true` 是"我已处理"、不是"交回 AppKit"，加错方向会把 ⌘←/⌘C 这类网页编辑键一起吞掉）。冒烟时手测确认；漏网的某键再按 keyCode 精确拦 |
 | **入口必须改 `static func main()`** | SwiftUI `@main` 无法在 `NSApplicationMain` 前跑 `CefExecuteProcess --type=` 分支 | 改入口；这条正好在 `swiftc -typecheck` 盲区，只能真机验 |
 | **Swift 6 严格并发 × ObjC++** | 项目带 `-default-isolation MainActor`，回调里的非 Sendable 类型会一片红 | 预计一批 `nonisolated(unsafe)` / `MainActor.assumeIsolated` 包装；不是难点但是实打实工作量（P1 可能从 3~5 天撑到 5~7 天） |
 | **遮挡 / Space 切换后黑帧** | 窗口模式下 `WasResized` / `WasHidden` / `NotifyScreenInfoChanged` 都是 **OSR 专用**（头文件原文 "only used when window rendering is disabled"），调了也是空操作 | 窗口模式交给 CEF 自己的 NSView 跟随尺寸；真出现黑帧别往这三个 API 上找，改查视图形状/材质叠加（`docs/bugs/030`） |
@@ -546,7 +546,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | **`Page.captureScreenshot` 对不可见 tab** | 可能出空白图 | P1 顺手验，结论决定 agent 截图工具的边界 |
 | **中文输入法** | 候选窗位置、`ImeSetComposition` | 内嵌 NSView 一般没问题，但要手打一句验证 |
 | **定位权限** | 百度地图"我的位置"需要 handler + TCC | 不验就是"地图能看不能定位" |
-| **签名顺序** | Helper×5 → framework → Go 后端 → App，和 Xcode 自身签名冲突 | 照 `scripts/bundle-backend.sh` 扩，预算半天 |
+| **签名顺序** | framework 内 `Libraries/*.dylib` → framework → Helper×5 → Go 后端 → App，和 Xcode 自身签名冲突 | 照 `scripts/bundle-backend.sh` 扩，预算半天 |
 | **官方包不含 Helper.app**（B0 实测） | `Release/` 下只有 framework，4/5 个 Helper 是各工程自己 CMake 造出来的 | 脚本按 `helper-Info.plist.in` 模板造（见 6.1） |
 | **不能直接链 framework**（B0 实测） | wrapper 是运行时加载形态；直接链会被装成 `@executable_path/../Frameworks/...`，Helper 在 `Contents/Frameworks/<Helper>.app` 里必然找不到 | 只链 `libcef_dll_wrapper`，framework 由 `CefScopedLibraryLoader::LoadInMain()` dlopen |
 | **`NSApplication` 必须实现 `CefAppProtocol`**（B0 实测崩过） | 不实现就抛 `-[NSApplication isHandlingSendEvent]: unrecognized selector`（页面已经加载完才炸，很容易误判成别的问题） | SwiftUI 不能给 NSApplication 建子类 → ObjC category 补 `isHandlingSendEvent/setHandlingSendEvent:` + 换掉 `sendEvent:` 的实现（`CefBridge.mm` 里 `InstallSendEventSwizzleIfNeeded`） |
@@ -617,6 +617,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | 批次 | 完成日期 | commit | review 结论 |
 |---|---|---|---|
 | B0 | 2026-11-12 | `3c8940d3` | 待真机构建（脚本本机实跑通过：下载/编 wrapper/造 Helper×5/装包签名/增量跳过） |
-| B1 | 2026-11-12 | 见 `cef(b1)` | 待真机构建；review 已过 1 轮（P1×2 已修） |
+| B1 | 2026-11-12 | `0114a3fb` | 待真机构建；review 已过 2 轮（P1×2、P2×6、P3×6 已处理，剩 1 条 P3 留给 B2） |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

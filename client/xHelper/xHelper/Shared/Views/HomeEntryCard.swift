@@ -27,6 +27,13 @@ struct HomeEntryCard: View {
         let action: () -> Void
     }
 
+    /// 单行档的细节行：标题在左（单行 tail 截断），时间/金额在右（不参与压缩）。
+    struct DetailLine: Identifiable {
+        let id: String
+        let title: String
+        let detail: String?
+    }
+
     let asset: String
     let title: String
     /// 会变的那一行（本月 ¥1,284 / 128 条 / 2 个标签 …）
@@ -37,8 +44,8 @@ struct HomeEntryCard: View {
     let tint: Color
     let layout: HomeCardLayout
     let height: CGFloat
-    /// 单行档的文本细节（至多 2 行）
-    let details: [String]
+    /// 单行档的细节行（至多 2 行）
+    let details: [DetailLine]
     /// 信息档的三条可点行（空 = 该档不渲染信息区，文字区占满）
     let infoRows: [InfoRow]
     /// 非信息档：整卡点击；信息档：文字区点击
@@ -55,7 +62,7 @@ struct HomeEntryCard: View {
         tint: Color,
         layout: HomeCardLayout,
         height: CGFloat,
-        details: [String] = [],
+        details: [DetailLine] = [],
         infoRows: [InfoRow] = [],
         action: @escaping () -> Void
     ) {
@@ -223,11 +230,22 @@ struct HomeEntryCard: View {
                 Spacer(minLength: 12)
                 secondaryText
             }
-            ForEach(Array(details.prefix(height >= 120 ? 2 : 1).enumerated()), id: \.offset) { _, line in
-                Text(line)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary.opacity(0.85))
-                    .lineLimit(1)
+            ForEach(Array(details.prefix(height >= 120 ? 2 : 1))) { line in
+                HStack(spacing: 8) {
+                    Text(line.title)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 6)
+                    if let detail = line.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                    }
+                }
             }
         }
     }

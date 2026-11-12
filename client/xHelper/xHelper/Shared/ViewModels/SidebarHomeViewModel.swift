@@ -1,37 +1,13 @@
 import Combine
 import Foundation
 
-/// 右栏首页六个入口卡片 + 今日行 + 最近页脚的数据。
+/// 右栏首页六个入口卡片 + 今日行的数据。
 ///
 /// 全部走**已有接口**（各 `limit=3/3/50`），一次并发六路；不新增后端契约。
 /// 备忘面板与首页备忘卡共用这里的 `reminders`（同一次请求，面板不再单开一路）。
 /// 见 `docs/design/right-sidebar-home/design-cards-v2.md` §6。
 @MainActor
 final class SidebarHomeViewModel: ObservableObject {
-
-    /// 最近页脚的一条（文档 / 灵阅混排）。
-    struct RecentItem: Identifiable, Equatable {
-        /// 点开时走哪条链路（不要用展示文案判断，改文案会静默点错）
-        enum Kind: Equatable {
-            case document
-            case artifact
-
-            var label: String {
-                switch self {
-                case .document: return "文档"
-                case .artifact: return "灵阅"
-                }
-            }
-        }
-
-        let id: String
-        /// 原始对象 id（点开时用）
-        let targetID: String
-        let title: String
-        let kind: Kind
-        /// 已格式化的相对时间
-        let time: String
-    }
 
     struct Stats: Equatable {
         var pendingReminders: Int?
@@ -43,7 +19,6 @@ final class SidebarHomeViewModel: ObservableObject {
         var documentsUpdatedText: String?
         var artifacts: Int?
         var artifactsCreatedText: String?
-        var recent: [RecentItem] = []
     }
 
     @Published private(set) var stats = Stats()
@@ -117,8 +92,6 @@ final class SidebarHomeViewModel: ObservableObject {
         next.artifactsCreatedText = a?.items.first.flatMap {
             LocalArtifactTime.parse($0.createdAt).map { SidebarHomeFormat.relativeTime($0) }
         }
-        next.recent = Self.mergeRecent(documents: d?.documents ?? [], artifacts: a?.items ?? [])
-
         stats = next
         remindersFailed = r == nil
         recentBills = bl?.bills ?? []
@@ -135,36 +108,6 @@ final class SidebarHomeViewModel: ObservableObject {
         if r != nil || e != nil || b != nil || bl != nil || d != nil || a != nil {
             loadedAt = Date()
         }
-    }
-
-    /// 文档（updated_at 倒序）与灵阅（created_at 倒序）合并取最近三条。
-    private static func mergeRecent(documents: [Document], artifacts: [ArtifactSummary]) -> [RecentItem] {
-        struct Entry {
-            let item: RecentItem
-            let date: Date
-        }
-        var entries: [Entry] = []
-        for doc in documents {
-            guard let date = LocalArtifactTime.parse(doc.updatedAt) else { continue }
-            entries.append(Entry(item: RecentItem(
-                id: "doc:" + doc.id,
-                targetID: doc.id,
-                title: doc.title,
-                kind: .document,
-                time: SidebarHomeFormat.relativeTime(date)
-            ), date: date))
-        }
-        for artifact in artifacts {
-            guard let date = LocalArtifactTime.parse(artifact.createdAt) else { continue }
-            entries.append(Entry(item: RecentItem(
-                id: "artifact:" + artifact.id,
-                targetID: artifact.id,
-                title: artifact.title,
-                kind: .artifact,
-                time: SidebarHomeFormat.relativeTime(date)
-            ), date: date))
-        }
-        return entries.sorted { $0.date > $1.date }.prefix(3).map(\.item)
     }
 
     /// 单路请求失败只影响对应数字（显示 `—` / 面板显示加载失败），记一条诊断日志，不打扰用户。

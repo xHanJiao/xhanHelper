@@ -91,6 +91,22 @@ enum SidebarHomeFormat {
         return "\(datePart) \(clock)"
     }
 
+    /// 相对到期说法，跟其它卡右侧的「3 天前」同一套口径：
+    /// 未来 `今天 / 明天 / 后天 / N 天后`，过期 `今天 / 昨天 / N 天前`。
+    /// 卡头要具体时刻用 `dueText`；卡片信息行只放相对距离，免得把标题挤没。
+    static func dueRelative(_ deadline: String, now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let date = parseISO(deadline) else { return nil }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        switch days {
+        case 0:  return "今天"
+        case 1:  return "明天"
+        case 2:  return "后天"
+        case -1: return "昨天"
+        default: return days > 0 ? "\(days) 天后" : "\(-days) 天前"
+        }
+    }
+
     /// 解析 ISO8601（带/不带小数秒、`Z`/`+08:00`）。与 `LocalArtifacts/LocalArtifactTime.parse` 同口径，
     /// 但本文件要能单独编进 SwiftPM 纯逻辑靶，不能跨模块引用它的内部符号。
     static func parseISO(_ s: String) -> Date? {

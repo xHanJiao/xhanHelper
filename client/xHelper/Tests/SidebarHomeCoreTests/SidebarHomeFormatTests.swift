@@ -90,6 +90,19 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertFalse(SidebarHomeFormat.isOverdue("", now: now))
     }
 
+    func testDueRelative() {
+        let now = date("2026-11-12 10:00:00")
+        XCTAssertEqual(SidebarHomeFormat.dueRelative("2026-11-12T20:00:00+08:00", now: now, calendar: calendar), "今天")
+        XCTAssertEqual(SidebarHomeFormat.dueRelative("2026-11-13T09:00:00+08:00", now: now, calendar: calendar), "明天")
+        XCTAssertEqual(SidebarHomeFormat.dueRelative("2026-11-14T09:00:00+08:00", now: now, calendar: calendar), "后天")
+        XCTAssertEqual(SidebarHomeFormat.dueRelative("2026-11-20T09:00:00+08:00", now: now, calendar: calendar), "8 天后")
+        // 过期走同一套「n 天前」，跟文档卡的相对时间口径一致
+        XCTAssertEqual(SidebarHomeFormat.dueRelative("2026-11-11T09:00:00+08:00", now: now, calendar: calendar), "昨天")
+        XCTAssertEqual(SidebarHomeFormat.dueRelative("2026-11-08T09:00:00+08:00", now: now, calendar: calendar), "4 天前")
+        // 解析失败不猜时间
+        XCTAssertNil(SidebarHomeFormat.dueRelative("", now: now, calendar: calendar))
+    }
+
     // MARK: - 问候与当月起始
 
     func testGreetingBuckets() {

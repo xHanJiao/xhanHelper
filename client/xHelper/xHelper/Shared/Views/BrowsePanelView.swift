@@ -122,7 +122,6 @@ struct BrowsePanelView: View {
 
     /// 「上次停在 X」取自浏览器历史
     @ObservedObject private var historyStore = HistoryStore.shared
-    @Environment(\.colorScheme) private var colorScheme
 
     /// 缓存击穿戳：每次打开面板/点刷新自增，URL 带 ?t= 强制回源拉新 index.html。
     /// 服务器静态资源无 Cache-Control，WKWebView 启发式缓存会让 reloadFromOrigin 命中旧文档，
@@ -188,10 +187,11 @@ struct BrowsePanelView: View {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
-    // MARK: - 首页（问候行 + 六个入口卡 + 最近页脚）
+    // MARK: - 首页（问候行 + 六个入口卡）
     //
     // 设计见 docs/design/right-sidebar-home/design-cards-v2.md：
-    // 卡片顶对齐、最近页脚贴底；档位随卡宽四档降级，内容块封顶 1320 居中。
+    // 卡片顶对齐；档位随卡宽四档降级，内容块封顶 1320 居中。
+    // 宽卡的信息行已经列出最近对象，所以不再有底部「最近」页脚（2026-11-12 用户拍板删掉）。
 
     private func homeColumns(_ count: Int) -> [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
@@ -213,11 +213,10 @@ struct BrowsePanelView: View {
                     .padding(.top, 16)
 
                     Spacer(minLength: 28)
-                    recentFooter(wide: metrics.columns > 1)
                 }
                 .padding(.vertical, 18)
                 .frame(width: contentWidth)
-                // 撑满高度，`Spacer` 才能把最近页脚压到底部；封顶后整块水平居中、两侧留白
+                // 撑满高度让内容顶对齐；封顶后整块水平居中、两侧留白
                 .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
             }
         }
@@ -397,7 +396,7 @@ struct BrowsePanelView: View {
                 return HomeEntryCard.InfoRow(
                     id: "reminder:" + reminder.id,
                     title: reminder.content,
-                    detail: SidebarHomeFormat.dueText(reminder.deadline),
+                    detail: SidebarHomeFormat.dueRelative(reminder.deadline),
                     icon: overdue ? .warning("exclamationmark.circle") : .symbol("checkmark.circle"),
                     action: openPanel
                 )
@@ -438,11 +437,10 @@ struct BrowsePanelView: View {
         }
     }
 
-    /// 单行档的两行细节：`标题 · 细节`，与信息行同源，避免维护两套文案。
-    private func detailLines(_ rows: [HomeEntryCard.InfoRow]) -> [String] {
-        rows.prefix(2).map { row in
-            guard let detail = row.detail, !detail.isEmpty else { return row.title }
-            return "\(row.title) · \(detail)"
+    /// 单行档的细节行与信息行同源（标题 / 右侧细节），不维护第二套文案。
+    private func detailLines(_ rows: [HomeEntryCard.InfoRow]) -> [HomeEntryCard.DetailLine] {
+        rows.prefix(2).map {
+            HomeEntryCard.DetailLine(id: $0.id, title: $0.title, detail: $0.detail)
         }
     }
 
@@ -456,66 +454,6 @@ struct BrowsePanelView: View {
         case .events:    return Color("appAccent")
         case .images, .agents, .dashboard: return Color("appAccent")
         }
-    }
-
-    @ViewBuilder
-    private func recentFooter(wide: Bool) -> some View {
-        let recent = homeVM.stats.recent
-        if !recent.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.12))
-                    .frame(height: 0.5)
-                Text("最近")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.8))
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 10),
-                                   count: wide ? 3 : 1),
-                    spacing: 10
-                ) {
-                    ForEach(recent) { item in
-                        recentRow(item)
-                    }
-                }
-            }
-            .padding(.top, 18)
-        }
-    }
-
-    private func recentRow(_ item: SidebarHomeViewModel.RecentItem) -> some View {
-        Button {
-            switch item.kind {
-            case .artifact:
-                ArtifactOpenCoordinator.shared.open(id: item.targetID, title: item.title)
-            case .document:
-                DocumentSelectionCoordinator.shared.openDocument(id: item.targetID)
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text("\(item.kind.label) · \(item.time)")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 11)
-                    .fill(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.44))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 11)
-                    .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.1 : 0.66), lineWidth: 0.5)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     var body: some View {

@@ -30,13 +30,16 @@
 - 卡高只跟档位/列数走，不因文本行数抖动。
 - **两列只在每列都够 340 时启用**（内容宽 ≥ 692 = 2 × 340 + 12），否则单列。比原来的 620 门槛高：621 宽会立刻掉成两张 304 的窄卡、直接触发图标档，反而比单列信息更少。
 - **内容块封顶 1320**（= 654 × 2 + 12 间距）。窗口再宽时卡片不再变宽，整块居中、两侧留白；窗口更窄时封顶不生效。
-- 图标档固定两列（328 宽里放一张空卡比两个方块更难看）；问候行与最近页脚保留。
+- 图标档固定两列（328 宽里放一张空卡比两个方块更难看）；问候行保留。
+- **底部「最近」页脚已删除**（2026-11-12）：宽卡信息行已给出最近对象，任何宽度都不再显示。
 
 ## 4. 信息行（信息档）
 
 - 规格：行高 28、行间 6、圆角 9、单行 11.5pt（`middle` 截断）、右侧细节 10pt。
 - 常态：`white 40%` 底（深色 6%）+ `white 55%` 描边；hover：`appAccent 12%` 底 + `appAccent 45%` 描边。
 - 最多 3 条，按各域「最近」顺序。
+- 右侧细节：备忘 = 相对到期（`今天 / 明天 / 后天 / N 天后 / 昨天 / N 天前`，过期的行首图标是橙色 `exclamationmark.circle`），文档/灵阅/事件 = 相对时间，账单 = 金额，浏览器 = host。
+- 单行档的细节行没有行首图标，所以过期与否不额外标注（时间口径与其它卡一致——用户 2026-11-12 定，不加「已过期」前缀）。要看过期状态用信息档或备忘面板。
 - **图标来源（不猜、不新造字段）**：
 
 | 行 | 图标 | 依据 |
@@ -77,10 +80,10 @@
 
 | 文件 | 改动 |
 |---|---|
-| `xHelper/Shared/Views/HomeEntryCard.swift` | 四档渲染、信息行视图、图标档；`InfoRow` / `InfoIcon` 与显式 `init`（`layout/details/infoRows`） |
-| `xHelper/Shared/Views/BrowsePanelView.swift` | 按内容宽取 `homeMetrics`、1320 封顶居中、`infoRows(for:)` / `detailLines(_:)`、去掉信息档的整卡按钮 |
-| `xHelper/Shared/ViewModels/SidebarHomeViewModel.swift` | `recentBills/recentDocuments/recentArtifacts/recentEvents`；账单 list 与事件 limit=3 |
-| `xHelper/Shared/Views/SidebarHomeFormat.swift` | `homeMetrics` / `HomeCardLayout` / `HomeCardMetrics`、分类 → SF Symbol 映射、标题首字（纯函数，进 SwiftPM 纯逻辑靶） |
+| `xHelper/Shared/Views/HomeEntryCard.swift` | 四档渲染、信息行视图、图标档；`InfoRow` / `InfoIcon` / `DetailLine` 与显式 `init`（`layout/details/infoRows`） |
+| `xHelper/Shared/Views/BrowsePanelView.swift` | 按内容宽取 `homeMetrics`、1320 封顶居中、`infoRows(for:)` / `detailLines(_:)`、去掉信息档的整卡按钮；删除「最近」页脚 |
+| `xHelper/Shared/ViewModels/SidebarHomeViewModel.swift` | `recentBills/recentDocuments/recentArtifacts/recentEvents`；账单 list 与事件 limit=3；删除 `RecentItem` / `Stats.recent` / `mergeRecent` |
+| `xHelper/Shared/Views/SidebarHomeFormat.swift` | `homeMetrics` / `HomeCardLayout` / `HomeCardMetrics`、`dueRelative`、分类 → SF Symbol 映射、标题首字（纯函数，进 SwiftPM 纯逻辑靶） |
 | `xHelper/Package.swift` + `Tests/SidebarHomeCoreTests/` | 档位四档 + 692 门槛 + 1320 封顶 + 映射表 12 项全覆盖 + 未知分类兜底 + 首字截取的单测 |
 | `docs/design/right-sidebar-home/design.md` | §4 指向本文；§11 追加变更记录 |
 
@@ -90,8 +93,10 @@
 2. 1900：六张卡都有 3 条信息行；点标签切到该标签、点文档打开文档、点备忘行进备忘面板。
 3. 840 两列：三行文字（与现状一致）；500：单行 + 细节；380：2×3 图标，hover 显示名字。
 4. 断网：数字显示 `—`，信息区为空但卡片不塌（不留半张空壳）。
-5. `swift test --filter SidebarHomeCoreTests` 全绿；macOS / iOS `swiftc -typecheck` 无 error。
+5. 任何宽度都没有底部「最近」区；单行档细节行右侧时间始终可见（长标题只截标题）。
+6. `swift test --filter SidebarHomeCoreTests` 全绿；macOS / iOS `swiftc -typecheck` 无 error。
 
 ## 9. 后续变更
 
 - **2026-11-12 · 实现落地**：两列门槛由 620 改为 692（见 §3），其余按本稿实现；纯逻辑（档位/图标/首字）落在 `SidebarHomeFormat.swift` 以便 `swift test` 覆盖。
+- **2026-11-12 · 删除「最近」页脚 + 细节行改左右结构**：页脚任何宽度都不再显示（宽卡信息行已覆盖）；单行档细节行 = 标题左 / 时间右；备忘行右侧改 `dueRelative` 相对口径。影响 `BrowsePanelView.swift`、`SidebarHomeViewModel.swift`、`HomeEntryCard.swift`、`SidebarHomeFormat.swift`、`Tests/SidebarHomeCoreTests`。

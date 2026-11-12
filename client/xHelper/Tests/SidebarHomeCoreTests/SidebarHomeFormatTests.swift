@@ -167,9 +167,9 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertEqual(m.cardHeight, 158)                                  // 没到封顶：高 = 宽
 
         // 封顶 170：卡再宽也不再长高（否则 300 宽就是一块 300×300 的巨型方块）
-        let wide = SidebarHomeFormat.homeMetrics(contentWidth: 600)         // 卡 294
+        let wide = SidebarHomeFormat.homeMetrics(contentWidth: 520)         // 卡 254
         XCTAssertEqual(wide.layout, .iconOnly)
-        XCTAssertEqual(wide.cardWidth, 294)
+        XCTAssertEqual(wide.cardWidth, 254)
         XCTAssertEqual(wide.cardHeight, 170)
     }
 
@@ -196,11 +196,11 @@ final class SidebarHomeFormatTests: XCTestCase {
     }
 
     func testHomeMetricsIconTierShrinksWithHeight() {
-        // 卡 294 本来封顶 170；可用高 500 → (500 − 123) / 3 ≈ 125.7
-        let m = SidebarHomeFormat.homeMetrics(contentWidth: 600, availableHeight: 500)
+        // 卡 254 本来封顶 170；可用高 500 → (500 − 123) / 3 ≈ 125.7
+        let m = SidebarHomeFormat.homeMetrics(contentWidth: 520, availableHeight: 500)
         XCTAssertEqual(m.layout, .iconOnly)
         XCTAssertEqual(m.cardHeight, (500 - SidebarHomeFormat.homeChromeHeight) / 3, accuracy: 0.001)
-        XCTAssertEqual(m.cardWidth, 294)
+        XCTAssertEqual(m.cardWidth, 254)
     }
 
     func testHomeMetricsAtContentCap() {
@@ -211,13 +211,13 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertEqual(m.layout, .info)
     }
 
-    func testHomeMetricsIconBoundaryAt340() {
-        // 边界落在**卡宽** 340 上：内容宽 = 2 × 340 + 12 = 692
-        let narrow = SidebarHomeFormat.homeMetrics(contentWidth: 691)   // 卡 339.5
+    func testHomeMetricsIconBoundaryAt300() {
+        // 边界落在**卡宽** 300 上：内容宽 = 2 × 300 + 12 = 612
+        let narrow = SidebarHomeFormat.homeMetrics(contentWidth: 611)   // 卡 299.5
         XCTAssertEqual(narrow.layout, .iconOnly)
         XCTAssertEqual(narrow.columns, 2)
 
-        let stacked = SidebarHomeFormat.homeMetrics(contentWidth: 692)
+        let stacked = SidebarHomeFormat.homeMetrics(contentWidth: 612)
         XCTAssertEqual(stacked.layout, .stacked)
         XCTAssertEqual(stacked.columns, 2)
         XCTAssertEqual(stacked.cardHeight, 132)

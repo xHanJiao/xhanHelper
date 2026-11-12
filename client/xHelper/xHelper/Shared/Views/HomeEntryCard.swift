@@ -216,10 +216,13 @@ struct HomeEntryCard: View {
     }
 
     /// 细节行 / 信息行已经给出同样的时间或补充信息时，卡头第三行就是重复说两遍（还会并排
-    /// 出现两套时间口径：卡头「下一条 11月15日」对行内「23 天前」）。只有两种都没有时
-    /// （三行档，或信息区断网拉空）才靠它撑起第三行。
+    /// 出现两套时间口径：卡头「下一条 11月15日」对行内「23 天前」）。
+    ///
+    /// 只有信息档 / 单行档会把行画出来，所以只在这两档且真有行时藏；三行档的第三行本来
+    /// 就是副文案（`details` 是按数据恒传的，不能拿它判断"有没有行"）。
     private var showsSecondary: Bool {
-        details.isEmpty && infoRows.isEmpty
+        guard layout == .info || layout == .singleLine else { return true }
+        return details.isEmpty && infoRows.isEmpty
     }
 
     private var textStack: some View {
@@ -230,7 +233,7 @@ struct HomeEntryCard: View {
         }
     }
 
-    /// 单行档：`标题 · 主数字 ⟶ 副文案`，下面至多两行细节（104 高只放一行）。
+    /// 单行档：`标题 · 主数字 ⟶ 副文案`，下面两行细节（132 高固定放两行）。
     private var singleLineStack: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 10) {

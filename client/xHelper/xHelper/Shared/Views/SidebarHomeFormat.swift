@@ -190,11 +190,13 @@ enum SidebarHomeFormat {
         let maxCardHeight = availableHeight.isFinite ? (availableHeight - homeChromeHeight) / 3 : .infinity
 
         // 卡宽放不下文字才退成纯图标卡（300 = 三行文字的最低宽度：132 插画 + 14 内距
-        // + 箭头后还剩 ~117，够「浏览器 / 15 条备忘」这种最短一档）。两列也不拆，拆了就是单列。
-        // 高度封顶 170——不封顶时卡宽 300 上下会变成一块 300×300 的巨型方块。
+        // + 箭头后还剩 ~117，够「浏览器 / 15 条备忘」；更长的副文案会尾截，可接受）。
+        // 两列也不拆，拆了就是单列。
+        // 高度封顶 170（不封顶时卡宽 300 上下会变成一块 300×300 的巨型方块），下限 110
+        // （再矮就整页滚，别把插画压成一条扁带）。
         if cardWidth < 300 {
             return HomeCardMetrics(layout: .iconOnly, columns: 2, cardWidth: cardWidth,
-                                   cardHeight: max(0, min(cardWidth, 170, maxCardHeight)))
+                                   cardHeight: max(110, min(cardWidth, 170, maxCardHeight)))
         }
 
         // 只有信息档比别的档高（164 vs 132），所以高度不够时降这一档就够；132 是底线。

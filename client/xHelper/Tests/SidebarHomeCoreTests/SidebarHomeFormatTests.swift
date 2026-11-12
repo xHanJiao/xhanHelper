@@ -179,7 +179,10 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertEqual(tall.layout, .info)
         XCTAssertEqual(tall.cardHeight, 164)
 
-        // 可用高 600：(600 − 123) / 3 = 159 < 164 → 降成单行档 132
+        // 降级边界：(H − 123) / 3 < 164 ⇔ H < 615，写死边界值防常量漂移
+        let edge = SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 615)
+        XCTAssertEqual(edge.layout, .info)                // 615 时 (615−123)/3 正好 164，不算"小于"
+        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 614).layout, .singleLine)
         let short = SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 600)
         XCTAssertEqual(short.layout, .singleLine)
         XCTAssertEqual(short.cardHeight, 132)
@@ -196,11 +199,16 @@ final class SidebarHomeFormatTests: XCTestCase {
     }
 
     func testHomeMetricsIconTierShrinksWithHeight() {
-        // 卡 254 本来封顶 170；可用高 500 → (500 − 123) / 3 ≈ 125.7
+        // 卡 254 本来封顶 170；可用高 500 → (500 − 123) / 3 = 125.67（写死字面量，
+        // 不拿 homeChromeHeight 自己算，否则常量写错测试照样绿）
         let m = SidebarHomeFormat.homeMetrics(contentWidth: 520, availableHeight: 500)
         XCTAssertEqual(m.layout, .iconOnly)
-        XCTAssertEqual(m.cardHeight, (500 - SidebarHomeFormat.homeChromeHeight) / 3, accuracy: 0.001)
+        XCTAssertEqual(m.cardHeight, 125.67, accuracy: 0.01)
         XCTAssertEqual(m.cardWidth, 254)
+
+        // 窗口极矮：高度有下限 110，不让插画压成扁带、也不归零消失
+        let tiny = SidebarHomeFormat.homeMetrics(contentWidth: 520, availableHeight: 100)
+        XCTAssertEqual(tiny.cardHeight, 110)
     }
 
     func testHomeMetricsAtContentCap() {
@@ -222,9 +230,9 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertEqual(stacked.columns, 2)
         XCTAssertEqual(stacked.cardHeight, 132)
 
-        // 极端测量态（宽 < 12）不产出负边长
+        // 极端测量态（宽 < 12）不产出负边长；高取图标档下限 110
         XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 0).cardWidth, 0)
-        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 0).cardHeight, 0)
+        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 0).cardHeight, 110)
     }
 
     // MARK: - 信息行图标

@@ -227,9 +227,10 @@ struct BrowsePanelView: View {
     }
 
     private var greeting: some View {
-        // 30s 一刷：问候语整点换档（「下午好」→「晚上好」），日期跨零点换。
+        // 每分钟重算：问候语整点换档（「下午好」→「晚上好」），日期跨零点换。
         // 用 TimelineView 而不是 Timer —— 视图被摘除时自动停，不用管取消。
-        TimelineView(.periodic(from: Date(), by: 30)) { context in
+        // 不能用 `.periodic(from: Date(), by:)`：body 每次重算都换起点，tick 会被一直往后推。
+        TimelineView(.everyMinute) { context in
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: context.date)))

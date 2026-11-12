@@ -1,7 +1,7 @@
 # 浏览器内核选型评估：WKWebView → 内嵌 Chromium（CEF）
 
-> 日期：2026-09-15
-> 状态：评估完成，待实施（先做 Phase 0 尖刺）
+> 日期：2026-09-15（2026-11-12 补 Phase 0 尖刺结果，见第九节）
+> 状态：**Phase 0 通过 → 进入迁移设计**（`browser-chromium-migration.md`）
 > 前置：`browser-safari-ua.md`（Chrome 伪装 → Safari 原生）、`browser-captcha-fingerprint.md`（指纹破绽修正）
 > 关联代码：`client/xHelper/xHelper/Shared/Tools/BrowserToolProvider.swift`、`client/xHelper/xHelper/Shared/Views/{XHWebView,BrowserTabView,AppBrowserWebView}.swift`、`client/xHelper/xHelper/Shared/Services/{XHWebViewBridge,CGEventInput,MediaExtractor,ContentBlocker}.swift`
 
@@ -133,8 +133,78 @@ Apple M1 / arm64 · macOS 26.5.1 · Xcode 26.4.1 · cmake/ninja **缺失**需装
 
 ## 八、待办 / 未来工作
 
-- [ ] Phase 0 尖刺（Runbook 见上）
-- [ ] 尖刺通过后：`docs/design/mac-apps/browser-chromium-migration.md`（CEF 迁移设计）
+- [x] Phase 0 尖刺（Runbook 见上，结果见第九节）
+- [x] 尖刺通过后：`docs/design/mac-apps/browser-chromium-migration.md`（CEF 迁移设计，含 14 条已拍板决定）
 - [ ] 引擎抽象：把 `TabSession`/`WKWebView` 背后抽成协议，UI 层不直接依赖 `WKWebView`（**只抽当前真正用到的接口**，不做投机抽象）
-- [ ] 若走 B / C+B 混合，评估"WKWebView 面板保留 + 独立真 Chromium 后端专供 agent 与登录态操作"
-- [ ] R3：CEF bundle 的签名/公证可行性验证
+- [x] ~~若走 B / C+B 混合，评估"WKWebView 面板保留 + 独立真 Chromium 后端"~~ → route B 已出局（面板是日常浏览器，不是 agent 操作台）；改为 D12 的 WK 兼容 tab（仅视频域名）
+- [x] R3：签名/公证可行性 → 本机只有 `Apple Development` 证书，**只自用不公证**（D13）+ `ARCHS=arm64`（D14）
+
+## 九、Phase 0 尖刺结果（2026-11-12）
+
+**结论：R1 + R2 都过，走 A（CEF）。** 但"真 Chromium 就自动过谷歌"这个前提**不成立**——需要四层伪装，其中一层是 CEF 独有的坑。
+
+### 9.1 环境与打法
+
+| 项 | 值 |
+|---|---|
+| 机器 | Apple M1 / arm64 · macOS 26.5.1 |
+| CEF | `156.0.7+g47dbc1d+chromium-156.0.8078.17`（用官方预编译 `cefclient.app`，未重编） |
+| 对照内核 | Electron `45.3.1` / Chromium `156.0.8078.96`（同 content 层，先做廉价代理） |
+| 真 Chrome 基线 | `157.0.8103.52` |
+| 驱动方式 | CEF/CDP：`--remote-debugging-port=9222` 可用，等价 Puppeteer（对后续 agent 工具迁移是利好） |
+| 网络 | 系统代理 `127.0.0.1:7897`（与日常使用一致） |
+
+### 9.2 结果
+
+| 验证项 | 结果 | 证据 |
+|---|---|---|
+| R2 内嵌渲染 | ✅ | `cefclient` 原生 App + NSView，百度地图/搜索/百科正常渲染，DOM 可读 |
+| R1 谷歌登录 | ✅ | 伪装后假邮箱走到「账号不存在」（URL 带 `idnf=`），**无**安全拦截；不伪装的对照组出现「此浏览器或应用可能不安全」 |
+| 百度验证码 | ✅ | 搜索 ×10（Electron 8 + CEF 2）、百科 ×4、地图 ×3，**0 次验证码**（同机同代理，非网络变干净） |
+
+**R1 的判定口径**：真账号完整登录需凭据 + 2FA，尖刺不代劳。改用「不存在的邮箱 + 相同提交路径」做等价探针——Google 的浏览器判定发生在账号校验之前，通过时表现为 `idnf`（找不到账号），被拦截时表现为安全提示页。对照组与被测组只有伪装变量不同，A/B 成立。
+
+### 9.3 关键发现：四层伪装，第四层是 CEF 特有
+
+| # | 层 | 做法 | Electron 实测 | CEF 实测 |
+|---|---|---|---|---|
+| 1 | UA 字符串 | 覆盖成真 Chrome 版本 | 必需 | `--user-agent` 即可 |
+| 2 | `sec-ch-ua*` 请求头 | 请求层改写（服务端可见） | **必需**（JS 里改没用） | `Network.setUserAgentOverride` / 正式接入用 `OnBeforeResourceLoad` |
+| 3 | `navigator.userAgentData.brands` | document-start 注入 | 必需 | 同上 |
+| 4 | **`window.chrome`** | 换成只有 `app/csi/loadTimes` 的干净对象 | Electron 原生是空对象，补成员即可 | **决定性**：见下 |
+
+CEF 往 `window.chrome` 额外注入了三个真 Chrome 没有的函数：
+
+```
+setSyncEncryptionKeys / setClientEncryptionKeys / addTrustedSyncEncryptionRecoveryMethod
+```
+
+带着它们时，**即使 UA-CH 已被 httpbin 证实完全正确，Google 仍拦**；把整个 `window.chrome` 替换成 `{app, csi, loadTimes}` 后立即通过。Electron 无此问题（它的 `window.chrome` 是空对象，补成员即对齐）。
+
+### 9.4 对正式实施的含义
+
+- 四层全部能落进 CEF 的三个钩子：`CefSettings.user_agent`（UA）、`CefRequestHandler::OnBeforeResourceLoad`（头）、`CefRenderProcessHandler::OnContextCreated`（brands + `window.chrome`）。无架构级不确定项。
+- **每次跟 Chromium 升级都要重跑这条探针**：CEF 可能新增 `window.chrome` 成员，Google 也可能改判定。这条应写进发版 checklist。
+- 尖刺产物（未入库）：`~/Library/Caches/xhan-helper-spike/`（CEF 二进制 2.1G + Electron 沙盒 + CDP 脚本），正式实施还要用。
+
+### 9.5 能力盘点：CDP 全覆盖，但**编解码缺 H.264 / AAC**（2026-11-12）
+
+用 `cefclient` + CDP 逐个探（脚本 `cef-capabilities.js` / `cef-video2.js`）：
+
+| 项 | 结果 |
+|---|---|
+| `Page.captureScreenshot` / `Page.printToPDF` | ✅（116KB / 209KB） |
+| `Accessibility.getFullAXTree` / `Target.getTargets` / `Fetch` / `Emulation` / `Network.setBlockedURLs` / `Input.insertText` | ✅ 全部可用 → P3 的 26 个工具迁移无架构级风险 |
+| AV1 / VP9 / VP8 / Opus / MP3 | ✅ |
+| **H.264 / AAC** | ❌ `canPlayType('video/mp4; codecs="avc1…")` 为空、`MediaSource.isTypeSupported` 为 false；直链 MP4 永远停在 `readyState=0` |
+
+官方二进制为规避专利编译时关了 `proprietary_codecs`（CEF issue #3559 明示），**没有运行时开关**。自建 codec 版需要 32GB RAM + 150GB 磁盘（本机 8GB / 50GB），社区现成产物只有 Linux 包 → **不自建**。
+
+**处置（D12 混合方案）**：B站 / 抖音 / 小红书 走 WK 兼容 tab（`CompatWebView`，永久保留），其余站点和 agent 工具都在 CEF 主 tab。规则见 `browser-chromium-migration.md` 的 9.1。
+
+### 9.5 遗留
+
+- R3（bundle 签名/公证）未验，按原计划在迁移设计之后单抽一天做。
+- 未测 DRM 站点（CEF 不含 Widevine，Netflix 类不可用）。
+- 百度风控是概率模型，13 次 0 命中说明触发率显著下降，不等于永久免疫。
+

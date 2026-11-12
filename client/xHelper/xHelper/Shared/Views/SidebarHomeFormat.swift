@@ -63,6 +63,74 @@ enum SidebarHomeFormat {
         }
     }
 
+    // MARK: - 到期
+
+    /// 是否已过期（deadline 已过去）。解析失败按「没过期」处理，不误报警。
+    static func isOverdue(_ deadline: String, now: Date = Date()) -> Bool {
+        guard let date = parseISO(deadline) else { return false }
+        return date < now
+    }
+
+    /// 到期文案（不含「到期/已过期」前缀，那层语义由调用方的标签/标题承担）：
+    /// `今天 18:00` / `明天 09:00` / `11月20日 09:00` / 过期则是 `昨天 05:43`。
+    /// 解析失败返回 nil——宁可不显示页脚，也不要瞎猜一个时间。
+    static func dueText(_ deadline: String, now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let date = parseISO(deadline) else { return nil }
+
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        let clock = clockText(date, calendar: calendar)
+        let datePart: String
+        switch days {
+        case 0:  datePart = "今天"
+        case 1:  datePart = "明天"
+        case 2:  datePart = "后天"
+        case -1: datePart = "昨天"
+        default: datePart = dayText(date, now: now, calendar: calendar)
+        }
+        return "\(datePart) \(clock)"
+    }
+
+    /// 解析 ISO8601（带/不带小数秒、`Z`/`+08:00`）。与 `LocalArtifacts/LocalArtifactTime.parse` 同口径，
+    /// 但本文件要能单独编进 SwiftPM 纯逻辑靶，不能跨模块引用它的内部符号。
+    static func parseISO(_ s: String) -> Date? {
+        if let d = isoFractionalFormatter.date(from: s) { return d }
+        return isoPlainFormatter.date(from: s)
+    }
+
+    private static let isoFractionalFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoPlainFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// `18:00`（24 小时制，跟界面其它时间一致）。
+    private static func clockText(_ date: Date, calendar: Calendar) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = calendar
+        f.timeZone = calendar.timeZone
+        f.dateFormat = "HH:mm"
+        return f.string(from: date)
+    }
+
+    /// 同年 `11月20日`，跨年带年份。
+    private static func dayText(_ date: Date, now: Date, calendar: Calendar) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.calendar = calendar
+        f.timeZone = calendar.timeZone
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        f.dateFormat = sameYear ? "M月d日" : "yyyy年M月d日"
+        return f.string(from: date)
+    }
+
     // MARK: - 日期
 
     /// 当月 1 日（本地日历零点）。账单统计的起始日用它。

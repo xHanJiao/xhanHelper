@@ -159,4 +159,16 @@ struct CardStyle {
         padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14),
         subtitleLineLimit: 3
     )
+
+    /// 备忘：内容通常只有一行，卡矮一档；是否过期由调用方加标签区分（不占样式位）。
+    static let reminder = CardStyle(
+        accentColor: Color("appAccent"),
+        backgroundColor: Color("appAccent").opacity(0.08),
+        titleColor: .primary,
+        subtitleColor: .secondary,
+        cornerRadius: 12,
+        padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14),
+        minHeight: 104,
+        subtitleLineLimit: 3
+    )
 }

@@ -3,7 +3,8 @@ import Foundation
 
 /// 右栏首页六个入口卡片 + 今日行 + 最近页脚的数据。
 ///
-/// 全部走**已有接口**（各 `limit=1/3`），一次并发六路；不新增后端契约。
+/// 全部走**已有接口**（各 `limit=1/3/50`），一次并发五路；不新增后端契约。
+/// 备忘面板与首页备忘卡共用这里的 `reminders`（同一次请求，面板不再单开一路）。
 /// 见 `docs/design/right-sidebar-home/design.md` §6。
 @MainActor
 final class SidebarHomeViewModel: ObservableObject {
@@ -38,8 +39,6 @@ final class SidebarHomeViewModel: ObservableObject {
         var eventsUpdatedText: String?
         var monthSpend: Double?
         var monthBillCount: Int?
-        var memories: Int?
-        var memoriesCreatedText: String?
         var documents: Int?
         var documentsUpdatedText: String?
         var artifacts: Int?
@@ -48,13 +47,19 @@ final class SidebarHomeViewModel: ObservableObject {
     }
 
     @Published private(set) var stats = Stats()
+    /// 待办提醒（deadline 升序）。首页「下一条」与备忘面板共用这一份。
+    /// 一次取 50 条不分页：pending 提醒本身量小。
+    /// shortcut: 超过 50 条只显示前 50（按到期排序后仍是最该看的那些），等真有量再加分页。
+    @Published private(set) var reminders: [Reminder] = []
+    /// 提醒这一路是否失败：面板据此显示「加载失败」而不是假装「没有待办」。
+    @Published private(set) var remindersFailed = false
     @Published private(set) var isLoading = false
 
     /// 缓存时间戳：60 秒内不重复打接口（首页会被反复进出）。
     private var loadedAt: Date?
     private static let cacheTTL: TimeInterval = 60
 
-    /// 六路并发拉取。`force` 用于用户显式刷新（当前首页没有刷新按钮，留给以后）。
+    /// 五路并发拉取。`force` 用于用户显式刷新（面板页头的刷新按钮、重试都走它）。
     func refresh(baseURL: String, token: String, force: Bool = false) async {
         guard !baseURL.isEmpty, !token.isEmpty else { return }
         guard !isLoading else { return }
@@ -68,17 +73,14 @@ final class SidebarHomeViewModel: ObservableObject {
         let start = SidebarHomeFormat.dateParam(SidebarHomeFormat.monthStart(of: now))
         let end = SidebarHomeFormat.dateParam(now)
 
-        async let reminders = attempt("reminders") {
-            try await api.listReminders(status: "pending", limit: 1, offset: 0)
+        async let reminderPage = attempt("reminders") {
+            try await api.listReminders(status: "pending", limit: 50, offset: 0)
         }
         async let events = attempt("events") {
             try await api.listEventThreads(limit: 1, offset: 0)
         }
         async let bills = attempt("bills") {
             try await api.fetchBillStats(startDate: start, endDate: end)
-        }
-        async let memories = attempt("memories") {
-            try await api.listMemories(limit: 1, offset: 0)
         }
         async let documents = attempt("documents") {
             try await api.listDocuments(limit: 3, offset: 0)
@@ -87,7 +89,7 @@ final class SidebarHomeViewModel: ObservableObject {
             try await api.listArtifacts(limit: 3, offset: 0)
         }
 
-        let (r, e, b, m, d, a) = await (reminders, events, bills, memories, documents, artifacts)
+        let (r, e, b, d, a) = await (reminderPage, events, bills, documents, artifacts)
         // 视图被摘除（切去面板/关右栏）会取消本次 .task：保留上一次的数字，别用 nil 把它刷成一片「—」。
         guard !Task.isCancelled else { return }
 
@@ -99,10 +101,6 @@ final class SidebarHomeViewModel: ObservableObject {
         }
         next.monthSpend = b?.sum
         next.monthBillCount = b?.count
-        next.memories = m?.total
-        next.memoriesCreatedText = m?.memories.first.flatMap {
-            LocalArtifactTime.parse($0.createdAt).map { SidebarHomeFormat.relativeTime($0) }
-        }
         next.documents = d?.total
         next.documentsUpdatedText = d?.documents.first.flatMap {
             LocalArtifactTime.parse($0.updatedAt).map { SidebarHomeFormat.relativeTime($0) }
@@ -114,8 +112,15 @@ final class SidebarHomeViewModel: ObservableObject {
         next.recent = Self.mergeRecent(documents: d?.documents ?? [], artifacts: a?.items ?? [])
 
         stats = next
-        // 六路全挂（多半是没登录/断网）不写入缓存，下次进来立刻重试。
-        if r != nil || e != nil || b != nil || m != nil || d != nil || a != nil {
+        remindersFailed = r == nil
+        // 按到期时间升序（服务端是 created_at 倒序）；deadline 解析不出来的排最后。
+        // 解析只做一遍：排序比较里现解析会对每条建两个 ISO8601 formatter，刷新时卡主线程。
+        reminders = (r?.items ?? [])
+            .map { (item: $0, due: LocalArtifactTime.parse($0.deadline) ?? .distantFuture) }
+            .sorted { $0.due < $1.due }
+            .map(\.item)
+        // 全挂（多半是没登录/断网）不写入缓存，下次进来立刻重试。
+        if r != nil || e != nil || b != nil || d != nil || a != nil {
             loadedAt = Date()
         }
     }
@@ -150,7 +155,7 @@ final class SidebarHomeViewModel: ObservableObject {
         return entries.sorted { $0.date > $1.date }.prefix(3).map(\.item)
     }
 
-    /// 单路请求失败只影响对应数字（显示 `—`），记一条诊断日志，不打扰用户。
+    /// 单路请求失败只影响对应数字（显示 `—` / 面板显示加载失败），记一条诊断日志，不打扰用户。
     private func attempt<T>(_ label: String, _ work: () async throws -> T) async -> T? {
         do {
             return try await work()

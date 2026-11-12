@@ -1050,7 +1050,7 @@ struct MacSettingsView: View {
     }
 
     /// 设置里的面板入口：把主窗带到前面并展开右栏到对应面板。
-    /// 这三个原本在右栏首页（见 docs/design/right-sidebar-home/design.md §7），移出首页后仍要可达。
+    /// 这几个原本在右栏首页（见 docs/design/right-sidebar-home/design.md §7），移出首页后仍要可达。
     private func panelButton(_ title: String, detail: String, icon: String, panel: BrowsePanel) -> some View {
         Button {
             openRightPanel(panel)
@@ -1394,6 +1394,7 @@ struct MacSettingsView: View {
             }
 
             Section("内容与工具") {
+                panelButton("记忆", detail: "长期记忆、主题词云与反馈", icon: "brain.head.profile", panel: .memories)
                 panelButton("图片库", detail: "预览与清理已上传的图", icon: "photo.on.rectangle.angled", panel: .images)
                 panelButton("智能体", detail: "管理自定义智能体", icon: "cpu", panel: .agents)
                 panelButton("监控看板", detail: "成本与调用统计", icon: "chart.bar.xaxis", panel: .dashboard)

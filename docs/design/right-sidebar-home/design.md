@@ -17,14 +17,14 @@
 - 每格是永不变的静态文案，看不到任何「量」；
 - 居中让方块飘在大片空地里，像没加载完。
 
-九个入口里有三个（图片 / 智能体 / 监控看板）并非日常高频，混在同一权重里既挤又误导。
+九个入口里有四个（记忆 / 图片 / 智能体 / 监控看板）并非日常高频，混在同一权重里既挤又误导。
 
 ## 2. 目标 / 非目标
 
 **目标**
 
 1. 首页变成「今天 + 六个常用入口 + 最近三件事」，每个入口带一行会变的数字；
-2. 图片 / 智能体 / 监控看板移出首页，改从设置进入；
+2. 记忆 / 图片 / 智能体 / 监控看板移出首页，改从设置进入（记忆的位置换成只读的「备忘」）；
 3. 不新增后端接口。
 
 **非目标**：真看板、可排序/可自定义入口、后端聚合接口、iOS（右栏是 macOS 独有）。
@@ -33,13 +33,13 @@
 
 ```
 下午好                                    11月11日 周二
-待办 3 · 事件 6 · 本月支出 ¥1,284
+备忘 3 · 事件 6 · 本月支出 ¥1,284
 ┌───────────────┬───────────────┐
 │ [插画] 打开浏览器 │ [插画] 账单      │
 │        3 个标签  │        本月 ¥1,284│
 │        上次停在… │        32 笔     │
 ├───────────────┼───────────────┤
-│ [插画] 记忆      │ [插画] 灵阅      │
+│ [插画] 备忘      │ [插画] 灵阅      │
 ├───────────────┼───────────────┤
 │ [插画] 文档      │ [插画] 事件      │
 └───────────────┴───────────────┘
@@ -54,7 +54,7 @@
 
 | 段 | 内容 | 布局 |
 |---|---|---|
-| 问候行 | 时段问候 + 日期；第二行三个数字（待办 / 事件 / 本月支出） | 贴顶 |
+| 问候行 | 时段问候 + 日期；第二行三个数字（备忘 / 事件 / 本月支出），整行可点进备忘 | 贴顶 |
 | 六张卡 | 插画 + 标题 + 主数字 + 副文案 | 2 列 × 3 行，**顶对齐** |
 | 最近页脚 | 3 条跨类型最近条目 | `margin-top: auto` 贴底，上方 0.5pt 分隔线 |
 
@@ -89,7 +89,8 @@
 |---|---|---|
 | 打开浏览器 | 微倾斜窗口 + 三颗灯点 + 地球经纬 + 右下光标 | `sidebar_browser` |
 | 账单 | 撕口小票 + 条目行 + ¥ 圆徽 + 三枚硬币 | `sidebar_bills` |
-| 记忆 | 三张错位卡片 + 节点连线 + 闪光 | `sidebar_memory` |
+| 备忘 | 横线本 + 勾选行 + 天青时钟角标 | `sidebar_reminder` |
+| 记忆 | 三张错位卡片 + 节点连线 + 闪光（已移出首页，资产保留待回） | `sidebar_memory` |
 | 灵阅 | 三页扇形叠放，首页是三根柱状图 + 闪光 | `sidebar_artifact` |
 | 文档 | 一页纸 + 折角书签 + 波浪下划线（呼应划线批注） | `sidebar_document` |
 | 事件 | 虚线时间轴三节点 + 三层叠加卡 + 绿勾徽章 | `sidebar_events` |
@@ -98,46 +99,50 @@
 
 ## 6. 数据
 
-六张卡 + 今日行 + 最近页脚的数据**全部来自已有接口**，一次并发 6 个轻请求（`limit=1/3`，各 10–20ms）。缓存 60 秒，不重复拉。
+六张卡 + 今日行 + 最近页脚的数据**全部来自已有接口**，一次并发 5 个轻请求（`limit=1/3/50`，各 10–20ms）。缓存 60 秒，不重复拉。
 
 | 用途 | 接口 | 取用字段 |
 |---|---|---|
-| 待办 | `GET /api/reminders?status=pending&limit=1` | `total` |
+| 备忘 | `GET /api/reminders?status=pending&limit=50` | `total`、全部 items（`deadline` 客户端升序） |
 | 事件 | `GET /api/event-threads?limit=1` | `total`、首条 `updated_at` |
 | 本月支出 | `GET /api/bills/stats?start_date=<当月1日>&end_date=<今天>` | `sum`、`count` |
-| 记忆 | `GET /api/memories?limit=1&offset=0` | `total`、首条 `created_at` |
 | 文档 | `GET /api/documents?limit=3&offset=0` | `total`、前 3 条（`updated_at` 倒序） |
 | 灵阅 | `GET /api/artifacts?limit=3&offset=0` | `total`、前 3 条（`created_at` 倒序） |
 | 浏览器标签 | 本地 `RightSidebarManager.tabs.count` | 零请求 |
 
+备忘那一路**一次取 50 条，首页卡与备忘面板共用**：首页只用 `total` + 第一条未过期的 `deadline`，面板直接渲染同一份数组（不再单开一路、不新增接口）。
+
 文案口径（**不许编造接口拿不到的字段**）：
 
 - 事件接口没有状态字段 → 写「N 个事件」，不写「进行中」；
-- 记忆接口没有「本周新增」→ 写「最近 6 小时前」（取最新一条 `created_at`）；
+- 备忘卡写「N 条备忘 / 下一条 今天 18:00」；全都过期时副文案改「N 条已过期」；
+- 备忘面板只读：标题 = 提醒内容、页脚 = 到期时间（`今天 18:00` / `明天 09:00` / `11月20日 09:00` / `昨天 05:43`），
+  已过期的卡在左下角加橙色「已过期」胶囊。不提供完成/取消（`ack` 会往来源对话插触发消息，仍只走通知）；
 - 账单写「本月 ¥1,284 / 32 笔」，金额千分位、不保留小数；≥ 100,000 显示 `12.8 万`；
 - 浏览器卡第三行「上次停在 X」取 `HistoryStore.shared.entries.first`，为空就整行不渲染；
 - 最近页脚：把文档前 3 条（`updated_at`）与灵阅前 3 条（`created_at`）合并按时间倒序取 3 条，第二行写「文档 / 灵阅 · 相对时间」。
 
 加载与降级：
 
-- 一个小 `SidebarHomeViewModel: ObservableObject`（`@MainActor`，右栏级持有），`async let` 并发六路；单飞（进行中不重入）；
+- 一个小 `SidebarHomeViewModel: ObservableObject`（`@MainActor`，右栏级持有），`async let` 并发五路；单飞（进行中不重入）；
 - 失败**不打扰用户**：该数字显示 `—`，`LogBuffer.shared.diag` 记一次，其余照常显示；
 - 刷新时机：首页出现（`browsePanelSelection == nil` 且右栏展开）、从其它面板返回首页、右栏重新展开；60 秒内不重复。
 
-## 7. 三个面板搬进设置
+## 7. 面板搬进设置
 
-`BrowsePanel` 枚举**保留全部 case**（`DocumentSelectionCoordinator`、顶栏 ⌘1/⌘2/⌘3 深链都依赖），只新增 `static let homePanels: [BrowsePanel]` 供首页渲染，图片 / 智能体 / 监控看板三项从首页移除。
+`BrowsePanel` 枚举**保留全部 case**（`DocumentSelectionCoordinator`、顶栏 ⌘1/⌘2/⌘3 深链都依赖），只新增 `static let homePanels: [BrowsePanel]` 供首页渲染，记忆 / 图片 / 智能体 / 监控看板四项从首页移除。
 
-设置窗（`MacSettingsView`）新增一节「内容与工具」，三行按钮：
+设置窗（`MacSettingsView`）新增一节「内容与工具」，四行按钮：
 
 ```
 内容与工具
-  图片库      预览与清理已上传的图    打开 ›
-  智能体      管理自定义智能体        打开 ›
-  监控看板    成本与调用统计          打开 ›
+  记忆        长期记忆、主题词云与反馈  打开 ›
+  图片库      预览与清理已上传的图      打开 ›
+  智能体      管理自定义智能体          打开 ›
+  监控看板    成本与调用统计            打开 ›
 ```
 
-动作：`BrowserToolProvider.shared.rightSidebar` 已是全局可取（`ContentView.onAppear` 注入，见 `Services/ArtifactOpenCoordinator.swift` 同款用法）→ `isOpen = true` + `showBrowsePanel()` + `browsePanelSelection = .images/.agents/.dashboard`，再 `AppDelegate.primaryWindow?.makeKeyAndOrderFront(nil)` 把主窗带到前面；设置窗不关。
+动作：`BrowserToolProvider.shared.rightSidebar` 已是全局可取（`ContentView.onAppear` 注入，见 `Services/ArtifactOpenCoordinator.swift` 同款用法）→ `isOpen = true` + `showBrowsePanel()` + `browsePanelSelection = .memories/.images/.agents/.dashboard`，再 `AppDelegate.primaryWindow?.makeKeyAndOrderFront(nil)` 把主窗带到前面；设置窗不关。
 
 顶栏的 ⌘3 监控按钮**保留**（它是深链入口，不是首页入口）。
 
@@ -145,14 +150,17 @@
 
 | 文件 | 改动 |
 |---|---|
-| `client/xHelper/xHelper/Shared/Views/BrowsePanelView.swift` | `grid` → 三段式首页；删除 `adaptiveColumns`；新增问候行、`HomeEntryCard`、最近页脚；`homePanels` |
-| `client/xHelper/xHelper/Shared/ViewModels/SidebarHomeViewModel.swift`（新） | 6 路并发拉取、60s 缓存、单飞、失败降级、取消不覆写旧值 |
+| `client/xHelper/xHelper/Shared/Views/BrowsePanelView.swift` | `grid` → 三段式首页；删除 `adaptiveColumns`；新增问候行、最近页脚；`homePanels`；今日行「备忘」可点；`panelContent(.reminders)` 接只读列表 |
+| `client/xHelper/xHelper/Shared/Views/HomeEntryCard.swift`（新） | 首页入口卡从 `BrowsePanelView` 抽出成独立视图（预览靶可渲染） |
+| `client/xHelper/xHelper/Shared/Views/ReminderPageView.swift`（新，纯展示） | 备忘面板：`PageContainer` + `CardGridView`（3 列 / 260），只读卡片，过期加橙色胶囊 |
+| `client/xHelper/xHelper/Shared/Views/CardStyle.swift` | 新增 `.reminder` 样式（`minHeight` 104，比记忆卡矮一档） |
+| `client/xHelper/xHelper/Shared/ViewModels/SidebarHomeViewModel.swift`（新） | 5 路并发拉取、60s 缓存、单飞、失败降级、取消不覆写旧值；换来的 `reminders` 数组供首页卡与备忘面板共用 |
 | `client/xHelper/xHelper/Shared/Views/SidebarHomeFormat.swift`（新，纯逻辑） | 金额格式化、相对时间、「当月 1 日」计算、问候 |
 | `client/xHelper/xHelper/Shared/Views/BookmarkPanelView.swift`、`HistoryPanelView.swift` | 删掉各自私有的 `relativeTime`，改用公共实现（避免第三份） |
-| `client/xHelper/xHelperMac/Assets.xcassets/sidebar_*.imageset`（6 个） | 插画资产（SVG 单尺度矢量） |
+| `client/xHelper/xHelperMac/Assets.xcassets/sidebar_*.imageset`（7 个） | 插画资产（SVG 单尺度矢量），含备忘的 `sidebar_reminder` |
 | `client/xHelper/xHelperMac/App.swift` | `MacSettingsView` 增加「内容与工具」一节 + `openRightPanel` |
 | `client/xHelper/xHelper/Shared/Views/ContentView.swift`、`RightSidebarView.swift` | 统一持有 `homeVM` 并逐层注入（缓存不随首页摘除而丢） |
-| `client/xHelper/Package.swift` + `Tests/SidebarHomeCoreTests/` | 纯逻辑 target：格式化 / 当月起始 / 相对时间边界（今天、昨天、跨月） |
+| `client/xHelper/Package.swift` + `Tests/SidebarHomeCoreTests/` | 纯逻辑 target：格式化 / 当月起始 / 相对时间边界 / 到期文案与过期判定 |
 
 ## 9. 测试与验收
 
@@ -160,14 +168,15 @@
 
 - 金额：`0`、`999`、`1284` → `¥1,284`、`128400` → `12.8 万`；
 - 相对时间：刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / 跨年；
-- 「当月 1 日」在 1 月、12 月、跨年边界的取值。
+- 「当月 1 日」在 1 月、12 月、跨年边界的取值；
+- 到期文案：今天/明天/后天/昨天跨天、跨年带年份、非法输入返回 nil；`isOverdue` 边界与非法输入不误报。
 
 真机（Xcode 构建后，`swiftc -typecheck` 只算编译自检）：
 
 1. 840 宽：2 列卡片 + 3 条最近页脚贴底，滚动条不出现；
 2. 拖到 560 / 380 宽：降成 1 列，不横向溢出；
 3. 深色：卡片描边/阴影、插画白纸亮度是否可接受；
-4. 断网（关本地后端或改错 token）：六个数字显示 `—`，页面不报错、不弹窗；
+4. 断网（关本地后端或改错 token）：各数字显示 `—`，页面不报错、不弹窗；备忘面板显示「加载失败，点刷新重试」而不是空列表；
 5. 点「设置 → 图片库」：主窗前置并展开右栏到图片面板；
 6. 从任意面板返回：首页数字刷新一次（60s 内不重复请求，看日志确认）。
 
@@ -176,6 +185,7 @@
 - 不加 `/api/sidebar/summary` 之类的聚合接口（6 个已有接口够用，多一层契约不划算）；
 - 不做卡片拖拽排序 / 自定义首页；
 - 不做「最近对话」；
+- 备忘不接 `ack` / 取消：面板纯只读，提醒的闭环仍走系统通知；
 - 不在首页放真图表或事件进度条；
 - iOS 不动（右栏为 macOS 独有）。
 
@@ -186,3 +196,12 @@
   2. `RecentItem` 的「文档 / 灵阅」用枚举而非展示文案判断点开链路（避免改文案后静默点错）。影响：`SidebarHomeViewModel.swift`、`BrowsePanelView.swift`。
   3. 相对时间的口径补了一条：6 小时内一律按小时（23:55 与 00:10 只差 15 分钟，说「昨天」更糊涂），超过 6 小时才按日历天说「昨天」。影响：`SidebarHomeFormat.swift`、`Tests/SidebarHomeCoreTests`。
 - 深色插画暂用同一份资产（真机截图后再定是否出深色专用版）。
+- 2026-11-12 第二轮改版（用户拍板）：
+  1. 首页「记忆」卡换成「备忘」卡（新 `BrowsePanel.reminders`），记忆入口移到设置「内容与工具」第一行；`.memories` case 与顶栏 ⌘ 深链保留。
+  2. 新增只读「备忘」面板：卡片式（与记忆同组件），数据与首页卡共用 `SidebarHomeViewModel.reminders`（`limit=50`，`deadline` 升序），不接 `ack`/取消。
+  3. 今日行「待办」改名「备忘」并整行可点（直接进备忘面板），消掉「上面有数字、底下没入口」的割裂。
+  4. 备忘卡比记忆卡矮一档（`CardStyle.reminder`，`minHeight` 104）；过期靠橙色「已过期」胶囊 + 页脚时间，不靠文案前缀。
+  5. 首页请求从 6 路降到 5 路（去掉 memories）。
+  影响：`BrowsePanelView.swift`、`SidebarHomeViewModel.swift`、`SidebarHomeFormat.swift`、`CardStyle.swift`、`ReminderPageView.swift`(新)、`HomeEntryCard.swift`(新，从首页视图抽出)、`xHelperMac/App.swift`、`Assets.xcassets/sidebar_reminder`、`Tests/SidebarHomeCoreTests`。
+  6. `mockup.html` 仍是第一版（记忆卡 / 「待办」口径）的样张，只作历史参考；以实现与本文 §3/§5 为准。
+- 备忘的 `limit=50` 不分页：pending 提醒量小；超过 50 条时按到期排序后仍是最该看的那批。真有量再加分页。

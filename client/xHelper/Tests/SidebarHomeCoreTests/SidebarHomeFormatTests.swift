@@ -61,6 +61,35 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertEqual(SidebarHomeFormat.relativeTime(date("2026-10-01 10:00:00"), now: now, calendar: calendar), "2026/10/01")
     }
 
+    // MARK: - 到期
+
+    func testDueTextTodayTomorrowAndClock() {
+        let now = date("2026-11-12 10:00:00")
+        XCTAssertEqual(SidebarHomeFormat.dueText("2026-11-12T18:00:00+08:00", now: now, calendar: calendar), "今天 18:00")
+        XCTAssertEqual(SidebarHomeFormat.dueText("2026-11-13T09:30:00+08:00", now: now, calendar: calendar), "明天 09:30")
+        XCTAssertEqual(SidebarHomeFormat.dueText("2026-11-14T00:05:00+08:00", now: now, calendar: calendar), "后天 00:05")
+    }
+
+    func testDueTextOverdueAndFarDates() {
+        let now = date("2026-11-12 10:00:00")
+        // 跨天但只差 10 分钟：按日历天说「昨天」，时间照实给
+        XCTAssertEqual(SidebarHomeFormat.dueText("2026-11-11T23:50:00+08:00", now: now, calendar: calendar), "昨天 23:50")
+        XCTAssertEqual(SidebarHomeFormat.dueText("2026-11-20T09:00:00+08:00", now: now, calendar: calendar), "11月20日 09:00")
+        // 跨年带年份
+        XCTAssertEqual(SidebarHomeFormat.dueText("2027-01-11T09:00:00+08:00", now: now, calendar: calendar), "2027年1月11日 09:00")
+        // 解析失败不猜时间
+        XCTAssertNil(SidebarHomeFormat.dueText("", now: now, calendar: calendar))
+        XCTAssertNil(SidebarHomeFormat.dueText("明天下午", now: now, calendar: calendar))
+    }
+
+    func testIsOverdue() {
+        let now = date("2026-11-12 10:00:00")
+        XCTAssertTrue(SidebarHomeFormat.isOverdue("2026-11-12T09:59:00+08:00", now: now))
+        XCTAssertFalse(SidebarHomeFormat.isOverdue("2026-11-12T10:01:00+08:00", now: now))
+        // 解析失败按「没过期」，不误报橙色标
+        XCTAssertFalse(SidebarHomeFormat.isOverdue("", now: now))
+    }
+
     // MARK: - 问候与当月起始
 
     func testGreetingBuckets() {

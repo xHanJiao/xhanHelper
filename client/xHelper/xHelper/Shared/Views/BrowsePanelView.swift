@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 /// 右侧栏浏览面板类型
 enum BrowsePanel: String, Identifiable, CaseIterable {
     case bills = "账单"
+    case reminders = "备忘"
     case memories = "记忆"
     case artifacts = "灵阅"
     case documents = "文档"
@@ -21,6 +22,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     var icon: String {
         switch self {
         case .bills:     return "yensign.circle"
+        case .reminders: return "checklist"
         case .memories:  return "brain.head.profile"
         case .artifacts: return "doc.richtext"
         case .documents: return "doc.text"
@@ -34,6 +36,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     var help: String {
         switch self {
         case .bills:     return "查看账单记录与统计"
+        case .reminders: return "待办提醒（只读，按到期时间排序）"
         case .memories:  return "长期记忆与语义搜索"
         case .artifacts: return "浏览对话中生成的页面、报告与对比图"
         case .documents: return "Markdown 文档与版本"
@@ -45,10 +48,10 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     }
 
     /// 首页展示的入口（浏览器单列在最前，不在此列）。
-    /// 图片 / 智能体 / 监控看板已移出首页，改从设置「内容与工具」进入；
+    /// 记忆 / 图片 / 智能体 / 监控看板已移出首页，改从设置「内容与工具」进入；
     /// 枚举 case 必须保留——文档深链、顶栏 ⌘1/⌘2/⌘3 都直接选中它们。
     /// 见 docs/design/right-sidebar-home/design.md §7。
-    static let homePanels: [BrowsePanel] = [.bills, .memories, .artifacts, .documents, .events]
+    static let homePanels: [BrowsePanel] = [.bills, .reminders, .artifacts, .documents, .events]
 }
 
 /// 回收站批量操作（页头按钮 → 二次确认）
@@ -107,9 +110,9 @@ struct BrowsePanelView: View {
     @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
-    /// 首页六个入口的数字（六路轻请求 + 60s 缓存，见 `SidebarHomeViewModel`）。
+    /// 首页六个入口 + 备忘面板的数字（五路轻请求 + 60s 缓存，见 `SidebarHomeViewModel`）。
     /// 挂在 `RightSidebarView`（与其它 VM 同处）而非首页自己：开浏览器 tab 时首页会被摘除，
-    /// 挂在自己身上会让缓存随之销毁，每次回来都重新打六个接口。
+    /// 挂在自己身上会让缓存随之销毁，每次回来都重新打五个接口。
     @ObservedObject var homeVM: SidebarHomeViewModel
     let baseURL: String
     let token: String
@@ -188,7 +191,7 @@ struct BrowsePanelView: View {
     // MARK: - 首页（问候行 + 六个入口卡 + 最近页脚）
     //
     // 设计见 docs/design/right-sidebar-home/design.md：
-    // 卡片顶对齐、最近页脚贴底；图片/智能体/监控看板已移出首页（改从设置进入）。
+    // 卡片顶对齐、最近页脚贴底；记忆/图片/智能体/监控看板已移出首页（改从设置进入）。
 
     /// 首页内容宽 ≥ 620 用两列卡片，否则单列（右栏最小 380，单列才不会把文字挤掉）。
     private static let twoColumnThreshold: CGFloat = 620
@@ -235,17 +238,25 @@ struct BrowsePanelView: View {
                     .foregroundColor(.secondary)
             }
 
-            todayLine
-                .font(.system(size: 12.5))
-                .foregroundColor(.secondary)
+            Button {
+                manager.browsePanelSelection = .reminders
+            } label: {
+                todayLine
+                    .font(.system(size: 12.5))
+                    .foregroundColor(.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("查看备忘")
         }
     }
 
-    /// 今日行：待办 / 事件 / 本月支出。任一路取不到就显示 `—`（不隐藏，免得布局跳动）。
+    /// 今日行：备忘 / 事件 / 本月支出。任一路取不到就显示 `—`（不隐藏，免得布局跳动）。
+    /// 整行可点进备忘面板——否则「上面有数字、下面没入口」会显得断头。
     /// 用 HStack 而不是 `Text + Text`（macOS 26 已废弃 `+`）。
     private var todayLine: some View {
         HStack(spacing: 7) {
-            todayItem("待办", homeVM.stats.pendingReminders.map(String.init))
+            todayItem("备忘", homeVM.stats.pendingReminders.map(String.init))
             separatorDot
             todayItem("事件", homeVM.stats.events.map(String.init))
             separatorDot
@@ -308,10 +319,16 @@ struct BrowsePanelView: View {
                 return ("sidebar_bills",
                         s.monthSpend.map { "本月 " + SidebarHomeFormat.money($0) } ?? "—",
                         s.monthBillCount.map { "\($0) 笔" })
-            case .memories:
-                return ("sidebar_memory",
-                        s.memories.map { "\($0) 条" } ?? "—",
-                        s.memoriesCreatedText.map { "最近 \($0)" })
+            case .reminders:
+                let overdue = homeVM.reminders.filter { SidebarHomeFormat.isOverdue($0.deadline) }.count
+                let next = homeVM.reminders.first { !SidebarHomeFormat.isOverdue($0.deadline) }
+                // 只有全过期时才提过期条数；有「下一条」就先说下一条。
+                let secondary = next.flatMap { SidebarHomeFormat.dueText($0.deadline) }
+                    .map { "下一条 \($0)" }
+                    ?? (overdue > 0 ? "\(overdue) 条已过期" : nil)
+                return ("sidebar_reminder",
+                        s.pendingReminders.map { "\($0) 条备忘" } ?? "—",
+                        secondary)
             case .artifacts:
                 return ("sidebar_artifact",
                         s.artifacts.map { "\($0) 页" } ?? "—",
@@ -324,7 +341,7 @@ struct BrowsePanelView: View {
                 return ("sidebar_events",
                         s.events.map { "\($0) 个事件" } ?? "—",
                         s.eventsUpdatedText.map { "最近更新 \($0)" })
-            case .images, .agents, .dashboard:
+            case .memories, .images, .agents, .dashboard:
                 // 已从首页移出（走设置），这里只为穷尽 switch
                 return ("sidebar_document", "", nil)
             }
@@ -344,6 +361,7 @@ struct BrowsePanelView: View {
     private func tint(for panel: BrowsePanel) -> Color {
         switch panel {
         case .bills:     return Color("assistantText")
+        case .reminders: return Color("appAccent")
         case .memories:  return Color("appAccent")
         case .artifacts: return Color("appAccent")
         case .documents: return Color("appAccent")
@@ -1165,6 +1183,7 @@ struct BrowsePanelView: View {
     private func isLoading(_ panel: BrowsePanel) -> Bool {
         switch panel {
         case .bills:     return billVM.isLoading
+        case .reminders: return homeVM.isLoading
         case .memories:  return memoryVM.isLoading
         case .artifacts: return artifactVM.isLoading
         case .documents:
@@ -1189,6 +1208,7 @@ struct BrowsePanelView: View {
     private func reload(_ panel: BrowsePanel) async {
         switch panel {
         case .bills:     await billVM.load()
+        case .reminders: await homeVM.refresh(baseURL: baseURL, token: token, force: true)
         case .memories:  await memoryVM.load()
         case .artifacts: await artifactVM.load()
         case .documents: await documentVM.loadCurrentMode()
@@ -1204,6 +1224,16 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:
             BillPage(viewModel: billVM, baseURL: baseURL, token: token)
+        case .reminders:
+            // 只读列表，数据与首页卡同源；直接从设置/顶栏进来时先补一次（60s 内命中缓存不重复请求）。
+            ReminderPageView(
+                items: homeVM.reminders,
+                isLoading: homeVM.isLoading,
+                errorMessage: homeVM.remindersFailed && homeVM.reminders.isEmpty
+                    ? "加载失败，点刷新重试" : nil,
+                onRetry: { Task { await homeVM.refresh(baseURL: baseURL, token: token, force: true) } }
+            )
+            .task { await homeVM.refresh(baseURL: baseURL, token: token) }
         case .memories:
             MemoryPage(viewModel: memoryVM)
         case .artifacts:
@@ -1291,107 +1321,6 @@ struct BrowsePanelView: View {
             }
         }
         #endif
-    }
-}
-
-/// 右栏首页的入口卡：左侧正方形插画 + 右侧标题/主数字/副文案 + 右箭头。
-///
-/// 尺寸与配色见 docs/design/right-sidebar-home/design.md §4：
-/// 底 `white 44%`（深色 7%），悬停提亮并轻微上浮；插画区宽度 = 卡片高度。
-private struct HomeEntryCard: View {
-    let asset: String
-    let title: String
-    /// 会变的那一行（本月 ¥1,284 / 128 条 …）
-    let primary: String
-    /// 更弱的补充行（32 笔 / 最近 昨天），没有就不渲染
-    let secondary: String?
-    /// 插画区底色（token 色，低透明度）
-    let tint: Color
-    let height: CGFloat
-    let action: () -> Void
-
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var hovered = false
-
-    private var fill: Color {
-        colorScheme == .dark
-            ? Color.white.opacity(hovered ? 0.13 : 0.07)
-            : Color.white.opacity(hovered ? 0.66 : 0.44)
-    }
-
-    private var stroke: Color {
-        colorScheme == .dark ? Color.white.opacity(0.1) : Color.white.opacity(0.66)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 0) {
-                ZStack {
-                    // 12~16% 的渐变底（左上浓、右下淡），让插画区像一张"图"而不是一块色块
-                    LinearGradient(
-                        colors: [
-                            tint.opacity(colorScheme == .dark ? 0.20 : 0.14),
-                            tint.opacity(colorScheme == .dark ? 0.06 : 0.04),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    Image(asset)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(6)
-                }
-                .frame(width: height, height: height)
-                .overlay(alignment: .trailing) {
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.06))
-                        .frame(width: 0.5)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Text(primary)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundColor(Color("appAccent"))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                    if let secondary, !secondary.isEmpty {
-                        Text(secondary)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.6))
-                    .padding(.trailing, 14)
-            }
-            .frame(height: height)
-            .background(RoundedRectangle(cornerRadius: 14).fill(fill))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(stroke, lineWidth: 0.5)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .shadow(
-                color: .black.opacity(hovered ? 0.1 : 0),
-                radius: 6, y: 3
-            )
-            .offset(y: hovered ? -1.5 : 0)
-            .contentShape(RoundedRectangle(cornerRadius: 14))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovered)
-        .help(title)
     }
 }
 

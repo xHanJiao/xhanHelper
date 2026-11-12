@@ -33,7 +33,7 @@ STUB="$CACHE/bin/cef-helper-stub"
 HELPER_SRC="$SRCROOT/CEF/helper_main.mm"
 HELPERS_DIR="$CACHE/helpers"
 
-# CEF 的四个 Helper（名字后缀 / bundle id 后缀），与 cef_variables.cmake 的 CEF_HELPER_APP_SUFFIXES 同构。
+# CEF 的五个 Helper（名字后缀 / bundle id 后缀），与 cef_variables.cmake 的 CEF_HELPER_APP_SUFFIXES 同构。
 HELPER_NAMES=("xhanHelper Helper" "xhanHelper Helper (Alerts)" "xhanHelper Helper (GPU)" "xhanHelper Helper (Plugin)" "xhanHelper Helper (Renderer)")
 HELPER_ID_SUFFIX=("" ".alerts" ".gpu" ".plugin" ".renderer")
 

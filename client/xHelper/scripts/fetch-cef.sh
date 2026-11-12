@@ -169,11 +169,13 @@ install() {
   # 戳文件**必须放在 .app 外面**：`Contents/Frameworks/` 下的一切都被 Xcode 当成"必须已签名的代码
   # 对象"，放个普通文件进去会让 CodeSign 直接失败（`code object is not signed at all`，B0 踩过）。
   # 位置：Xcode 构建用 TARGET_TEMP_DIR，手动跑回落到缓存目录；文件名按目标路径区分。
-  local stamp_dir stamp helper_sha installed_sha
+  local stamp_dir stamp helper_sha installed_sha layout_version
   stamp_dir="${CEF_INSTALL_STAMP_DIR:-${TARGET_TEMP_DIR:-$CACHE/stamps}}"
   mkdir -p "$stamp_dir"
   stamp="$stamp_dir/$(printf '%s' "$dest" | shasum -a 256 | cut -c1-16).sha"
-  helper_sha="$(shasum -a 256 "$STUB" | cut -d' ' -f1)"
+  # 布局版本跟着"装进 app 的结构"走：改了 framework 布局（如转版本化）就 +1，老产物会重装一次
+  layout_version="2"
+  helper_sha="$layout_version:$(shasum -a 256 "$STUB" | cut -d' ' -f1)"
   # 首次安装没有戳文件，`cat` 返非零属预期
   installed_sha="$(cat "$stamp" 2>/dev/null || true)"
   if [ -n "$version" ] &&
@@ -188,6 +190,21 @@ install() {
   log "装进 $dest"
   rm -rf "$dest/Chromium Embedded Framework.framework"
   cp -R "$FRAMEWORK" "$dest/"
+
+  # 转成**版本化布局**：CEF 发行包是扁平包（Resources/Info.plist），而 Xcode 在 macOS 上
+  # 校验嵌入 framework 时只认 `Versions/Current/Resources/Info.plist`（非 shallow bundle，
+  # 见 SWBTaskExecution 里的判定），不改就是：
+  #   error: Framework ... did not contain an Info.plist
+  local fw="$dest/Chromium Embedded Framework.framework"
+  if [ ! -d "$fw/Versions/A" ]; then
+    mkdir -p "$fw/Versions/A"
+    mv "$fw/Chromium Embedded Framework" "$fw/Resources" "$fw/Libraries" "$fw/Versions/A/"
+    ln -sfn A "$fw/Versions/Current"
+    # 根上只留标准软链（CEF 运行时要按 Framework.framework/Libraries/... 找 dylib，所以它也留着）
+    ln -sfn "Versions/Current/Chromium Embedded Framework" "$fw/Chromium Embedded Framework"
+    ln -sfn "Versions/Current/Resources" "$fw/Resources"
+    ln -sfn "Versions/Current/Libraries" "$fw/Libraries"
+  fi
   for name in "${HELPER_NAMES[@]}"; do
     rm -rf "$dest/$name.app"
     cp -R "$HELPERS_DIR/$name.app" "$dest/"
@@ -195,15 +212,18 @@ install() {
   # 同上：本机产物可能本来就没有 quarantine 属性，xattr 返非零属正常
   xattr -dr com.apple.quarantine "$dest/Chromium Embedded Framework.framework" "$dest"/*.app || true
 
-  # 由里到外 ad-hoc 签名：框架内的 dylib → 框架 → 各 Helper。
-  # 只自用不分发（D13），不引 Developer ID、不公证，所以用 - 而不是证书名。
+  # 由里到外签名：框架内 dylib → 框架 → 各 Helper。
+  # 用 Xcode 这次构建的签名身份（与 App 本体一致，否则后续到 Xcode 的 embedded binary
+  # 校验里会出现"签名身份不一致"）；手动跑没有身份时退回 ad-hoc（只自用，D13 不公证）。
+  local sign_id="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+  log "嵌套签名身份：$sign_id"
   local lib
   for lib in "$dest/Chromium Embedded Framework.framework/Libraries/"*.dylib; do
-    codesign -f -s - --timestamp=none "$lib"
+    codesign -f -s "$sign_id" --timestamp=none "$lib"
   done
-  codesign -f -s - --timestamp=none "$dest/Chromium Embedded Framework.framework"
+  codesign -f -s "$sign_id" --timestamp=none "$dest/Chromium Embedded Framework.framework"
   for name in "${HELPER_NAMES[@]}"; do
-    codesign -f -s - --timestamp=none "$dest/$name.app"
+    codesign -f -s "$sign_id" --timestamp=none "$dest/$name.app"
   done
   echo "$helper_sha" > "$stamp"
   log "签名完成"

@@ -331,7 +331,15 @@ static bool EnsureLibraryLoaded() {
                                   repeats:NO
                                     block:^(__unused NSTimer *timer) {
                                       g_pump = nil;
-                                      if (g_cef_ready) CefDoMessageLoopWork();
+                                      if (!g_cef_ready) return;
+                                      // 单次 CefDoMessageLoopWork 只处理一小撮任务，一次不够把导航推下去：
+                                      // 实测只调 1 次时 renderer 活着、页面永不 commit（History 空、network
+                                      // service 不起），调 100 次稳定 5/5 通过。CEF 没有"是否还有活"的查询口，
+                                      // 只能给个上限。
+                                      // shortcut: 100 是实测够用的经验值，B2 做性能时再按真实负载收窄
+                                      for (int i = 0; i < 100; i++) {
+                                        CefDoMessageLoopWork();
+                                      }
                                     }];
   [NSRunLoop.mainRunLoop addTimer:g_pump forMode:NSRunLoopCommonModes];
 }

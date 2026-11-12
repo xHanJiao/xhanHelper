@@ -50,21 +50,28 @@ extract() {
   log "解包到 $CACHE"
   mkdir -p "$CACHE"
   tar -xjf "$ARCHIVE" -C "$CACHE"
-  # 不清 quarantine 的话签名必挂（第一次构建必踩）
+  # 不清 quarantine 的话签名必挂（第一次构建必踩）。
+  # 本机自己打的包往往没有 quarantine 属性，xattr 返非零属正常，故忽略。
   xattr -dr com.apple.quarantine "$DIST" || true
   # 解完就删：一份 300MB 的 tar 留着没用（解出来的 ~2GB 才是要用的）
   rm -f "$ARCHIVE"
 }
 
 fetch_dist() {
-  [ -f "$DIST/include/cef_app.h" ] && return 0
+  # 完整性判据同时看头文件和 framework 的 Info.plist：解包中断留下的半截目录不能当成"已就绪"
+  if [ -f "$DIST/include/cef_app.h" ] && [ -f "$FRAMEWORK/Resources/Info.plist" ]; then return 0; fi
   [ -f "$ARCHIVE" ] || download
   extract
-  [ -f "$DIST/include/cef_app.h" ] || { echo "error: [cef] 解包后仍找不到 include/cef_app.h" >&2; exit 1; }
+  if [ ! -f "$DIST/include/cef_app.h" ] || [ ! -f "$FRAMEWORK/Resources/Info.plist" ]; then
+    echo "error: [cef] 解包不完整（缺 include/ 或 framework），删掉 $CACHE 重跑本脚本" >&2
+    exit 1
+  fi
 }
 
 build_wrapper() {
   [ -f "$WRAPPER_LIB" ] && return 0
+  command -v cmake >/dev/null || { echo "error: [cef] 需要 cmake（brew install cmake ninja）" >&2; exit 1; }
+  command -v ninja >/dev/null || { echo "error: [cef] 需要 ninja（brew install cmake ninja）" >&2; exit 1; }
   log "编 libcef_dll_wrapper（CEF 升级后必须重编，否则 ABI 不匹配直接崩）"
   local build="$CACHE/wrapper-build"
   cmake -S "$DIST" -B "$build" -G Ninja \
@@ -155,9 +162,15 @@ install() {
   # 增量：每次构建都重拷 300MB 太浪费，版本一致就跳过（Bundle CEF 是 alwaysOutOfDate）
   local version
   version="$(read_framework_version "$FRAMEWORK")"
+  # 版本一致 **且** Helper 就是这次编出来的那份（改了 helper_main.mm 必须重装，否则 app 里一直是
+  # 旧 Helper，症状是"改了完全没生效"）。装进去的二进制被 codesign 改过，不能直接 cmp → 记 sha。
+  # 首次安装没有戳文件，`cat` 返非零属预期。
+  local helper_sha installed_sha
+  helper_sha="$(shasum -a 256 "$STUB" | cut -d' ' -f1)"
+  installed_sha="$(cat "$dest/.cef-helper-sha" 2>/dev/null || true)"
   if [ -n "$version" ] &&
      [ "$(read_framework_version "$dest/Chromium Embedded Framework.framework")" = "$version" ] &&
-     [ -d "$dest/${HELPER_NAMES[0]}.app" ]; then
+     [ "$installed_sha" = "$helper_sha" ]; then
     log "已是 ${version}，跳过安装"
     return 0
   fi
@@ -170,6 +183,7 @@ install() {
     rm -rf "$dest/$name.app"
     cp -R "$HELPERS_DIR/$name.app" "$dest/"
   done
+  # 同上：本机产物可能本来就没有 quarantine 属性，xattr 返非零属正常
   xattr -dr com.apple.quarantine "$dest/Chromium Embedded Framework.framework" "$dest"/*.app || true
 
   # 由里到外 ad-hoc 签名：框架内的 dylib → 框架 → 各 Helper。
@@ -182,6 +196,7 @@ install() {
   for name in "${HELPER_NAMES[@]}"; do
     codesign -f -s - --timestamp=none "$dest/$name.app"
   done
+  echo "$helper_sha" > "$dest/.cef-helper-sha"
   log "签名完成"
 }
 

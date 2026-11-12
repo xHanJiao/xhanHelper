@@ -9,7 +9,9 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_browser_process_handler.h"
 #include "include/cef_display_handler.h"
+#include "include/cef_keyboard_handler.h"
 #include "include/cef_life_span_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/wrapper/cef_library_loader.h"
@@ -98,13 +100,38 @@ static void SetCefError(NSError **error, NSInteger code, NSString *message) {
   }
 }
 
+@interface XHCefRuntime ()
++ (void)schedulePumpWorkAfterMs:(int64_t)delayMs;
+@end
+
 namespace {
+
+// external_message_pump 的正确用法：CEF 通过 OnScheduleMessagePumpWork 告诉"delay 毫秒后需要跑一次
+// CefDoMessageLoopWork"。别用固定 60Hz 定时器空转（本 app 关窗驻留、常开，白烧电）。
+class XHCefBrowserProcessHandler : public CefBrowserProcessHandler {
+ public:
+  void OnScheduleMessagePumpWork(int64_t delay_ms) override {
+    // 这个回调可能在任意 CEF 线程，定时器必须在主线程装
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [XHCefRuntime schedulePumpWorkAfterMs:delay_ms];
+    });
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(XHCefBrowserProcessHandler);
+};
 
 class XHCefApp : public CefApp {
  public:
-  XHCefApp() = default;
+  CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
+    if (!browser_process_handler_) {
+      browser_process_handler_ = new XHCefBrowserProcessHandler();
+    }
+    return browser_process_handler_;
+  }
 
  private:
+  CefRefPtr<XHCefBrowserProcessHandler> browser_process_handler_;
   IMPLEMENT_REFCOUNTING(XHCefApp);
 };
 
@@ -122,9 +149,32 @@ namespace {
 class XHCefClient : public CefClient,
                     public CefLifeSpanHandler,
                     public CefLoadHandler,
-                    public CefDisplayHandler {
+                    public CefDisplayHandler,
+                    public CefKeyboardHandler {
  public:
   explicit XHCefClient(XHCefBrowserView *view) : view_(view) {}
+
+  CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+
+  // ⌘ 组合键默认会被网页吞掉（⌘K 聚焦输入、⌘W、⌘F、⌘+ 都进 Chromium）。
+  // 这里把 ⌘ 键交回 AppKit；**编辑键例外**（⌘C/V/X/Z/A/Y 必须留给网页里的输入框）。
+  // shortcut: 编辑键是硬编码白名单，B6 统一收口快捷键时改成"app 自有快捷键表"。
+  bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
+                     const CefKeyEvent &event,
+                     CefEventHandle os_event,
+                     bool *is_keyboard_shortcut) override {
+    if (event.type != KEYEVENT_RAWKEYDOWN || os_event == nullptr) return false;
+    NSEvent *nsEvent = (__bridge NSEvent *)os_event;
+    if ((nsEvent.modifierFlags & NSEventModifierFlagCommand) == 0) return false;
+
+    static NSSet<NSString *> *editingKeys =
+        [NSSet setWithObjects:@"c", @"v", @"x", @"z", @"a", @"y", nil];
+    NSString *key = nsEvent.charactersIgnoringModifiers.lowercaseString;
+    if (key.length == 0 || [editingKeys containsObject:key]) return false;
+
+    if (is_keyboard_shortcut) *is_keyboard_shortcut = true;
+    return true;
+  }
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -278,20 +328,14 @@ static bool EnsureLibraryLoaded() {
   CefString(&settings.locales_dir_path) =
       [framework stringByAppendingPathComponent:@"Resources"].UTF8String;
   CefString(&settings.root_cache_path) = cachePath.UTF8String;
+  // 不设 cache_path = incognito（cookie/localStorage 只在内存），登录态全靠它
+  CefString(&settings.cache_path) = cachePath.UTF8String;
 
   if (!CefInitialize(mainArgs, settings, new XHCefApp(), nullptr)) {
     SetCefError(error, 4, @"CefInitialize 失败（看 Console 里的 CEF 日志）");
     return NO;
   }
   g_cef_ready = true;
-
-  // external_message_pump：CEF 不自带循环，必须由我们按固定节拍调 CefDoMessageLoopWork
-  g_pump = [NSTimer timerWithTimeInterval:1.0 / 60.0
-                                  repeats:YES
-                                    block:^(__unused NSTimer *timer) {
-                                      if (g_cef_ready) CefDoMessageLoopWork();
-                                    }];
-  [NSRunLoop.mainRunLoop addTimer:g_pump forMode:NSRunLoopCommonModes];
   return YES;
 }
 
@@ -300,6 +344,23 @@ static bool EnsureLibraryLoaded() {
 
 + (BOOL)isReady {
   return g_cef_ready;
+}
+
++ (void)schedulePumpWorkAfterMs:(int64_t)delayMs {
+  if (!g_cef_ready) return;
+
+  NSDate *target = [NSDate dateWithTimeIntervalSinceNow:delayMs <= 0 ? 0 : delayMs / 1000.0];
+  // 已经有更早的排程就别动（合并请求，只保留最早的一次）
+  if (g_pump && [g_pump.fireDate compare:target] != NSOrderedDescending) return;
+  [g_pump invalidate];
+
+  g_pump = [NSTimer timerWithTimeInterval:MAX(0, [target timeIntervalSinceNow])
+                                  repeats:NO
+                                    block:^(__unused NSTimer *timer) {
+                                      g_pump = nil;
+                                      if (g_cef_ready) CefDoMessageLoopWork();
+                                    }];
+  [NSRunLoop.mainRunLoop addTimer:g_pump forMode:NSRunLoopCommonModes];
 }
 
 @end
@@ -330,11 +391,10 @@ static bool EnsureLibraryLoaded() {
   if (self.window) {
     [self createBrowserIfNeeded];
   }
-  [self syncBrowserVisibility];
 }
 
 - (void)createBrowserIfNeeded {
-  if (_browserRequested || !XHCefRuntime.isReady) return;
+  if (_browserRequested || !XHCefRuntime.isReady) return;   // 未就绪不置标记，等下次进窗口再试
   _browserRequested = YES;
 
   _client = new XHCefClient(self);
@@ -347,7 +407,9 @@ static bool EnsureLibraryLoaded() {
 
   if (!CefBrowserHost::CreateBrowser(windowInfo, _client, _startURL.UTF8String,
                                      browserSettings, nullptr, nullptr)) {
-    NSLog(@"[cef] CreateBrowser 失败（父视图或浏览器设置有问题）");
+    NSLog(@"[cef] CreateBrowser 失败（父视图或浏览器设置有问题），允许下次重试");
+    _browserRequested = NO;
+    _client = nullptr;
   }
 }
 
@@ -363,21 +425,11 @@ static bool EnsureLibraryLoaded() {
 
 - (void)syncBrowserFrame {
   NSRect bounds = self.bounds;
-  // CEF 会把自己的渲染子视图挂进来，它不跟随父视图尺寸，得我们同步
+  // CEF 会把自己的渲染子视图挂进来，它不跟随父视图尺寸，得我们同步。
+  // 窗口模式（非 OSR）下 WasResized/WasHidden 是空操作，别调（会让人以为遮挡/尺寸问题已处理）。
   for (NSView *subview in self.subviews) {
     subview.frame = bounds;
   }
-  if (_browser) {
-    _browser->GetHost()->WasResized();
-  }
-}
-
-- (void)syncBrowserVisibility {
-  if (!_browser) return;
-  BOOL visible = self.window != nil && !self.window.isMiniaturized &&
-                 (self.window.occlusionState & NSWindowOcclusionStateVisible) != 0;
-  _browser->GetHost()->WasHidden(!visible);
-  _browser->GetHost()->NotifyScreenInfoChanged();
 }
 
 - (void)loadURLString:(NSString *)urlString {
@@ -397,12 +449,12 @@ static bool EnsureLibraryLoaded() {
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
   [self syncBrowserFrame];
-  [self syncBrowserVisibility];
 }
 
 - (void)cefBrowserDidClose {
+  // 只放 browser；client 留到本视图 dealloc。
+  // 在 OnBeforeClose 栈里把 client 引用清零，CEF 那份引用一放就是"成员函数执行中 delete this"。
   _browser = nullptr;
-  _client = nullptr;
 }
 
 - (void)dealloc {

@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 见 docs/design/mac-apps/browser-chromium-migration.md 第十三章
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == 11,
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                  event.modifierFlags.intersection([.control, .option, .command])
                     == [.control, .option, .command]
             else { return event }
             CefSmokeWindowController.shared.show()

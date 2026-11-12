@@ -106,7 +106,7 @@ Phase 0 已实测：**"真 Chromium 就自动过谷歌"不成立**，需要四�
 
 ## 六、打包 / 签名 / 公证（D13 / D14 已定）
 
-- bundle 里放 `Chromium Embedded Framework.framework` + 4 个 `Helper.app`，**+250~350MB**。
+- bundle 里放 `Chromium Embedded Framework.framework` + 5 个 `Helper.app`（主 / Alerts / GPU / Plugin / Renderer；官方包不预置，见 6.1），**+250~350MB**。
 - **架构 `ARCHS=arm64`**（D14）：官方 CEF 包是单架构，Release 默认 universal 会链接失败；自用（M1）不需要 x86_64。Debug 的 `ONLY_ACTIVE_ARCH=YES` 本来就不受影响，只需补 Release/pbxproj 全局 `ARCHS`。
 - `CefSettings` 必须显式给：`browser_subprocess_path`（Helper 可执行）、`framework_dir_path`、`main_bundle_path`、`resources_dir_path`、`locales_dir_path`（只留 `zh-CN`/`en-US` 可省几十 MB）。
 - 签名顺序：Helper×4 → framework → Go 后端 → 主 app；`--options runtime --timestamp`。Renderer 需要 JIT 相关 entitlement（`allow-jit` 等），照 CEF 官方示例。**注意和 Xcode 自身签名的先后**：Run Script 提前签过再让 Xcode 整体签，容易出现 `code object is not signed at all` / 签名被覆盖，第一次构建预算半天（现有 `scripts/bundle-backend.sh` 的嵌套签名先例照它扩）。
@@ -541,7 +541,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | **⌘ 快捷键被 CEF 吞** | ⌘K 聚焦聊天输入、⌘W、⌘F、⌘+ 落到网页里 | `CefKeyboardHandler::OnPreKeyEvent` 判为应用快捷键并交回 AppKit |
 | **入口必须改 `static func main()`** | SwiftUI `@main` 无法在 `NSApplicationMain` 前跑 `CefExecuteProcess --type=` 分支 | 改入口；这条正好在 `swiftc -typecheck` 盲区，只能真机验 |
 | **Swift 6 严格并发 × ObjC++** | 项目带 `-default-isolation MainActor`，回调里的非 Sendable 类型会一片红 | 预计一批 `nonisolated(unsafe)` / `MainActor.assumeIsolated` 包装；不是难点但是实打实工作量（P1 可能从 3~5 天撑到 5~7 天） |
-| **遮挡 / Space 切换后黑帧** | CEF 需要 `WasHidden` / `NotifyScreenInfoChanged` 才重绘 | P1 合成冒烟时一起看 |
+| **遮挡 / Space 切换后黑帧** | 窗口模式下 `WasResized` / `WasHidden` / `NotifyScreenInfoChanged` 都是 **OSR 专用**（头文件原文 "only used when window rendering is disabled"），调了也是空操作 | 窗口模式交给 CEF 自己的 NSView 跟随尺寸；真出现黑帧别往这三个 API 上找，改查视图形状/材质叠加（`docs/bugs/030`） |
 | **后台 tab 被节流** | Chromium 对隐藏 renderer 降频，agent 自动化会莫名卡住 | `OnBeforeCommandLineProcessing` 加 `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows` |
 | **`Page.captureScreenshot` 对不可见 tab** | 可能出空白图 | P1 顺手验，结论决定 agent 截图工具的边界 |
 | **中文输入法** | 候选窗位置、`ImeSetComposition` | 内嵌 NSView 一般没问题，但要手打一句验证 |
@@ -613,5 +613,10 @@ main                       ← 继续每天发版（WK，现状不变）
 建议只合 **B0 + B1**，其余保持独立——尤其 B5 最容易回炉。
 
 ### 14.4 进度记录
+
+| 批次 | 完成日期 | commit | review 结论 |
+|---|---|---|---|
+| B0 | 2026-11-12 | `3c8940d3` | 待真机构建（脚本本机实跑通过：下载/编 wrapper/造 Helper×5/装包签名/增量跳过） |
+| B1 | 2026-11-12 | 见 `cef(b1)` | 待真机构建；review 已过 1 轮（P1×2 已修） |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

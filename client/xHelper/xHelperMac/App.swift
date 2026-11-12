@@ -40,6 +40,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 : nil
             DispatchQueue.main.async { CefSmokeWindowController.shared.show(urlString: url) }
         }
+
+        // 四层伪装的回归探针：`open <app> --args --cef-probe[=回显请求头的地址]`。
+        // 落盘 `cef-probe.json` 后自己退出（由 scripts/cef-regression.sh 判读）；不需要后端。
+        if let arg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--cef-probe") }) {
+            let parts = arg.split(separator: "=", maxSplits: 1)
+            let url = parts.count == 2 ? String(parts[1]) : "https://httpbin.org/headers"
+            DispatchQueue.main.async { CefSmokeWindowController.shared.runProbe(urlString: url) }
+            return
+        }
         #endif
 
         // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。

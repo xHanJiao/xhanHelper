@@ -1,5 +1,7 @@
 #import "CefBridge.h"
 
+#include "CefDisguise.h"
+
 #include <objc/runtime.h>
 
 #include <memory>
@@ -12,6 +14,9 @@
 #include "include/cef_browser_process_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_life_span_handler.h"
+#include "include/cef_request.h"
+#include "include/cef_parser.h"
+#include "include/cef_resource_request_handler.h"
 #include "include/cef_values.h"
 #include "include/cef_load_handler.h"
 #include "include/wrapper/cef_library_loader.h"
@@ -146,16 +151,61 @@ class XHCefApp : public CefApp {
 
 namespace {
 
+// 第 2 层伪装：CEF 默认的 sec-ch-ua 只报 Chromium（UA 被覆盖后甚至可能不发），服务端一眼看出不是 Chrome。
+// 真 Chrome 只在安全传输上加这三个低熵提示（http 上不发，乱发反而是异常信号）。
+class XHCefResourceRequestHandler : public CefResourceRequestHandler {
+ public:
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+                                   CefRefPtr<CefFrame> frame,
+                                   CefRefPtr<CefRequest> request,
+                                   CefRefPtr<CefCallback> callback) override {
+    if (IsSecureForClientHints(request->GetURL())) {
+      request->SetHeaderByName("sec-ch-ua", xhdisguise::SecChUa(), true);
+      request->SetHeaderByName("sec-ch-ua-mobile", "?0", true);
+      request->SetHeaderByName("sec-ch-ua-platform", "\"macOS\"", true);
+    }
+    return RV_CONTINUE;
+  }
+
+ private:
+  // 低熵提示只走安全来源（https，以及浏览器当"可信"的 localhost）。逐个比 host 前缀不够：
+  // `http://localhost.evil.com` 也会命中，那才是不该注入的地方。
+  static bool IsSecureForClientHints(const CefString &url) {
+    CefURLParts parts;
+    if (!CefParseURL(url, parts)) return false;
+    const std::string scheme = CefString(&parts.scheme).ToString();
+    if (scheme == "https") return true;
+    if (scheme != "http") return false;
+    const std::string host = CefString(&parts.host).ToString();
+    return host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+  }
+
+  IMPLEMENT_REFCOUNTING(XHCefResourceRequestHandler);
+};
+
 class XHCefClient : public CefClient,
                     public CefLifeSpanHandler,
                     public CefLoadHandler,
-                    public CefDisplayHandler {
+                    public CefDisplayHandler,
+                    public CefRequestHandler {
  public:
   explicit XHCefClient(XHCefBrowserView *view) : view_(view) {}
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request,
+      bool is_navigation,
+      bool is_download,
+      const CefString &request_initiator,
+      bool &disable_default_handling) override {
+    return new XHCefResourceRequestHandler();
+  }
 
   // 关窗/CloseBrowser 走完进程回收才通知外部放引用
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
@@ -254,6 +304,24 @@ class XHCefClient : public CefClient,
     });
   }
 
+  // 页面 → 原生的回传通道（回归探针用）：CEF 的 ExecuteJavaScript 没有返回值，页面里只能靠
+  // console.log 把结果交出来。前缀 "XHPROBE:" 的才截走，其余照常进控制台。
+  bool OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                        cef_log_severity_t level,
+                        const CefString &message,
+                        const CefString &source,
+                        int line) override {
+    const std::string text = message.ToString();
+    const std::string prefix = "XHPROBE:";
+    if (text.rfind(prefix, 0) != 0) return false;
+    NSString *payload = [NSString stringWithUTF8String:text.substr(prefix.size()).c_str()] ?: @"";
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      if (view.probeReported) view.probeReported(payload);
+    });
+    return true;  // 已消费，别再往控制台刷一坨 JSON
+  }
+
  private:
   __weak XHCefBrowserView *view_;
 
@@ -344,6 +412,9 @@ static bool EnsureLibraryLoaded() {
   CefString(&settings.root_cache_path) = cachePath.UTF8String;
   // 不设 cache_path = incognito（cookie/localStorage 只在内存），登录态全靠它
   CefString(&settings.cache_path) = cachePath.UTF8String;
+
+  // 第 1 层伪装：同一条串同时管 User-Agent 请求头和 navigator.userAgent
+  CefString(&settings.user_agent) = xhdisguise::UserAgent();
 
   if (!CefInitialize(mainArgs, settings, new XHCefApp(), nullptr)) {
     LogInitFailure(4, @"CefInitialize 失败（CEF 自己的日志见 Console）");
@@ -472,6 +543,12 @@ static bool EnsureLibraryLoaded() {
 - (void)loadHTMLString:(NSString *)html {
   NSString *base64 = [[html dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
   [self loadURLString:[@"data:text/html;charset=utf-8;base64," stringByAppendingString:base64]];
+}
+
+- (void)evaluateJavaScript:(NSString *)script {
+  if (!_browser) return;
+  CefRefPtr<CefFrame> frame = _browser->GetMainFrame();
+  if (frame) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
 }
 
 - (void)reload {

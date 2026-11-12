@@ -85,7 +85,9 @@ build_wrapper() {
 }
 
 build_stub() {
-  if [ -f "$STUB" ] && [ "$STUB" -nt "$HELPER_SRC" ]; then return 0; fi
+  # 伪装注入（第 3/4 层）也在 helper 里：改了共享头必须重编，否则症状是"改了完全没生效"
+  local disguise_hdr="$SRCROOT/xHelperMac/CEF/CefDisguise.h"
+  if [ -f "$STUB" ] && [ "$STUB" -nt "$HELPER_SRC" ] && [ "$STUB" -nt "$disguise_hdr" ]; then return 0; fi
   log "编 Helper 可执行文件（${HELPER_SRC}）"
   mkdir -p "$CACHE/bin"
   # 只链 wrapper，不链 framework：framework 由 CefScopedLibraryLoader 在运行时 dlopen

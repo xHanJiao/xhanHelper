@@ -32,6 +32,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// `target=_blank` / `window.open`：CEF 默认会自己开一个裸原生窗口（还会复用本视图的 client，
 /// 把地址栏串成弹窗的 URL）。这里一律拦下，交给 Swift 开成我们自己的 tab。
 @property (nonatomic, copy, nullable) void (^popupRequested)(NSString *url);
+/// 页内 `console.log("XHPROBE:<json>")` 的内容（回归探针的回传通道：CEF 执行 JS 没有返回值）
+@property (nonatomic, copy, nullable) void (^probeReported)(NSString *payload);
 
 @property (nonatomic, readonly) BOOL isLoading;
 @property (nonatomic, readonly) BOOL canGoBack;
@@ -40,6 +42,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)loadURLString:(NSString *)urlString;
 /// CEF 没有 loadHTMLString，用 data: URL 顶（新标签页那种本地 HTML）
 - (void)loadHTMLString:(NSString *)html;
+/// 执行 JS（无返回值；要拿结果就让页面 `console.log("XHPROBE:…")`，见 probeReported）
+- (void)evaluateJavaScript:(NSString *)script;
 - (void)reload;
 - (void)stopLoading;
 - (void)goBack;

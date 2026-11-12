@@ -56,11 +56,21 @@ Phase 0 已实测：**"真 Chromium 就自动过谷歌"不成立**，需要四�
 | # | 层 | 落点 | 说明 |
 |---|---|---|---|
 | 1 | UA 字符串 | `CefSettings.user_agent` | 版本要与内核一致 |
-| 2 | `sec-ch-ua*` 请求头 | `CefRequestHandler::OnBeforeResourceLoad`（或 `CefResourceRequestHandler`） | 服务端可见；CEF 默认不发/只报 Chromium。**必须实测抓包确认** |
-| 3 | `navigator.userAgentData.brands` | `CefRenderProcessHandler::OnContextCreated` 里 `ExecuteJavaScript` | document-start |
-| 4 | **`window.chrome`** | 同上 | CEF 会注入 `setSyncEncryptionKeys` / `setClientEncryptionKeys` / `addTrustedSyncEncryptionRecoveryMethod` 三个真 Chrome 没有的函数；**带着它们 UA-CH 再正确也被拦**。整个替换成 `{app, csi, loadTimes}` |
+| 2 | `sec-ch-ua*` 请求头 | `CefResourceRequestHandler::OnBeforeResourceLoad`（CEF 156 已从 `CefRequestHandler` 删掉同名钩子） | 服务端可见；CEF 默认不发/只报 Chromium。**必须实测抓包确认**（`cef-regression.sh` 的探针就是这条的取证） |
+| 3 | `navigator.userAgentData.brands` | `CefRenderProcessHandler::OnContextCreated` 里 `CefV8Context::Eval`（同步，不是 `ExecuteJavaScript`） | document-start |
+| 4 | **`window.chrome`** | 同上 | CEF 会注入 `setSyncEncryptionKeys` / `setClientEncryptionKeys` / `addTrustedSyncEncryptionRecoveryMethod` 三个真 Chrome 没有的函数；**带着它们 UA-CH 再正确也被拦**。整体替换成 `{app, csi, loadTimes, runtime}` |
 
 策略保持"越少越好"：这四层是**名义层**（内核本来就是 Chromium），不要再退回 WKWebView 那种伪造 `plugins`/`mediaDevices`/WebGL 的深层指纹路线。
+
+**B3 落地口径（代码即事实）**
+
+- 版本号唯一来源是 `include/cef_version.h`（`CHROME_VERSION_MAJOR/MINOR/BUILD/PATCH`）；UA 与 brands 都从它拼，**升级内核不会出现"UA 忘改"**（10.2 的 A 档检查因此不必再 grep UA 常量）。伪装常量集中在 `xHelperMac/CEF/CefDisguise.h`，浏览器进程（`CefBridge.mm`）与渲染进程（`CEF/helper_main.mm`，`fetch-cef.sh` 单独编译）共用同一份。
+- 第 1 层：`CefSettings.user_agent`（这条串同时管 `User-Agent` 请求头与 `navigator.userAgent`）。
+- 第 2 层：**CEF 156 的 `CefRequestHandler` 已没有 `OnBeforeResourceLoad`**，改由 `GetResourceRequestHandler` 返回 `CefResourceRequestHandler`，在它的 `OnBeforeResourceLoad` 里 `SetHeaderByName(..., overwrite=true)`。只对 `https` / localhost 设（真 Chrome 在 http 上不发低熵提示，发了反而是异常信号）。
+- 第 3/4 层：`XHCefRenderProcessHandler::OnContextCreated` 里 `context->Enter()` → `CefV8Context::Eval(...)` → `Exit()`（**不用 `frame->ExecuteJavaScript`**：那是投任务，"页面脚本 vs 注入脚本谁先跑"是赌博，赌输了等于没做）。**必须让 `CefExecuteProcess` 拿到带 render handler 的 `CefApp`**（`helper_main.mm`）；传 `nullptr` 就没有渲染进程钩子（CEF 154 起 `CefRegisterExtension` 已移除，不能再走那条路）。注入失败按层 `console.error("[cef-disguise] …")`，不静默降级。
+- `GREASE` 陪跑品牌（`Not:A-Brand` / `99`）是跟着内核代次手写的常量；升级内核后抓包发现形态变了要同步改（见 10.1）。
+- 取证：`--cef-probe[=回显地址]`（加载回显请求头的页面 → 页内 `console.log("XHPROBE:…")` 回传 → 落盘 `cef-probe.json` 后自动退出），由 `scripts/cef-regression.sh` 判读四层是否**互相自洽**；谷歌登录假邮箱、百度三站有没有验证码仍需人眼。
+- 退路（探针若显示网络层把我们设的头又盖回去了）：开 `remote_debugging_port` 用 CDP `Network.setUserAgentOverride`（带 `userAgentMetadata`），一次把 UA / UA-CH 头 / `navigator.userAgentData` 三层都接管 —— 比自己拼头可靠，代价是引入 CDP 通道。
 
 **回归**：脚本落在 `scripts/cef-regression.sh`（P1 第 3 步交付），查四件事：谷歌假邮箱探针、百度三站、httpbin 请求头、`window.chrome` 成员与真 Chrome 的差异。每次升级 CEF 后必须先跑（见第十节 10.2 的 stamp 检查）。
 
@@ -466,7 +476,7 @@ PINNED_AT=$(cat "$SRCROOT/CEF_VERSION_AT")  # 2026-11-12
 
 **两个附加检查（更值钱）**
 
-1. **UA 与内核版本一致性**：`grep` 伪装层的 UA 常量，与 framework 实际版本比对。不一致 → `warning: 伪装 UA 写的是 Chrome/157，实际内核 156.0.7`。挡住"升级忘了改 UA"这种最隐蔽的错。
+1. **伪装与内核版本一致性**：B3 起 UA / brands / `sec-ch-ua` 全部从 `cef_version.h` 拼（见第三章），**编译期就不可能对不上**，这条检查从"grep UA 常量"降级为"不用做"。真正会漂的是 GREASE 陪跑品牌（手写常量）——它只能靠 `cef-regression.sh` 的探针发现，所以第 2 条比第 1 条更值钱。
 2. **升级未回归**：`scripts/cef-regression.sh` 成功后写 stamp（`{"version":"156.0.7"}`）；构建时 `shipped != stamp` → `warning: 156.0.7 是升级后首次构建，先跑 scripts/cef-regression.sh`。
 
 ### 10.3 工程细节（已核实）
@@ -482,7 +492,7 @@ PINNED_AT=$(cat "$SRCROOT/CEF_VERSION_AT")  # 2026-11-12
 client/xHelper/CEF_VERSION            # 156.0.7+g47dbc1d
 client/xHelper/CEF_VERSION_AT         # 2026-11-12
 client/xHelper/scripts/check-cef-version.sh   # Xcode Run Script 与发版前 --strict 共用
-client/xHelper/scripts/cef-regression.sh      # 谷歌探针 + 百度三站 + httpbin 头 + window.chrome 成员
+client/xHelper/scripts/cef-regression.sh      # 自动：UA/sec-ch-ua/userAgentData/window.chrome（探针）；人工清单：谷歌假邮箱、百度三站
 client/xHelper/scripts/update-cef.sh          # 下载/替换/签名一条龙（P4，可选）
 ```
 
@@ -569,6 +579,8 @@ main                       ← 继续每天发版（WK，现状不变）
 | **首次运行弹「Chromium Safe Storage」钥匙串授权** | 第一次起 CEF 会问"允许使用你储存在钥匙串的 Chromium Safe Storage 中的机密信息"（Chromium 用它加密 cookie/密码）。**没人点的话 profile / 网络初始化就停在那儿**：renderer 进程起得来、页面永不 commit、History 表空、连 network service 都不启动 —— 极容易被误判成"CEF 嵌不进来" | 首次点「允许」（或「始终允许」）。系统按"允许过的 App"记，**换签名身份 / 每次重签都可能重新弹**（ad-hoc 与 Developer 混签、反复重建换 cdhash 时最明显）。排查"页面不加载"先确认没有这条弹窗在等 |
 | **页面永不 commit（最费时间的坑）** | renderer/GPU 进程都起得来、浏览器创建成功，但页面永远不 commit：`Default/History` 的 `urls` 表 0 条、network service 不启动、`chrome_debug.log` 干净。看着像"CEF 嵌不进来"，实际是消息泵饿死 | **根因：`CefDoMessageLoopWork` 单次处理的工作量有限**，`external_message_pump` 下一次调度只调 1 次不够推进导航。修法：每次调度里循环调（实测 100 次，稳定 5/5；1 次 3/3 失败、16ms 定时器 1/3 成功）。对照实验：同环境官方 `cefclient` 正常，别怀疑网络/签名 |
 | **`process_requirement.cc` 报错**（只在命令行真空壳里出现过；真机没复现，疑与上一条同源） | 自建 `.app` 里 CEF 初始化、Helper 起、browser 创建都正常（`--no-sandbox` 确实传给了子进程），但重跑时出现 `Unable to derive validation category for current process` + `ProcessIsSignedAndFulfillsRequirement`，renderer 活着、导航不提交。同环境下官方 `cefclient.app` 正常 | 真机构建第一件事就复验这条。若复现：优先试 ① Helper 里补 `CefScopedSandboxContext`（改用 CEF sandbox，去掉 `no_sandbox`）② 换 `cache_path`/`root_cache_path` 到非临时目录 ③ 对照 `cefclient.app` 的 Info.plist 逐项对齐 |
+| **CEF 156 删了一批老 API**（B3 实测） | `CefRegisterExtension`（`CEF_API_REMOVED(15400)`）、`CefRequestHandler::OnBeforeResourceLoad` 都已不在头文件里，照旧教程写会编译失败 | 注入走渲染进程 `OnContextCreated`；改请求头走 `GetResourceRequestHandler` → `CefResourceRequestHandler::OnBeforeResourceLoad` |
+| **渲染进程钩子要有 CefApp**（B3） | `CefExecuteProcess(main_args, nullptr, nullptr)` 时 `OnContextCreated` 永远不触发（症状：页面正常、伪装全无） | `helper_main.mm` 里传 `CefRefPtr<CefApp>`（带 `GetRenderProcessHandler`）；只改浏览器进程的 `XHCefApp` 没用 |
 
 ### 13.2 资源预算（8GB 内存 / ~47GB 空闲）
 
@@ -636,6 +648,7 @@ main                       ← 继续每天发版（WK，现状不变）
 |---|---|---|---|
 | B0 | 2026-11-12 | `3c8940d3` | 待真机构建（脚本本机实跑通过：下载/编 wrapper/造 Helper×5/装包签名/增量跳过） |
 | B1 | 2026-11-12 | `5315d41d..d30dc5b2` | **通过**：真机 CEF 起、页面真实加载（`Default/History` 有「百度一下，你就知道」）、profile 落盘、无 `process_requirement`；合成外观人眼确认无灰闪/黑帧。review 2 轮（P1×2、P2×6、P3×6 已处理，剩 1 条 P3 留给 B2） |
-| B2 | 2026-11-12 | 待提交 | 待真机构建 + review（MINOR，P0/P1=0，P2×5 已修）。交付：`BrowserPage`/`WKPage`/`CefPage`、`BrowserEngineRouter`（swift test 7 条）、`RightSidebarTab.engine`、dev 默认 CEF + 设置页 dev 开关回 WK、CEF popup 拦成新 tab（B4 提前一块）；口径见 §9.2.8 |
+| B2 | 2026-11-12 | `a412156e` | **通过**（MINOR，P0/P1=0，P2×5 已修）。交付：`BrowserPage`/`WKPage`/`CefPage`、`BrowserEngineRouter`（swift test 7 条）、`RightSidebarTab.engine`、dev 默认 CEF + 设置页 dev 开关回 WK、CEF popup 拦成新 tab（B4 提前一块）；口径见 §9.2.8。取证：19:29 点百度地图后 `History` 只有一条 map（不再有第二个 browser），19:41–19:42 百度→百科是正常 tab 流 |
+| B3 | 2026-11-12 | 待提交 | **通过**（review MINOR，P0/P1=0，P2×4/P3×3 已修，见 `docs/code-review/browser-chromium-migration/2026-11-12.md`）。交付：`CefDisguise.h`（版本取自 `cef_version.h`）、UA、`sec-ch-ua*`（`CefResourceRequestHandler`）、`userAgentData`、`window.chrome` 清洗、`--cef-probe` 探针 + `scripts/cef-regression.sh`；口径见第三章「B3 落地口径」。取证：① 探针 14/14 PASS，**网络层没有覆盖我们设的 `sec-ch-ua`**（`"Not:A-Brand";v="99", "Chromium";v="156", "Google Chrome";v="156"` + `?0` + `"macOS"`），页面侧 brands/`[object NavigatorUAData]`/chrome 键（app,csi,loadTimes,runtime）三者互相自洽；② 谷歌登录从 `identifier` 直接进到 `/challenge/pwd`（20:10:51），百度首页/搜索/百科同时段正常无验证码 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

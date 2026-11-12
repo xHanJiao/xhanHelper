@@ -31,6 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             CefSmokeWindowController.shared.show()
             return nil
         }
+
+        // 同一个冒烟窗的免手按入口：`open <app> --args --cef-smoke`。
+        // 让 agent 能自己跑一遍（合成按键要系统自动化权限，跑不了）。
+        if ProcessInfo.processInfo.arguments.contains("--cef-smoke") {
+            DispatchQueue.main.async { CefSmokeWindowController.shared.show() }
+        }
         #endif
 
         // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。

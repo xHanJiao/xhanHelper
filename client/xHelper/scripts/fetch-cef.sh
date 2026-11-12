@@ -165,10 +165,17 @@ install() {
   version="$(read_framework_version "$FRAMEWORK")"
   # 版本一致 **且** Helper 就是这次编出来的那份（改了 helper_main.mm 必须重装，否则 app 里一直是
   # 旧 Helper，症状是"改了完全没生效"）。装进去的二进制被 codesign 改过，不能直接 cmp → 记 sha。
-  # 首次安装没有戳文件，`cat` 返非零属预期。
-  local helper_sha installed_sha
+  #
+  # 戳文件**必须放在 .app 外面**：`Contents/Frameworks/` 下的一切都被 Xcode 当成"必须已签名的代码
+  # 对象"，放个普通文件进去会让 CodeSign 直接失败（`code object is not signed at all`，B0 踩过）。
+  # 位置：Xcode 构建用 TARGET_TEMP_DIR，手动跑回落到缓存目录；文件名按目标路径区分。
+  local stamp_dir stamp helper_sha installed_sha
+  stamp_dir="${CEF_INSTALL_STAMP_DIR:-${TARGET_TEMP_DIR:-$CACHE/stamps}}"
+  mkdir -p "$stamp_dir"
+  stamp="$stamp_dir/$(printf '%s' "$dest" | shasum -a 256 | cut -c1-16).sha"
   helper_sha="$(shasum -a 256 "$STUB" | cut -d' ' -f1)"
-  installed_sha="$(cat "$dest/.cef-helper-sha" 2>/dev/null || true)"
+  # 首次安装没有戳文件，`cat` 返非零属预期
+  installed_sha="$(cat "$stamp" 2>/dev/null || true)"
   if [ -n "$version" ] &&
      [ "$(read_framework_version "$dest/Chromium Embedded Framework.framework")" = "$version" ] &&
      [ "$installed_sha" = "$helper_sha" ]; then
@@ -177,6 +184,7 @@ install() {
   fi
 
   mkdir -p "$dest"
+  rm -f "$dest/.cef-helper-sha"   # 老版本误写进 bundle 的戳，留着会让 CodeSign 继续失败
   log "装进 $dest"
   rm -rf "$dest/Chromium Embedded Framework.framework"
   cp -R "$FRAMEWORK" "$dest/"
@@ -197,7 +205,7 @@ install() {
   for name in "${HELPER_NAMES[@]}"; do
     codesign -f -s - --timestamp=none "$dest/$name.app"
   done
-  echo "$helper_sha" > "$dest/.cef-helper-sha"
+  echo "$helper_sha" > "$stamp"
   log "签名完成"
 }
 

@@ -430,6 +430,15 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - 新标签页在 CEF 侧走 `data:text/html;base64,...`（CEF 没有 `loadHTMLString`）；地址栏对 `about/data/file` 一律显示空。
 - **`target=_blank` / `window.open`（从 B4 提前拉了一小块）**：不处理时 CEF 会自己开一个裸原生窗口，而且**复用 opener 的 client** → 弹窗的地址/标题会串到侧栏 tab 上（实测：页面还是百度首页、地址栏却是百度地图）。所以在 `CefLifeSpanHandler::OnBeforePopup` 一律拦掉，交给 Swift 用 `openURL` 开成我们自己的 tab。遗留（B4 做）：opener 关系、无 URL 的 `window.open`（先开窗再 document.write，目前丢弃并留痕）、windowFeatures/尺寸。
 
+#### 9.2.9 B4 实现口径（多 tab 面）
+
+- **D17 落地**：CEF 的 popup（`CefLifeSpanHandler::OnBeforePopup` → `CefPage.onPopupRequested`）和 WK 的 `noopener` 跳转，一律 `openURL(url, openerEngine:)` 带上 opener 的引擎；收藏 / 历史 / 地址栏 / 右键搜索不带（按 URL 现算，它们不是"从某页弹出来的"）。
+- **已知限制（2026-11-12 已拍板：先接受，B9 一起解决）**：CEF 的弹窗被拦掉后开的是**兄弟 tab**，页面拿不到 `window.opener`（`window.open()` 返回 null）。依赖 `opener.postMessage` 的扫码登录 / 支付回调会退化成"在新标签页里登录"。WK 侧不受影响（`createWebViewWith` 从父 configuration 派生，opener 关系保留）。要恢复 CEF 的 opener 得让 CEF 自己建 popup browser 再嵌进我们的 tab —— 复杂度和 B9「多 tab 协作」重叠，到那时一起定。
+- **强制回收**：关 tab → `CloseBrowser(force_close)`；另补两处兜底，否则会留 renderer：① 视图已释放时 `OnAfterCreated` 里直接关（tab 开出来就被配额回收）；② `CreateBrowser` 的异步窗口期内被关（`_closeRequested`），created 后立刻关。
+- **标签恢复**：`closedStack` 只存 URL，开的时候现算引擎（§9.2.2）；目前没有跨启动的会话恢复。
+- **后台 tab（B7 前置）**：CEF 的 browser 在**视图进窗口时**才创建（`viewDidMoveToWindow`），而侧栏只挂激活 tab → 后台开的 tab 不会加载。现在没有"CEF 后台 tab"的用户路径（agent 标签 B2 起固定 compat），**B7 把 agent 标签接 CEF 之前必须先解决**（二选一：视图一创建就建 browser；或后台 tab 保留挂载）。
+- 无 URL 的 `window.open`（先开窗再 `document.write`）仍然丢弃，Console 留 `[cef] popup without url`。
+
 ## 十、CEF 版本运维
 
 **为什么需要**：谷歌那条判定是黑盒，靠"名义层"伪装；内核太旧（落后一年）本身会被当旧浏览器，反而提高风控概率。所以既要能"该升就升"，又不能"每天发版被迫跟"。
@@ -649,6 +658,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | B0 | 2026-11-12 | `3c8940d3` | 待真机构建（脚本本机实跑通过：下载/编 wrapper/造 Helper×5/装包签名/增量跳过） |
 | B1 | 2026-11-12 | `5315d41d..d30dc5b2` | **通过**：真机 CEF 起、页面真实加载（`Default/History` 有「百度一下，你就知道」）、profile 落盘、无 `process_requirement`；合成外观人眼确认无灰闪/黑帧。review 2 轮（P1×2、P2×6、P3×6 已处理，剩 1 条 P3 留给 B2） |
 | B2 | 2026-11-12 | `a412156e` | **通过**（MINOR，P0/P1=0，P2×5 已修）。交付：`BrowserPage`/`WKPage`/`CefPage`、`BrowserEngineRouter`（swift test 7 条）、`RightSidebarTab.engine`、dev 默认 CEF + 设置页 dev 开关回 WK、CEF popup 拦成新 tab（B4 提前一块）；口径见 §9.2.8。取证：19:29 点百度地图后 `History` 只有一条 map（不再有第二个 browser），19:41–19:42 百度→百科是正常 tab 流 |
-| B3 | 2026-11-12 | 待提交 | **通过**（review MINOR，P0/P1=0，P2×4/P3×3 已修，见 `docs/code-review/browser-chromium-migration/2026-11-12.md`）。交付：`CefDisguise.h`（版本取自 `cef_version.h`）、UA、`sec-ch-ua*`（`CefResourceRequestHandler`）、`userAgentData`、`window.chrome` 清洗、`--cef-probe` 探针 + `scripts/cef-regression.sh`；口径见第三章「B3 落地口径」。取证：① 探针 14/14 PASS，**网络层没有覆盖我们设的 `sec-ch-ua`**（`"Not:A-Brand";v="99", "Chromium";v="156", "Google Chrome";v="156"` + `?0` + `"macOS"`），页面侧 brands/`[object NavigatorUAData]`/chrome 键（app,csi,loadTimes,runtime）三者互相自洽；② 谷歌登录从 `identifier` 直接进到 `/challenge/pwd`（20:10:51），百度首页/搜索/百科同时段正常无验证码 |
+| B3 | 2026-11-12 | `1d29b5b9` | **通过**（review MINOR，P0/P1=0，P2×4/P3×3 已修，见 `docs/code-review/browser-chromium-migration/2026-11-12.md`）。交付：`CefDisguise.h`（版本取自 `cef_version.h`）、UA、`sec-ch-ua*`（`CefResourceRequestHandler`）、`userAgentData`、`window.chrome` 清洗、`--cef-probe` 探针 + `scripts/cef-regression.sh`；口径见第三章「B3 落地口径」。取证：① 探针 14/14 PASS，**网络层没有覆盖我们设的 `sec-ch-ua`**（`"Not:A-Brand";v="99", "Chromium";v="156", "Google Chrome";v="156"` + `?0` + `"macOS"`），页面侧 brands/`[object NavigatorUAData]`/chrome 键（app,csi,loadTimes,runtime）三者互相自洽；② 谷歌登录从 `identifier` 直接进到 `/challenge/pwd`（20:10:51），百度首页/搜索/百科同时段正常无验证码 |
+| B4 | 2026-11-12 | 待提交 | **通过**（多 tab / popup 有取证；分屏与关闭回收靠人眼）。交付：popup 引擎跟 opener（D17）、秒关 tab 的 renderer 回收兜底、CEF 焦点判定修（见 9.2.9 / tier1-ux §3.1）。取证（20:25–20:28 那次运行）：6 个不同站点都落了 CEF profile（多 tab）；20:26:57 百度结果页点链接 → `[Browser] cef popup → new tab` + 新 tab 的 `baike.baidu.com` 记录 → popup 走的是我们自己的 tab（不再是裸原生窗）；退出后无残留 Helper 进程。**未验**：⌘W/⌘Shift+T 的焦点修复（这次构建早于修复），且该快捷键在 prod（WK）上也失效 → 记为 main 老 bug，不算本批验收项；分屏两窗格同时跑 CEF 未单独点验 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

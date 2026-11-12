@@ -210,6 +210,14 @@ class XHCefClient : public CefClient,
   // 关窗/CloseBrowser 走完进程回收才通知外部放引用
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     XHCefBrowserView *view = view_;
+    if (!view) {
+      // 视图已经没了（tab 开出来就被关 / 配额回收）：没人接管这个 browser，
+      // 不在这里兜底就是一个永远回收不掉的 renderer 进程。
+      dispatch_async(dispatch_get_main_queue(), ^{
+        browser->GetHost()->CloseBrowser(true);
+      });
+      return;
+    }
     RunOnMain(^{
       [view cefBrowserCreated:browser];
     });
@@ -466,6 +474,7 @@ static bool EnsureLibraryLoaded() {
   NSString *_startURL;
   NSString *_pendingURL;      // browser 还没 OnAfterCreated 时来的导航，等 created 再补
   BOOL _browserRequested;
+  BOOL _closeRequested;       // 创建窗口期内就被要求关闭（tab 秒关），created 后立刻回收
   BOOL _isLoading;
   BOOL _canGoBack;
   BOOL _canGoForward;
@@ -491,7 +500,8 @@ static bool EnsureLibraryLoaded() {
 }
 
 - (void)createBrowserIfNeeded {
-  if (_browserRequested || !XHCefRuntime.isReady) return;   // 未就绪不置标记，等下次进窗口再试
+  // 未就绪不置标记，等下次进窗口再试；已要求关闭就不再造（省一个白造的 renderer）
+  if (_browserRequested || _closeRequested || !XHCefRuntime.isReady) return;
   _browserRequested = YES;
 
   _client = new XHCefClient(self);
@@ -589,13 +599,19 @@ static bool EnsureLibraryLoaded() {
 }
 
 - (void)closeBrowser {
-  if (!_browser) return;
+  _closeRequested = YES;
+  if (!_browser) return;   // 还在创建中：OnAfterCreated 里看到标记会立刻关（见 cefBrowserCreated）
   // force_close=true：否则 renderer 进程会赖着（240MB/页的先例）
   _browser->GetHost()->CloseBrowser(true);
 }
 
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
+  if (_closeRequested) {
+    // tab 在 CreateBrowser 的异步窗口期就被关了：此刻才拿到 browser，就地收掉
+    _browser->GetHost()->CloseBrowser(true);
+    return;
+  }
   [self syncBrowserFrame];
   if (_pendingURL) {
     browser->GetMainFrame()->LoadURL(_pendingURL.UTF8String);

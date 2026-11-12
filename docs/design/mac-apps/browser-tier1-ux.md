@@ -36,10 +36,13 @@
 浏览器聚焦 = 满足全部：
 
 1. `BrowserToolProvider.rightSidebar.activeTabId != nil`（浏览器态，非浏览面板态）；
-2. 激活 tab 的 `webView.window` 是 keyWindow；
+2. 激活 tab 的 `page.hostingView.window` 是 keyWindow（B2 起从 `webView` 改成内核协议，CEF tab 才判得出来）；
 3. firstResponder 判定：
+   - firstResponder **在 `page.hostingView` 子树里** → 浏览器聚焦（CEF 的 firstResponder 是 Chromium 自己的子视图，这条最直接）；
    - **正在编辑文本框**（field editor / NSTextView）→ 浏览器聚焦 = 该框是否为浏览器字段（地址栏/查找栏）；
    - **其他**（页面内 WKWebView 及其子视图、窗口、按钮、无焦点）→ 视为浏览器聚焦（对齐 Chrome：有激活 tab 且未在别处输入时，Cmd+W 关 tab）。
+
+被吞掉的 ⌘W 会打一行 `[Shortcut] ⌘W 未处理：…`（含 activePage / window / firstResponder / 两个字段标志），因为这条路径失败时从外部完全看不出原因（只有"按了没反应"）。
 
 "浏览器字段"由 `BrowserTabView` 通过 `@FocusState urlFocused / findFocused` 的 onChange 上报到 `BrowserFocus.isUrlFieldFocused / isFindFieldFocused`（onAppear/onDisappear 重置，防旧 tab 残留）。
 

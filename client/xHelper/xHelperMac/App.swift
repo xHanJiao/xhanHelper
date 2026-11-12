@@ -200,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     BrowserToolProvider.shared.closeTab(id)
                 } else if BrowserFocus.isFocused() {
                     BrowserToolProvider.shared.closeActiveTab()
+                } else {
+                    LogBuffer.shared.diag("[Shortcut] ⌘W 未处理：\(BrowserFocus.diagnosis())")
                 }
                 return nil
             }

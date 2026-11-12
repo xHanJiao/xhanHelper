@@ -2315,10 +2315,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 立即开新 tab 并加载 URL（收藏夹/历史点击打开，不等加载完成就显示 tab）。
-    func openURL(_ url: URL) {
+    /// - Parameter openerEngine: `target=_blank` / `window.open` / `noopener` 跳转时传 opener 的引擎
+    ///   （D17：引擎跟 opener 一致）。跨引擎会断 `window.opener` + cookie 域，登录弹窗必挂。
+    func openURL(_ url: URL, openerEngine: BrowserEngine? = nil) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(url: url, cefAvailable: Self.cefAvailable))
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(
+            url: url, openerEngine: openerEngine, cefAvailable: Self.cefAvailable))
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
@@ -2675,7 +2678,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     _ = await self.handleOpen(["url": url.absoluteString, "background": true], owner: owner)
                 }
             } else {
-                self.openURL(url)
+                self.openURL(url, openerEngine: session?.page.engine)
             }
         }
         // JS 弹窗：用 beginSheetModal（非阻塞 sheet）而非 runModal——runModal 会在主线程开嵌套
@@ -3147,12 +3150,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     }
                 }
                 // target=_blank / window.open：CEF 原生弹窗已在桥里拦掉，这里开成我们自己的 tab。
-                // 引擎跟着判定函数走（当前默认 CEF）；opener 关系/无 URL 的 window.open 留给 B4。
+                // 引擎跟 opener（D17）；CEF 没有 opener 关系（新 tab 是兄弟上下文），
+                // 依赖 window.opener.postMessage 的登录弹窗会退化成"新标签页里登录"。
                 #if os(macOS)
                 if let cefPage = page as? CefPage {
+                    let openerEngine = page.engine
                     cefPage.onPopupRequested = { url in
                         LogBuffer.shared.diag("[Browser] cef popup → new tab: \(url.absoluteString.prefix(160))")
-                        BrowserToolProvider.shared.openURL(url)
+                        BrowserToolProvider.shared.openURL(url, openerEngine: openerEngine)
                     }
                 }
                 #endif

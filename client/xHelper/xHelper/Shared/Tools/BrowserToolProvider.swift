@@ -1442,6 +1442,28 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return cleaned
     }
 
+    /// 用户下载的落盘路径：~/Downloads/xhanHelper/ + sanitize + 重名序号（WK 与 CEF 共用同一套规则）。
+    /// 建目录失败返回 nil（调用方按"取消下载"处理）。
+    nonisolated static func userDownloadDestination(_ suggestedName: String) -> URL? {
+        let dir: URL
+        #if os(macOS)
+        dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
+        #else
+        dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("xhanHelper", isDirectory: true)
+        #endif
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            Task { @MainActor in
+                LogBuffer.shared.error("[B-Download] create dir failed: \(error)")
+            }
+            return nil
+        }
+        return uniqueDestination(in: dir, name: sanitizeFileName(suggestedName))
+    }
+
     /// 目标路径：目录内重名自动加序号（foo.txt → foo-1.txt）。
     nonisolated static func uniqueDestination(in dir: URL, name: String) -> URL {
         var dest = dir.appendingPathComponent(name)
@@ -2931,20 +2953,31 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// 是否有进行中的用户下载（关 tab 时用于决定 session 是否保活）
         var hasActiveDownloads: Bool {
-            !activeRecordIDs.isEmpty
+            !activeRecordIDs.isEmpty || !cefDownloadRecords.isEmpty
         }
 
         func forceCancelDownloads() {
             for (_, recordID) in activeRecordIDs {
                 DownloadHistoryStore.shared.cancel(id: recordID)
             }
+            for (_, recordID) in cefDownloadRecords {
+                DownloadHistoryStore.shared.cancel(id: recordID)
+            }
             activeRecordIDs.removeAll()
+            cefDownloadRecords.removeAll()
             downloadProgressObservations.removeAll()
         }
 
         /// 活动下载记录（user-initiated）：WKDownload 对象 → 历史记录 id
         private var activeRecordIDs: [ObjectIdentifier: UUID] = [:]
         private var downloadProgressObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
+        /// CEF 下载：CEF download id → 历史记录 id（WK 那条走 activeRecordIDs）
+        var cefDownloadRecords: [Int64: UUID] = [:]
+
+        /// CEF 侧取消下载（store 的取消按钮/关标签时调）
+        func cancelCefDownload(_ downloadId: Int64) {
+            (page as? CefPage)?.cancelDownload(downloadId)
+        }
 
         /// agent 打开的标签（用于空闲超时自动关闭，用户自开的标签不受影响）
         var isAgentTab = false
@@ -3176,6 +3209,54 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         default:  // prompt：与 WK 侧一致，简化为提示框，返回默认值
                             if let handler = self.onJSAlert { handler(message) { reply(true, defaultText) } } else { reply(false, nil) }
                         }
+                    }
+
+                    // 下载：落盘规则与 WK 同一套（~/Downloads/xhanHelper + 重名序号）。
+                    // 路径由 CEF 在 UI 线程同步问（RunOnMain 同步执行），所以这里必须同步返回。
+                    cefPage.onDownloadPathRequested = { suggestedName, _ in
+                        BrowserToolProvider.userDownloadDestination(suggestedName)?.path
+                    }
+                    cefPage.onDownloadUpdated = { [weak self] downloadId, state, received, total, fullPath, urlString in
+                        guard let self else { return }
+                        switch state {
+                        case 0:
+                            if let rid = self.cefDownloadRecords[downloadId] {
+                                DownloadHistoryStore.shared.updateProgress(
+                                    id: rid, fraction: 0, completed: received, total: total)
+                            } else if !fullPath.isEmpty {
+                                // 第一次收到进度才建记录：此时才有 fullPath / 真实文件名
+                                // （OnDownloadUpdated 早于 OnBeforeDownload 时 fullPath 还是空，等下一拍）
+                                let dest = URL(fileURLWithPath: fullPath)
+                                let rid = DownloadHistoryStore.shared.startDownload(
+                                    filename: dest.lastPathComponent,
+                                    url: urlString,
+                                    destination: dest
+                                )
+                                DownloadHistoryStore.shared.attachCancelHandler(id: rid) { [weak self] in
+                                    self?.cancelCefDownload(downloadId)
+                                }
+                                self.cefDownloadRecords[downloadId] = rid
+                                #if DEBUG
+                                print("[B-Download] cef download -> \(fullPath)")
+                                #endif
+                            }
+                        case 1:
+                            if let rid = self.cefDownloadRecords.removeValue(forKey: downloadId) {
+                                DownloadHistoryStore.shared.finish(id: rid, ok: true, sizeBytes: Int(received))
+                            }
+                        default:
+                            // 已取消（也可能是网络侧中断）：store 的状态守卫保证不会覆盖用户手动取消
+                            if let rid = self.cefDownloadRecords.removeValue(forKey: downloadId) {
+                                DownloadHistoryStore.shared.cancel(id: rid)
+                            }
+                        }
+                    }
+                    // 右键「用百度搜索选中文字」：App 内开新 tab（默认引擎会跳系统浏览器，与 WK 侧同因）
+                    cefPage.onContextSearch = { text in
+                        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !query.isEmpty,
+                              let url = AppBrowserWebView.searchURL(for: query, engine: "百度") else { return }
+                        BrowserToolProvider.shared.openURL(url)
                     }
                 }
                 #endif
@@ -3640,23 +3721,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 完成后 AppKit 自动写入，无需手工移动。
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                       suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-            let dir: URL
-            #if os(macOS)
-            dir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
-            #else
-            dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("xhanHelper", isDirectory: true)
-            #endif
-            do {
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            } catch {
-                LogBuffer.shared.error("[B-Download] create dir failed: \(error)")
+            guard let dest = BrowserToolProvider.userDownloadDestination(suggestedFilename) else {
                 completionHandler(nil)
                 return
             }
-            let name = BrowserToolProvider.sanitizeFileName(suggestedFilename)
-            let dest = BrowserToolProvider.uniqueDestination(in: dir, name: name)
             let url = download.originalRequest?.url?.absoluteString ?? response.url?.absoluteString ?? ""
             let itemID = DownloadHistoryStore.shared.startDownload(
                 filename: dest.lastPathComponent,

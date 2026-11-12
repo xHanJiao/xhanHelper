@@ -5,6 +5,7 @@
 #include <objc/runtime.h>
 
 #include <cmath>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +14,9 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_browser_process_handler.h"
+#include "include/cef_context_menu_handler.h"
+#include "include/cef_download_handler.h"
+#include "include/cef_menu_model.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_find_handler.h"
 #include "include/cef_jsdialog_handler.h"
@@ -144,8 +148,14 @@ class XHCefApp : public CefApp {
 
 @class XHCefBrowserView;
 
-@interface XHCefBrowserView ()
+@interface XHCefBrowserView () <NSMenuDelegate>
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser;
+/// 下载进行中：留下 CefDownloadItemCallback 的取消句柄（CEF 不允许把 item 留存到回调之外）
+- (void)cefDownloadRegister:(int64_t)downloadId callback:(CefRefPtr<CefDownloadItemCallback>)callback;
+- (void)cefDownloadDrop:(int64_t)downloadId;
+/// 把 CefMenuModel 摊成 NSMenu 显示（Alloy 模式没有默认右键菜单，必须自己弹）
+- (void)cefShowMenu:(CefRefPtr<CefMenuModel>)model
+           callback:(CefRefPtr<CefRunContextMenuCallback>)callback;
 - (void)cefBrowserDidClose;
 - (void)cefLoadingStateChanged:(BOOL)isLoading
                      canGoBack:(BOOL)canGoBack
@@ -192,6 +202,8 @@ class XHCefClient : public CefClient,
                     public CefDisplayHandler,
                     public CefFindHandler,
                     public CefJSDialogHandler,
+                    public CefDownloadHandler,
+                    public CefContextMenuHandler,
                     public CefRequestHandler {
  public:
   explicit XHCefClient(XHCefBrowserView *view) : view_(view) {}
@@ -201,7 +213,102 @@ class XHCefClient : public CefClient,
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  // 下载：Alloy 模式下不接这条就是"点了没反应"（CEF 默认取消，见 cef_download_handler.h）
+  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefDownloadItem> download_item,
+                        const CefString &suggested_name,
+                        CefRefPtr<CefBeforeDownloadCallback> callback) override {
+    XHCefBrowserView *view = view_;
+    NSString *name = CefStringToNSString(suggested_name);
+    NSString *url = CefStringToNSString(download_item->GetURL());
+    // 回调在主线程，这里同步取路径（RunOnMain 在当前线程是直接调用）
+    __block NSString *path = nil;
+    RunOnMain(^{
+      if (view.downloadPathRequested) path = view.downloadPathRequested(name, url);
+    });
+    if (path.length == 0) {
+      // 不执行 callback → CEF 按取消处理（头文件明确写了这条语义）
+      return true;
+    }
+    callback->Continue(path.UTF8String, false);  // false = 不弹 CEF 自带的另存为框
+    return true;
+  }
+
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefDownloadItem> download_item,
+                         CefRefPtr<CefDownloadItemCallback> callback) override {
+    NSInteger state;
+    if (download_item->IsComplete()) {
+      state = 1;
+    } else if (download_item->IsCanceled()) {
+      state = 2;
+    } else if (download_item->IsInProgress()) {
+      state = 0;
+    } else {
+      return;   // 中间态（待开始时）不算进度
+    }
+    XHCefBrowserView *view = view_;
+    const int64_t downloadId = download_item->GetId();
+    const int64_t received = download_item->GetReceivedBytes();
+    const int64_t total = download_item->GetTotalBytes();
+    NSString *fullPath = CefStringToNSString(download_item->GetFullPath());
+    NSString *url = CefStringToNSString(download_item->GetURL());
+    RunOnMain(^{
+      if (state == 0) {
+        [view cefDownloadRegister:downloadId callback:callback];
+      } else {
+        [view cefDownloadDrop:downloadId];
+      }
+      if (view.downloadUpdated) {
+        view.downloadUpdated(downloadId, state, received, total, fullPath, url);
+      }
+    });
+  }
+
+  // 右键菜单：Alloy（子视图窗口）没有默认菜单实现，OnBeforeContextMenu 只改模型，显示归 RunContextMenu
+  void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           CefRefPtr<CefContextMenuParams> params,
+                           CefRefPtr<CefMenuModel> model) override {
+    NSString *selection =
+        [CefStringToNSString(params->GetSelectionText())
+            stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (selection.length == 0) return;
+    NSString *label = selection.length > 24 ? [selection substringToIndex:24] : selection;
+    NSString *title = [NSString stringWithFormat:@"用百度搜索「%@」", label];
+    model->AddSeparator();
+    model->AddItem(MENU_ID_USER_FIRST + 1, title.UTF8String);
+  }
+
+  bool RunContextMenu(CefRefPtr<CefBrowser> browser,
+                      CefRefPtr<CefFrame> frame,
+                      CefRefPtr<CefContextMenuParams> params,
+                      CefRefPtr<CefMenuModel> model,
+                      CefRefPtr<CefRunContextMenuCallback> callback) override {
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      [view cefShowMenu:model callback:callback];
+    });
+    return true;
+  }
+
+  bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                            CefRefPtr<CefFrame> frame,
+                            CefRefPtr<CefContextMenuParams> params,
+                            int command_id,
+                            EventFlags event_flags) override {
+    if (command_id != MENU_ID_USER_FIRST + 1) return false;   // 其余交给 CEF 默认实现
+    XHCefBrowserView *view = view_;
+    NSString *text = CefStringToNSString(params->GetSelectionText());
+    RunOnMain(^{
+      if (view.contextSearchRequested) view.contextSearchRequested(text);
+    });
+    return true;
+  }
 
   // 页内查找：CEF 只在 finalUpdate 时给确定结果（中途的 count 是"当前累计"）
   void OnFindResult(CefRefPtr<CefBrowser> browser,
@@ -528,6 +635,12 @@ static bool EnsureLibraryLoaded() {
   BOOL _isLoading;
   BOOL _canGoBack;
   BOOL _canGoForward;
+  /// 进行中下载的取消句柄（CefDownloadItemCallback 只能在 OnDownloadUpdated 里用，必须留一份）
+  std::map<int64_t, CefRefPtr<CefDownloadItemCallback>> _downloadCallbacks;
+  /// 右键菜单：显示期间持有 callback（菜单是同步模态的，关闭后清掉）
+  CefRefPtr<CefRunContextMenuCallback> _menuCallback;
+  BOOL _menuPicked;
+  NSMenu *_menu;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URLString:(NSString *)urlString {
@@ -704,6 +817,122 @@ static bool EnsureLibraryLoaded() {
 
 - (void)dealloc {
   [self closeBrowser];
+}
+
+// MARK: 下载
+
+- (void)cefDownloadRegister:(int64_t)downloadId callback:(CefRefPtr<CefDownloadItemCallback>)callback {
+  _downloadCallbacks[downloadId] = callback;
+}
+
+- (void)cefDownloadDrop:(int64_t)downloadId {
+  _downloadCallbacks.erase(downloadId);
+}
+
+- (void)cancelDownload:(int64_t)downloadId {
+  auto it = _downloadCallbacks.find(downloadId);
+  if (it == _downloadCallbacks.end()) return;
+  if (it->second) it->second->Cancel();
+  _downloadCallbacks.erase(it);
+}
+
+// MARK: 右键菜单
+
+/// CEF 的菜单标签带 Windows/Linux 风格的助记符标记（`&Back` → Alt+B），macOS 原生菜单不认。
+/// 按标准规则反转义：`&&` → 字面 `&`，单个 `&X` → `X`。
+static NSString *XHMenuLabel(NSString *raw) {
+  if ([raw rangeOfString:@"&"].location == NSNotFound) return raw;
+  NSMutableString *out = [NSMutableString stringWithCapacity:raw.length];
+  const NSUInteger length = raw.length;
+  for (NSUInteger i = 0; i < length; i++) {
+    unichar c = [raw characterAtIndex:i];
+    if (c == '&' && i + 1 < length) {
+      unichar next = [raw characterAtIndex:i + 1];
+      if (next == '&') {
+        [out appendString:@"&"];
+        i++;
+      }
+      continue;   // 单个 & 只是助记符标记，丢掉
+    }
+    [out appendFormat:@"%C", c];
+  }
+  return out;
+}
+
+/// 把 CefMenuModel 递归摊成 NSMenu 项；tag 存 command_id，选中后原样交回 CEF。
+static void XHAppendMenuItems(NSMenu *menu, CefRefPtr<CefMenuModel> model, id target) {
+  const size_t count = model->GetCount();
+  for (size_t i = 0; i < count; i++) {
+    switch (model->GetTypeAt(i)) {
+      case MENUITEMTYPE_NONE:
+        break;
+      case MENUITEMTYPE_SEPARATOR:
+        [menu addItem:[NSMenuItem separatorItem]];
+        break;
+      case MENUITEMTYPE_SUBMENU: {
+        NSString *title = XHMenuLabel(CefStringToNSString(model->GetLabelAt(i)));
+        if (title.length == 0) break;
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+        NSMenu *sub = [[NSMenu alloc] initWithTitle:title];
+        sub.autoenablesItems = NO;
+        XHAppendMenuItems(sub, model->GetSubMenuAt(i), target);
+        item.submenu = sub;
+        [menu addItem:item];
+        break;
+      }
+      default: {
+        NSString *title = XHMenuLabel(CefStringToNSString(model->GetLabelAt(i)));
+        if (title.length == 0) break;
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                     action:@selector(xhMenuItemPicked:)
+                                              keyEquivalent:@""];
+        item.target = target;
+        item.tag = model->GetCommandIdAt(i);
+        item.enabled = model->IsEnabledAt(i);
+        if (model->GetTypeAt(i) != MENUITEMTYPE_COMMAND) {
+          item.state = model->IsCheckedAt(i) ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+        [menu addItem:item];
+        break;
+      }
+    }
+  }
+}
+
+- (void)cefShowMenu:(CefRefPtr<CefMenuModel>)model
+           callback:(CefRefPtr<CefRunContextMenuCallback>)callback {
+  _menuCallback = callback;
+  _menuPicked = NO;
+  _menu = [[NSMenu alloc] initWithTitle:@"context"];
+  _menu.autoenablesItems = NO;   // 我们自己按模型设 enabled，交给 AppKit 自动判会全灰
+  _menu.delegate = self;
+  XHAppendMenuItems(_menu, model, self);
+  if (_menu.numberOfItems == 0) {
+    // 空模型：没有可显示的东西，直接 Cancel，别让渲染进程以为菜单还开着
+    _menu = nil;
+    if (_menuCallback) _menuCallback->Cancel();
+    _menuCallback = nullptr;
+    return;
+  }
+  if (NSEvent *event = NSApp.currentEvent) {
+    [NSMenu popUpContextMenu:_menu withEvent:event forView:self];
+  } else {
+    NSPoint location = [self convertPoint:self.window.mouseLocationOutsideOfEventStream fromView:nil];
+    [_menu popUpMenuPositioningItem:nil atLocation:location inView:self];
+  }
+}
+
+- (void)xhMenuItemPicked:(NSMenuItem *)sender {
+  _menuPicked = YES;
+  if (_menuCallback) _menuCallback->Continue((int)sender.tag, EVENTFLAG_NONE);
+  _menuCallback = nullptr;
+}
+
+- (void)menuDidClose:(NSMenu *)menu {
+  // 点空白/按 Esc 关掉：告诉 CEF 菜单没选中，别让渲染进程以为还开着
+  if (!_menuPicked && _menuCallback) _menuCallback->Cancel();
+  _menuCallback = nullptr;
+  _menu = nil;
 }
 
 @end

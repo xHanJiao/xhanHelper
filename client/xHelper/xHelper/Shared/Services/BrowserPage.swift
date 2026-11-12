@@ -162,6 +162,13 @@ final class CefPage: NSObject, BrowserPage {
     /// JS 对话框：kind 0=alert / 1=confirm / 2=prompt。reply **必须调一次**（否则页面一直等）。
     var onJSDialog: ((_ kind: Int, _ message: String, _ defaultText: String,
                      _ reply: @escaping (Bool, String?) -> Void) -> Void)?
+    /// 用户点击下载：返回落盘路径（nil = 取消）。**必须同步返回**。
+    var onDownloadPathRequested: ((_ suggestedName: String, _ url: String) -> String?)?
+    /// 下载状态：state 0=下载中 / 1=完成 / 2=已取消
+    var onDownloadUpdated: ((_ downloadId: Int64, _ state: Int, _ received: Int64, _ total: Int64,
+                             _ fullPath: String, _ url: String) -> Void)?
+    /// 右键「用百度搜索选中文字」
+    var onContextSearch: ((String) -> Void)?
     let stateObservers = BrowserPageState()
 
     /// `url == nil` 表示从空白页起（新标签页随后用 loadHTMLString 填）。
@@ -206,6 +213,19 @@ final class CefPage: NSObject, BrowserPage {
                 handler(Int(kind), message, defaultText) { ok, text in reply(ok, text) }
             }
         }
+        browserView.downloadPathRequested = { [weak self] suggestedName, urlString in
+            MainActor.assumeIsolated {
+                self?.onDownloadPathRequested?(suggestedName, urlString)
+            }
+        }
+        browserView.downloadUpdated = { [weak self] downloadId, state, received, total, fullPath, urlString in
+            MainActor.assumeIsolated {
+                self?.onDownloadUpdated?(downloadId, Int(state), received, total, fullPath, urlString)
+            }
+        }
+        browserView.contextSearchRequested = { [weak self] text in
+            MainActor.assumeIsolated { self?.onContextSearch?(text) }
+        }
     }
 
     var hostingView: XHPageView { browserView }
@@ -239,6 +259,11 @@ final class CefPage: NSObject, BrowserPage {
 
     func stopFinding(clearSelection: Bool) {
         browserView.stopFinding(clearSelection)
+    }
+
+    /// 取消进行中的下载（store 的「取消」按钮 → 这里 → CEF）
+    func cancelDownload(_ downloadId: Int64) {
+        browserView.cancelDownload(downloadId)
     }
 }
 #endif

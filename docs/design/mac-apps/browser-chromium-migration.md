@@ -423,7 +423,7 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 
 **B2 实现口径（代码即事实，便于 B3 接着改）**
 
-- 协议：`BrowserPage`（`Shared/Services/BrowserPage.swift`）只放面板真的用到的六个读状态 + 七个动作 + `hostingView` + 状态广播。JS 求值 / 下载 / 页内查找 / 快照继续走 `wkWebView` 过渡口；CEF 标签那里是 `nil`，调用方必须给明确失败（`TabSession.cefUnsupported`）。
+- 协议：`BrowserPage`（`Shared/Services/BrowserPage.swift`）只放面板真的用到的六个读状态 + 七个动作 + `hostingView` + 状态广播。**B6a/B6b 已把页内查找、缩放、下载、JS 对话框收进协议**（`find`/`zoomScale`/`onDownloadPathRequested`…），现在只有 JS 求值与快照还走 `wkWebView` 过渡口；CEF 标签那里是 `nil`，调用方必须给明确失败（`TabSession.cefUnsupported`）。
 - `TabSession` 持有 `page`，`webView` 变成 `page.wkWebView`（可选）。CEF 没有 delegate，标题 / URL / 加载态由 `CefPage` 转成同一套 `onTitleChange` / `onURLChanged` / `loadContinuation`。
 - **agent 标签在 B2 里固定走兼容引擎**（`TabSession(engine: .compat)`）：agent 工具（快照/点击/JS）要 B7 才接 CEF，先给它 CEF 会变成"页面能看、工具全哑"。B7 接入时改回 `resolveEngine`。
 - CEF 起不来（缺 framework / `CefInitialize` 失败）→ `TabSession.makePage` 就地降级 WK + Toast「主引擎未启动，已切兼容模式」，`engine` 以实际造出来的页面为准（不谎报 cef）。
@@ -455,7 +455,16 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **缩放**：`BrowserPage.zoomScale/setZoomScale`。WK 走 `pageZoom`，CEF 走 `CefBrowserHost::SetZoomLevel`（`level = ln(scale)/ln(1.2)`，CEF 自己按 origin 记住）。⌘±/钳制 0.5–2.5 不变。
 - **JS 对话框**：`CefJSDialogHandler::OnJSDialog` → `CefPage.onJSDialog` → 复用 WK 那套非阻塞 sheet（alert/confirm；prompt 与 WK 侧一致简化为提示框并回默认值）。桥里做了 **reply 只调一次**的护栏，且没接线时立刻回"取消"，绝不让页面干等。
 
-**B6b（下一批，还没做）**：下载（`CefDownloadHandler` + `DownloadHistoryStore` 现在只认 WKDownload/URLSessionTask，要加外部驱动分支）、右键菜单（`CefContextMenuHandler`，含"用 X 搜索"）、`<input type=file>`（`CefDialogHandler`）、favicon（CEF 侧要等 JS 通道）、权限（`CefPermissionHandler`：摄像头/麦克风/定位一律拒，与 WK 侧同策略）、埋点迁移、后台媒体保活（需要"页面是否在播"的信号）、墙检测/手递手（要 JS 结果）。
+**B6b（本批）**
+
+- **下载**：`CefDownloadHandler`。`OnBeforeDownload` 里同步问宿主路径（`BrowserToolProvider.userDownloadDestination`，与 WK 侧同一套：`~/Downloads/xhanHelper/` + sanitize + 重名序号），`Continue(path, false)` 不弹 CEF 自带的另存为框；不接线/取不到路径时不执行 callback → CEF 按取消处理（Alloy 模式不接这条就是"点了没反应"）。
+  - `DownloadHistoryStore` 加 `cancelHandler`（不落盘）：CEF 这类**外部驱动**的下载由内核侧取消，`cancel()` 时回调。
+  - 记录**在第一次收到进度时才建**（那时才有 `fullPath`/真实文件名）；`OnDownloadUpdated` 早于 `OnBeforeDownload` 时 `fullPath` 为空，等下一拍。完成/取消走 `finish/`cancel``，状态守卫保证不覆盖用户手动取消。
+- **右键菜单**：Alloy 模式（子视图窗口）**没有默认菜单实现**，光改模型不会显示 → 自己实现 `RunContextMenu`：把 `CefMenuModel` 递归摊成 `NSMenu`（tag 存 command_id，选中后 `callback->Continue` 交回 CEF 执行默认动作；Esc/点空白 `menuDidClose` → `callback->Cancel`）。`OnBeforeContextMenu` 只在有选中文字时追加一条「用百度搜索「…」」（`MENU_ID_USER_FIRST+1`），动作回 Swift 开新 tab（默认承运商会跳系统浏览器，与 WK 的 `AppBrowserWebView` 同因）。
+- **菜单标签反转义**：CEF 的 label 带 Windows/Linux 助记符（`&Back` → Alt+B），macOS 原生菜单不认，直接显示会带一串 `&` → `XHMenuLabel` 按标准规则处理（`&&` → 字面 `&`，单个 `&X` → `X`）。
+- **`<input type=file>`**：不实现，靠 CEF 默认（`file_dialog_runner` + `select_file_dialog_bridge` 都在 libcef 里，macOS 原生 NSOpenPanel）。真机弹不出来再自己接 `CefDialogHandler`。
+
+**B6 剩下没做的**（都在等 CEF 的 JS 结果通道，B7 一起）：favicon、权限（`CefPermissionHandler`：摄像头/麦克风/定位一律拒，与 WK 同策略）、埋点迁移、后台媒体保活（要"页面是否在播"的信号）、墙检测/手递手。
 
 ## 十、CEF 版本运维
 
@@ -680,5 +689,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B4 | 2026-11-12 | 待提交 | **通过**（多 tab / popup 有取证；分屏与关闭回收靠人眼）。交付：popup 引擎跟 opener（D17）、秒关 tab 的 renderer 回收兜底、CEF 焦点判定修（见 9.2.9 / tier1-ux §3.1）。取证（20:25–20:28 那次运行）：6 个不同站点都落了 CEF profile（多 tab）；20:26:57 百度结果页点链接 → `[Browser] cef popup → new tab` + 新 tab 的 `baike.baidu.com` 记录 → popup 走的是我们自己的 tab（不再是裸原生窗）；退出后无残留 Helper 进程。**未验**：⌘W/⌘Shift+T 的焦点修复（这次构建早于修复），且该快捷键在 prod（WK）上也失效 → 记为 main 老 bug，不算本批验收项；分屏两窗格同时跑 CEF 未单独点验 |
 | B5 | 2026-11-12 | 待提交 | 待真机构建 + 人眼。交付：白名单生效（含短链）、提示条（D16 + 频率闸）、地址栏换引擎图标、主引擎降级横幅；口径见 §9.2.10。三层检测的第 2/3 层按 §9.2.10 末条推到 B7 |
 | B6a | 2026-11-12 | 待提交 | **通过**（⌘F 查找、⌘±/⌘0 缩放已验；⌘G/⌘Shift+G 保留标准语义「查找下一个/上一个」，只在查找栏打开时有意义，不算缺陷）。交付：`BrowserPage` 增加 zoom/find、`CefFindHandler`、`CefJSDialogHandler`；口径见 §9.2.11。**未验**：页面 alert/confirm/prompt 的真机表现（无本地 http 测试页，B6b 一起验）；其余功能面在 B6b |
+| B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

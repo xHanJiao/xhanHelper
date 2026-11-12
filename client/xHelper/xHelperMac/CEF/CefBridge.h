@@ -40,6 +40,19 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) void (^jsDialogRequested)(NSInteger kind, NSString *message,
                                                                NSString *defaultText,
                                                                void (^reply)(BOOL accepted, NSString * _Nullable text));
+/// 用户点击下载：宿主决定落盘路径。**必须同步返回**（nil = 取消这次下载）。
+/// 不接这条 CEF 会走 Alloy 默认行为——直接取消，文件不会落盘。
+@property (nonatomic, copy, nullable) NSString * _Nullable (^downloadPathRequested)(NSString *suggestedName,
+                                                                               NSString *url);
+/// 下载状态：state 0=下载中 / 1=完成 / 2=已取消。`fullPath` 是 CEF 实际写入的路径。
+@property (nonatomic, copy, nullable) void (^downloadUpdated)(int64_t downloadId,
+                                                          NSInteger state,
+                                                          int64_t receivedBytes,
+                                                          int64_t totalBytes,
+                                                          NSString *fullPath,
+                                                          NSString *url);
+/// 右键菜单里的「用百度搜索选中文字」：宿主开新 tab
+@property (nonatomic, copy, nullable) void (^contextSearchRequested)(NSString *selectedText);
 
 @property (nonatomic, readonly) BOOL isLoading;
 @property (nonatomic, readonly) BOOL canGoBack;
@@ -62,6 +75,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// 页内查找（结果经 findResultCount 回报；空串 = 停止查找）
 - (void)findString:(NSString *)text forward:(BOOL)forward matchCase:(BOOL)matchCase;
 - (void)stopFinding:(BOOL)clearSelection;
+
+/// 取消进行中的下载（CEF 侧真正停掉）
+- (void)cancelDownload:(int64_t)downloadId;
 
 /// 强回收：等 OnBeforeClose 才放掉 browser 引用（泄漏先例见 docs/bugs/2026-08-browser-webview-leak）
 - (void)closeBrowser;

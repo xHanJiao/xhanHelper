@@ -43,6 +43,8 @@ final class DownloadHistoryStore: ObservableObject {
         /// 运行时取消句柄（不落盘）
         var download: WKDownload?
         var task: URLSessionDownloadTask?
+        /// 外部驱动的下载（CEF）：取消时回调内核，句柄本身不落盘
+        var cancelHandler: (() -> Void)?
 
         enum CodingKeys: String, CodingKey {
             case id, filename, url, destinationPath, sizeBytes, state, startedAt, finishedAt, progress, enforceMedia,
@@ -116,6 +118,12 @@ final class DownloadHistoryStore: ObservableObject {
         records[i].task = task
     }
 
+    /// 绑定取消句柄（外部驱动的下载，如 CEF：由内核侧真正停掉）
+    func attachCancelHandler(id: UUID, handler: @escaping () -> Void) {
+        guard let i = records.firstIndex(where: { $0.id == id }) else { return }
+        records[i].cancelHandler = handler
+    }
+
     /// 下载完成时若采用服务器建议名，同步记录的文件名/路径（仍为 .downloading 时生效）
     func rename(id: UUID, filename: String, destination: URL) {
         guard let i = records.firstIndex(where: { $0.id == id }),
@@ -168,6 +176,7 @@ final class DownloadHistoryStore: ObservableObject {
         if let size = sizeBytes { records[i].sizeBytes = size }
         records[i].download = nil
         records[i].task = nil
+        records[i].cancelHandler = nil
         records[i].lastSampleAt = nil
         records[i].speedBytesPerSec = 0
         trim()
@@ -184,8 +193,10 @@ final class DownloadHistoryStore: ObservableObject {
         records[i].finishedAt = Date()
         records[i].download?.cancel { _ in }
         records[i].task?.cancel()
+        records[i].cancelHandler?()
         records[i].download = nil
         records[i].task = nil
+        records[i].cancelHandler = nil
         scheduleSave()
     }
 

@@ -1,0 +1,15 @@
+{
+  "images": [
+    {
+      "filename": "sidebar_memory.svg",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "properties": {
+    "preserves-vector-representation": true
+  }
+}

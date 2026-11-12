@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+<meta charset="utf-8">
+<title>右栏首页 · 插画卡片</title>
+<style>
+  :root{
+    --appAccent:#2F7D63;
+    --assistantText:#3B2E1F;
+    --chatBackground:#F7EEDD;
+    --secondary:color-mix(in srgb, var(--assistantText) 55%, transparent);
+    --tertiary:color-mix(in srgb, var(--assistantText) 40%, transparent);
+    --row:rgba(255,255,255,.44);
+    --rowHover:rgba(255,255,255,.66);
+    --rowBorder:rgba(255,255,255,.66);
+    --pageBg:#EFE7DA;
+    --artTint1:linear-gradient(135deg,#E7F4F7,#FBFDFD);
+    --artTint2:linear-gradient(135deg,#FAF2E0,#FFFDF8);
+    --artTint3:linear-gradient(135deg,#EAF4EF,#FAFDFB);
+    --artTint4:linear-gradient(135deg,#EDF5F1,#FCFEFD);
+    --artTint5:linear-gradient(135deg,#E9F1EC,#FAFCFB);
+    --artTint6:linear-gradient(135deg,#EBF4EF,#FBFDFC);
+  }
+  html.dark{
+    --appAccent:#92C8B4;
+    --assistantText:#FFFFFF;
+    --chatBackground:#1C1C1E;
+    --secondary:color-mix(in srgb, var(--assistantText) 62%, transparent);
+    --tertiary:color-mix(in srgb, var(--assistantText) 42%, transparent);
+    --row:rgba(255,255,255,.07);
+    --rowHover:rgba(255,255,255,.13);
+    --rowBorder:rgba(255,255,255,.10);
+    --pageBg:#111112;
+    --artTint1:linear-gradient(135deg,rgba(65,201,226,.16),rgba(65,201,226,.03));
+    --artTint2:linear-gradient(135deg,rgba(217,192,138,.18),rgba(217,192,138,.03));
+    --artTint3:linear-gradient(135deg,rgba(146,200,180,.16),rgba(146,200,180,.03));
+    --artTint4:linear-gradient(135deg,rgba(146,200,180,.13),rgba(146,200,180,.02));
+    --artTint5:linear-gradient(135deg,rgba(255,255,255,.09),rgba(255,255,255,.02));
+    --artTint6:linear-gradient(135deg,rgba(146,200,180,.14),rgba(146,200,180,.02));
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:-apple-system,"PingFang SC",system-ui,sans-serif;
+    background:var(--pageBg);color:var(--assistantText);
+    min-height:100vh;display:flex;flex-direction:column;align-items:center;
+    padding:28px 24px 96px;
+  }
+  .stage{
+    width:var(--stageW,880px);height:760px;border-radius:16px;overflow:hidden;position:relative;
+    box-shadow:0 24px 60px rgba(0,0,0,.18);transition:width .18s ease;
+  }
+  .backdrop{
+    position:absolute;inset:-40px;
+    background:
+      radial-gradient(60% 55% at 18% 12%, #d5ded4 0%, transparent 60%),
+      radial-gradient(55% 60% at 82% 22%, #eae3cd 0%, transparent 62%),
+      radial-gradient(70% 70% at 62% 92%, #bccfc9 0%, transparent 60%),
+      linear-gradient(135deg,#e2e8dd,#efe9d8 45%,#c8d7d1);
+    filter:blur(38px) saturate(108%);transform:scale(1.08);
+  }
+  .backdrop::after{content:"";position:absolute;inset:0;background:rgba(70,58,38,.10);}
+  html.dark .backdrop{filter:blur(38px) saturate(70%) brightness(.45);}
+  .panel{position:relative;height:100%;padding:18px 26px 22px;display:flex;flex-direction:column;overflow:hidden;}
+
+  .greet{display:flex;align-items:baseline;justify-content:space-between;gap:16px;}
+  .greet h1{font-size:19px;font-weight:650;letter-spacing:.2px;}
+  .greet .date{font-size:12px;color:var(--secondary);}
+  .todayline{margin-top:6px;font-size:12.5px;color:var(--secondary);display:flex;gap:10px;flex-wrap:wrap;}
+  .todayline b{font-weight:600;color:var(--assistantText);}
+  .dot{opacity:.35;}
+
+  /* ---------- 插画卡片 ---------- */
+  .icu{display:grid;gap:var(--gap,12px);margin-top:16px;}
+  .icu[data-cols="2"]{grid-template-columns:repeat(2,1fr);}
+  .icu[data-cols="3"]{grid-template-columns:repeat(3,1fr);}
+  .icc{
+    display:flex;height:var(--cardH,112px);overflow:hidden;cursor:pointer;
+    border-radius:14px;background:var(--row);border:.5px solid var(--rowBorder);
+    transition:background .12s ease, transform .12s ease, box-shadow .12s ease;
+    text-align:left;font:inherit;color:inherit;padding:0;
+  }
+  .icc:hover{background:var(--rowHover);transform:translateY(-1.5px);box-shadow:0 6px 18px rgba(40,34,24,.10);}
+  .icc::after{content:"";margin:0 14px 0 -6px;align-self:center;width:7px;height:7px;border-right:1.5px solid var(--tertiary);border-top:1.5px solid var(--tertiary);transform:rotate(45deg);opacity:.45;}
+  .icc .art{width:var(--cardH,112px);flex:0 0 var(--cardH,112px);display:flex;align-items:center;justify-content:center;overflow:hidden;padding:6px;box-shadow:inset -.5px 0 0 rgba(60,48,30,.07);}
+  .icc .art svg{width:100%;height:100%;display:block;}
+  .icc[data-k="1"] .art{background:var(--artTint1);}
+  .icc[data-k="2"] .art{background:var(--artTint2);}
+  .icc[data-k="3"] .art{background:var(--artTint3);}
+  .icc[data-k="4"] .art{background:var(--artTint4);}
+  .icc[data-k="5"] .art{background:var(--artTint5);}
+  .icc[data-k="6"] .art{background:var(--artTint6);}
+  .icc .copy{padding:12px 14px 12px 14px;display:flex;flex-direction:column;justify-content:center;gap:3px;flex:1;min-width:0;}
+  .icc .t{font-size:13.5px;font-weight:600;white-space:nowrap;}
+  .icc .stat{font-size:12.5px;font-weight:560;color:var(--appAccent);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .icc .sub{font-size:11px;color:var(--tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  .icu[data-cols="3"] .icc{height:calc(var(--cardH) - 8px);}
+  .icu[data-cols="3"] .icc .copy{padding:10px 10px 10px 11px;}
+  .icu[data-cols="3"] .icc .t{font-size:12.5px;}
+  .icu[data-cols="3"] .icc .stat{font-size:11.5px;}
+  .icu[data-cols="3"] .icc .sub{font-size:10.5px;}
+
+  /* 尺寸档：大 / 中 / 小 */
+  .stage[data-size="l"]{--cardH:132px;--artPad:4px;--artW:46%;--gap:12px;}
+  .stage[data-size="m"]{--cardH:108px;--artPad:10px;--artW:42%;--gap:12px;}
+  .stage[data-size="s"]{--cardH:88px;--artPad:12px;--artW:36%;--gap:10px;}
+  .stage[data-size="s"] .icc{border-radius:12px;}
+  .stage[data-size="s"] .icc .copy{padding:9px 12px;gap:2px;}
+  .stage[data-size="s"] .icc .t{font-size:13px;}
+  .stage[data-size="s"] .icc .stat{font-size:12px;}
+  .stage[data-size="s"] .icc .sub{font-size:10.5px;}
+
+  /* ---------- 最近（紧凑一行，贴底） ---------- */
+  #recentBlock{margin-top:auto;padding-top:18px;}
+  #recentBlock::before{content:"";display:block;height:.5px;margin:0 2px 12px;background:color-mix(in srgb,var(--assistantText) 12%,transparent);}
+  .sect{margin:0 0 8px;font-size:11.5px;font-weight:600;color:var(--tertiary);letter-spacing:.4px;}
+  .recents{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  .rrow{
+    display:flex;align-items:center;gap:9px;padding:9px 12px;
+    border-radius:11px;background:var(--row);border:.5px solid var(--rowBorder);
+    cursor:pointer;min-width:0;transition:background .12s,transform .12s;
+  }
+  .rrow:hover{background:var(--rowHover);transform:translateY(-1px);}
+  .rthumb{
+    width:34px;height:34px;flex:0 0 34px;border-radius:8px;
+    background:linear-gradient(140deg,#cfe0d6,#e8e0cd 60%,#c9d8d4);
+    display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:rgba(0,0,0,.38);
+  }
+  html.dark .rthumb{background:linear-gradient(140deg,#31403a,#3a3630 60%,#2f3b38);color:rgba(255,255,255,.5);}
+  .rrow .rmeta{min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .rrow .t{font-size:12px;font-weight:540;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rrow .when{font-size:10.5px;color:var(--tertiary);white-space:nowrap;}
+
+  /* 窄态 */
+  .stage[data-w="380"] .icu[data-cols="2"],
+  .stage[data-w="380"] .icu[data-cols="3"]{grid-template-columns:1fr;}
+  .stage[data-w="560"] .icu[data-cols="3"]{grid-template-columns:repeat(2,1fr);}
+  .stage[data-w="380"] .recents{grid-template-columns:1fr;}
+  .stage[data-w="380"] .icc{--cardH:92px;}
+  .stage[data-w="380"] .greet h1{font-size:17px;}
+  .hide{display:none !important;}
+  .stage[data-align="center"] .icu{margin-top:auto;}
+
+  /* 控制条 */
+  .ui{
+    position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;
+    background:rgba(255,255,255,.8);border:.5px solid rgba(0,0,0,.08);
+    box-shadow:0 8px 24px rgba(0,0,0,.12);backdrop-filter:blur(14px);
+    font-size:12px;z-index:10;flex-wrap:nowrap;white-space:nowrap;
+  }
+  html.dark .ui{background:rgba(40,40,42,.85);border-color:rgba(255,255,255,.12);}
+  .ui button{font:inherit;font-size:12px;padding:5px 10px;border-radius:7px;cursor:pointer;border:.5px solid rgba(0,0,0,.1);background:transparent;color:inherit;}
+  .ui button.on{background:var(--appAccent);border-color:transparent;color:#fff;}
+  html.dark .ui button.on{color:#12221c;}
+  .ui .sep{width:1px;height:18px;background:rgba(0,0,0,.12);margin:0 4px;}
+  html.dark .ui .sep{background:rgba(255,255,255,.16);}
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage" data-w="840" data-size="l">
+  <div class="backdrop"></div>
+  <div class="panel">
+
+    <div class="greet">
+      <h1>下午好</h1>
+      <div class="date">11月11日 周二</div>
+    </div>
+    <div class="todayline">
+      <span>待办 <b>3</b></span><span class="dot">·</span>
+      <span>事件 <b>6</b></span><span class="dot">·</span>
+      <span>本月支出 <b>¥1,284</b></span>
+    </div>
+
+    <div class="icu" id="icu" data-cols="2">
+
+      <!-- 1 浏览器 -->
+      <button class="icc" data-k="1">
+        <div class="art">
+          <svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="70" cy="60" r="44" fill="#41C9E2" opacity=".12"/>
+            <g transform="rotate(-5 70 58)">
+              <rect x="30" y="28" width="80" height="62" rx="11" fill="#FFFFFF" opacity=".94"/>
+              <path d="M30 39a11 11 0 0 1 11-11h58a11 11 0 0 1 11 11v7H30z" fill="#2F7D63"/>
+              <circle cx="40" cy="37" r="2.4" fill="#F7EEDD"/>
+              <circle cx="48" cy="37" r="2.4" fill="#F7EEDD" opacity=".7"/>
+              <circle cx="56" cy="37" r="2.4" fill="#F7EEDD" opacity=".45"/>
+              <circle cx="70" cy="64" r="15" fill="none" stroke="#2F7D63" stroke-width="2.6"/>
+              <path d="M55 64h30M70 49c5.5 5.5 5.5 24.5 0 30M70 49c-5.5 5.5-5.5 24.5 0 30"
+                    stroke="#2F7D63" stroke-width="1.9" fill="none" opacity=".5"/>
+            </g>
+            <path d="M98 82l17 7-7 2.3-2.4 7z" fill="#3B2E1F" opacity=".5"/>
+          </svg>
+        </div>
+        <div class="copy">
+          <div class="t">打开浏览器</div>
+          <div class="stat">3 个标签</div>
+          <div class="sub">上次停在 知乎</div>
+        </div>
+      </button>
+
+      <!-- 2 账单 -->
+      <button class="icc" data-k="2">
+        <div class="art">
+          <svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="70" cy="60" r="44" fill="#D9C08A" opacity=".2"/>
+            <g transform="rotate(-6 70 60)">
+              <path d="M46 24h46v70l-7.6-5.2L76.8 94l-7.6-5.2L61.6 94l-7.6-5.2L46.4 94z" fill="#FFFFFF" opacity=".96"/>
+              <rect x="56" y="38" width="28" height="4" rx="2" fill="#2F7D63" opacity=".55"/>
+              <rect x="56" y="48" width="20" height="4" rx="2" fill="#3B2E1F" opacity=".18"/>
+              <rect x="56" y="58" width="24" height="4" rx="2" fill="#3B2E1F" opacity=".18"/>
+              <rect x="56" y="68" width="16" height="4" rx="2" fill="#3B2E1F" opacity=".18"/>
+            </g>
+            <circle cx="94" cy="36" r="14" fill="#2F7D63"/>
+            <g stroke="#F7EEDD" stroke-width="1.9" stroke-linecap="round" fill="none">
+              <path d="M89 29l5 6 5-6M94 35v9M90.5 38h7M90.5 41.5h7"/>
+            </g>
+            <g>
+              <ellipse cx="100" cy="92" rx="12" ry="4.6" fill="#B79F6F" opacity=".22"/>
+              <ellipse cx="100" cy="87" rx="12" ry="4.6" fill="#E8D9B8"/>
+              <ellipse cx="100" cy="82" rx="12" ry="4.6" fill="#F3E8CE"/>
+            </g>
+          </svg>
+        </div>
+        <div class="copy">
+          <div class="t">账单</div>
+          <div class="stat">本月 ¥1,284</div>
+          <div class="sub">32 笔</div>
+        </div>
+      </button>
+
+      <!-- 3 记忆 -->
+      <button class="icc" data-k="3">
+        <div class="art">
+          <svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="70" cy="62" r="44" fill="#2F7D63" opacity=".12"/>
+            <rect x="36" y="38" width="64" height="44" rx="9" fill="#2F7D63" opacity=".18" transform="rotate(-8 68 60)"/>
+            <rect x="38" y="35" width="64" height="44" rx="9" fill="#FFFFFF" opacity=".86" transform="rotate(-3 70 57)"/>
+            <rect x="40" y="32" width="64" height="44" rx="9" fill="#FFFFFF" opacity=".98"/>
+            <g stroke="#2F7D63" stroke-width="1.5" opacity=".4">
+              <path d="M54 46L76 42M76 42L90 56M54 46L64 64M64 64L82 68M82 68L90 56M76 42L64 64"/>
+            </g>
+            <g fill="#2F7D63">
+              <circle cx="54" cy="46" r="3.4"/><circle cx="76" cy="42" r="3.4"/>
+              <circle cx="90" cy="56" r="3.2"/><circle cx="64" cy="64" r="3.2"/>
+              <circle cx="82" cy="68" r="3.4"/>
+            </g>
+            <path d="M100 22l2.6 7 7 2.6-7 2.6-2.6 7-2.6-7-7-2.6 7-2.6z" fill="#41C9E2" opacity=".85"/>
+          </svg>
+        </div>
+        <div class="copy">
+          <div class="t">记忆</div>
+          <div class="stat">128 条</div>
+          <div class="sub">最近 6 小时前</div>
+        </div>
+      </button>
+
+      <!-- 4 灵阅 -->
+      <button class="icc" data-k="4">
+        <div class="art">
+          <svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="70" cy="60" r="44" fill="#2F7D63" opacity=".1"/>
+            <g transform="rotate(-14 58 64)">
+              <rect x="30" y="28" width="54" height="68" rx="8" fill="#2F7D63" opacity=".16"/>
+            </g>
+            <g transform="rotate(-6 64 62)">
+              <rect x="36" y="26" width="54" height="68" rx="8" fill="#FFFFFF" opacity=".72"/>
+            </g>
+            <g transform="rotate(3 70 60)">
+              <rect x="42" y="24" width="54" height="68" rx="8" fill="#FFFFFF" opacity=".96"/>
+              <rect x="51" y="60" width="9" height="20" rx="3" fill="#2F7D63" opacity=".4"/>
+              <rect x="64" y="50" width="9" height="30" rx="3" fill="#2F7D63" opacity=".72"/>
+              <rect x="77" y="56" width="9" height="24" rx="3" fill="#41C9E2" opacity=".8"/>
+              <rect x="51" y="36" width="30" height="4" rx="2" fill="#3B2E1F" opacity=".16"/>
+              <rect x="51" y="44" width="20" height="4" rx="2" fill="#3B2E1F" opacity=".1"/>
+            </g>
+            <path d="M104 26l2.2 6 6 2.2-6 2.2-2.2 6-2.2-6-6-2.2 6-2.2z" fill="#41C9E2" opacity=".8"/>
+          </svg>
+        </div>
+        <div class="copy">
+          <div class="t">灵阅</div>
+          <div class="stat">32 页</div>
+          <div class="sub">最近 昨天 18:02</div>
+        </div>
+      </button>
+
+      <!-- 5 文档 -->
+      <button class="icc" data-k="5">
+        <div class="art">
+          <svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="70" cy="60" r="44" fill="#92C8B4" opacity=".22"/>
+            <rect x="44" y="22" width="56" height="76" rx="9" fill="#FFFFFF" opacity=".96"/>
+            <rect x="56" y="42" width="32" height="4" rx="2" fill="#3B2E1F" opacity=".22"/>
+            <rect x="56" y="52" width="32" height="4" rx="2" fill="#3B2E1F" opacity=".15"/>
+            <rect x="56" y="62" width="22" height="4" rx="2" fill="#3B2E1F" opacity=".15"/>
+            <path d="M56 78q5-6 10 0t10 0 10 0" stroke="#2F7D63" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+            <path d="M80 22h14v24l-7-6-7 6z" fill="#41C9E2" opacity=".9"/>
+          </svg>
+        </div>
+        <div class="copy">
+          <div class="t">文档</div>
+          <div class="stat">18 篇</div>
+          <div class="sub">最近编辑 昨天</div>
+        </div>
+      </button>
+
+      <!-- 6 事件 -->
+      <button class="icc" data-k="6">
+        <div class="art">
+          <svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="70" cy="60" r="44" fill="#2F7D63" opacity=".12"/>
+            <path d="M46 24v72" stroke="#2F7D63" stroke-width="2" stroke-dasharray="2 6" opacity=".35" stroke-linecap="round"/>
+            <circle cx="46" cy="36" r="5" fill="#2F7D63"/>
+            <circle cx="46" cy="64" r="5" fill="#41C9E2"/>
+            <circle cx="46" cy="88" r="4" fill="#2F7D63" opacity=".3"/>
+            <rect x="58" y="24" width="50" height="22" rx="7" fill="#FFFFFF" opacity=".5"/>
+            <rect x="58" y="32" width="50" height="22" rx="7" fill="#FFFFFF" opacity=".74"/>
+            <rect x="58" y="40" width="50" height="22" rx="7" fill="#FFFFFF"/>
+            <rect x="66" y="47" width="24" height="3.4" rx="1.7" fill="#2F7D63" opacity=".5"/>
+            <rect x="66" y="54" width="14" height="3.4" rx="1.7" fill="#3B2E1F" opacity=".15"/>
+            <circle cx="98" cy="80" r="11" fill="#2F7D63" opacity=".9"/>
+            <path d="M93.5 80.5l3 3 6-6.5" stroke="#F7EEDD" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="copy">
+          <div class="t">事件</div>
+          <div class="stat">6 个事件</div>
+          <div class="sub">最近更新 今天</div>
+        </div>
+      </button>
+
+    </div>
+
+    <div id="recentBlock">
+      <div class="sect">最近</div>
+      <div class="recents">
+        <div class="rrow">
+          <div class="rmeta">
+            <div class="t">记忆质量与噪声回收 · 设计</div>
+            <div class="when">文档 · 昨天 22:14</div>
+          </div>
+        </div>
+        <div class="rrow">
+          <div class="rmeta">
+            <div class="t">Q4 支出对比报告</div>
+            <div class="when">灵阅 · 昨天 18:02</div>
+          </div>
+        </div>
+        <div class="rrow">
+          <div class="rmeta">
+            <div class="t">macOS 卡片爬窗顶 · 备忘</div>
+            <div class="when">文档 · 11月9日</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="ui">
+  <button data-cols="2" class="on">2 列</button>
+  <button data-cols="3">3 列</button>
+  <div class="sep"></div>
+  <button data-size="l" class="on">大</button>
+  <button data-size="m">中</button>
+  <button data-size="s">小</button>
+  <div class="sep"></div>
+  <button data-w="840" class="on">840</button>
+  <button data-w="560">560</button>
+  <button data-w="380">380</button>
+  <div class="sep"></div>
+  <button id="alignBtn">卡片居中</button>
+  <button id="recentBtn" class="on">最近 开</button>
+  <button id="themeBtn">深色</button>
+</div>
+
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var stage = document.getElementById('stage');
+  var grid = document.getElementById('icu');
+  var recentBlock = document.getElementById('recentBlock');
+  var colBtns = Array.prototype.slice.call(document.querySelectorAll('.ui button[data-cols]'));
+  var wBtns = Array.prototype.slice.call(document.querySelectorAll('.ui button[data-w]'));
+  var sizeBtns = Array.prototype.slice.call(document.querySelectorAll('.ui button[data-size]'));
+  var recentBtn = document.getElementById('recentBtn');
+  var alignBtn = document.getElementById('alignBtn');
+  var themeBtn = document.getElementById('themeBtn');
+
+  function setCols(n){
+    grid.setAttribute('data-cols', String(n));
+    colBtns.forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-cols') === String(n)); });
+  }
+  function setW(w){
+    stage.setAttribute('data-w', String(w));
+    stage.style.setProperty('--stageW', w + 'px');
+    wBtns.forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-w') === String(w)); });
+  }
+  function setRecent(on){
+    recentBlock.classList.toggle('hide', !on);
+    recentBtn.classList.toggle('on', on);
+    recentBtn.textContent = on ? '最近 开' : '最近 关';
+  }
+  function setSize(s){
+    stage.setAttribute('data-size', s);
+    sizeBtns.forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-size') === s); });
+  }
+  function setAlign(a){
+    stage.setAttribute('data-align', a);
+    alignBtn.classList.toggle('on', a === 'center');
+    alignBtn.textContent = a === 'center' ? '卡片顶对齐' : '卡片居中';
+  }
+  function setTheme(t){
+    document.documentElement.className = t;
+    themeBtn.textContent = t === 'dark' ? '浅色' : '深色';
+  }
+
+  colBtns.forEach(function(b){ b.onclick = function(){ setCols(b.getAttribute('data-cols')); }; });
+  wBtns.forEach(function(b){ b.onclick = function(){ setW(b.getAttribute('data-w')); }; });
+  sizeBtns.forEach(function(b){ b.onclick = function(){ setSize(b.getAttribute('data-size')); }; });
+  alignBtn.onclick = function(){ setAlign(stage.getAttribute('data-align') === 'center' ? 'top' : 'center'); };
+  recentBtn.onclick = function(){ setRecent(recentBlock.classList.contains('hide')); };
+  themeBtn.onclick = function(){
+    setTheme(document.documentElement.className === 'dark' ? 'light' : 'dark');
+  };
+
+  setCols(q.get('cols') || '2');
+  setW(q.get('w') || '840');
+  setSize(q.get('size') || 'l');
+  setAlign(q.get('align') || 'top');
+  setRecent(q.get('recent') !== '0');
+  setTheme(q.get('theme') || 'light');
+})();
+</script>
+</body>
+</html>

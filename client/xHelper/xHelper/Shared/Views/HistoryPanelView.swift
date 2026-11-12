@@ -86,7 +86,7 @@ struct HistoryPanelView: View {
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text("\(e.host) · \(Self.relativeTime(e.visitedAt))")
+                Text("\(e.host) · \(SidebarHomeFormat.relativeTime(e.visitedAt))")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -129,17 +129,6 @@ struct HistoryPanelView: View {
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
-    }
-
-    private static func relativeTime(_ date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "刚刚" }
-        if interval < 3600 { return "\(Int(interval / 60)) 分钟前" }
-        if interval < 86400 { return "\(Int(interval / 3600)) 小时前" }
-        if interval < 7 * 86400 { return "\(Int(interval / 86400)) 天前" }
-        let f = DateFormatter()
-        f.dateFormat = "yyyy/MM/dd"
-        return f.string(from: date)
     }
 }
 #endif

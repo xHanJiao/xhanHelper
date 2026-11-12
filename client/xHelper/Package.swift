@@ -174,5 +174,17 @@ let package = Package(
             dependencies: ["VoiceAudioLeaseCore"],
             path: "Tests/VoiceAudioLeaseCoreTests"
         ),
+        // SidebarHomeCore — 右栏首页的纯格式化逻辑（金额 / 相对时间 / 问候 / 当月起始）。
+        // 「昨天」按日历天判定、10 万以上改万位，这些边界容易被改坏，抽出来让 swift test 钉住。
+        .target(
+            name: "SidebarHomeCore",
+            path: "xHelper/Shared",
+            sources: ["Views/SidebarHomeFormat.swift"]
+        ),
+        .testTarget(
+            name: "SidebarHomeCoreTests",
+            dependencies: ["SidebarHomeCore"],
+            path: "Tests/SidebarHomeCoreTests"
+        ),
     ]
 )

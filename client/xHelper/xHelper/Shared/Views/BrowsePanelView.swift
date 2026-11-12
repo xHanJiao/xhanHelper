@@ -43,6 +43,12 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .agents:    return "自定义智能体管理"
         }
     }
+
+    /// 首页展示的入口（浏览器单列在最前，不在此列）。
+    /// 图片 / 智能体 / 监控看板已移出首页，改从设置「内容与工具」进入；
+    /// 枚举 case 必须保留——文档深链、顶栏 ⌘1/⌘2/⌘3 都直接选中它们。
+    /// 见 docs/design/right-sidebar-home/design.md §7。
+    static let homePanels: [BrowsePanel] = [.bills, .memories, .artifacts, .documents, .events]
 }
 
 /// 回收站批量操作（页头按钮 → 二次确认）
@@ -101,11 +107,19 @@ struct BrowsePanelView: View {
     @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
+    /// 首页六个入口的数字（六路轻请求 + 60s 缓存，见 `SidebarHomeViewModel`）。
+    /// 挂在 `RightSidebarView`（与其它 VM 同处）而非首页自己：开浏览器 tab 时首页会被摘除，
+    /// 挂在自己身上会让缓存随之销毁，每次回来都重新打六个接口。
+    @ObservedObject var homeVM: SidebarHomeViewModel
     let baseURL: String
     let token: String
 
     /// 监控看板 WebView 共享状态（header 刷新按钮 + WebView 共用）
     @StateObject private var dashboardWebModel = XHWebViewModel()
+
+    /// 「上次停在 X」取自浏览器历史
+    @ObservedObject private var historyStore = HistoryStore.shared
+    @Environment(\.colorScheme) private var colorScheme
 
     /// 缓存击穿戳：每次打开面板/点刷新自增，URL 带 ?t= 强制回源拉新 index.html。
     /// 服务器静态资源无 Cache-Control，WKWebView 启发式缓存会让 reloadFromOrigin 命中旧文档，
@@ -171,43 +185,231 @@ struct BrowsePanelView: View {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
-    /// 根据网格可用宽度自适应列数：宽时 3 列（9 格 3 行），窄时 2 列（9 格 5 行，靠滚动兜住）。
-    /// 宽态：先维持 110 的格子宽、把剩余空间给间距；空间不足时间距压到最小、格子随之收缩；
-    /// 空间富余时间距封顶、格子保持 110。
-    private func adaptiveColumns(width: CGFloat) -> (columns: [GridItem], spacing: CGFloat) {
-        if width >= 480 {
-            let maxTile: CGFloat = 110
-            let minTile: CGFloat = 84
-            let maxSpacing: CGFloat = 20
-            let minSpacing: CGFloat = 6
+    // MARK: - 首页（问候行 + 六个入口卡 + 最近页脚）
+    //
+    // 设计见 docs/design/right-sidebar-home/design.md：
+    // 卡片顶对齐、最近页脚贴底；图片/智能体/监控看板已移出首页（改从设置进入）。
 
-            var spacing = (width - 3 * maxTile) / 2
-            var tile = maxTile
-            if spacing < minSpacing {
-                spacing = minSpacing
-                tile = max(minTile, (width - 2 * minSpacing) / 3)
-            } else if spacing > maxSpacing {
-                spacing = maxSpacing
-            }
-            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 3)
-            return (columns, spacing)
-        } else {
-            let maxTile: CGFloat = 160
-            let minTile: CGFloat = 90
-            let maxSpacing: CGFloat = 20
-            let minSpacing: CGFloat = 8
+    /// 首页内容宽 ≥ 620 用两列卡片，否则单列（右栏最小 380，单列才不会把文字挤掉）。
+    private static let twoColumnThreshold: CGFloat = 620
 
-            var spacing = width - 2 * maxTile
-            var tile = maxTile
-            if spacing < minSpacing {
-                spacing = minSpacing
-                tile = max(minTile, (width - minSpacing) / 2)
-            } else if spacing > maxSpacing {
-                spacing = maxSpacing
+    private func homeColumns(wide: Bool) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 12), count: wide ? 2 : 1)
+    }
+
+    private var home: some View {
+        GeometryReader { geo in
+            let contentWidth = geo.size.width - 52   // 左右各 26
+            let wide = contentWidth >= Self.twoColumnThreshold
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    greeting
+                    LazyVGrid(columns: homeColumns(wide: wide), spacing: 12) {
+                        browserCard(height: wide ? 132 : 104)
+                        ForEach(BrowsePanel.homePanels) { panel in
+                            entryCard(panel, height: wide ? 132 : 104)
+                        }
+                    }
+                    .padding(.top, 16)
+
+                    Spacer(minLength: 28)
+                    recentFooter(wide: wide)
+                }
+                .padding(.horizontal, 26)
+                .padding(.vertical, 18)
+                // 撑满高度，`Spacer` 才能把最近页脚压到底部
+                .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
             }
-            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 2)
-            return (columns, spacing)
         }
+        .task { await homeVM.refresh(baseURL: baseURL, token: token) }
+    }
+
+    private var greeting: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: Date())))
+                    .font(.system(size: 19, weight: .semibold))
+                Spacer()
+                Text(Self.todayText())
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+
+            todayLine
+                .font(.system(size: 12.5))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    /// 今日行：待办 / 事件 / 本月支出。任一路取不到就显示 `—`（不隐藏，免得布局跳动）。
+    /// 用 HStack 而不是 `Text + Text`（macOS 26 已废弃 `+`）。
+    private var todayLine: some View {
+        HStack(spacing: 7) {
+            todayItem("待办", homeVM.stats.pendingReminders.map(String.init))
+            separatorDot
+            todayItem("事件", homeVM.stats.events.map(String.init))
+            separatorDot
+            todayItem("本月支出", homeVM.stats.monthSpend.map(SidebarHomeFormat.money))
+        }
+        .font(.system(size: 12.5))
+        .foregroundColor(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.9)
+    }
+
+    private func todayItem(_ label: String, _ value: String?) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+            Text(value ?? "—")
+                .fontWeight(.semibold)
+                .foregroundColor(Color("assistantText"))
+                .monospacedDigit()
+        }
+    }
+
+    private var separatorDot: some View {
+        Text("·")
+            .foregroundColor(Color.primary.opacity(0.35))
+    }
+
+    private static func todayText() -> String {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.month, .day, .weekday], from: Date())
+        let names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+        let index = max(0, min(6, (comps.weekday ?? 1) - 1))
+        return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"
+    }
+
+    private func browserCard(height: CGFloat) -> some View {
+        let count = manager.tabs.count
+        #if os(macOS)
+        let last = historyStore.entries.first?.title
+        let secondary = last.map { "上次停在 \($0)" }
+        #else
+        let secondary: String? = nil
+        #endif
+        return HomeEntryCard(
+            asset: "sidebar_browser",
+            title: "打开浏览器",
+            primary: count == 0 ? "未打开" : "\(count) 个标签",
+            secondary: secondary,
+            tint: Color("accentSecondary"),
+            height: height
+        ) {
+            BrowserToolProvider.shared.openBlankTab()
+        }
+    }
+
+    private func entryCard(_ panel: BrowsePanel, height: CGFloat) -> some View {
+        let s = homeVM.stats
+        let card: (asset: String, primary: String, secondary: String?) = {
+            switch panel {
+            case .bills:
+                return ("sidebar_bills",
+                        s.monthSpend.map { "本月 " + SidebarHomeFormat.money($0) } ?? "—",
+                        s.monthBillCount.map { "\($0) 笔" })
+            case .memories:
+                return ("sidebar_memory",
+                        s.memories.map { "\($0) 条" } ?? "—",
+                        s.memoriesCreatedText.map { "最近 \($0)" })
+            case .artifacts:
+                return ("sidebar_artifact",
+                        s.artifacts.map { "\($0) 页" } ?? "—",
+                        s.artifactsCreatedText.map { "最近 \($0)" })
+            case .documents:
+                return ("sidebar_document",
+                        s.documents.map { "\($0) 篇" } ?? "—",
+                        s.documentsUpdatedText.map { "最近编辑 \($0)" })
+            case .events:
+                return ("sidebar_events",
+                        s.events.map { "\($0) 个事件" } ?? "—",
+                        s.eventsUpdatedText.map { "最近更新 \($0)" })
+            case .images, .agents, .dashboard:
+                // 已从首页移出（走设置），这里只为穷尽 switch
+                return ("sidebar_document", "", nil)
+            }
+        }()
+        return HomeEntryCard(
+            asset: card.asset,
+            title: panel.rawValue,
+            primary: card.primary,
+            secondary: card.secondary,
+            tint: tint(for: panel),
+            height: height
+        ) {
+            manager.browsePanelSelection = panel
+        }
+    }
+
+    private func tint(for panel: BrowsePanel) -> Color {
+        switch panel {
+        case .bills:     return Color("assistantText")
+        case .memories:  return Color("appAccent")
+        case .artifacts: return Color("appAccent")
+        case .documents: return Color("appAccent")
+        case .events:    return Color("appAccent")
+        case .images, .agents, .dashboard: return Color("appAccent")
+        }
+    }
+
+    @ViewBuilder
+    private func recentFooter(wide: Bool) -> some View {
+        let recent = homeVM.stats.recent
+        if !recent.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.12))
+                    .frame(height: 0.5)
+                Text("最近")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(.secondary.opacity(0.8))
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 10),
+                                   count: wide ? 3 : 1),
+                    spacing: 10
+                ) {
+                    ForEach(recent) { item in
+                        recentRow(item)
+                    }
+                }
+            }
+            .padding(.top, 18)
+        }
+    }
+
+    private func recentRow(_ item: SidebarHomeViewModel.RecentItem) -> some View {
+        Button {
+            switch item.kind {
+            case .artifact:
+                ArtifactOpenCoordinator.shared.open(id: item.targetID, title: item.title)
+            case .document:
+                DocumentSelectionCoordinator.shared.openDocument(id: item.targetID)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text("\(item.kind.label) · \(item.time)")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 11)
+                    .fill(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.44))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11)
+                    .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.1 : 0.66), lineWidth: 0.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     var body: some View {
@@ -238,7 +440,7 @@ struct BrowsePanelView: View {
                     panelContent(panel)
                 }
             } else {
-                grid
+                home
             }
         }
         .onChange(of: manager.browsePanelSelection) { _, newValue in
@@ -433,55 +635,6 @@ struct BrowsePanelView: View {
         default:
             EmptyView()
         }
-    }
-
-    // MARK: - 网格
-
-    private var grid: some View {
-        // 9 格（浏览器 + 8 个面板）：宽 5 列 × 2 行、窄 2 列 × 5 行。窄态高度不够时靠 ScrollView 兜住，
-        // 内容比视口矮时用 minHeight 撑满以保持垂直居中。
-        GeometryReader { geo in
-            let (columns, spacing) = adaptiveColumns(width: geo.size.width - 48)
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: spacing) {
-                    browserTile
-                    ForEach(BrowsePanel.allCases) { panel in
-                        tile(icon: panel.icon, title: panel.rawValue, help: panel.help) {
-                            manager.browsePanelSelection = panel
-                        }
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
-            }
-        }
-    }
-
-    private var browserTile: some View {
-        tile(icon: "globe", title: "打开浏览器", help: "打开浏览器标签页，可先登录账号") {
-            BrowserToolProvider.shared.openBlankTab()
-        }
-    }
-
-    private func tile(icon: String, title: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 26))
-                    .foregroundColor(.accentColor)
-                    .frame(width: 52, height: 52)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     // MARK: - 浏览页面
@@ -1138,6 +1291,107 @@ struct BrowsePanelView: View {
             }
         }
         #endif
+    }
+}
+
+/// 右栏首页的入口卡：左侧正方形插画 + 右侧标题/主数字/副文案 + 右箭头。
+///
+/// 尺寸与配色见 docs/design/right-sidebar-home/design.md §4：
+/// 底 `white 44%`（深色 7%），悬停提亮并轻微上浮；插画区宽度 = 卡片高度。
+private struct HomeEntryCard: View {
+    let asset: String
+    let title: String
+    /// 会变的那一行（本月 ¥1,284 / 128 条 …）
+    let primary: String
+    /// 更弱的补充行（32 笔 / 最近 昨天），没有就不渲染
+    let secondary: String?
+    /// 插画区底色（token 色，低透明度）
+    let tint: Color
+    let height: CGFloat
+    let action: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var hovered = false
+
+    private var fill: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(hovered ? 0.13 : 0.07)
+            : Color.white.opacity(hovered ? 0.66 : 0.44)
+    }
+
+    private var stroke: Color {
+        colorScheme == .dark ? Color.white.opacity(0.1) : Color.white.opacity(0.66)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 0) {
+                ZStack {
+                    // 12~16% 的渐变底（左上浓、右下淡），让插画区像一张"图"而不是一块色块
+                    LinearGradient(
+                        colors: [
+                            tint.opacity(colorScheme == .dark ? 0.20 : 0.14),
+                            tint.opacity(colorScheme == .dark ? 0.06 : 0.04),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    Image(asset)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(6)
+                }
+                .frame(width: height, height: height)
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.06))
+                        .frame(width: 0.5)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text(primary)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundColor(Color("appAccent"))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                    if let secondary, !secondary.isEmpty {
+                        Text(secondary)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .padding(.trailing, 14)
+            }
+            .frame(height: height)
+            .background(RoundedRectangle(cornerRadius: 14).fill(fill))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(stroke, lineWidth: 0.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .shadow(
+                color: .black.opacity(hovered ? 0.1 : 0),
+                radius: 6, y: 3
+            )
+            .offset(y: hovered ? -1.5 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+        .help(title)
     }
 }
 

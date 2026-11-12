@@ -199,7 +199,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。优先接管用户已打开的页：用户已自己开好/已登录/已过验证码时，先 list_tabs 取 owner=user 的 tabId 直接操作该页，不要另开新页（另开新页可能重新触发站点风控/验证）。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理（主会话无 ui__ask_user 时改为文字告知用户，页面已升栏并已发系统通知），用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。优先接管用户已打开的页：用户已自己开好/已登录/已过验证码时，先 list_tabs 取 owner=user 的 tabId 直接操作该页，不要另开新页（另开新页可能重新触发站点风控/验证）。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理（主会话无 ui__ask_user 时改为文字告知用户，页面已升栏并已发系统通知），用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"),
+                                   "background": boolProp("是否后台打开（不切走当前标签页），默认 true"),
+                                   "engine": ["type": "string",
+                                              "enum": ["cef", "compat"],
+                                              "description": "指定内核（可选）：cef=主引擎 Chromium（默认，谷歌登录/风控正常），compat=兼容 WebKit（看视频、主引擎渲染异常时的兜底）。不填按域名规则自动选（视频站自动走 compat）"]]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭本任务打开的全部标签页（只关 agent 标签，用户自己的标签不受影响）", inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭。只能关闭本任务（owner 相同）的标签；用户自己的标签需用户授权", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title/owner）。每项带 owner 标注：user=用户自己的标签，main:<convID> / subagent:<convID>=agent 自己任务的标签。返回的 activeTabId 就是用户当前正在看的那页。用户要求操作他自己打开的页面时（如「帮我操作我打开的这个页」），用 owner=user 对应的 tabId：读取免费，写/交互首次会弹一次授权确认，允许后同一任务/会话内免再确认", inputSchema: objProps([:]), isReadOnly: true),
@@ -587,7 +591,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func cgClick(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         #if os(macOS)
         guard let webView = session.webView else {
-            return .init(serverResult: nil, serverError: TabSession.cefUnsupported, clientAction: nil)
+            return .init(serverResult: nil, serverError: TabSession.cefUnsupportedCGEvent, clientAction: nil)
         }
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
@@ -664,7 +668,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func cgDrag(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         #if os(macOS)
         guard let webView = session.webView else {
-            return .init(serverResult: nil, serverError: TabSession.cefUnsupported, clientAction: nil)
+            return .init(serverResult: nil, serverError: TabSession.cefUnsupportedCGEvent, clientAction: nil)
         }
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
@@ -1745,15 +1749,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return .init(serverResult: nil, serverError: errorMsg, clientAction: nil)
         }
 
+        // D19：agent 显式指定引擎（"cef" / "compat"），优先级最高
+        let engineArg = (args["engine"] as? String).flatMap { BrowserEngine(rawValue: $0.lowercased()) }
+
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let isAgent = owner != nil
-        // agent 标签在 B2 里仍走兼容引擎：agent 工具（快照/点击/JS）要等 B7 才接 CEF，
-        // 现在给它一个 CEF 标签会变成"页面能看、工具全哑"。用户自己开的（owner == nil，
-        // 含 Cmd+Shift+T 恢复）按 URL 判定，恢复出来的页才不会从 CEF 掉回 WK。B7 接入时统一。
-        let session = TabSession(engine: owner == nil
-            ? BrowserEngineRouter.resolveEngine(url: url, cefAvailable: Self.cefAvailable)
-            : .compat)
+        // B7 起 agent 标签也走 resolveEngine：CEF 有了 JS 求值通道（渲染进程代跑 + JSON 回包），
+        // 快照/读正文/点击这些工具不再依赖 WKWebView。仍走 WK 的只剩真实鼠标注入（cg_click/cg_drag）
+        // 与截图类能力，调用时给明确失败。
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(
+            url: url, override: engineArg, cefAvailable: Self.cefAvailable))
         session.isAgentTab = isAgent
         session.owner = owner
         tabs[tabId] = session
@@ -3379,7 +3385,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         /// CEF 标签上 WK 专属能力的统一失败文案（agent 工具在 B6/B7 才接 CEF）
-        static let cefUnsupported = "该标签由 CEF（Chromium）引擎承载，此能力暂未接入 CEF（见迁移批次 B6/B7）；需要时请用兼容引擎打开该页"
+        static let cefUnsupported = "该标签由 CEF（Chromium）引擎承载，此能力暂未接入 CEF（见迁移批次 B7/B8）；需要时请用兼容引擎打开该页"
+        /// 真实系统级鼠标注入（CGEvent）按 WK 的视图坐标体系写，CEF 标签上暂不支持
+        static let cefUnsupportedCGEvent = "真实鼠标注入（cg_click / cg_drag）目前只在兼容引擎（WK）标签可用；CEF 标签请改用普通 click / drag 动作"
 
         /// 页面是否已就绪（readyState == complete）
         private func isPageReady() async -> Bool {
@@ -3388,9 +3396,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func waitForLoad(timeoutMs: Int) async -> LocalToolResult {
-            guard webView != nil else {
-                return .init(serverResult: nil, serverError: Self.cefUnsupported, clientAction: nil)
-            }
             cancelLoadWait()
             // 快速路径：页面已就绪（open 后/无新导航时避免假 timeout）
             if await isPageReady() {
@@ -3430,9 +3435,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // MARK: - JS Helpers
 
         func jsResult(_ js: String) async -> (text: String?, jsError: String?) {
-            guard let webView else { return (nil, Self.cefUnsupported) }
             do {
-                let result = try await webView.evaluateJavaScript(js)
+                let result = try await page.evaluateJS(js)
                 return ((result as? String), nil)
             } catch {
                 LogBuffer.shared.error("[Browser] JS error: \(error.localizedDescription)")
@@ -3441,9 +3445,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func jsBool(_ js: String) async -> (ok: Bool, jsError: String?) {
-            guard let webView else { return (false, Self.cefUnsupported) }
             do {
-                let result = try await webView.evaluateJavaScript(js)
+                let result = try await page.evaluateJS(js)
                 return ((result as? Bool) ?? false, nil)
             } catch {
                 LogBuffer.shared.error("[Browser] JS error: \(error.localizedDescription)")
@@ -3466,11 +3469,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func eval(_ script: String) async -> LocalToolResult {
-            guard let webView else {
-                return .init(serverResult: nil, serverError: Self.cefUnsupported, clientAction: nil)
-            }
             do {
-                let result = try await webView.evaluateJavaScript(script)
+                let result = try await page.evaluateJS(script)
                 let text: String
                 if let s = result as? String {
                     text = s

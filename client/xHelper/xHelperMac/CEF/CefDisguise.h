@@ -19,6 +19,40 @@
 
 namespace xhdisguise {
 
+/// 把 UTF-8 源码包成 JS 字符串字面量（agent 传的脚本可以含引号/换行/反斜杠，不能直接拼）。
+inline std::string JsStringLiteral(const std::string &utf8) {
+  std::string out;
+  out.reserve(utf8.size() + 2);
+  out.push_back('"');
+  for (unsigned char c : utf8) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (c < 0x20) {
+          char buf[8];
+          snprintf(buf, sizeof(buf), "\\u%04x", c);
+          out += buf;
+        } else {
+          out.push_back(static_cast<char>(c));  // UTF-8 多字节直接透传
+        }
+    }
+  }
+  out.push_back('"');
+  return out;
+}
+
+/// 包一层 eval：既能跑表达式也能跑语句（取完成值），并把结果序列化成 JSON。
+/// 返回值形态固定为 `{ok:true, json:"…"}` 或 `{ok:false, error:"…"}`。
+inline std::string EvalWrapper(const std::string &script) {
+  return "(function(){try{var __r=(0,eval)(" + JsStringLiteral(script) +
+         ");return {ok:true,json:JSON.stringify(__r===undefined?null:__r)};}"
+         "catch(e){return {ok:false,error:String((e&&e.message)||e)};}})()";
+}
+
 inline std::string ChromeVersion() {
   return std::to_string(CHROME_VERSION_MAJOR) + "." + std::to_string(CHROME_VERSION_MINOR) + "." +
          std::to_string(CHROME_VERSION_BUILD) + "." + std::to_string(CHROME_VERSION_PATCH);
@@ -150,6 +184,55 @@ inline std::string JavaScript() {
 /// 每个 frame（含 iframe —— 谷歌登录判定跑在 iframe 里）在上下文创建时注一次。
 class XHCefRenderProcessHandler : public CefRenderProcessHandler {
  public:
+  /// 浏览器进程发来的 `xh_eval`：代跑一段 JS，把结果 JSON 回给 `xh_eval_result`。
+  /// CEF 的 `CefFrame::ExecuteJavaScript` 没有返回值，agent 工具（快照/点击/读正文）全靠这条通道。
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefProcessId source_process,
+                                CefRefPtr<CefProcessMessage> message) override {
+    if (!message || message->GetName() != "xh_eval" || !frame) return false;
+    CefRefPtr<CefListValue> args = message->GetArgumentList();
+    if (!args || args->GetSize() < 2) return false;
+    const int requestId = args->GetInt(0);
+    const std::string script = args->GetString(1).ToString();
+
+    std::string json;
+    std::string error;
+    CefRefPtr<CefV8Context> context = frame->GetV8Context();
+    if (!context) {
+      error = "渲染进程上下文不可用（页面正在导航或已崩溃）";
+    } else if (!context->Enter()) {
+      error = "进入 V8 上下文失败";
+    } else {
+      CefRefPtr<CefV8Value> result;
+      CefRefPtr<CefV8Exception> exception;
+      const bool ok = context->Eval(EvalWrapper(script), frame->GetURL(), 0, result, exception);
+      context->Exit();
+      if (!ok) {
+        error = exception ? exception->GetMessage().ToString() : "JS 执行失败（无异常信息）";
+      } else if (!result || !result->IsObject()) {
+        error = "JS 结果形态异常（不是包装对象）";
+      } else {
+        CefRefPtr<CefV8Value> okValue = result->GetValue("ok");
+        if (okValue && okValue->IsBool() && okValue->GetBoolValue()) {
+          CefRefPtr<CefV8Value> jsonValue = result->GetValue("json");
+          json = (jsonValue && jsonValue->IsString()) ? jsonValue->GetStringValue().ToString() : "null";
+        } else {
+          CefRefPtr<CefV8Value> errValue = result->GetValue("error");
+          error = (errValue && errValue->IsString()) ? errValue->GetStringValue().ToString() : "JS 抛异常";
+        }
+      }
+    }
+
+    CefRefPtr<CefProcessMessage> reply = CefProcessMessage::Create("xh_eval_result");
+    CefRefPtr<CefListValue> replyArgs = reply->GetArgumentList();
+    replyArgs->SetInt(0, requestId);
+    replyArgs->SetString(1, json);
+    replyArgs->SetString(2, error);
+    frame->SendProcessMessage(PID_BROWSER, reply);
+    return true;
+  }
+
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefV8Context> context) override {

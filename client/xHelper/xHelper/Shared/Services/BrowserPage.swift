@@ -51,6 +51,10 @@ protocol BrowserPage: AnyObject {
     func find(_ text: String, forward: Bool, matchCase: Bool)
     func stopFinding(clearSelection: Bool)
     var onFindResult: ((Int) -> Void)? { get set }
+
+    /// 执行 JS 并取结果（agent 工具的快照/读正文/点击都靠它）。
+    /// 返回 JSON 可序列化的对象；`undefined`/`null` 给 `NSNull`。CEF 侧经渲染进程回包。
+    func evaluateJS(_ script: String) async throws -> Any
 }
 
 /// 页面状态的一对多广播（面板要刷新地址栏，TabSession 要更新标题/host，两边都得收）。
@@ -139,6 +143,10 @@ final class WKPage: NSObject, BrowserPage {
     func stopFinding(clearSelection: Bool) {
         guard clearSelection else { return }
         webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
+    }
+
+    func evaluateJS(_ script: String) async throws -> Any {
+        try await webView.evaluateJavaScript(script)
     }
 
     deinit {
@@ -264,6 +272,28 @@ final class CefPage: NSObject, BrowserPage {
     /// 取消进行中的下载（store 的「取消」按钮 → 这里 → CEF）
     func cancelDownload(_ downloadId: Int64) {
         browserView.cancelDownload(downloadId)
+    }
+
+    func evaluateJS(_ script: String) async throws -> Any {
+        try await withCheckedThrowingContinuation { continuation in
+            browserView.evaluateJavaScript(script) { value, error in
+                if let error {
+                    continuation.resume(throwing: CefPageError.jsFailed(error))
+                } else {
+                    continuation.resume(returning: value ?? NSNull())
+                }
+            }
+        }
+    }
+}
+
+private enum CefPageError: LocalizedError {
+    case jsFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .jsFailed(let message): return message
+        }
     }
 }
 #endif

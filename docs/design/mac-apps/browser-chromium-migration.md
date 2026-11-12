@@ -425,7 +425,7 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 
 - 协议：`BrowserPage`（`Shared/Services/BrowserPage.swift`）只放面板真的用到的六个读状态 + 七个动作 + `hostingView` + 状态广播。**B6a/B6b 已把页内查找、缩放、下载、JS 对话框收进协议**（`find`/`zoomScale`/`onDownloadPathRequested`…），现在只有 JS 求值与快照还走 `wkWebView` 过渡口；CEF 标签那里是 `nil`，调用方必须给明确失败（`TabSession.cefUnsupported`）。
 - `TabSession` 持有 `page`，`webView` 变成 `page.wkWebView`（可选）。CEF 没有 delegate，标题 / URL / 加载态由 `CefPage` 转成同一套 `onTitleChange` / `onURLChanged` / `loadContinuation`。
-- **agent 标签在 B2 里固定走兼容引擎**（`TabSession(engine: .compat)`）：agent 工具（快照/点击/JS）要 B7 才接 CEF，先给它 CEF 会变成"页面能看、工具全哑"。B7 接入时改回 `resolveEngine`。
+- ~~agent 标签在 B2 里固定走兼容引擎~~ **B7 已改回 `resolveEngine`**（agent 标签与用户标签同一套判定 + `engine` 参数，D19）：JS 求值通道接通后快照/读正文/点击都不再依赖 WKWebView。
 - CEF 起不来（缺 framework / `CefInitialize` 失败）→ `TabSession.makePage` 就地降级 WK + Toast「主引擎未启动，已切兼容模式」，`engine` 以实际造出来的页面为准（不谎报 cef）。
 - 新标签页在 CEF 侧走 `data:text/html;base64,...`（CEF 没有 `loadHTMLString`）；地址栏对 `about/data/file` 一律显示空。
 - **`target=_blank` / `window.open`（从 B4 提前拉了一小块）**：不处理时 CEF 会自己开一个裸原生窗口，而且**复用 opener 的 client** → 弹窗的地址/标题会串到侧栏 tab 上（实测：页面还是百度首页、地址栏却是百度地图）。所以在 `CefLifeSpanHandler::OnBeforePopup` 一律拦掉，交给 Swift 用 `openURL` 开成我们自己的 tab。B4 已定：引擎跟 opener（D17）；**opener 关系不保留**（兄弟 tab，`window.open()` 返回 null）— 已拍板先接受、B9 一起解决；无 URL 的 `window.open`（先开窗再 document.write）仍丢弃并留痕（`[cef] popup without url`）；windowFeatures/尺寸不适用（我们不开原生窗）。
@@ -466,6 +466,17 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **`<input type=file>`**：不实现，靠 CEF 默认（`file_dialog_runner` + `select_file_dialog_bridge` 都在 libcef 里，macOS 原生 NSOpenPanel）。真机弹不出来再自己接 `CefDialogHandler`。
 
 **B6 剩下没做的**（都在等 CEF 的 JS 结果通道，B7 一起）：favicon、权限（`CefPermissionHandler`：摄像头/麦克风/定位一律拒，与 WK 同策略）、埋点迁移、后台媒体保活（要"页面是否在播"的信号）、墙检测/手递手。
+
+#### 9.2.12 B7 实现口径（agent 工具接 CEF）
+
+- **JS 求值通道**（本批核心）：CEF 没有"执行并返回结果"的 API（`CefFrame::ExecuteJavaScript` 无返回值），改成自建应答通道：
+  - 浏览器进程 `XHCefBrowserView.evaluateJavaScript:completion:` → `SendProcessMessage(PID_RENDERER, "xh_eval")`（`id` + `script`）；
+  - 渲染进程 `XHCefRenderProcessHandler::OnProcessMessageReceived`（`CefDisguise.h`，与伪装注入同一个类）在 frame 的 `CefV8Context` 里跑 `EvalWrapper(script)`，回 `"xh_eval_result"`（`id` + `json` + `error`）；
+  - `EvalWrapper` 用 `(0,eval)(<脚本字面量>)` 包一层：**表达式和语句都能跑**（取完成值），结果 `JSON.stringify`，异常转成 `{ok:false,error}`。脚本以 JS 字符串字面量传入（转义引号/换行/反斜杠/控制字符），不做拼接，避免注入与语法碎片。自检：8/8（表达式 / IIFE / 语句块 / throw / undefined / 可选链 / 嵌套结构 / 引号反斜杠）。
+  - 三条收尾路径都必须只走一次：正常回包、**10s 超时**（renderer 崩了/页面在导航时回包可能永远不来，agent 工具不能挂死）、**关页**（`cefBrowserDidClose` 把待回包一律失败）。
+- **协议**：`BrowserPage.evaluateJS(_:) async throws -> Any`（WK = `webView.evaluateJavaScript`，CEF = 上面这条）。agent 的四个 JS 助手（`jsResult` / `jsBool` / `jsJSON` / `eval`）全部改成走 `page.evaluateJS`，`cefUnsupported` 在读写类工具上不再出现。
+- **agent 标签回到 `resolveEngine`**（含 `open` 的 `engine` 参数，D19）：不再固定兼容引擎。仍只在 WK 标签可用的：`cg_click` / `cg_drag`（真实鼠标注入按 WK 视图坐标写，CEF 上给明确失败 `cefUnsupportedCGEvent`）。
+- **还留在 WK 侧的**（不阻塞读类工具）：滚动位置保存/恢复（CEF 切 tab 由内核维持）、后台媒体保活探测、媒体嗅探面板、活动埋点的浏览状态机。这些在 CEF 标签上是静默跳过，不是报错。
 
 ## 十、CEF 版本运维
 
@@ -691,5 +702,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B5 | 2026-11-12 | 待提交 | 待真机构建 + 人眼。交付：白名单生效（含短链）、提示条（D16 + 频率闸）、地址栏换引擎图标、主引擎降级横幅；口径见 §9.2.10。三层检测的第 2/3 层按 §9.2.10 末条推到 B7 |
 | B6a | 2026-11-12 | 待提交 | **通过**（⌘F 查找、⌘±/⌘0 缩放已验；⌘G/⌘Shift+G 保留标准语义「查找下一个/上一个」，只在查找栏打开时有意义，不算缺陷）。交付：`BrowserPage` 增加 zoom/find、`CefFindHandler`、`CefJSDialogHandler`；口径见 §9.2.11。**未验**：页面 alert/confirm/prompt 的真机表现（无本地 http 测试页，B6b 一起验）；其余功能面在 B6b |
 | B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」+「检查元素」→ DevTools）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
+| B7 | 2026-11-12 | 待提交 | 待真机构建 + agent 实操（对 CEF 标签跑 snapshot / read / click / fill）。交付：CEF JS 求值通道（`xh_eval` / `xh_eval_result`，10s 超时 + 关页失败）、`BrowserPage.evaluateJS` 统一 WK/CEF、agent 标签改回 `resolveEngine` + `open` 的 `engine` 参数（D19）；口径见 §9.2.12 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

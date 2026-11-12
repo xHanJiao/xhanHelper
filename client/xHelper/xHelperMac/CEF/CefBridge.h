@@ -63,6 +63,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)loadHTMLString:(NSString *)html;
 /// 执行 JS（无返回值；要拿结果就让页面 `console.log("XHPROBE:…")`，见 probeReported）
 - (void)evaluateJavaScript:(NSString *)script;
+/// 执行 JS 并取结果（异步）：value 是 JSON 解析后的对象，失败给 error。
+/// 走渲染进程代跑（CEF 没有"执行并返回"的 API），10s 无回包按超时失败、关页立刻失败。
+- (void)evaluateJavaScript:(NSString *)script
+                completion:(void (^)(id _Nullable value, NSString * _Nullable error))completion;
 - (void)reload;
 - (void)stopLoading;
 - (void)goBack;

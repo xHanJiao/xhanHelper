@@ -156,6 +156,8 @@ class XHCefApp : public CefApp {
 /// 把 CefMenuModel 摊成 NSMenu 显示（Alloy 模式没有默认右键菜单，必须自己弹）
 - (void)cefShowMenu:(CefRefPtr<CefMenuModel>)model
            callback:(CefRefPtr<CefRunContextMenuCallback>)callback;
+/// 渲染进程返回的 JS 结果（`xh_eval_result`）
+- (void)cefEvalResult:(int32_t)requestId json:(NSString *)json error:(NSString *)error;
 - (void)cefBrowserDidClose;
 - (void)cefLoadingStateChanged:(BOOL)isLoading
                      canGoBack:(BOOL)canGoBack
@@ -216,6 +218,24 @@ class XHCefClient : public CefClient,
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  // JS 求值回包（渲染进程的 XHCefRenderProcessHandler 跑完脚本后回传）
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefProcessId source_process,
+                                CefRefPtr<CefProcessMessage> message) override {
+    if (!message || message->GetName() != "xh_eval_result") return false;
+    CefRefPtr<CefListValue> args = message->GetArgumentList();
+    if (!args || args->GetSize() < 3) return false;
+    const int32_t requestId = args->GetInt(0);
+    NSString *json = CefStringToNSString(args->GetString(1));
+    NSString *error = CefStringToNSString(args->GetString(2));
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      [view cefEvalResult:requestId json:json error:error];
+    });
+    return true;
+  }
 
   // 下载：Alloy 模式下不接这条就是"点了没反应"（CEF 默认取消，见 cef_download_handler.h）
   bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
@@ -657,12 +677,16 @@ static bool EnsureLibraryLoaded() {
   CefRefPtr<CefRunContextMenuCallback> _menuCallback;
   BOOL _menuPicked;
   NSMenu *_menu;
+  /// JS 求值：request id → 待回包（回包/超时/关页三条路径都要把它取走，只走一次）
+  int32_t _evalRequestCounter;
+  NSMutableDictionary<NSNumber *, id> *_evalCompletions;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URLString:(NSString *)urlString {
   self = [super initWithFrame:frame];
   if (self) {
     _startURL = [urlString copy] ?: @"about:blank";
+    _evalCompletions = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -738,6 +762,59 @@ static bool EnsureLibraryLoaded() {
   if (!_browser) return;
   CefRefPtr<CefFrame> frame = _browser->GetMainFrame();
   if (frame) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
+}
+
+// JS 求值（要返回值）：CEF 没有"执行并拿结果"的 API，交给渲染进程代跑再回包。
+- (void)evaluateJavaScript:(NSString *)script
+                completion:(void (^)(id _Nullable value, NSString * _Nullable error))completion {
+  CefRefPtr<CefFrame> frame = _browser ? _browser->GetMainFrame() : nullptr;
+  if (!frame) {
+    completion(nil, @"页面还没准备好（浏览器未创建）");
+    return;
+  }
+  const int32_t requestId = ++_evalRequestCounter;
+  _evalCompletions[@(requestId)] = [completion copy];
+
+  CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create("xh_eval");
+  CefRefPtr<CefListValue> args = message->GetArgumentList();
+  args->SetInt(0, requestId);
+  args->SetString(1, script.UTF8String);
+  frame->SendProcessMessage(PID_RENDERER, message);
+
+  // 超时兜底：渲染进程崩了 / 页面在导航时回包可能永远不来，agent 工具不能挂死
+  __weak XHCefBrowserView *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+                   XHCefBrowserView *strongSelf = weakSelf;
+                   if (!strongSelf) return;
+                   id pending = strongSelf->_evalCompletions[@(requestId)];
+                   if (!pending) return;
+                   [strongSelf->_evalCompletions removeObjectForKey:@(requestId)];
+                   ((void (^)(id, NSString *))pending)(nil, @"JS 执行超时（渲染进程无响应）");
+                 });
+}
+
+- (void)cefEvalResult:(int32_t)requestId json:(NSString *)json error:(NSString *)error {
+  id pending = _evalCompletions[@(requestId)];
+  if (!pending) return;   // 已超时/已关页，回包来晚了
+  [_evalCompletions removeObjectForKey:@(requestId)];
+  void (^completion)(id, NSString *) = pending;
+  if (error.length > 0) {
+    completion(nil, error);
+    return;
+  }
+  id value = nil;
+  if (json.length > 0) {
+    NSError *parseError = nil;
+    value = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding]
+                                            options:NSJSONReadingFragmentsAllowed
+                                              error:&parseError];
+    if (!value && parseError) {
+      completion(nil, [NSString stringWithFormat:@"JS 结果不是合法 JSON：%@", parseError.localizedDescription]);
+      return;
+    }
+  }
+  completion(value, nil);
 }
 
 // zoom level ↔ 缩放比：Chromium 默认一级约 1.2 倍
@@ -829,6 +906,12 @@ static bool EnsureLibraryLoaded() {
   // 只放 browser；client 留到本视图 dealloc。
   // 在 OnBeforeClose 栈里把 client 引用清零，CEF 那份引用一放就是"成员函数执行中 delete this"。
   _browser = nullptr;
+  // 关页时把还等着的 JS 求值一律失败掉，别让 agent 工具等到超时
+  NSArray<id> *pending = _evalCompletions.allValues;
+  [_evalCompletions removeAllObjects];
+  for (id block in pending) {
+    ((void (^)(id, NSString *))block)(nil, @"页面已关闭");
+  }
 }
 
 - (void)dealloc {

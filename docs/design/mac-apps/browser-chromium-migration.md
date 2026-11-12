@@ -472,10 +472,11 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **JS 求值通道**（本批核心）：CEF 没有"执行并返回结果"的 API（`CefFrame::ExecuteJavaScript` 无返回值），改成自建应答通道：
   - 浏览器进程 `XHCefBrowserView.evaluateJavaScript:completion:` → `SendProcessMessage(PID_RENDERER, "xh_eval")`（`id` + `script`）；
   - 渲染进程 `XHCefRenderProcessHandler::OnProcessMessageReceived`（`CefDisguise.h`，与伪装注入同一个类）在 frame 的 `CefV8Context` 里跑 `EvalWrapper(script)`，回 `"xh_eval_result"`（`id` + `json` + `error`）；
-  - `EvalWrapper` 用 `(0,eval)(<脚本字面量>)` 包一层：**表达式和语句都能跑**（取完成值），结果 `JSON.stringify`，异常转成 `{ok:false,error}`。脚本以 JS 字符串字面量传入（转义引号/换行/反斜杠/控制字符），不做拼接，避免注入与语法碎片。自检：8/8（表达式 / IIFE / 语句块 / throw / undefined / 可选链 / 嵌套结构 / 引号反斜杠）。
+  - `EvalWrapper` 用 `(0,eval)(<脚本字面量>)` 包一层：**表达式和语句都能跑**（取完成值），结果 `JSON.stringify`，异常转成 `{ok:false,error}`。**回包只认字符串**（`JSON.stringify({ok,…,json|error})` 的信封）——第一版回 V8 对象，实测跨回浏览器进程 `GetValue("ok")` 读不到值（表现为所有 eval 报”JS 抛异常”），改成信封字符串后稳定。脚本以 JS 字符串字面量传入（转义引号/换行/反斜杠/控制字符），不做拼接，避免注入与语法碎片。自检：8/8（表达式 / IIFE / 语句块 / throw / undefined / 可选链 / 嵌套结构 / 引号反斜杠）。
   - 三条收尾路径都必须只走一次：正常回包、**10s 超时**（renderer 崩了/页面在导航时回包可能永远不来，agent 工具不能挂死）、**关页**（`cefBrowserDidClose` 把待回包一律失败）。
 - **协议**：`BrowserPage.evaluateJS(_:) async throws -> Any`（WK = `webView.evaluateJavaScript`，CEF = 上面这条）。agent 的四个 JS 助手（`jsResult` / `jsBool` / `jsJSON` / `eval`）全部改成走 `page.evaluateJS`，`cefUnsupported` 在读写类工具上不再出现。
 - **agent 标签回到 `resolveEngine`**（含 `open` 的 `engine` 参数，D19）：不再固定兼容引擎。仍只在 WK 标签可用的：`cg_click` / `cg_drag`（真实鼠标注入按 WK 视图坐标写，CEF 上给明确失败 `cefUnsupportedCGEvent`）。
+- **后台 renderer 必须关降频**：`XHCefApp::OnBeforeCommandLineProcessing` 追加 `--disable-background-timer-throttling` / `--disable-renderer-backgrounding` / `--disable-backgrounding-occluded-windows`。agent 标签停在隐藏窗口里，不关这三个就是「标题正确、`readyState` 永远不是 complete、页面空壳」。
 - **还留在 WK 侧的**（不阻塞读类工具）：滚动位置保存/恢复（CEF 切 tab 由内核维持）、后台媒体保活探测、媒体嗅探面板、活动埋点的浏览状态机。这些在 CEF 标签上是静默跳过，不是报错。
 
 ## 十、CEF 版本运维

@@ -45,12 +45,14 @@ inline std::string JsStringLiteral(const std::string &utf8) {
   return out;
 }
 
-/// 包一层 eval：既能跑表达式也能跑语句（取完成值），并把结果序列化成 JSON。
-/// 返回值形态固定为 `{ok:true, json:"…"}` 或 `{ok:false, error:"…"}`。
+/// 包一层 eval：既能跑表达式也能跑语句（取完成值），结果序列化成 JSON。
+/// **返回的是字符串**（信封 `{"ok":true,"json":"…"}` / `{"ok":false,"error":"…"}`），
+/// 不返回对象：跨回浏览器进程读 V8 对象的属性在实测里拿不到值（`GetValue("ok")` 空），
+/// 只认一个字符串最省事也最稳。
 inline std::string EvalWrapper(const std::string &script) {
   return "(function(){try{var __r=(0,eval)(" + JsStringLiteral(script) +
-         ");return {ok:true,json:JSON.stringify(__r===undefined?null:__r)};}"
-         "catch(e){return {ok:false,error:String((e&&e.message)||e)};}})()";
+         ");return JSON.stringify({ok:true,json:JSON.stringify(__r===undefined?null:__r)});}"
+         "catch(e){return JSON.stringify({ok:false,error:String((e&&e.message)||e)});}})()";
 }
 
 inline std::string ChromeVersion() {
@@ -196,8 +198,8 @@ class XHCefRenderProcessHandler : public CefRenderProcessHandler {
     const int requestId = args->GetInt(0);
     const std::string script = args->GetString(1).ToString();
 
-    std::string json;
-    std::string error;
+    std::string json;    // 信封 {"ok":true,"json":"…"} / {"ok":false,"error":"…"}
+    std::string error;   // C++ 级失败（编译错/上下文不可用），正常为空
     CefRefPtr<CefV8Context> context = frame->GetV8Context();
     if (!context) {
       error = "渲染进程上下文不可用（页面正在导航或已崩溃）";
@@ -210,17 +212,10 @@ class XHCefRenderProcessHandler : public CefRenderProcessHandler {
       context->Exit();
       if (!ok) {
         error = exception ? exception->GetMessage().ToString() : "JS 执行失败（无异常信息）";
-      } else if (!result || !result->IsObject()) {
-        error = "JS 结果形态异常（不是包装对象）";
+      } else if (!result || !result->IsString()) {
+        error = "JS 结果形态异常（不是信封字符串）";
       } else {
-        CefRefPtr<CefV8Value> okValue = result->GetValue("ok");
-        if (okValue && okValue->IsBool() && okValue->GetBoolValue()) {
-          CefRefPtr<CefV8Value> jsonValue = result->GetValue("json");
-          json = (jsonValue && jsonValue->IsString()) ? jsonValue->GetStringValue().ToString() : "null";
-        } else {
-          CefRefPtr<CefV8Value> errValue = result->GetValue("error");
-          error = (errValue && errValue->IsString()) ? errValue->GetStringValue().ToString() : "JS 抛异常";
-        }
+        json = result->GetStringValue().ToString();   // 信封，浏览器进程再解
       }
     }
 

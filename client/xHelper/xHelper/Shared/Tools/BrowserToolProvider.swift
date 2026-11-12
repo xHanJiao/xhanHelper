@@ -1021,7 +1021,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let result = await session.jsJSON(elementTextSelJS(sel, maxChars))
             return interpretTextResult(result)
         }
-        let (text, _) = await session.jsResult("document.body?.innerText ?? ''")
+        let (text, jsErr) = await session.jsResult("document.body?.innerText ?? ''")
+        if let jsErr {
+            // 静默回空会让 LLM 以为"页面没内容"，实际是 JS 通道/页面本身挂了
+            return .init(serverResult: nil, serverError: "读取正文失败：\(jsErr)", clientAction: nil)
+        }
         let raw = text ?? ""
         var body = String(raw.prefix(maxResultChars))
         var out: [String: Any] = ["text": body.isEmpty ? "" : Self.pageContentDisclaimer + "\n" + body]
@@ -4383,9 +4387,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 按文本匹配第一步（贝壳「两居」类场景兜底；点击由 clickUpJS 完成）
     private func clickTextDownJS(_ text: String, _ index: Int) -> String {
-        return "(function(){\(collectEls(200))" +
+        // 用 innerText（渲染文本）而不是 textContent：后者会把 <script>/<style> 里的源码也算进来，
+        // 实测点"新闻"能匹配到一段 JS 代码。
+        let textOf = "var txt=function(e){var t=(e.getAttribute&&e.getAttribute('aria-label'))||(e.innerText!=null?e.innerText:e.textContent)||e.value||e.placeholder||'';return String(t).replace(/\\s+/g,' ').trim();};"
+        return "(function(){\(collectEls(200))\(textOf)" +
             "var hits=[];for(var i=0;i<out.length;i++){var e=out[i];" +
-            "var t=(e.getAttribute('aria-label')||e.textContent||e.value||e.placeholder||'').trim();" +
+            "var t=txt(e);" +
             "if(t.indexOf('\(esc(text))')>=0||(e.placeholder||'').indexOf('\(esc(text))')>=0)hits.push(i);}" +
             "if(hits.length===0)return JSON.stringify({ok:false,err:'未找到文本: \(esc(text))'});" +
             "if(\(index)>=hits.length)return JSON.stringify({ok:false,err:'匹配到 '+hits.length+' 个，可用 index 指定，当前 index=\(index)'});" +
@@ -4397,7 +4404,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "e.focus();" +
             "e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0}));" +
             "e.setAttribute('data-xh-down',Math.round(x)+','+Math.round(y));" +
-            "return JSON.stringify({ok:true,text:(e.getAttribute('aria-label')||e.textContent||e.value||e.placeholder||'').trim().slice(0,40),matches:hits.length,x:Math.round(x),y:Math.round(y)});})()"
+            "return JSON.stringify({ok:true,text:txt(e).slice(0,40),matches:hits.length,x:Math.round(x),y:Math.round(y)});})()"
     }
 
     // MARK: - 逐字符输入（拟人化）

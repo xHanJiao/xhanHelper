@@ -139,6 +139,17 @@ class XHCefApp : public CefApp {
     return browser_process_handler_;
   }
 
+  /// 后台标签（agent 工作区停进隐藏窗口）的 renderer 会被 Chromium 当"不可见"降频：
+  /// 定时器冻结、加载停在半路 —— 实测表现是标题正确但 `document.readyState` 永远不是 complete。
+  /// 这三个开关就是关掉这层降频；只改浏览器进程，子进程参数由 CEF 自己往下传。
+  void OnBeforeCommandLineProcessing(const CefString &process_type,
+                                    CefRefPtr<CefCommandLine> command_line) override {
+    if (!process_type.empty() || !command_line) return;
+    command_line->AppendSwitch("disable-background-timer-throttling");
+    command_line->AppendSwitch("disable-renderer-backgrounding");
+    command_line->AppendSwitch("disable-backgrounding-occluded-windows");
+  }
+
  private:
   CefRefPtr<XHCefBrowserProcessHandler> browser_process_handler_;
   IMPLEMENT_REFCOUNTING(XHCefApp);
@@ -829,16 +840,34 @@ static NSWindow *XHCefParkingWindow(void) {
     completion(nil, error);
     return;
   }
-  id value = nil;
+  // 渲染进程回的是信封字符串：{"ok":true,"json":"…"} / {"ok":false,"error":"…"}
+  NSDictionary *envelope = nil;
   if (json.length > 0) {
-    NSError *parseError = nil;
-    value = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding]
-                                            options:NSJSONReadingFragmentsAllowed
-                                              error:&parseError];
-    if (!value && parseError) {
-      completion(nil, [NSString stringWithFormat:@"JS 结果不是合法 JSON：%@", parseError.localizedDescription]);
-      return;
-    }
+    envelope = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding]
+                                               options:0
+                                                 error:nil];
+  }
+  if (![envelope isKindOfClass:NSDictionary.class]) {
+    completion(nil, @"JS 回包不是合法信封");
+    return;
+  }
+  if (![(envelope[@"ok"] ?: @NO) boolValue]) {
+    NSString *message = envelope[@"error"];
+    completion(nil, message.length > 0 ? message : @"JS 抛异常");
+    return;
+  }
+  NSString *valueJSON = envelope[@"json"];
+  if (![valueJSON isKindOfClass:NSString.class] || valueJSON.length == 0) {
+    completion(nil, nil);   // 空结果 = undefined/null
+    return;
+  }
+  NSError *parseError = nil;
+  id value = [NSJSONSerialization JSONObjectWithData:[valueJSON dataUsingEncoding:NSUTF8StringEncoding]
+                                             options:NSJSONReadingFragmentsAllowed
+                                               error:&parseError];
+  if (!value && parseError) {
+    completion(nil, [NSString stringWithFormat:@"JS 结果不是合法 JSON：%@", parseError.localizedDescription]);
+    return;
   }
   completion(value, nil);
 }

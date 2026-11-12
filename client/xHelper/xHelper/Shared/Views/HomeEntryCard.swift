@@ -101,7 +101,9 @@ struct HomeEntryCard: View {
                     .scaledToFit()
                     .padding(10)
             }
-            .frame(width: height, height: height)
+            // 填满列宽、高度取档位值：图标档在窄窗口是「宽卡 + 居中插画」，不再是方块
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
             .modifier(HomeCardChrome(hovered: hovered))
         }
         .buttonStyle(.plain)

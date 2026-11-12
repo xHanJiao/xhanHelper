@@ -170,28 +170,35 @@ enum SidebarHomeFormat {
     /// 首页内容块最大宽（= 654 × 2 + 12 间距）。超过它只加两侧留白，卡片不再拉长。
     static let homeContentMaxWidth: CGFloat = 1320
 
-    /// 按内容宽算列数与档位。纯函数，见 `Tests/SidebarHomeCoreTests`。
+    /// 首页纵向除卡片外的固定开销（问候行 ~47 + 卡片上间距 16 + 行间 2×12 + 上下 padding 36）。
+    /// 近似值，只用来判断「三行卡放不放得下」，差几个点不影响结论。
+    static let homeChromeHeight: CGFloat = 123
+
+    /// 按内容宽 + 可用高算列数与档位。纯函数，见 `Tests/SidebarHomeCoreTests`。
     ///
-    /// 两列只在**每列都够「三行档」的 340** 时启用（2 × 340 + 12 = 692）：
-    /// 门槛还是 620 的话，621 宽会立刻掉成两张 304 的窄卡，直接触发图标档，反而比单列信息更少。
-    static func homeMetrics(contentWidth: CGFloat) -> HomeCardMetrics {
+    /// **永远两列**（用户 2026-11-12 拍板）：内容块窄了就靠档位降级（三行 → 单行 → 图标卡），
+    /// 不再退回单列——单列时一行只有一张卡，看着像列表而不是入口宫格。
+    ///
+    /// `availableHeight` 传视图实际可用高（不传 = 不考虑高度，老调用点行为不变）：
+    /// 三行 164 的信息档放不下时降到 132 的单行档；连 132 都放不下就**允许整页滚动**，
+    /// 不再继续压——卡高压到 100 出头文字和插画都会糊。
+    static func homeMetrics(contentWidth: CGFloat, availableHeight: CGFloat = .infinity) -> HomeCardMetrics {
         let width = max(0, contentWidth)
+        // 极端测量态（宽 < 12）也别算出负边长
+        let cardWidth = max(0, (width - 12) / 2)
+        // 每张卡最多能有高；窗口极矮时允许为负，后面 clamp 掉
+        let maxCardHeight = availableHeight.isFinite ? (availableHeight - homeChromeHeight) / 3 : .infinity
 
-        // 最窄：两张卡都放不下文字，退成 2 列纯图标（单列一张空壳比两个方块更难看）
-        if width < 340 {
-            // 极端测量态（宽 < 12）也别算出负边长
-            let side = max(0, (width - 12) / 2)
-            return HomeCardMetrics(layout: .iconOnly, columns: 2, cardWidth: side, cardHeight: side)
+        // 卡宽放不下文字：退成纯图标卡。两列也不拆，拆了就是单列。
+        // 高度封顶 170——不封顶时卡宽 300 上下会变成一块 300×300 的巨型方块。
+        if cardWidth < 340 {
+            return HomeCardMetrics(layout: .iconOnly, columns: 2, cardWidth: cardWidth,
+                                   cardHeight: max(0, min(cardWidth, 170, maxCardHeight)))
         }
 
-        if width < 2 * 340 + 12 {
-            let layout = tier(cardWidth: width)
-            return HomeCardMetrics(layout: layout, columns: 1, cardWidth: width,
-                                   cardHeight: layout == .info ? 164 : 104)
-        }
-
-        let cardWidth = (width - 12) / 2
-        let layout = tier(cardWidth: cardWidth)
+        // 只有信息档比别的档高（164 vs 132），所以高度不够时降这一档就够；132 是底线。
+        let base = tier(cardWidth: cardWidth)
+        let layout = base == .info && maxCardHeight < 164 ? .singleLine : base
         return HomeCardMetrics(layout: layout, columns: 2, cardWidth: cardWidth,
                                cardHeight: layout == .info ? 164 : 132)
     }

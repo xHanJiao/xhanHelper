@@ -200,7 +200,9 @@ struct BrowsePanelView: View {
     private var home: some View {
         GeometryReader { geo in
             let contentWidth = max(0, min(geo.size.width - 52, SidebarHomeFormat.homeContentMaxWidth))
-            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth)
+            // 高度也参与档位：窗口矮时信息档降成单行档，尽量一屏放下（放不下就滚）
+            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth,
+                                                        availableHeight: geo.size.height)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     greeting
@@ -212,7 +214,8 @@ struct BrowsePanelView: View {
                     }
                     .padding(.top, 16)
 
-                    Spacer(minLength: 28)
+                    // 高度吃紧时先让这口留白让位（0 起，撑开时照旧垫底）
+                    Spacer(minLength: 0)
                 }
                 .padding(.vertical, 18)
                 .frame(width: contentWidth)
@@ -224,26 +227,30 @@ struct BrowsePanelView: View {
     }
 
     private var greeting: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: Date())))
-                    .font(.system(size: 19, weight: .semibold))
-                Spacer()
-                Text(Self.todayText())
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
+        // 30s 一刷：问候语整点换档（「下午好」→「晚上好」），日期跨零点换。
+        // 用 TimelineView 而不是 Timer —— 视图被摘除时自动停，不用管取消。
+        TimelineView(.periodic(from: Date(), by: 30)) { context in
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: context.date)))
+                        .font(.system(size: 19, weight: .semibold))
+                    Spacer()
+                    Text(Self.todayText(context.date))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
 
-            Button {
-                manager.browsePanelSelection = .reminders
-            } label: {
-                todayLine
-                    .font(.system(size: 12.5))
-                    .foregroundColor(.secondary)
-                    .contentShape(Rectangle())
+                Button {
+                    manager.browsePanelSelection = .reminders
+                } label: {
+                    todayLine
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("查看备忘")
             }
-            .buttonStyle(.plain)
-            .help("查看备忘")
         }
     }
 
@@ -279,9 +286,9 @@ struct BrowsePanelView: View {
             .foregroundColor(Color.primary.opacity(0.35))
     }
 
-    private static func todayText() -> String {
+    private static func todayText(_ now: Date) -> String {
         let cal = Calendar.current
-        let comps = cal.dateComponents([.month, .day, .weekday], from: Date())
+        let comps = cal.dateComponents([.month, .day, .weekday], from: now)
         let names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
         let index = max(0, min(6, (comps.weekday ?? 1) - 1))
         return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"

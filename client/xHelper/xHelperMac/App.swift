@@ -20,6 +20,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // dev 视觉标识（UI-7）：Dock 图标右下角打一个 dev 角标（两个 .app 图标否则一模一样）。
         applyDevIconBadgeIfNeeded()
 
+        #if DEBUG
+        // CEF 合成冒烟（隐藏入口、无菜单项）：⌃⌥⌘B。
+        // 见 docs/design/mac-apps/browser-chromium-migration.md 第十三章
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 11,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                    == [.control, .option, .command]
+            else { return event }
+            CefSmokeWindowController.shared.show()
+            return nil
+        }
+        #endif
+
         // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。
         // 未配密钥时不起后端——先走首次配置（UI-1），配置完成后再 start。
         if LocalBackendManager.isActive && LocalBackendManager.shared.isConfigured {
@@ -594,6 +607,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 @main
+enum xhanHelperLauncher {
+    /// 不能用 `@main` 直接挂在 App 上：CEF 的子进程分支必须赶在 NSApplication 起来之前跑。
+    /// （macOS 上子进程由 Helper.app 承担，这条是兜底；`swiftc -typecheck` 覆盖不到本文件，只能真机验）
+    static func main() {
+        _ = XHCefRuntime.executeSubprocessIfNeeded()
+        xhanHelperMacApp.main()
+    }
+}
+
 struct xhanHelperMacApp: App {
     init() {
         NotificationDelegateRegistrar.register()

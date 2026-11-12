@@ -1,0 +1,412 @@
+#import "CefBridge.h"
+
+#include <objc/runtime.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "include/cef_app.h"
+#include "include/cef_browser.h"
+#include "include/cef_client.h"
+#include "include/cef_display_handler.h"
+#include "include/cef_life_span_handler.h"
+#include "include/cef_load_handler.h"
+#include "include/wrapper/cef_library_loader.h"
+
+// MARK: - 进程级状态
+
+static bool g_cef_ready = false;
+static NSTimer *g_pump = nil;
+
+// libcef_dll_wrapper 是「运行时加载」形态（C API 符号由 wrapper 里的一张函数指针表转发），
+// 所以 framework 必须先 dlopen 再碰任何 cef_* —— 也就是绝不能直接链 framework（会两份）。
+static std::unique_ptr<CefScopedLibraryLoader> g_loader;
+
+// argv 指针要活到 CefExecuteProcess / CefInitialize 用完，放静态区最省心。
+static std::vector<std::string> g_arg_store;
+static std::vector<char *> g_arg_ptrs;
+
+static CefMainArgs MakeMainArgs() {
+  NSArray<NSString *> *args = NSProcessInfo.processInfo.arguments;
+  g_arg_store.clear();
+  g_arg_ptrs.clear();
+  g_arg_store.reserve(args.count);
+  for (NSString *arg in args) {
+    g_arg_store.emplace_back(arg.UTF8String ?: "");
+  }
+  g_arg_ptrs.reserve(g_arg_store.size());
+  for (std::string &s : g_arg_store) {
+    g_arg_ptrs.push_back(const_cast<char *>(s.c_str()));
+  }
+  return CefMainArgs(static_cast<int>(g_arg_ptrs.size()), g_arg_ptrs.data());
+}
+
+// CEF 要求 NSApplication 实现 CefAppProtocol（见 include/cef_application_mac.h）：
+// 它用 isHandlingSendEvent 判断"此刻是不是在 sendEvent: 栈里"，不实现就抛
+// `-[NSApplication isHandlingSendEvent]: unrecognized selector`（实测在这条上崩过）。
+// SwiftUI 不能给 NSApplication 建子类，所以用 category 补方法 + 换掉 sendEvent: 的实现。
+static BOOL g_handlingSendEvent = NO;
+static IMP g_originalSendEvent = NULL;
+
+@interface NSApplication (XHCefSendingEvent)
+- (BOOL)isHandlingSendEvent;
+- (void)setHandlingSendEvent:(BOOL)value;
+@end
+
+@implementation NSApplication (XHCefSendingEvent)
+- (BOOL)isHandlingSendEvent {
+  return g_handlingSendEvent;
+}
+- (void)setHandlingSendEvent:(BOOL)value {
+  g_handlingSendEvent = value;
+}
+@end
+
+static void XHCefSendEvent(NSApplication *self, SEL _cmd, NSEvent *event) {
+  BOOL previous = g_handlingSendEvent;
+  g_handlingSendEvent = YES;
+  ((void (*)(id, SEL, NSEvent *))g_originalSendEvent)(self, _cmd, event);
+  g_handlingSendEvent = previous;
+}
+
+static void InstallSendEventSwizzleIfNeeded() {
+  if (g_originalSendEvent) return;
+  Method method = class_getInstanceMethod(NSApplication.class, @selector(sendEvent:));
+  g_originalSendEvent = method_getImplementation(method);
+  method_setImplementation(method, (IMP)XHCefSendEvent);
+}
+
+// CEF 的回调在主线程；万一不是，就挪过去再碰 AppKit。
+static void RunOnMain(dispatch_block_t block) {
+  if (NSThread.isMainThread) {
+    block();
+  } else {
+    dispatch_async(dispatch_get_main_queue(), block);
+  }
+}
+
+static NSString *CefStringToNSString(const CefString &value) {
+  return [NSString stringWithUTF8String:value.ToString().c_str()] ?: @"";
+}
+
+static void SetCefError(NSError **error, NSInteger code, NSString *message) {
+  if (error) {
+    *error = [NSError errorWithDomain:@"XHCefRuntime"
+                                code:code
+                            userInfo:@{NSLocalizedDescriptionKey : message}];
+  }
+}
+
+namespace {
+
+class XHCefApp : public CefApp {
+ public:
+  XHCefApp() = default;
+
+ private:
+  IMPLEMENT_REFCOUNTING(XHCefApp);
+};
+
+}  // namespace
+
+@class XHCefBrowserView;
+
+@interface XHCefBrowserView ()
+- (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser;
+- (void)cefBrowserDidClose;
+@end
+
+namespace {
+
+class XHCefClient : public CefClient,
+                    public CefLifeSpanHandler,
+                    public CefLoadHandler,
+                    public CefDisplayHandler {
+ public:
+  explicit XHCefClient(XHCefBrowserView *view) : view_(view) {}
+
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+  CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+
+  // 关窗/CloseBrowser 走完进程回收才通知外部放引用
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      [view cefBrowserCreated:browser];
+    });
+  }
+
+  void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      [view cefBrowserDidClose];
+    });
+  }
+
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int httpStatusCode) override {
+    if (!frame->IsMain()) return;
+    XHCefBrowserView *view = view_;
+    // 4xx/5xx 也算加载完（页面已经渲染出来了），失败由 OnLoadError 报
+    RunOnMain(^{
+      if (view.loadDidFinish) view.loadDidFinish(YES);
+    });
+  }
+
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode,
+                   const CefString &errorText,
+                   const CefString &failedUrl) override {
+    if (!frame->IsMain()) return;
+    // ERR_ABORTED 是正常中断（重定向、用户点走），不当失败报
+    if (errorCode == ERR_ABORTED) return;
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      if (view.loadDidFinish) view.loadDidFinish(NO);
+    });
+  }
+
+  void OnTitleChange(CefRefPtr<CefBrowser> browser,
+                     const CefString &title) override {
+    NSString *text = CefStringToNSString(title);
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      if (view.titleDidChange) view.titleDidChange(text);
+    });
+  }
+
+  void OnAddressChange(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       const CefString &url) override {
+    if (!frame->IsMain()) return;
+    NSString *text = CefStringToNSString(url);
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      if (view.urlDidChange) view.urlDidChange(text);
+    });
+  }
+
+ private:
+  __weak XHCefBrowserView *view_;
+
+  IMPLEMENT_REFCOUNTING(XHCefClient);
+};
+
+}  // namespace
+
+// MARK: - XHCefRuntime
+
+@implementation XHCefRuntime
+
+static bool EnsureLibraryLoaded() {
+  if (g_loader) return true;
+  auto loader = std::make_unique<CefScopedLibraryLoader>();
+  if (!loader->LoadInMain()) return false;
+  g_loader = std::move(loader);
+  return true;
+}
+
++ (BOOL)executeSubprocessIfNeeded {
+  // Helper 进程走 CEF/helper_main.mm 里的 LoadInHelper，不经过这里
+  if (!EnsureLibraryLoaded()) return NO;
+  CefMainArgs mainArgs = MakeMainArgs();
+  // 子进程会在这里跑完整个生命周期；主进程立刻返回 -1
+  int code = CefExecuteProcess(mainArgs, nullptr, nullptr);
+  if (code >= 0) {
+    exit(code);
+  }
+  return NO;
+}
+
++ (BOOL)initializeIn:(NSString *)dataRoot error:(NSError **)error {
+  if (g_cef_ready) return YES;
+  if (!EnsureLibraryLoaded()) {
+    SetCefError(error, 5, @"Chromium Embedded Framework 加载失败（看 Console）");
+    return NO;
+  }
+
+  NSBundle *bundle = NSBundle.mainBundle;
+  NSString *frameworks = bundle.privateFrameworksPath;
+  NSString *framework = [frameworks stringByAppendingPathComponent:
+                                          @"Chromium Embedded Framework.framework"];
+  NSString *productName = bundle.infoDictionary[@"CFBundleName"] ?: @"xhanHelper";
+  NSString *helper = [frameworks stringByAppendingPathComponent:
+                                    [NSString stringWithFormat:@"%@ Helper.app/Contents/MacOS/%@ Helper",
+                                                               productName, productName]];
+
+  NSFileManager *fm = NSFileManager.defaultManager;
+  if (![fm fileExistsAtPath:framework]) {
+    SetCefError(error, 1, [NSString stringWithFormat:@"缺 framework：%@（先跑 scripts/fetch-cef.sh）", framework]);
+    return NO;
+  }
+  if (![fm fileExistsAtPath:helper]) {
+    SetCefError(error, 2, [NSString stringWithFormat:@"缺 Helper：%@", helper]);
+    return NO;
+  }
+
+  InstallSendEventSwizzleIfNeeded();
+
+  NSString *cachePath = [dataRoot stringByAppendingPathComponent:@"CEF"];
+  NSError *dirError = nil;
+  if (![fm createDirectoryAtPath:cachePath
+     withIntermediateDirectories:YES
+                      attributes:nil
+                           error:&dirError]) {
+    SetCefError(error, 3, [NSString stringWithFormat:@"建缓存目录失败：%@（%@）",
+                                                     cachePath, dirError.localizedDescription]);
+    return NO;
+  }
+
+  CefMainArgs mainArgs = MakeMainArgs();
+  CefSettings settings;
+  settings.no_sandbox = true;              // 本机未开沙盒，用 CEF sandbox 还要 entitlement
+  settings.external_message_pump = true;   // 消息泵由 NSTimer 驱动，见 startPump
+  settings.windowless_rendering_enabled = false;
+  settings.persist_session_cookies = true;
+  settings.background_color = 0xFFFFFFFF;  // 首帧前白底，避免黑闪
+  settings.log_severity = LOGSEVERITY_WARNING;
+
+  CefString(&settings.framework_dir_path) = framework.UTF8String;
+  CefString(&settings.browser_subprocess_path) = helper.UTF8String;
+  CefString(&settings.main_bundle_path) = bundle.bundlePath.UTF8String;
+  CefString(&settings.resources_dir_path) =
+      [framework stringByAppendingPathComponent:@"Resources"].UTF8String;
+  CefString(&settings.locales_dir_path) =
+      [framework stringByAppendingPathComponent:@"Resources"].UTF8String;
+  CefString(&settings.root_cache_path) = cachePath.UTF8String;
+
+  if (!CefInitialize(mainArgs, settings, new XHCefApp(), nullptr)) {
+    SetCefError(error, 4, @"CefInitialize 失败（看 Console 里的 CEF 日志）");
+    return NO;
+  }
+  g_cef_ready = true;
+
+  // external_message_pump：CEF 不自带循环，必须由我们按固定节拍调 CefDoMessageLoopWork
+  g_pump = [NSTimer timerWithTimeInterval:1.0 / 60.0
+                                  repeats:YES
+                                    block:^(__unused NSTimer *timer) {
+                                      if (g_cef_ready) CefDoMessageLoopWork();
+                                    }];
+  [NSRunLoop.mainRunLoop addTimer:g_pump forMode:NSRunLoopCommonModes];
+  return YES;
+}
+
+// shortcut: 退出时不做 CefShutdown（进程退出即回收，省掉 OnBeforeClose → Shutdown 的时序坑），
+// B2 接正式引擎、需要"关掉浏览器子系统"时再补这条路径。
+
++ (BOOL)isReady {
+  return g_cef_ready;
+}
+
+@end
+
+// MARK: - XHCefBrowserView
+
+@implementation XHCefBrowserView {
+  CefRefPtr<CefBrowser> _browser;
+  CefRefPtr<XHCefClient> _client;
+  NSString *_startURL;
+  BOOL _browserRequested;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame URLString:(NSString *)urlString {
+  self = [super initWithFrame:frame];
+  if (self) {
+    _startURL = [urlString copy] ?: @"about:blank";
+  }
+  return self;
+}
+
+- (BOOL)isFlipped {
+  return YES;
+}
+
+- (void)viewDidMoveToWindow {
+  [super viewDidMoveToWindow];
+  if (self.window) {
+    [self createBrowserIfNeeded];
+  }
+  [self syncBrowserVisibility];
+}
+
+- (void)createBrowserIfNeeded {
+  if (_browserRequested || !XHCefRuntime.isReady) return;
+  _browserRequested = YES;
+
+  _client = new XHCefClient(self);
+
+  CefWindowInfo windowInfo;
+  CefWindowHandle parent = (CefWindowHandle)(__bridge void *)self;
+  windowInfo.SetAsChild(parent, CefRect(0, 0, (int)NSWidth(self.bounds), (int)NSHeight(self.bounds)));
+  CefBrowserSettings browserSettings;
+  browserSettings.background_color = 0xFFFFFFFF;
+
+  if (!CefBrowserHost::CreateBrowser(windowInfo, _client, _startURL.UTF8String,
+                                     browserSettings, nullptr, nullptr)) {
+    NSLog(@"[cef] CreateBrowser 失败（父视图或浏览器设置有问题）");
+  }
+}
+
+- (void)layout {
+  [super layout];
+  [self syncBrowserFrame];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+  [super setFrameSize:newSize];
+  [self syncBrowserFrame];
+}
+
+- (void)syncBrowserFrame {
+  NSRect bounds = self.bounds;
+  // CEF 会把自己的渲染子视图挂进来，它不跟随父视图尺寸，得我们同步
+  for (NSView *subview in self.subviews) {
+    subview.frame = bounds;
+  }
+  if (_browser) {
+    _browser->GetHost()->WasResized();
+  }
+}
+
+- (void)syncBrowserVisibility {
+  if (!_browser) return;
+  BOOL visible = self.window != nil && !self.window.isMiniaturized &&
+                 (self.window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+  _browser->GetHost()->WasHidden(!visible);
+  _browser->GetHost()->NotifyScreenInfoChanged();
+}
+
+- (void)loadURLString:(NSString *)urlString {
+  if (_browser) {
+    _browser->GetMainFrame()->LoadURL(urlString.UTF8String);
+  } else {
+    _startURL = [urlString copy] ?: @"about:blank";
+  }
+}
+
+- (void)closeBrowser {
+  if (!_browser) return;
+  // force_close=true：否则 renderer 进程会赖着（240MB/页的先例）
+  _browser->GetHost()->CloseBrowser(true);
+}
+
+- (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser {
+  _browser = browser;
+  [self syncBrowserFrame];
+  [self syncBrowserVisibility];
+}
+
+- (void)cefBrowserDidClose {
+  _browser = nullptr;
+  _client = nullptr;
+}
+
+- (void)dealloc {
+  [self closeBrowser];
+}
+
+@end

@@ -46,6 +46,7 @@ struct ContentView: View {
     @StateObject private var documentVM: DocumentViewModel
     @StateObject private var eventVM: EventViewModel
     @StateObject private var imageVM: ImageViewModel
+    @StateObject private var homeVM: SidebarHomeViewModel
     @StateObject private var chatTabManager: ChatTabManager
     @StateObject private var conversationListVM: ConversationListViewModel
 
@@ -412,6 +413,7 @@ struct ContentView: View {
         _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
         _eventVM = StateObject(wrappedValue: EventViewModel(apiClient: api))
         _imageVM = StateObject(wrappedValue: ImageViewModel(apiClient: api))
+        _homeVM = StateObject(wrappedValue: SidebarHomeViewModel())
         _chatTabManager = StateObject(wrappedValue: ChatTabManager {
             ChatViewModel(apiClient: APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? ""))
         })
@@ -506,6 +508,7 @@ struct ContentView: View {
                                     eventVM: eventVM,
                                     agentVM: agentVM,
                                     imageVM: imageVM,
+                                    homeVM: homeVM,
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )

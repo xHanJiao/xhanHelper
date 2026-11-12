@@ -1049,6 +1049,49 @@ struct MacSettingsView: View {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
     }
 
+    /// 设置里的面板入口：把主窗带到前面并展开右栏到对应面板。
+    /// 这几个原本在右栏首页（见 docs/design/right-sidebar-home/design.md §7），移出首页后仍要可达。
+    private func panelButton(_ title: String, detail: String, icon: String, panel: BrowsePanel) -> some View {
+        Button {
+            openRightPanel(panel)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color("appAccent"))
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("打开")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func openRightPanel(_ panel: BrowsePanel) {
+        guard let rs = BrowserToolProvider.shared.rightSidebar else {
+            // 接线 bug：右栏管理器没被 ContentView 注入。报出来 + 给用户一个可见反馈，别让按钮像没反应
+            LogBuffer.shared.error("settings: rightSidebar 未接线，无法打开 \(panel.rawValue)")
+            ToastCenter.shared.show("右栏暂不可用，请重开窗口再试")
+            return
+        }
+        rs.isOpen = true
+        rs.showBrowsePanel()
+        rs.browsePanelSelection = panel
+        AppDelegate.primaryWindow?.makeKeyAndOrderFront(nil)
+    }
+
     private func refreshCalendarStatus() {
         calendarStatus = CalendarStore.shared.statusText
         calendarAuthorized = CalendarStore.shared.isAuthorized
@@ -1348,6 +1391,13 @@ struct MacSettingsView: View {
             } footer: {
                 Text("服务地址留空、未开「使用本地后端」时连默认后端（Debug=localhost:8080 / Release=云端）；打开开关 = app 自启动内嵌后端（127.0.0.1:\(LocalPaths.backendPort)）。填写服务地址则一律改连该地址。三者改动均需重启 app 生效。")
                     + (LocalPaths.isDev ? Text("\nDebug 构建连的是 dev 后端（连 prod 云端会被 403 拒绝）。") : Text(""))
+            }
+
+            Section("内容与工具") {
+                panelButton("记忆", detail: "长期记忆、主题词云与反馈", icon: "brain.head.profile", panel: .memories)
+                panelButton("图片库", detail: "预览与清理已上传的图", icon: "photo.on.rectangle.angled", panel: .images)
+                panelButton("智能体", detail: "管理自定义智能体", icon: "cpu", panel: .agents)
+                panelButton("监控看板", detail: "成本与调用统计", icon: "chart.bar.xaxis", panel: .dashboard)
             }
 
             Section("浏览") {

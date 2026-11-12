@@ -14,6 +14,8 @@ struct RightSidebarView: View {
     @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
+    /// 首页入口数字（右栏级持有，切浏览器 tab 不丢缓存）
+    @ObservedObject var homeVM: SidebarHomeViewModel
     let baseURL: String
     let token: String
 
@@ -499,6 +501,7 @@ struct RightSidebarView: View {
                     eventVM: eventVM,
                     agentVM: agentVM,
                     imageVM: imageVM,
+                    homeVM: homeVM,
                     baseURL: baseURL,
                     token: token
                 )

@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 /// 右侧栏浏览面板类型
 enum BrowsePanel: String, Identifiable, CaseIterable {
     case bills = "账单"
+    case reminders = "备忘"
     case memories = "记忆"
     case artifacts = "灵阅"
     case documents = "文档"
@@ -21,6 +22,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     var icon: String {
         switch self {
         case .bills:     return "yensign.circle"
+        case .reminders: return "checklist"
         case .memories:  return "brain.head.profile"
         case .artifacts: return "doc.richtext"
         case .documents: return "doc.text"
@@ -34,6 +36,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     var help: String {
         switch self {
         case .bills:     return "查看账单记录与统计"
+        case .reminders: return "待办提醒（只读，按到期时间排序）"
         case .memories:  return "长期记忆与语义搜索"
         case .artifacts: return "浏览对话中生成的页面、报告与对比图"
         case .documents: return "Markdown 文档与版本"
@@ -43,6 +46,12 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .agents:    return "自定义智能体管理"
         }
     }
+
+    /// 首页展示的入口（浏览器单列在最前，不在此列）。
+    /// 记忆 / 图片 / 智能体 / 监控看板已移出首页，改从设置「内容与工具」进入；
+    /// 枚举 case 必须保留——文档深链、顶栏 ⌘1/⌘2/⌘3 都直接选中它们。
+    /// 见 docs/design/right-sidebar-home/design.md §7。
+    static let homePanels: [BrowsePanel] = [.bills, .reminders, .artifacts, .documents, .events]
 }
 
 /// 回收站批量操作（页头按钮 → 二次确认）
@@ -101,11 +110,18 @@ struct BrowsePanelView: View {
     @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
+    /// 首页六个入口的最近对象 + 备忘面板的数字（六路轻请求 + 60s 缓存，见 `SidebarHomeViewModel`）。
+    /// 挂在 `RightSidebarView`（与其它 VM 同处）而非首页自己：开浏览器 tab 时首页会被摘除，
+    /// 挂在自己身上会让缓存随之销毁，每次回来都重新打六个接口。
+    @ObservedObject var homeVM: SidebarHomeViewModel
     let baseURL: String
     let token: String
 
     /// 监控看板 WebView 共享状态（header 刷新按钮 + WebView 共用）
     @StateObject private var dashboardWebModel = XHWebViewModel()
+
+    /// 「上次停在 X」取自浏览器历史
+    @ObservedObject private var historyStore = HistoryStore.shared
 
     /// 缓存击穿戳：每次打开面板/点刷新自增，URL 带 ?t= 强制回源拉新 index.html。
     /// 服务器静态资源无 Cache-Control，WKWebView 启发式缓存会让 reloadFromOrigin 命中旧文档，
@@ -171,42 +187,280 @@ struct BrowsePanelView: View {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
-    /// 根据网格可用宽度自适应列数：宽时 3 列（9 格 3 行），窄时 2 列（9 格 5 行，靠滚动兜住）。
-    /// 宽态：先维持 110 的格子宽、把剩余空间给间距；空间不足时间距压到最小、格子随之收缩；
-    /// 空间富余时间距封顶、格子保持 110。
-    private func adaptiveColumns(width: CGFloat) -> (columns: [GridItem], spacing: CGFloat) {
-        if width >= 480 {
-            let maxTile: CGFloat = 110
-            let minTile: CGFloat = 84
-            let maxSpacing: CGFloat = 20
-            let minSpacing: CGFloat = 6
+    // MARK: - 首页（问候行 + 六个入口卡）
+    //
+    // 设计见 docs/design/right-sidebar-home/design-cards-v2.md：
+    // 卡片顶对齐；档位随卡宽四档降级，内容块封顶 1320 居中。
+    // 宽卡的信息行已经列出最近对象，所以不再有底部「最近」页脚（2026-11-12 用户拍板删掉）。
 
-            var spacing = (width - 3 * maxTile) / 2
-            var tile = maxTile
-            if spacing < minSpacing {
-                spacing = minSpacing
-                tile = max(minTile, (width - 2 * minSpacing) / 3)
-            } else if spacing > maxSpacing {
-                spacing = maxSpacing
-            }
-            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 3)
-            return (columns, spacing)
-        } else {
-            let maxTile: CGFloat = 160
-            let minTile: CGFloat = 90
-            let maxSpacing: CGFloat = 20
-            let minSpacing: CGFloat = 8
+    private func homeColumns(_ count: Int) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
+    }
 
-            var spacing = width - 2 * maxTile
-            var tile = maxTile
-            if spacing < minSpacing {
-                spacing = minSpacing
-                tile = max(minTile, (width - minSpacing) / 2)
-            } else if spacing > maxSpacing {
-                spacing = maxSpacing
+    private var home: some View {
+        GeometryReader { geo in
+            let contentWidth = max(0, min(geo.size.width - 52, SidebarHomeFormat.homeContentMaxWidth))
+            // 高度也参与档位：窗口矮时信息档降成单行档，尽量一屏放下（放不下就滚）
+            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth,
+                                                        availableHeight: geo.size.height)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    greeting
+                    LazyVGrid(columns: homeColumns(metrics.columns), spacing: 12) {
+                        browserCard(metrics: metrics)
+                        ForEach(BrowsePanel.homePanels) { panel in
+                            entryCard(panel, metrics: metrics)
+                        }
+                    }
+                    .padding(.top, 16)
+
+                    // 高度吃紧时先让这口留白让位（0 起，撑开时照旧垫底）
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 18)
+                .frame(width: contentWidth)
+                // 撑满高度让内容顶对齐；封顶后整块水平居中、两侧留白
+                .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
             }
-            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 2)
-            return (columns, spacing)
+        }
+        .task { await homeVM.refresh(baseURL: baseURL, token: token) }
+    }
+
+    private var greeting: some View {
+        // 每分钟重算：问候语整点换档（「下午好」→「晚上好」），日期跨零点换。
+        // 用 TimelineView 而不是 Timer —— 视图被摘除时自动停，不用管取消。
+        // 不能用 `.periodic(from: Date(), by:)`：body 每次重算都换起点，tick 会被一直往后推。
+        TimelineView(.everyMinute) { context in
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: context.date)))
+                        .font(.system(size: 19, weight: .semibold))
+                    Spacer()
+                    Text(Self.todayText(context.date))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+
+                Button {
+                    manager.browsePanelSelection = .reminders
+                } label: {
+                    todayLine
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("查看备忘")
+            }
+        }
+    }
+
+    /// 今日行：备忘 / 事件 / 本月支出。任一路取不到就显示 `—`（不隐藏，免得布局跳动）。
+    /// 整行可点进备忘面板——否则「上面有数字、下面没入口」会显得断头。
+    /// 用 HStack 而不是 `Text + Text`（macOS 26 已废弃 `+`）。
+    private var todayLine: some View {
+        HStack(spacing: 7) {
+            todayItem("备忘", homeVM.stats.pendingReminders.map(String.init))
+            separatorDot
+            todayItem("事件", homeVM.stats.events.map(String.init))
+            separatorDot
+            todayItem("本月支出", homeVM.stats.monthSpend.map(SidebarHomeFormat.money))
+        }
+        .font(.system(size: 12.5))
+        .foregroundColor(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.9)
+    }
+
+    private func todayItem(_ label: String, _ value: String?) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+            Text(value ?? "—")
+                .fontWeight(.semibold)
+                .foregroundColor(Color("assistantText"))
+                .monospacedDigit()
+        }
+    }
+
+    private var separatorDot: some View {
+        Text("·")
+            .foregroundColor(Color.primary.opacity(0.35))
+    }
+
+    private static func todayText(_ now: Date) -> String {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.month, .day, .weekday], from: now)
+        let names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+        let index = max(0, min(6, (comps.weekday ?? 1) - 1))
+        return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"
+    }
+
+    private func browserCard(metrics: HomeCardMetrics) -> some View {
+        let count = manager.tabs.count
+        #if os(macOS)
+        let last = historyStore.entries.first?.title
+        let secondary = last.map { "上次停在 \($0)" }
+        #else
+        let secondary: String? = nil
+        #endif
+        let rows = manager.tabs.prefix(3).map { tab in
+            HomeEntryCard.InfoRow(
+                id: "tab:" + tab.id,
+                title: tab.title,
+                detail: tab.host,
+                icon: tab.host.map { HomeEntryCard.InfoIcon.favicon(host: $0) }
+                    ?? .monogram(SidebarHomeFormat.monogram(tab.title))
+            ) {
+                manager.activeTabId = tab.id
+                BrowserToolProvider.shared.selectTab(tab.id)
+            }
+        }
+        return HomeEntryCard(
+            asset: "sidebar_browser",
+            title: "浏览器",
+            primary: count == 0 ? "未打开" : "\(count) 个标签",
+            secondary: secondary,
+            tint: Color("accentSecondary"),
+            layout: metrics.layout,
+            height: metrics.cardHeight,
+            details: detailLines(rows),
+            infoRows: rows
+        ) {
+            BrowserToolProvider.shared.openBlankTab()
+        }
+    }
+
+    private func entryCard(_ panel: BrowsePanel, metrics: HomeCardMetrics) -> some View {
+        let s = homeVM.stats
+        let card: (asset: String, primary: String, secondary: String?) = {
+            switch panel {
+            case .bills:
+                return ("sidebar_bills",
+                        s.monthSpend.map { "本月 " + SidebarHomeFormat.money($0) } ?? "—",
+                        s.monthBillCount.map { "\($0) 笔" })
+            case .reminders:
+                let overdue = homeVM.reminders.filter { SidebarHomeFormat.isOverdue($0.deadline) }.count
+                let next = homeVM.reminders.first { !SidebarHomeFormat.isOverdue($0.deadline) }
+                // 只有全过期时才提过期条数；有「下一条」就先说下一条。
+                let secondary = next.flatMap { SidebarHomeFormat.dueText($0.deadline) }
+                    .map { "下一条 \($0)" }
+                    ?? (overdue > 0 ? "\(overdue) 条已过期" : nil)
+                return ("sidebar_reminder",
+                        s.pendingReminders.map { "\($0) 条备忘" } ?? "—",
+                        secondary)
+            case .artifacts:
+                return ("sidebar_artifact",
+                        s.artifacts.map { "\($0) 页" } ?? "—",
+                        s.artifactsCreatedText.map { "最近 \($0)" })
+            case .documents:
+                return ("sidebar_document",
+                        s.documents.map { "\($0) 篇" } ?? "—",
+                        s.documentsUpdatedText.map { "最近编辑 \($0)" })
+            case .events:
+                return ("sidebar_events",
+                        s.events.map { "\($0) 个事件" } ?? "—",
+                        s.eventsUpdatedText.map { "最近更新 \($0)" })
+            case .memories, .images, .agents, .dashboard:
+                // 已从首页移出（走设置），这里只为穷尽 switch
+                return ("sidebar_document", "", nil)
+            }
+        }()
+        let rows = infoRows(for: panel)
+        return HomeEntryCard(
+            asset: card.asset,
+            title: panel.rawValue,
+            primary: card.primary,
+            secondary: card.secondary,
+            tint: tint(for: panel),
+            layout: metrics.layout,
+            height: metrics.cardHeight,
+            details: detailLines(rows),
+            infoRows: rows
+        ) {
+            manager.browsePanelSelection = panel
+        }
+    }
+
+    /// 信息档的三条最近对象。全部复用 `SidebarHomeViewModel` 已有的取数，不额外请求。
+    /// 图标只落在已有字段上：账单 `category1` 映射、备忘按是否过期、无类型字段的域用标题首字。
+    private func infoRows(for panel: BrowsePanel) -> [HomeEntryCard.InfoRow] {
+        let openPanel: () -> Void = { manager.browsePanelSelection = panel }
+        switch panel {
+        case .bills:
+            return homeVM.recentBills.prefix(3).map { bill in
+                HomeEntryCard.InfoRow(
+                    id: "bill:" + bill.id,
+                    title: bill.item,
+                    detail: SidebarHomeFormat.money(bill.amount),
+                    icon: SidebarHomeFormat.billIcon(category1: bill.category1)
+                        .map { HomeEntryCard.InfoIcon.symbol($0) }
+                        ?? .monogram(SidebarHomeFormat.monogram(bill.item)),
+                    action: openPanel
+                )
+            }
+        case .reminders:
+            return homeVM.reminders.prefix(3).map { reminder -> HomeEntryCard.InfoRow in
+                let overdue = SidebarHomeFormat.isOverdue(reminder.deadline)
+                return HomeEntryCard.InfoRow(
+                    id: "reminder:" + reminder.id,
+                    title: reminder.content,
+                    detail: SidebarHomeFormat.dueRelative(reminder.deadline),
+                    icon: overdue ? .warning("exclamationmark.circle") : .symbol("checkmark.circle"),
+                    action: openPanel
+                )
+            }
+        case .artifacts:
+            return homeVM.recentArtifacts.prefix(3).map { artifact in
+                HomeEntryCard.InfoRow(
+                    id: "artifact:" + artifact.id,
+                    title: artifact.title,
+                    detail: LocalArtifactTime.parse(artifact.createdAt).map { SidebarHomeFormat.relativeTime($0) },
+                    icon: .monogram(SidebarHomeFormat.monogram(artifact.title)),
+                    action: { ArtifactOpenCoordinator.shared.open(id: artifact.id, title: artifact.title) }
+                )
+            }
+        case .documents:
+            return homeVM.recentDocuments.prefix(3).map { doc in
+                HomeEntryCard.InfoRow(
+                    id: "document:" + doc.id,
+                    title: doc.title,
+                    detail: LocalArtifactTime.parse(doc.updatedAt).map { SidebarHomeFormat.relativeTime($0) },
+                    icon: .monogram(SidebarHomeFormat.monogram(doc.title)),
+                    action: { DocumentSelectionCoordinator.shared.openDocument(id: doc.id) }
+                )
+            }
+        case .events:
+            return homeVM.recentEvents.prefix(3).map { event in
+                HomeEntryCard.InfoRow(
+                    id: "event:" + event.id,
+                    title: event.name,
+                    detail: LocalArtifactTime.parse(event.updatedAt).map { SidebarHomeFormat.relativeTime($0) },
+                    icon: .monogram(SidebarHomeFormat.monogram(event.name)),
+                    action: openPanel
+                )
+            }
+        case .memories, .images, .agents, .dashboard:
+            // 已从首页移出（走设置），这里只为穷尽 switch
+            return []
+        }
+    }
+
+    /// 单行档的细节行与信息行同源（标题 / 右侧细节），不维护第二套文案。
+    private func detailLines(_ rows: [HomeEntryCard.InfoRow]) -> [HomeEntryCard.DetailLine] {
+        rows.prefix(2).map {
+            HomeEntryCard.DetailLine(id: $0.id, title: $0.title, detail: $0.detail)
+        }
+    }
+
+    private func tint(for panel: BrowsePanel) -> Color {
+        switch panel {
+        case .bills:     return Color("assistantText")
+        case .reminders: return Color("appAccent")
+        case .memories:  return Color("appAccent")
+        case .artifacts: return Color("appAccent")
+        case .documents: return Color("appAccent")
+        case .events:    return Color("appAccent")
+        case .images, .agents, .dashboard: return Color("appAccent")
         }
     }
 
@@ -238,7 +492,7 @@ struct BrowsePanelView: View {
                     panelContent(panel)
                 }
             } else {
-                grid
+                home
             }
         }
         .onChange(of: manager.browsePanelSelection) { _, newValue in
@@ -433,55 +687,6 @@ struct BrowsePanelView: View {
         default:
             EmptyView()
         }
-    }
-
-    // MARK: - 网格
-
-    private var grid: some View {
-        // 9 格（浏览器 + 8 个面板）：宽 5 列 × 2 行、窄 2 列 × 5 行。窄态高度不够时靠 ScrollView 兜住，
-        // 内容比视口矮时用 minHeight 撑满以保持垂直居中。
-        GeometryReader { geo in
-            let (columns, spacing) = adaptiveColumns(width: geo.size.width - 48)
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: spacing) {
-                    browserTile
-                    ForEach(BrowsePanel.allCases) { panel in
-                        tile(icon: panel.icon, title: panel.rawValue, help: panel.help) {
-                            manager.browsePanelSelection = panel
-                        }
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
-            }
-        }
-    }
-
-    private var browserTile: some View {
-        tile(icon: "globe", title: "打开浏览器", help: "打开浏览器标签页，可先登录账号") {
-            BrowserToolProvider.shared.openBlankTab()
-        }
-    }
-
-    private func tile(icon: String, title: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 26))
-                    .foregroundColor(.accentColor)
-                    .frame(width: 52, height: 52)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     // MARK: - 浏览页面
@@ -1012,6 +1217,7 @@ struct BrowsePanelView: View {
     private func isLoading(_ panel: BrowsePanel) -> Bool {
         switch panel {
         case .bills:     return billVM.isLoading
+        case .reminders: return homeVM.isLoading
         case .memories:  return memoryVM.isLoading
         case .artifacts: return artifactVM.isLoading
         case .documents:
@@ -1036,6 +1242,7 @@ struct BrowsePanelView: View {
     private func reload(_ panel: BrowsePanel) async {
         switch panel {
         case .bills:     await billVM.load()
+        case .reminders: await homeVM.refresh(baseURL: baseURL, token: token, force: true)
         case .memories:  await memoryVM.load()
         case .artifacts: await artifactVM.load()
         case .documents: await documentVM.loadCurrentMode()
@@ -1051,6 +1258,16 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:
             BillPage(viewModel: billVM, baseURL: baseURL, token: token)
+        case .reminders:
+            // 只读列表，数据与首页卡同源；直接从设置/顶栏进来时先补一次（60s 内命中缓存不重复请求）。
+            ReminderPageView(
+                items: homeVM.reminders,
+                isLoading: homeVM.isLoading,
+                errorMessage: homeVM.remindersFailed && homeVM.reminders.isEmpty
+                    ? "加载失败，点刷新重试" : nil,
+                onRetry: { Task { await homeVM.refresh(baseURL: baseURL, token: token, force: true) } }
+            )
+            .task { await homeVM.refresh(baseURL: baseURL, token: token) }
         case .memories:
             MemoryPage(viewModel: memoryVM)
         case .artifacts:

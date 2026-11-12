@@ -277,11 +277,15 @@ class XHCefClient : public CefClient,
     NSString *selection =
         [CefStringToNSString(params->GetSelectionText())
             stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (selection.length == 0) return;
-    NSString *label = selection.length > 24 ? [selection substringToIndex:24] : selection;
-    NSString *title = [NSString stringWithFormat:@"用百度搜索「%@」", label];
+    if (selection.length > 0) {
+      NSString *label = selection.length > 24 ? [selection substringToIndex:24] : selection;
+      NSString *title = [NSString stringWithFormat:@"用百度搜索「%@」", label];
+      model->AddSeparator();
+      model->AddItem(MENU_ID_USER_FIRST + 1, title.UTF8String);
+    }
+    // DevTools：CEF 的默认模型在 Alloy 下不带这一项，自己加（cefclient 也是这么干的）
     model->AddSeparator();
-    model->AddItem(MENU_ID_USER_FIRST + 1, title.UTF8String);
+    model->AddItem(MENU_ID_USER_FIRST + 2, "检查元素");
   }
 
   bool RunContextMenu(CefRefPtr<CefBrowser> browser,
@@ -301,13 +305,25 @@ class XHCefClient : public CefClient,
                             CefRefPtr<CefContextMenuParams> params,
                             int command_id,
                             EventFlags event_flags) override {
-    if (command_id != MENU_ID_USER_FIRST + 1) return false;   // 其余交给 CEF 默认实现
-    XHCefBrowserView *view = view_;
-    NSString *text = CefStringToNSString(params->GetSelectionText());
-    RunOnMain(^{
-      if (view.contextSearchRequested) view.contextSearchRequested(text);
-    });
-    return true;
+    if (command_id == MENU_ID_USER_FIRST + 1) {
+      XHCefBrowserView *view = view_;
+      NSString *text = CefStringToNSString(params->GetSelectionText());
+      RunOnMain(^{
+        if (view.contextSearchRequested) view.contextSearchRequested(text);
+      });
+      return true;
+    }
+    if (command_id == MENU_ID_USER_FIRST + 2) {
+      // 空 windowInfo = CEF 自己开一个独立原生窗（macOS 上 CefWindowInfo 只有 SetAsChild，
+      // 没有 SetAsPopup，cefclient 也是传默认值）
+      CefWindowInfo windowInfo;
+      CefBrowserSettings settings;
+      browser->GetHost()->ShowDevTools(windowInfo, nullptr, settings,
+                                       CefPoint(params->GetXCoord(), params->GetYCoord()));
+      NSLog(@"[cef] ShowDevTools at (%d,%d)", params->GetXCoord(), params->GetYCoord());
+      return true;
+    }
+    return false;   // 其余交给 CEF 默认实现
   }
 
   // 页内查找：CEF 只在 finalUpdate 时给确定结果（中途的 count 是"当前累计"）

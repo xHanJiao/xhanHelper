@@ -462,6 +462,7 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
   - 记录**在第一次收到进度时才建**（那时才有 `fullPath`/真实文件名）；`OnDownloadUpdated` 早于 `OnBeforeDownload` 时 `fullPath` 为空，等下一拍。完成/取消走 `finish/`cancel``，状态守卫保证不覆盖用户手动取消。
 - **右键菜单**：Alloy 模式（子视图窗口）**没有默认菜单实现**，光改模型不会显示 → 自己实现 `RunContextMenu`：把 `CefMenuModel` 递归摊成 `NSMenu`（tag 存 command_id，选中后 `callback->Continue` 交回 CEF 执行默认动作；Esc/点空白 `menuDidClose` → `callback->Cancel`）。`OnBeforeContextMenu` 只在有选中文字时追加一条「用百度搜索「…」」（`MENU_ID_USER_FIRST+1`），动作回 Swift 开新 tab（默认承运商会跳系统浏览器，与 WK 的 `AppBrowserWebView` 同因）。
 - **菜单标签反转义**：CEF 的 label 带 Windows/Linux 助记符（`&Back` → Alt+B），macOS 原生菜单不认，直接显示会带一串 `&` → `XHMenuLabel` 按标准规则处理（`&&` → 字面 `&`，单个 `&X` → `X`）。
+- **DevTools**：CEF 的默认模型在 Alloy 下不带这一项 → 自己追加「检查元素」（`MENU_ID_USER_FIRST+2`），`ShowDevTools` 传空 `CefWindowInfo`（macOS 的 `CefWindowInfo` 只有 `SetAsChild`，没有 `SetAsPopup`，cefclient 同样传默认值）由 CEF 开一个独立原生窗；带 `inspect_element_at` 坐标，打开即定位到右键处。**真机待验**：Alloy 能否起 DevTools 窗（libcef 里有 `devtools_window_runner`），起不来就把 DevTools 挪到 B9 的窗口宿主里做。
 - **`<input type=file>`**：不实现，靠 CEF 默认（`file_dialog_runner` + `select_file_dialog_bridge` 都在 libcef 里，macOS 原生 NSOpenPanel）。真机弹不出来再自己接 `CefDialogHandler`。
 
 **B6 剩下没做的**（都在等 CEF 的 JS 结果通道，B7 一起）：favicon、权限（`CefPermissionHandler`：摄像头/麦克风/定位一律拒，与 WK 同策略）、埋点迁移、后台媒体保活（要"页面是否在播"的信号）、墙检测/手递手。
@@ -689,6 +690,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B4 | 2026-11-12 | 待提交 | **通过**（多 tab / popup 有取证；分屏与关闭回收靠人眼）。交付：popup 引擎跟 opener（D17）、秒关 tab 的 renderer 回收兜底、CEF 焦点判定修（见 9.2.9 / tier1-ux §3.1）。取证（20:25–20:28 那次运行）：6 个不同站点都落了 CEF profile（多 tab）；20:26:57 百度结果页点链接 → `[Browser] cef popup → new tab` + 新 tab 的 `baike.baidu.com` 记录 → popup 走的是我们自己的 tab（不再是裸原生窗）；退出后无残留 Helper 进程。**未验**：⌘W/⌘Shift+T 的焦点修复（这次构建早于修复），且该快捷键在 prod（WK）上也失效 → 记为 main 老 bug，不算本批验收项；分屏两窗格同时跑 CEF 未单独点验 |
 | B5 | 2026-11-12 | 待提交 | 待真机构建 + 人眼。交付：白名单生效（含短链）、提示条（D16 + 频率闸）、地址栏换引擎图标、主引擎降级横幅；口径见 §9.2.10。三层检测的第 2/3 层按 §9.2.10 末条推到 B7 |
 | B6a | 2026-11-12 | 待提交 | **通过**（⌘F 查找、⌘±/⌘0 缩放已验；⌘G/⌘Shift+G 保留标准语义「查找下一个/上一个」，只在查找栏打开时有意义，不算缺陷）。交付：`BrowserPage` 增加 zoom/find、`CefFindHandler`、`CefJSDialogHandler`；口径见 §9.2.11。**未验**：页面 alert/confirm/prompt 的真机表现（无本地 http 测试页，B6b 一起验）；其余功能面在 B6b |
-| B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
+| B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」+「检查元素」→ DevTools）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

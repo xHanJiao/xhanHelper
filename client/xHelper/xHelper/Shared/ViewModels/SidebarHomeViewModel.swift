@@ -3,9 +3,9 @@ import Foundation
 
 /// 右栏首页六个入口卡片 + 今日行 + 最近页脚的数据。
 ///
-/// 全部走**已有接口**（各 `limit=1/3/50`），一次并发五路；不新增后端契约。
+/// 全部走**已有接口**（各 `limit=3/3/50`），一次并发六路；不新增后端契约。
 /// 备忘面板与首页备忘卡共用这里的 `reminders`（同一次请求，面板不再单开一路）。
-/// 见 `docs/design/right-sidebar-home/design.md` §6。
+/// 见 `docs/design/right-sidebar-home/design-cards-v2.md` §6。
 @MainActor
 final class SidebarHomeViewModel: ObservableObject {
 
@@ -51,6 +51,11 @@ final class SidebarHomeViewModel: ObservableObject {
     /// 一次取 50 条不分页：pending 提醒本身量小。
     /// shortcut: 超过 50 条只显示前 50（按到期排序后仍是最该看的那些），等真有量再加分页。
     @Published private(set) var reminders: [Reminder] = []
+    /// 信息档卡片的最近三条（各域取服务端给的最近 3 条）。取不到就是空数组，卡片退化成「无信息区」。
+    @Published private(set) var recentBills: [Bill] = []
+    @Published private(set) var recentDocuments: [Document] = []
+    @Published private(set) var recentArtifacts: [ArtifactSummary] = []
+    @Published private(set) var recentEvents: [AppEventThread] = []
     /// 提醒这一路是否失败：面板据此显示「加载失败」而不是假装「没有待办」。
     @Published private(set) var remindersFailed = false
     @Published private(set) var isLoading = false
@@ -59,7 +64,7 @@ final class SidebarHomeViewModel: ObservableObject {
     private var loadedAt: Date?
     private static let cacheTTL: TimeInterval = 60
 
-    /// 五路并发拉取。`force` 用于用户显式刷新（面板页头的刷新按钮、重试都走它）。
+    /// 六路并发拉取。`force` 用于用户显式刷新（面板页头的刷新按钮、重试都走它）。
     func refresh(baseURL: String, token: String, force: Bool = false) async {
         guard !baseURL.isEmpty, !token.isEmpty else { return }
         guard !isLoading else { return }
@@ -77,10 +82,13 @@ final class SidebarHomeViewModel: ObservableObject {
             try await api.listReminders(status: "pending", limit: 50, offset: 0)
         }
         async let events = attempt("events") {
-            try await api.listEventThreads(limit: 1, offset: 0)
+            try await api.listEventThreads(limit: 3, offset: 0)
         }
         async let bills = attempt("bills") {
             try await api.fetchBillStats(startDate: start, endDate: end)
+        }
+        async let billList = attempt("bill list") {
+            try await api.getBills(limit: 3, offset: 0)
         }
         async let documents = attempt("documents") {
             try await api.listDocuments(limit: 3, offset: 0)
@@ -89,7 +97,7 @@ final class SidebarHomeViewModel: ObservableObject {
             try await api.listArtifacts(limit: 3, offset: 0)
         }
 
-        let (r, e, b, d, a) = await (reminderPage, events, bills, documents, artifacts)
+        let (r, e, b, bl, d, a) = await (reminderPage, events, bills, billList, documents, artifacts)
         // 视图被摘除（切去面板/关右栏）会取消本次 .task：保留上一次的数字，别用 nil 把它刷成一片「—」。
         guard !Task.isCancelled else { return }
 
@@ -113,6 +121,10 @@ final class SidebarHomeViewModel: ObservableObject {
 
         stats = next
         remindersFailed = r == nil
+        recentBills = bl?.bills ?? []
+        recentDocuments = d?.documents ?? []
+        recentArtifacts = a?.items ?? []
+        recentEvents = e?.items ?? []
         // 按到期时间升序（服务端是 created_at 倒序）；deadline 解析不出来的排最后。
         // 解析只做一遍：排序比较里现解析会对每条建两个 ISO8601 formatter，刷新时卡主线程。
         reminders = (r?.items ?? [])
@@ -120,7 +132,7 @@ final class SidebarHomeViewModel: ObservableObject {
             .sorted { $0.due < $1.due }
             .map(\.item)
         // 全挂（多半是没登录/断网）不写入缓存，下次进来立刻重试。
-        if r != nil || e != nil || b != nil || d != nil || a != nil {
+        if r != nil || e != nil || b != nil || bl != nil || d != nil || a != nil {
             loadedAt = Date()
         }
     }

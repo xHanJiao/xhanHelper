@@ -148,4 +148,85 @@ enum SidebarHomeFormat {
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: date)
     }
+
+    // MARK: - 首页卡片档位
+
+    /// 首页内容块最大宽（= 654 × 2 + 12 间距）。超过它只加两侧留白，卡片不再拉长。
+    static let homeContentMaxWidth: CGFloat = 1320
+
+    /// 按内容宽算列数与档位。纯函数，见 `Tests/SidebarHomeCoreTests`。
+    ///
+    /// 两列只在**每列都够「三行档」的 340** 时启用（2 × 340 + 12 = 692）：
+    /// 门槛还是 620 的话，621 宽会立刻掉成两张 304 的窄卡，直接触发图标档，反而比单列信息更少。
+    static func homeMetrics(contentWidth: CGFloat) -> HomeCardMetrics {
+        let width = max(0, contentWidth)
+
+        // 最窄：两张卡都放不下文字，退成 2 列纯图标（单列一张空壳比两个方块更难看）
+        if width < 340 {
+            // 极端测量态（宽 < 12）也别算出负边长
+            let side = max(0, (width - 12) / 2)
+            return HomeCardMetrics(layout: .iconOnly, columns: 2, cardWidth: side, cardHeight: side)
+        }
+
+        if width < 2 * 340 + 12 {
+            let layout = tier(cardWidth: width)
+            return HomeCardMetrics(layout: layout, columns: 1, cardWidth: width,
+                                   cardHeight: layout == .info ? 164 : 104)
+        }
+
+        let cardWidth = (width - 12) / 2
+        let layout = tier(cardWidth: cardWidth)
+        return HomeCardMetrics(layout: layout, columns: 2, cardWidth: cardWidth,
+                               cardHeight: layout == .info ? 164 : 132)
+    }
+
+    private static func tier(cardWidth: CGFloat) -> HomeCardLayout {
+        if cardWidth >= 560 { return .info }
+        if cardWidth >= 440 { return .singleLine }
+        return .stacked
+    }
+
+    // MARK: - 信息行图标
+
+    /// 账单一级分类 → SF Symbol。`category1` 是后端固定 12 项枚举（见 `model/bill.go`）；
+    /// 未知分类返回 nil，由调用方退回首字色块——不猜、不新造字段。
+    static func billIcon(category1: String) -> String? {
+        switch category1 {
+        case "餐饮": return "fork.knife"
+        case "服装": return "tshirt"
+        case "交通": return "tram"
+        case "居住": return "house"
+        case "旅游": return "airplane"
+        case "美容": return "scissors"
+        case "人情": return "gift"
+        case "日用": return "basket"
+        case "数码": return "laptopcomputer"
+        case "学习": return "book"
+        case "医疗": return "cross.case"
+        case "娱乐": return "gamecontroller"
+        default: return nil
+        }
+    }
+
+    /// 首字色块用的一个字（中文取首字，英文取首字母大写）。空串退回 `·`，不留空白 chip。
+    static func monogram(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "·" }
+        return String(first).uppercased()
+    }
+}
+
+/// 入口卡四档：信息（插画 + 3 条可点行 + 文字）/ 单行 + 细节 / 三行文字 / 纯图标。
+enum HomeCardLayout: Equatable {
+    case info
+    case singleLine
+    case stacked
+    case iconOnly
+}
+
+struct HomeCardMetrics: Equatable {
+    let layout: HomeCardLayout
+    let columns: Int
+    let cardWidth: CGFloat
+    let cardHeight: CGFloat
 }

@@ -108,4 +108,98 @@ final class SidebarHomeFormatTests: XCTestCase {
             SidebarHomeFormat.monthStart(of: date("2026-12-01 00:00:00"), calendar: calendar),
             calendar: calendar), "2026-12-01")
     }
+
+    // MARK: - 卡片档位
+
+    func testHomeMetricsSingleColumnTiers() {
+        for (width, layout, height) in [(340.0, HomeCardLayout.stacked, 104.0),
+                                        (439.0, .stacked, 104.0),
+                                        (440.0, .singleLine, 104.0),
+                                        (559.0, .singleLine, 104.0),
+                                        (560.0, .info, 164.0),
+                                        (691.0, .info, 164.0)] as [(CGFloat, HomeCardLayout, CGFloat)] {
+            let m = SidebarHomeFormat.homeMetrics(contentWidth: width)
+            XCTAssertEqual(m.columns, 1, "宽 \(width) 应为单列")
+            XCTAssertEqual(m.layout, layout, "宽 \(width) 档位")
+            XCTAssertEqual(m.cardWidth, width)
+            XCTAssertEqual(m.cardHeight, height, "宽 \(width) 卡高")
+        }
+    }
+
+    func testHomeMetricsTwoColumnsOnlyWhenBothFitStacked() {
+        // 692 = 2 × 340 + 12：刚够两列都进三行档，不留「621 宽掉成图标」的悬崖
+        let edge = SidebarHomeFormat.homeMetrics(contentWidth: 692)
+        XCTAssertEqual(edge.columns, 2)
+        XCTAssertEqual(edge.layout, .stacked)
+        XCTAssertEqual(edge.cardWidth, 340)
+        XCTAssertEqual(edge.cardHeight, 132)
+
+        let single = SidebarHomeFormat.homeMetrics(contentWidth: 691)
+        XCTAssertEqual(single.columns, 1)
+        XCTAssertEqual(single.layout, .info)
+    }
+
+    func testHomeMetricsTwoColumnTiers() {
+        let singleLine = SidebarHomeFormat.homeMetrics(contentWidth: 900)   // 卡 444
+        XCTAssertEqual(singleLine.columns, 2)
+        XCTAssertEqual(singleLine.layout, .singleLine)
+        XCTAssertEqual(singleLine.cardHeight, 132)
+
+        let info = SidebarHomeFormat.homeMetrics(contentWidth: 1132)        // 卡 560
+        XCTAssertEqual(info.columns, 2)
+        XCTAssertEqual(info.layout, .info)
+        XCTAssertEqual(info.cardHeight, 164)
+    }
+
+    func testHomeMetricsNarrowestBecomesTwoColumnsOfIcons() {
+        let m = SidebarHomeFormat.homeMetrics(contentWidth: 328)            // 右栏 380
+        XCTAssertEqual(m.columns, 2)
+        XCTAssertEqual(m.layout, .iconOnly)
+        XCTAssertEqual(m.cardWidth, 158)
+        XCTAssertEqual(m.cardHeight, 158)                                  // 方块：高 = 宽
+    }
+
+    func testHomeMetricsAtContentCap() {
+        let m = SidebarHomeFormat.homeMetrics(contentWidth: SidebarHomeFormat.homeContentMaxWidth)
+        XCTAssertEqual(SidebarHomeFormat.homeContentMaxWidth, 1320)
+        XCTAssertEqual(m.columns, 2)
+        XCTAssertEqual(m.cardWidth, 654)
+        XCTAssertEqual(m.layout, .info)
+    }
+
+    func testHomeMetricsIconBoundaryAt340() {
+        let narrow = SidebarHomeFormat.homeMetrics(contentWidth: 339)
+        XCTAssertEqual(narrow.layout, .iconOnly)
+        XCTAssertEqual(narrow.columns, 2)
+
+        let stacked = SidebarHomeFormat.homeMetrics(contentWidth: 340)
+        XCTAssertEqual(stacked.layout, .stacked)
+        XCTAssertEqual(stacked.columns, 1)
+
+        // 极端测量态（宽 < 12）不产出负边长
+        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 0).cardWidth, 0)
+        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 0).cardHeight, 0)
+    }
+
+    // MARK: - 信息行图标
+
+    func testBillIconCoversEveryCategory() {
+        // 后端固定 12 项枚举（server/internal/model/bill.go）
+        let categories = ["餐饮", "服装", "交通", "居住", "旅游", "美容",
+                          "人情", "日用", "数码", "学习", "医疗", "娱乐"]
+        for category in categories {
+            XCTAssertNotNil(SidebarHomeFormat.billIcon(category1: category), "分类「\(category)」缺图标")
+        }
+        // 未知分类交给首字色块兜底，不瞎映射
+        XCTAssertNil(SidebarHomeFormat.billIcon(category1: ""))
+        XCTAssertNil(SidebarHomeFormat.billIcon(category1: "其他"))
+    }
+
+    func testMonogram() {
+        XCTAssertEqual(SidebarHomeFormat.monogram("周报草稿"), "周")
+        XCTAssertEqual(SidebarHomeFormat.monogram("xhanHelper 设计备忘"), "X")
+        XCTAssertEqual(SidebarHomeFormat.monogram("  20261108 · 充实的一天"), "2")
+        XCTAssertEqual(SidebarHomeFormat.monogram(""), "·")
+        XCTAssertEqual(SidebarHomeFormat.monogram("   "), "·")
+    }
 }

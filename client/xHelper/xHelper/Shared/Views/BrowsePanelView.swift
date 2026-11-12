@@ -110,9 +110,9 @@ struct BrowsePanelView: View {
     @ObservedObject var eventVM: EventViewModel
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
-    /// 首页六个入口 + 备忘面板的数字（五路轻请求 + 60s 缓存，见 `SidebarHomeViewModel`）。
+    /// 首页六个入口的最近对象 + 备忘面板的数字（六路轻请求 + 60s 缓存，见 `SidebarHomeViewModel`）。
     /// 挂在 `RightSidebarView`（与其它 VM 同处）而非首页自己：开浏览器 tab 时首页会被摘除，
-    /// 挂在自己身上会让缓存随之销毁，每次回来都重新打五个接口。
+    /// 挂在自己身上会让缓存随之销毁，每次回来都重新打六个接口。
     @ObservedObject var homeVM: SidebarHomeViewModel
     let baseURL: String
     let token: String
@@ -190,37 +190,34 @@ struct BrowsePanelView: View {
 
     // MARK: - 首页（问候行 + 六个入口卡 + 最近页脚）
     //
-    // 设计见 docs/design/right-sidebar-home/design.md：
-    // 卡片顶对齐、最近页脚贴底；记忆/图片/智能体/监控看板已移出首页（改从设置进入）。
+    // 设计见 docs/design/right-sidebar-home/design-cards-v2.md：
+    // 卡片顶对齐、最近页脚贴底；档位随卡宽四档降级，内容块封顶 1320 居中。
 
-    /// 首页内容宽 ≥ 620 用两列卡片，否则单列（右栏最小 380，单列才不会把文字挤掉）。
-    private static let twoColumnThreshold: CGFloat = 620
-
-    private func homeColumns(wide: Bool) -> [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 12), count: wide ? 2 : 1)
+    private func homeColumns(_ count: Int) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
     }
 
     private var home: some View {
         GeometryReader { geo in
-            let contentWidth = geo.size.width - 52   // 左右各 26
-            let wide = contentWidth >= Self.twoColumnThreshold
+            let contentWidth = max(0, min(geo.size.width - 52, SidebarHomeFormat.homeContentMaxWidth))
+            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     greeting
-                    LazyVGrid(columns: homeColumns(wide: wide), spacing: 12) {
-                        browserCard(height: wide ? 132 : 104)
+                    LazyVGrid(columns: homeColumns(metrics.columns), spacing: 12) {
+                        browserCard(metrics: metrics)
                         ForEach(BrowsePanel.homePanels) { panel in
-                            entryCard(panel, height: wide ? 132 : 104)
+                            entryCard(panel, metrics: metrics)
                         }
                     }
                     .padding(.top, 16)
 
                     Spacer(minLength: 28)
-                    recentFooter(wide: wide)
+                    recentFooter(wide: metrics.columns > 1)
                 }
-                .padding(.horizontal, 26)
                 .padding(.vertical, 18)
-                // 撑满高度，`Spacer` 才能把最近页脚压到底部
+                .frame(width: contentWidth)
+                // 撑满高度，`Spacer` 才能把最近页脚压到底部；封顶后整块水平居中、两侧留白
                 .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
             }
         }
@@ -291,7 +288,7 @@ struct BrowsePanelView: View {
         return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"
     }
 
-    private func browserCard(height: CGFloat) -> some View {
+    private func browserCard(metrics: HomeCardMetrics) -> some View {
         let count = manager.tabs.count
         #if os(macOS)
         let last = historyStore.entries.first?.title
@@ -299,19 +296,34 @@ struct BrowsePanelView: View {
         #else
         let secondary: String? = nil
         #endif
+        let rows = manager.tabs.prefix(3).map { tab in
+            HomeEntryCard.InfoRow(
+                id: "tab:" + tab.id,
+                title: tab.title,
+                detail: tab.host,
+                icon: tab.host.map { HomeEntryCard.InfoIcon.favicon(host: $0) }
+                    ?? .monogram(SidebarHomeFormat.monogram(tab.title))
+            ) {
+                manager.activeTabId = tab.id
+                BrowserToolProvider.shared.selectTab(tab.id)
+            }
+        }
         return HomeEntryCard(
             asset: "sidebar_browser",
             title: "打开浏览器",
             primary: count == 0 ? "未打开" : "\(count) 个标签",
             secondary: secondary,
             tint: Color("accentSecondary"),
-            height: height
+            layout: metrics.layout,
+            height: metrics.cardHeight,
+            details: detailLines(rows),
+            infoRows: rows
         ) {
             BrowserToolProvider.shared.openBlankTab()
         }
     }
 
-    private func entryCard(_ panel: BrowsePanel, height: CGFloat) -> some View {
+    private func entryCard(_ panel: BrowsePanel, metrics: HomeCardMetrics) -> some View {
         let s = homeVM.stats
         let card: (asset: String, primary: String, secondary: String?) = {
             switch panel {
@@ -346,15 +358,91 @@ struct BrowsePanelView: View {
                 return ("sidebar_document", "", nil)
             }
         }()
+        let rows = infoRows(for: panel)
         return HomeEntryCard(
             asset: card.asset,
             title: panel.rawValue,
             primary: card.primary,
             secondary: card.secondary,
             tint: tint(for: panel),
-            height: height
+            layout: metrics.layout,
+            height: metrics.cardHeight,
+            details: detailLines(rows),
+            infoRows: rows
         ) {
             manager.browsePanelSelection = panel
+        }
+    }
+
+    /// 信息档的三条最近对象。全部复用 `SidebarHomeViewModel` 已有的取数，不额外请求。
+    /// 图标只落在已有字段上：账单 `category1` 映射、备忘按是否过期、无类型字段的域用标题首字。
+    private func infoRows(for panel: BrowsePanel) -> [HomeEntryCard.InfoRow] {
+        let openPanel: () -> Void = { manager.browsePanelSelection = panel }
+        switch panel {
+        case .bills:
+            return homeVM.recentBills.prefix(3).map { bill in
+                HomeEntryCard.InfoRow(
+                    id: "bill:" + bill.id,
+                    title: bill.item,
+                    detail: SidebarHomeFormat.money(bill.amount),
+                    icon: SidebarHomeFormat.billIcon(category1: bill.category1)
+                        .map { HomeEntryCard.InfoIcon.symbol($0) }
+                        ?? .monogram(SidebarHomeFormat.monogram(bill.item)),
+                    action: openPanel
+                )
+            }
+        case .reminders:
+            return homeVM.reminders.prefix(3).map { reminder -> HomeEntryCard.InfoRow in
+                let overdue = SidebarHomeFormat.isOverdue(reminder.deadline)
+                return HomeEntryCard.InfoRow(
+                    id: "reminder:" + reminder.id,
+                    title: reminder.content,
+                    detail: SidebarHomeFormat.dueText(reminder.deadline),
+                    icon: overdue ? .warning("exclamationmark.circle") : .symbol("checkmark.circle"),
+                    action: openPanel
+                )
+            }
+        case .artifacts:
+            return homeVM.recentArtifacts.prefix(3).map { artifact in
+                HomeEntryCard.InfoRow(
+                    id: "artifact:" + artifact.id,
+                    title: artifact.title,
+                    detail: LocalArtifactTime.parse(artifact.createdAt).map { SidebarHomeFormat.relativeTime($0) },
+                    icon: .monogram(SidebarHomeFormat.monogram(artifact.title)),
+                    action: { ArtifactOpenCoordinator.shared.open(id: artifact.id, title: artifact.title) }
+                )
+            }
+        case .documents:
+            return homeVM.recentDocuments.prefix(3).map { doc in
+                HomeEntryCard.InfoRow(
+                    id: "document:" + doc.id,
+                    title: doc.title,
+                    detail: LocalArtifactTime.parse(doc.updatedAt).map { SidebarHomeFormat.relativeTime($0) },
+                    icon: .monogram(SidebarHomeFormat.monogram(doc.title)),
+                    action: { DocumentSelectionCoordinator.shared.openDocument(id: doc.id) }
+                )
+            }
+        case .events:
+            return homeVM.recentEvents.prefix(3).map { event in
+                HomeEntryCard.InfoRow(
+                    id: "event:" + event.id,
+                    title: event.name,
+                    detail: LocalArtifactTime.parse(event.updatedAt).map { SidebarHomeFormat.relativeTime($0) },
+                    icon: .monogram(SidebarHomeFormat.monogram(event.name)),
+                    action: openPanel
+                )
+            }
+        case .memories, .images, .agents, .dashboard:
+            // 已从首页移出（走设置），这里只为穷尽 switch
+            return []
+        }
+    }
+
+    /// 单行档的两行细节：`标题 · 细节`，与信息行同源，避免维护两套文案。
+    private func detailLines(_ rows: [HomeEntryCard.InfoRow]) -> [String] {
+        rows.prefix(2).map { row in
+            guard let detail = row.detail, !detail.isEmpty else { return row.title }
+            return "\(row.title) · \(detail)"
         }
     }
 

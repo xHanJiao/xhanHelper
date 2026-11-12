@@ -62,6 +62,8 @@
 
 ## 4. 视觉规格
 
+> 卡片规格已被 `design-cards-v2.md`（四档信息密度 + 信息行）取代，本节仅保留问候行/最近页脚的换算与配色口径。
+
 全部取现有 token（`client/xHelper/xHelperMac/Assets.xcassets`），不自造色相。
 
 | 元素 | 规格 |
@@ -69,9 +71,9 @@
 | 页面内边距 | 上 18 / 左右 26 / 下 22 |
 | 问候 | 19pt，weight 650；日期 12pt secondary |
 | 今日行 | 12.5pt secondary，数字用 `assistantText` 600 加重；分隔符 `·` 35% 透明 |
-| 卡片 | 高 132，圆角 14，间距 12；底 `Color.white 44%`（深色 7%）；描边 `.5pt` 白 66%（深色 10%） |
+| 卡片 | 高 164（信息档）/ 132（两列）/ 104（单列），圆角 14，间距 12；底 `Color.white 44%`（深色 7%）；描边 `.5pt` 白 66%（深色 10%） |
 | 卡片悬停 | 底提亮到 66%（深色 13%），`translateY(-1.5)`，外阴影 `black 10% / 6pt` |
-| 插画区 | **正方形，边长 = 卡片高**，右侧 0.5pt 极淡分隔；每卡一层 12–16% 的渐变底 |
+| 插画区 | 信息档宽 116，其余档**正方形、边长 = 卡片高**；右侧 0.5pt 极淡分隔；每卡一层 12–16% 的渐变底 |
 | 标题 | 13.5pt / 600 |
 | 主数字 | 12.5pt / 560，`appAccent`，等宽数字（tabular） |
 | 副文案 | 11pt / tertiary，单行截断 |
@@ -79,7 +81,7 @@
 | 最近页脚 | 顶部 0.5pt `assistantText 12%` 线 + 18pt 间距；条目高约 50，圆角 11，标题 12pt / 540，第二行 10.5pt tertiary |
 | 最近列数 | 与卡片一致：2 列卡片 → 3 列条目；1 列卡片 → 1 列条目 |
 
-断点：右栏内容宽 ≥ 620 → 2 列卡片；< 620 → 1 列卡片（卡片高降到 104）；整页可滚动（沿用现在的 `ScrollView` 兜底）。
+断点：右栏内容宽 ≥ 692 → 2 列卡片（两列都够 340 才分栏）；< 692 → 1 列；内容块封顶 1320 居中。档位见 `design-cards-v2.md` §3；整页可滚动（沿用现在的 `ScrollView` 兜底）。
 
 ## 5. 六张插画
 
@@ -99,16 +101,17 @@
 
 ## 6. 数据
 
-六张卡 + 今日行 + 最近页脚的数据**全部来自已有接口**，一次并发 5 个轻请求（`limit=1/3/50`，各 10–20ms）。缓存 60 秒，不重复拉。
+六张卡 + 今日行 + 最近页脚的数据**全部来自已有接口**，一次并发 6 个轻请求（`limit=3/3/50`，各 10–20ms）。缓存 60 秒，不重复拉。
 
 | 用途 | 接口 | 取用字段 |
 |---|---|---|
 | 备忘 | `GET /api/reminders?status=pending&limit=50` | `total`、全部 items（`deadline` 客户端升序） |
-| 事件 | `GET /api/event-threads?limit=1` | `total`、首条 `updated_at` |
+| 事件 | `GET /api/event-threads?limit=3` | `total`、首条 `updated_at`、前 3 条（信息行） |
 | 本月支出 | `GET /api/bills/stats?start_date=<当月1日>&end_date=<今天>` | `sum`、`count` |
+| 最近账单 | `GET /api/bills?limit=3` | 前 3 条（`item/amount/category1/date`，信息行） |
 | 文档 | `GET /api/documents?limit=3&offset=0` | `total`、前 3 条（`updated_at` 倒序） |
 | 灵阅 | `GET /api/artifacts?limit=3&offset=0` | `total`、前 3 条（`created_at` 倒序） |
-| 浏览器标签 | 本地 `RightSidebarManager.tabs.count` | 零请求 |
+| 浏览器标签 | 本地 `RightSidebarManager.tabs` | 零请求 |
 
 备忘那一路**一次取 50 条，首页卡与备忘面板共用**：首页只用 `total` + 第一条未过期的 `deadline`，面板直接渲染同一份数组（不再单开一路、不新增接口）。
 
@@ -124,7 +127,7 @@
 
 加载与降级：
 
-- 一个小 `SidebarHomeViewModel: ObservableObject`（`@MainActor`，右栏级持有），`async let` 并发五路；单飞（进行中不重入）；
+- 一个小 `SidebarHomeViewModel: ObservableObject`（`@MainActor`，右栏级持有），`async let` 并发六路；单飞（进行中不重入）；
 - 失败**不打扰用户**：该数字显示 `—`，`LogBuffer.shared.diag` 记一次，其余照常显示；
 - 刷新时机：首页出现（`browsePanelSelection == nil` 且右栏展开）、从其它面板返回首页、右栏重新展开；60 秒内不重复。
 
@@ -205,3 +208,9 @@
   影响：`BrowsePanelView.swift`、`SidebarHomeViewModel.swift`、`SidebarHomeFormat.swift`、`CardStyle.swift`、`ReminderPageView.swift`(新)、`HomeEntryCard.swift`(新，从首页视图抽出)、`xHelperMac/App.swift`、`Assets.xcassets/sidebar_reminder`、`Tests/SidebarHomeCoreTests`。
   6. `mockup.html` 仍是第一版（记忆卡 / 「待办」口径）的样张，只作历史参考；以实现与本文 §3/§5 为准。
 - 备忘的 `limit=50` 不分页：pending 提醒量小；超过 50 条时按到期排序后仍是最该看的那批。真有量再加分页。
+- 2026-11-12 第三轮改版（入口卡 v2，正本见 `design-cards-v2.md`）：
+  1. 卡片改四档信息密度（≥560 信息 / 440–560 单行 / 340–440 三行 / <340 纯图标），首页内容块封顶 1320 居中；两列门槛从 620 提到 692（两列都够 340 才分栏，避免 621 宽掉成图标档）。
+  2. 信息档直接列出各域最近 3 条可点对象：浏览器标签切标签、文档/灵阅直达、账单/备忘/事件进面板；信息档整卡不再是按钮。
+  3. 图标只落在已有字段：浏览器真 favicon（失败 → host 首字）、账单 `category1` 12 项映射、备忘按过期状态、无类型字段的域用标题首字。
+  4. 数据从 5 路变更 6 路：新增 `GET /api/bills?limit=3`，事件 `limit=1 → 3`；备忘、文档、灵阅沿用原请求。
+  影响：`HomeEntryCard.swift`、`BrowsePanelView.swift`、`SidebarHomeViewModel.swift`、`SidebarHomeFormat.swift`、`Tests/SidebarHomeCoreTests`、`design-cards-v2.md`(新)。

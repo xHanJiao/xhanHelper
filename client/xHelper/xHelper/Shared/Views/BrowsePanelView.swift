@@ -309,7 +309,7 @@ struct BrowsePanelView: View {
         }
         return HomeEntryCard(
             asset: "sidebar_browser",
-            title: "打开浏览器",
+            title: "浏览器",
             primary: count == 0 ? "未打开" : "\(count) 个标签",
             secondary: secondary,
             tint: Color("accentSecondary"),

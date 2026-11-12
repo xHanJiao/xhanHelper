@@ -213,11 +213,18 @@ struct HomeEntryCard: View {
         }
     }
 
+    /// 细节行 / 信息行已经给出同样的时间或补充信息时，卡头第三行就是重复说两遍（还会并排
+    /// 出现两套时间口径：卡头「下一条 11月15日」对行内「23 天前」）。只有两种都没有时
+    /// （三行档，或信息区断网拉空）才靠它撑起第三行。
+    private var showsSecondary: Bool {
+        details.isEmpty && infoRows.isEmpty
+    }
+
     private var textStack: some View {
         VStack(alignment: .leading, spacing: 3) {
             titleText
             primaryText
-            secondaryText
+            if showsSecondary { secondaryText }
         }
     }
 
@@ -228,7 +235,7 @@ struct HomeEntryCard: View {
                 titleText.layoutPriority(2)
                 primaryText.layoutPriority(1)
                 Spacer(minLength: 12)
-                secondaryText
+                if showsSecondary { secondaryText }
             }
             ForEach(Array(details.prefix(height >= 120 ? 2 : 1))) { line in
                 HStack(spacing: 8) {
@@ -237,6 +244,8 @@ struct HomeEntryCard: View {
                         .foregroundColor(.secondary.opacity(0.85))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        // 限宽而非限字数：长备忘标题最多占 200pt（≈18 字），剩下留白给右侧时间
+                        .frame(maxWidth: 200, alignment: .leading)
                     Spacer(minLength: 6)
                     if let detail = line.detail, !detail.isEmpty {
                         Text(detail)

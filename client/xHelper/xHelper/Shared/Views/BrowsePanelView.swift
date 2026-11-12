@@ -322,6 +322,7 @@ struct BrowsePanelView: View {
             secondary: secondary,
             tint: Color("accentSecondary"),
             layout: metrics.layout,
+            width: metrics.cardWidth,
             height: metrics.cardHeight,
             details: detailLines(rows),
             infoRows: rows
@@ -373,6 +374,7 @@ struct BrowsePanelView: View {
             secondary: card.secondary,
             tint: tint(for: panel),
             layout: metrics.layout,
+            width: metrics.cardWidth,
             height: metrics.cardHeight,
             details: detailLines(rows),
             infoRows: rows

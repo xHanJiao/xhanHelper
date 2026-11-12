@@ -43,6 +43,8 @@ struct HomeEntryCard: View {
     /// 插画区底色（token 色，低透明度）
     let tint: Color
     let layout: HomeCardLayout
+    /// 卡宽：窄卡的插画带要跟着缩（`homeBandWidth`），不然文字区没地方
+    let width: CGFloat
     let height: CGFloat
     /// 单行档的细节行（至多 2 行）
     let details: [DetailLine]
@@ -61,6 +63,7 @@ struct HomeEntryCard: View {
         secondary: String?,
         tint: Color,
         layout: HomeCardLayout,
+        width: CGFloat,
         height: CGFloat,
         details: [DetailLine] = [],
         infoRows: [InfoRow] = [],
@@ -72,6 +75,7 @@ struct HomeEntryCard: View {
         self.secondary = secondary
         self.tint = tint
         self.layout = layout
+        self.width = width
         self.height = height
         self.details = details
         self.infoRows = infoRows
@@ -146,7 +150,7 @@ struct HomeEntryCard: View {
     private var textCard: some View {
         Button(action: action) {
             HStack(spacing: 0) {
-                band(width: height)
+                band(width: SidebarHomeFormat.homeBandWidth(cardWidth: width, cardHeight: height))
                 Group {
                     if layout == .singleLine { singleLineStack } else { textStack }
                 }
@@ -221,8 +225,15 @@ struct HomeEntryCard: View {
     /// 只有信息档 / 单行档会把行画出来，所以只在这两档且真有行时藏；三行档的第三行本来
     /// 就是副文案（`details` 是按数据恒传的，不能拿它判断"有没有行"）。
     private var showsSecondary: Bool {
-        guard layout == .info || layout == .singleLine else { return true }
-        return details.isEmpty && infoRows.isEmpty
+        switch layout {
+        case .info, .singleLine:
+            return details.isEmpty && infoRows.isEmpty
+        case .stacked:
+            // 窄卡只留「标题 / 主数字」两行：第三行在 200 出头的卡里会被截成「上次停在 Dee…」
+            return width >= SidebarHomeFormat.homeSecondaryMinCardWidth
+        case .iconOnly:
+            return false
+        }
     }
 
     private var textStack: some View {

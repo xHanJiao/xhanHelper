@@ -189,12 +189,12 @@ enum SidebarHomeFormat {
         // 每张卡最多能有高；窗口极矮时允许为负，后面 clamp 掉
         let maxCardHeight = availableHeight.isFinite ? (availableHeight - homeChromeHeight) / 3 : .infinity
 
-        // 卡宽放不下文字才退成纯图标卡（300 = 三行文字的最低宽度：132 插画 + 14 内距
-        // + 箭头后还剩 ~117，够「浏览器 / 15 条备忘」；更长的副文案会尾截，可接受）。
+        // 卡宽放不下文字才退成纯图标卡：200 以下缩完插画带文字区只剩 ~40pt，
+        // 「本月 ¥2,963」会被截成「本月 ¥…」，不如干净给插画（用户 2026-11-12 拍板）。
         // 两列也不拆，拆了就是单列。
         // 高度封顶 170（不封顶时卡宽 300 上下会变成一块 300×300 的巨型方块），下限 110
         // （再矮就整页滚，别把插画压成一条扁带）。
-        if cardWidth < 300 {
+        if cardWidth < 200 {
             return HomeCardMetrics(layout: .iconOnly, columns: 2, cardWidth: cardWidth,
                                    cardHeight: max(110, min(cardWidth, 170, maxCardHeight)))
         }
@@ -204,6 +204,16 @@ enum SidebarHomeFormat {
         let layout = base == .info && maxCardHeight < 164 ? .singleLine : base
         return HomeCardMetrics(layout: layout, columns: 2, cardWidth: cardWidth,
                                cardHeight: layout == .info ? 164 : 132)
+    }
+
+    /// 三行档里副文案（第三行）的最低卡宽。窄于此只留「标题 / 主数字」两行——
+    /// 200 出头的卡里第三行只会被截成「上次停在 Dee…」，不如不显示。
+    static let homeSecondaryMinCardWidth: CGFloat = 300
+
+    /// 插画带宽度：跟着卡宽缩（0.42，最多 = 卡高）。
+    /// 卡宽 440 以上恒为卡高（原来的口径）；300 的卡带 126，200 的卡带 84，把横向空间让给文字。
+    static func homeBandWidth(cardWidth: CGFloat, cardHeight: CGFloat) -> CGFloat {
+        max(0, min(cardHeight, cardWidth * 0.42))
     }
 
     private static func tier(cardWidth: CGFloat) -> HomeCardLayout {

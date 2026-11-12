@@ -447,6 +447,16 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **降级横幅**：`CefInitialize` 失败过（`cefInitFailed`）→ 兼容 tab 顶部常驻「主引擎未启动，当前为兼容模式」；地址栏的"换主引擎"按钮同时置灰，不给"点了必然降级回来"的按钮（原来只有一次 Toast）。
 - **三层检测的现状**：第 1 层（域名白名单）已生效；第 2/3 层（`MediaSource.isTypeSupported` document-start 探针、`MEDIA_ERR_SRC_NOT_SUPPORTED` 兜底）**依赖 CEF 的 JS 结果通道，B7 一起做**——现在 CEF 侧只有 `console.log("XHPROBE:…")` 这条测试通道，为检测再拉一条生产通道不值当。期间靠地址栏图标手动兜底。
 
+#### 9.2.11 B6 实现口径（浏览器功能补齐，分批）
+
+**B6a（本批）**
+
+- **页内查找**：`BrowserFindCoordinator` 从"持有 WKWebView"改成"持有 `BrowserPage`"。WK 侧仍只报命中与否（`WKFindResult` 没有计数），CEF 侧经 `CefFindHandler::OnFindResult`（只在 `finalUpdate` 时取）报命中数；两边都归一成 `onFindResult(count)`。⌘F/⌘G/⌘Shift+G/Esc 与查找栏 UI 不动。
+- **缩放**：`BrowserPage.zoomScale/setZoomScale`。WK 走 `pageZoom`，CEF 走 `CefBrowserHost::SetZoomLevel`（`level = ln(scale)/ln(1.2)`，CEF 自己按 origin 记住）。⌘±/钳制 0.5–2.5 不变。
+- **JS 对话框**：`CefJSDialogHandler::OnJSDialog` → `CefPage.onJSDialog` → 复用 WK 那套非阻塞 sheet（alert/confirm；prompt 与 WK 侧一致简化为提示框并回默认值）。桥里做了 **reply 只调一次**的护栏，且没接线时立刻回"取消"，绝不让页面干等。
+
+**B6b（下一批，还没做）**：下载（`CefDownloadHandler` + `DownloadHistoryStore` 现在只认 WKDownload/URLSessionTask，要加外部驱动分支）、右键菜单（`CefContextMenuHandler`，含"用 X 搜索"）、`<input type=file>`（`CefDialogHandler`）、favicon（CEF 侧要等 JS 通道）、权限（`CefPermissionHandler`：摄像头/麦克风/定位一律拒，与 WK 侧同策略）、埋点迁移、后台媒体保活（需要"页面是否在播"的信号）、墙检测/手递手（要 JS 结果）。
+
 ## 十、CEF 版本运维
 
 **为什么需要**：谷歌那条判定是黑盒，靠"名义层"伪装；内核太旧（落后一年）本身会被当旧浏览器，反而提高风控概率。所以既要能"该升就升"，又不能"每天发版被迫跟"。
@@ -669,5 +679,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B3 | 2026-11-12 | `1d29b5b9` | **通过**（review MINOR，P0/P1=0，P2×4/P3×3 已修，见 `docs/code-review/browser-chromium-migration/2026-11-12.md`）。交付：`CefDisguise.h`（版本取自 `cef_version.h`）、UA、`sec-ch-ua*`（`CefResourceRequestHandler`）、`userAgentData`、`window.chrome` 清洗、`--cef-probe` 探针 + `scripts/cef-regression.sh`；口径见第三章「B3 落地口径」。取证：① 探针 14/14 PASS，**网络层没有覆盖我们设的 `sec-ch-ua`**（`"Not:A-Brand";v="99", "Chromium";v="156", "Google Chrome";v="156"` + `?0` + `"macOS"`），页面侧 brands/`[object NavigatorUAData]`/chrome 键（app,csi,loadTimes,runtime）三者互相自洽；② 谷歌登录从 `identifier` 直接进到 `/challenge/pwd`（20:10:51），百度首页/搜索/百科同时段正常无验证码 |
 | B4 | 2026-11-12 | 待提交 | **通过**（多 tab / popup 有取证；分屏与关闭回收靠人眼）。交付：popup 引擎跟 opener（D17）、秒关 tab 的 renderer 回收兜底、CEF 焦点判定修（见 9.2.9 / tier1-ux §3.1）。取证（20:25–20:28 那次运行）：6 个不同站点都落了 CEF profile（多 tab）；20:26:57 百度结果页点链接 → `[Browser] cef popup → new tab` + 新 tab 的 `baike.baidu.com` 记录 → popup 走的是我们自己的 tab（不再是裸原生窗）；退出后无残留 Helper 进程。**未验**：⌘W/⌘Shift+T 的焦点修复（这次构建早于修复），且该快捷键在 prod（WK）上也失效 → 记为 main 老 bug，不算本批验收项；分屏两窗格同时跑 CEF 未单独点验 |
 | B5 | 2026-11-12 | 待提交 | 待真机构建 + 人眼。交付：白名单生效（含短链）、提示条（D16 + 频率闸）、地址栏换引擎图标、主引擎降级横幅；口径见 §9.2.10。三层检测的第 2/3 层按 §9.2.10 末条推到 B7 |
+| B6a | 2026-11-12 | 待提交 | **通过**（⌘F 查找、⌘±/⌘0 缩放已验；⌘G/⌘Shift+G 保留标准语义「查找下一个/上一个」，只在查找栏打开时有意义，不算缺陷）。交付：`BrowserPage` 增加 zoom/find、`CefFindHandler`、`CefJSDialogHandler`；口径见 §9.2.11。**未验**：页面 alert/confirm/prompt 的真机表现（无本地 http 测试页，B6b 一起验）；其余功能面在 B6b |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

@@ -58,8 +58,7 @@ struct BrowserTabView: View {
                     .padding(.horizontal, 8)
             }
             Divider()
-            // 页内查找是 WK 的能力，CEF 标签不显示查找条（避免"输入了没反应"）
-            if findCoordinator.isPresented, page.wkWebView != nil {
+            if findCoordinator.isPresented {
                 findBar
                 Divider()
             }
@@ -93,10 +92,8 @@ struct BrowserTabView: View {
                 loadError = msg
             })
             stateToken = page.stateObservers.add { syncPageState() }
-            // 页内查找只有 WK 有（CEF 的 Find 接口是另一套，B6 再接）
-            if let webView = page.wkWebView {
-                findCoordinator.attach(webView)
-            }
+            // 页内查找按内核协议接（WK 报命中与否、CEF 报命中数）
+            findCoordinator.attach(page)
             // 新标签页自动聚焦地址栏
             if page.url == nil || Self.isLocalPlaceholder(page.url) {
                 DispatchQueue.main.async { urlFocused = true }

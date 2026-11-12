@@ -3165,6 +3165,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         LogBuffer.shared.diag("[Browser] cef popup → new tab: \(url.absoluteString.prefix(160))")
                         BrowserToolProvider.shared.openURL(url, openerEngine: openerEngine)
                     }
+                    // JS 对话框复用 WK 那套 sheet（非阻塞）；reply 必须调一次，否则页面一直等
+                    cefPage.onJSDialog = { [weak self] kind, message, defaultText, reply in
+                        guard let self else { reply(false, nil); return }
+                        switch kind {
+                        case 0:   // alert
+                            if let handler = self.onJSAlert { handler(message) { reply(true, nil) } } else { reply(false, nil) }
+                        case 1:   // confirm
+                            if let handler = self.onJSConfirm { handler(message) { ok in reply(ok, nil) } } else { reply(false, nil) }
+                        default:  // prompt：与 WK 侧一致，简化为提示框，返回默认值
+                            if let handler = self.onJSAlert { handler(message) { reply(true, defaultText) } } else { reply(false, nil) }
+                        }
+                    }
                 }
                 #endif
                 return

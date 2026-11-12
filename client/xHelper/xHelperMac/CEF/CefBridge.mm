@@ -4,6 +4,7 @@
 
 #include <objc/runtime.h>
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +14,8 @@
 #include "include/cef_client.h"
 #include "include/cef_browser_process_handler.h"
 #include "include/cef_display_handler.h"
+#include "include/cef_find_handler.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_life_span_handler.h"
 #include "include/cef_request.h"
 #include "include/cef_parser.h"
@@ -187,6 +190,8 @@ class XHCefClient : public CefClient,
                     public CefLifeSpanHandler,
                     public CefLoadHandler,
                     public CefDisplayHandler,
+                    public CefFindHandler,
+                    public CefJSDialogHandler,
                     public CefRequestHandler {
  public:
   explicit XHCefClient(XHCefBrowserView *view) : view_(view) {}
@@ -194,7 +199,52 @@ class XHCefClient : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  // 页内查找：CEF 只在 finalUpdate 时给确定结果（中途的 count 是"当前累计"）
+  void OnFindResult(CefRefPtr<CefBrowser> browser,
+                    int identifier,
+                    int count,
+                    const CefRect &selectionRect,
+                    int activeMatchOrdinal,
+                    bool finalUpdate) override {
+    if (!finalUpdate) return;
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      if (view.findResultCount) view.findResultCount(count);
+    });
+  }
+
+  // JS 对话框：不接的话 CEF 会自己弹平台原生框（阻塞式），观感和我们的 sheet 也不一致
+  bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+                  const CefString &origin_url,
+                  JSDialogType dialog_type,
+                  const CefString &message_text,
+                  const CefString &default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback,
+                  bool &suppress_message) override {
+    XHCefBrowserView *view = view_;
+    const NSInteger kind = static_cast<NSInteger>(dialog_type);
+    NSString *message = CefStringToNSString(message_text);
+    NSString *defaultText = CefStringToNSString(default_prompt_text);
+    __block BOOL replied = NO;
+    void (^reply)(BOOL, NSString *) = ^(BOOL accepted, NSString *text) {
+      if (replied) return;   // callback 只能调一次，页面还在等它
+      replied = YES;
+      callback->Continue(accepted, CefString((text ?: @"").UTF8String));
+    };
+    RunOnMain(^{
+      if (view.jsDialogRequested) {
+        view.jsDialogRequested(kind, message, defaultText, reply);
+      } else {
+        reply(NO, nil);   // 没接线也别让页面卡住
+      }
+    });
+    suppress_message = false;
+    return true;
+  }
 
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
       CefRefPtr<CefBrowser> browser,
@@ -559,6 +609,30 @@ static bool EnsureLibraryLoaded() {
   if (!_browser) return;
   CefRefPtr<CefFrame> frame = _browser->GetMainFrame();
   if (frame) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
+}
+
+// zoom level ↔ 缩放比：Chromium 默认一级约 1.2 倍
+- (double)zoomScale {
+  if (!_browser) return 1.0;
+  return pow(1.2, _browser->GetHost()->GetZoomLevel());
+}
+
+- (void)setZoomScale:(double)scale {
+  if (!_browser || scale <= 0) return;
+  _browser->GetHost()->SetZoomLevel(log(scale) / log(1.2));
+}
+
+- (void)findString:(NSString *)text forward:(BOOL)forward matchCase:(BOOL)matchCase {
+  if (!_browser) return;
+  if (text.length == 0) {
+    _browser->GetHost()->StopFinding(YES);
+    return;
+  }
+  _browser->GetHost()->Find(text.UTF8String, forward, matchCase, false);
+}
+
+- (void)stopFinding:(BOOL)clearSelection {
+  if (_browser) _browser->GetHost()->StopFinding(clearSelection);
 }
 
 - (void)reload {

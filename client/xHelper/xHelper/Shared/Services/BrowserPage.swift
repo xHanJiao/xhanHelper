@@ -42,6 +42,15 @@ protocol BrowserPage: AnyObject {
     func goForward()
     /// 回收内核资源（WK 停加载；CEF 走 `CloseBrowser(force_close)`）
     func close()
+
+    /// 页面缩放（1.0 = 100%）。WK 走 `pageZoom`；CEF 走 `SetZoomLevel`（CEF 自己按 origin 记）。
+    var zoomScale: Double { get }
+    func setZoomScale(_ scale: Double)
+
+    /// 页内查找。WK 同步、CEF 异步；命中数通过 `onFindResult` 回报（-1 = 未知）。
+    func find(_ text: String, forward: Bool, matchCase: Bool)
+    func stopFinding(clearSelection: Bool)
+    var onFindResult: ((Int) -> Void)? { get set }
 }
 
 /// 页面状态的一对多广播（面板要刷新地址栏，TabSession 要更新标题/host，两边都得收）。
@@ -106,6 +115,32 @@ final class WKPage: NSObject, BrowserPage {
     func goForward() { webView.goForward() }
     func close() { webView.stopLoading() }
 
+    var zoomScale: Double { webView.pageZoom }
+    func setZoomScale(_ scale: Double) { webView.pageZoom = scale }
+
+    var onFindResult: ((Int) -> Void)?
+
+    func find(_ text: String, forward: Bool, matchCase: Bool) {
+        guard !text.isEmpty else {
+            onFindResult?(0)
+            return
+        }
+        let config = WKFindConfiguration()
+        config.backwards = !forward
+        config.caseSensitive = matchCase
+        config.wraps = true
+        webView.find(text, configuration: config) { [weak self] result in
+            // WKFindResult 只有"命中与否"，没有计数 → 报 1/0
+            self?.onFindResult?(result.matchFound ? 1 : 0)
+        }
+    }
+
+    /// WK 没有 stopFinding，清掉选区即可（与 Safari 退出查找栏的观感一致）
+    func stopFinding(clearSelection: Bool) {
+        guard clearSelection else { return }
+        webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
+    }
+
     deinit {
         observations.forEach { $0.invalidate() }
     }
@@ -124,6 +159,9 @@ final class CefPage: NSObject, BrowserPage {
     var onLoadFinish: ((Bool) -> Void)?
     /// `target=_blank` / `window.open` 的目标：CEF 的原生弹窗已拦掉，由宿主开新 tab
     var onPopupRequested: ((URL) -> Void)?
+    /// JS 对话框：kind 0=alert / 1=confirm / 2=prompt。reply **必须调一次**（否则页面一直等）。
+    var onJSDialog: ((_ kind: Int, _ message: String, _ defaultText: String,
+                     _ reply: @escaping (Bool, String?) -> Void) -> Void)?
     let stateObservers = BrowserPageState()
 
     /// `url == nil` 表示从空白页起（新标签页随后用 loadHTMLString 填）。
@@ -156,6 +194,18 @@ final class CefPage: NSObject, BrowserPage {
                 self?.onPopupRequested?(url)
             }
         }
+        browserView.findResultCount = { [weak self] count in
+            MainActor.assumeIsolated { self?.onFindResult?(Int(count)) }
+        }
+        browserView.jsDialogRequested = { [weak self] kind, message, defaultText, reply in
+            MainActor.assumeIsolated {
+                guard let self, let handler = self.onJSDialog else {
+                    reply(false, nil)   // 没接线：按"取消"放行，绝不能让页面干等
+                    return
+                }
+                handler(Int(kind), message, defaultText) { ok, text in reply(ok, text) }
+            }
+        }
     }
 
     var hostingView: XHPageView { browserView }
@@ -176,5 +226,19 @@ final class CefPage: NSObject, BrowserPage {
     func goBack() { browserView.goBack() }
     func goForward() { browserView.goForward() }
     func close() { browserView.closeBrowser() }
+
+    var zoomScale: Double { browserView.zoomScale }
+    func setZoomScale(_ scale: Double) { browserView.setZoomScale(scale) }
+
+    var onFindResult: ((Int) -> Void)?
+
+    func find(_ text: String, forward: Bool, matchCase: Bool) {
+        // ObjC 的 findString:forward:matchCase: 在 Swift 侧被自动改名为 find(_:forward:matchCase:)
+        browserView.find(text, forward: forward, matchCase: matchCase)
+    }
+
+    func stopFinding(clearSelection: Bool) {
+        browserView.stopFinding(clearSelection)
+    }
 }
 #endif

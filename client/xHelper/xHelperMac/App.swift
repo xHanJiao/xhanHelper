@@ -230,14 +230,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     BrowserToolProvider.shared.activePage?.reload()
                     return nil
                 case 24: // Cmd+= 页面放大
-                    Self.zoomWebView(by: 0.1)
+                    Self.zoomActivePage(by: 0.1)
                     return nil
                 case 27: // Cmd+- 页面缩小
-                    Self.zoomWebView(by: -0.1)
+                    Self.zoomActivePage(by: -0.1)
                     return nil
-                case 3: // Cmd+F 页内查找（仅 WK：CEF 的 Find 接口 B6 再接）
-                    if let wv = BrowserToolProvider.shared.activeWebView {
-                        BrowserFindCoordinator.shared.requestShow(wv)
+                case 29: // Cmd+0 缩放复位（对齐 Chrome）
+                    BrowserToolProvider.shared.activePage?.setZoomScale(1.0)
+                    return nil
+                case 3: // Cmd+F 页内查找（WK / CEF 都接）
+                    if let page = BrowserToolProvider.shared.activePage {
+                        BrowserFindCoordinator.shared.requestShow(page)
                     }
                     return nil
                 case 5: // Cmd+G / Cmd+Shift+G 查找跳转（栏显示时才拦截）
@@ -282,10 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）
-    private static func zoomWebView(by delta: CGFloat) {
-        guard let wv = BrowserToolProvider.shared.activeWebView else { return }
-        wv.pageZoom = min(max(wv.pageZoom + delta, 0.5), 2.5)
+    /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）。走内核协议：WK 是 `pageZoom`，CEF 是 zoom level。
+    private static func zoomActivePage(by delta: Double) {
+        guard let page = BrowserToolProvider.shared.activePage else { return }
+        page.setZoomScale(min(max(page.zoomScale + delta, 0.5), 2.5))
     }
 
     /// 收藏/取消收藏当前页（Cmd+D，与地址栏星标按钮逻辑一致）

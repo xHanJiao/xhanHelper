@@ -34,6 +34,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) void (^popupRequested)(NSString *url);
 /// 页内 `console.log("XHPROBE:<json>")` 的内容（回归探针的回传通道：CEF 执行 JS 没有返回值）
 @property (nonatomic, copy, nullable) void (^probeReported)(NSString *payload);
+/// 页内查找命中数（CEF 的 Find 是异步的，结果从这里回；finalUpdate 时才回调）
+@property (nonatomic, copy, nullable) void (^findResultCount)(int count);
+/// JS 对话框：kind 0=alert / 1=confirm / 2=prompt。`reply` **必须调一次**，否则页面一直挂着。
+@property (nonatomic, copy, nullable) void (^jsDialogRequested)(NSInteger kind, NSString *message,
+                                                               NSString *defaultText,
+                                                               void (^reply)(BOOL accepted, NSString * _Nullable text));
 
 @property (nonatomic, readonly) BOOL isLoading;
 @property (nonatomic, readonly) BOOL canGoBack;
@@ -48,6 +54,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stopLoading;
 - (void)goBack;
 - (void)goForward;
+
+/// 页面缩放（1.0 = 100%）。CEF 内部是对数级 zoom level，换算在 .mm 里做。
+@property (nonatomic, readonly) double zoomScale;
+- (void)setZoomScale:(double)scale;
+
+/// 页内查找（结果经 findResultCount 回报；空串 = 停止查找）
+- (void)findString:(NSString *)text forward:(BOOL)forward matchCase:(BOOL)matchCase;
+- (void)stopFinding:(BOOL)clearSelection;
 
 /// 强回收：等 OnBeforeClose 才放掉 browser 引用（泄漏先例见 docs/bugs/2026-08-browser-webview-leak）
 - (void)closeBrowser;

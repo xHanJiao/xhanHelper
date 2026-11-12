@@ -439,6 +439,14 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **后台 tab（B7 前置）**：CEF 的 browser 在**视图进窗口时**才创建（`viewDidMoveToWindow`），而侧栏只挂激活 tab → 后台开的 tab 不会加载。现在没有"CEF 后台 tab"的用户路径（agent 标签 B2 起固定 compat），**B7 把 agent 标签接 CEF 之前必须先解决**（二选一：视图一创建就建 browser；或后台 tab 保留挂载）。
 - 无 URL 的 `window.open`（先开窗再 `document.write`）仍然丢弃，Console 留 `[cef] popup without url`。
 
+#### 9.2.10 B5 实现口径（兼容 tab + 跨引擎）
+
+- **白名单已生效**：`BrowserEngineRouter.videoWhitelistEnabled = true`（D-b 的临时关闭结束）。视频站含短链（`b23.tv` / `v.douyin.com` / `xhslink.com`）**新建 tab 时**就落兼容引擎，不走"先开 CEF、302 之后才发现"。
+- **提示条（D16）**：CEF tab 落到白名单域 → 页面顶部 28pt 细条「此站的视频需要兼容模式」+「用兼容模式打开」（开新 compatible tab，原 tab 停在原地）；离开该域自动收起；同一 tab 会话内同域只弹一次；同 host 24h 最多 2 次（`EngineHintGate`，按 eTLD+1 计数）；偏好表里已有该 host 的选择 → 不弹。
+- **地址栏换引擎图标**：主引擎页显示 safari 图标（换兼容打开）、兼容页显示 globe 图标（换主引擎打开）。这是 §9.2.4 的兜底出口——检测永远有漏网，任何页都得能一键换内核。点一次同时写进偏好表（D15 第 4 条「别再问同一站」）。
+- **降级横幅**：`CefInitialize` 失败过（`cefInitFailed`）→ 兼容 tab 顶部常驻「主引擎未启动，当前为兼容模式」；地址栏的"换主引擎"按钮同时置灰，不给"点了必然降级回来"的按钮（原来只有一次 Toast）。
+- **三层检测的现状**：第 1 层（域名白名单）已生效；第 2/3 层（`MediaSource.isTypeSupported` document-start 探针、`MEDIA_ERR_SRC_NOT_SUPPORTED` 兜底）**依赖 CEF 的 JS 结果通道，B7 一起做**——现在 CEF 侧只有 `console.log("XHPROBE:…")` 这条测试通道，为检测再拉一条生产通道不值当。期间靠地址栏图标手动兜底。
+
 ## 十、CEF 版本运维
 
 **为什么需要**：谷歌那条判定是黑盒，靠"名义层"伪装；内核太旧（落后一年）本身会被当旧浏览器，反而提高风控概率。所以既要能"该升就升"，又不能"每天发版被迫跟"。
@@ -660,5 +668,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B2 | 2026-11-12 | `a412156e` | **通过**（MINOR，P0/P1=0，P2×5 已修）。交付：`BrowserPage`/`WKPage`/`CefPage`、`BrowserEngineRouter`（swift test 7 条）、`RightSidebarTab.engine`、dev 默认 CEF + 设置页 dev 开关回 WK、CEF popup 拦成新 tab（B4 提前一块）；口径见 §9.2.8。取证：19:29 点百度地图后 `History` 只有一条 map（不再有第二个 browser），19:41–19:42 百度→百科是正常 tab 流 |
 | B3 | 2026-11-12 | `1d29b5b9` | **通过**（review MINOR，P0/P1=0，P2×4/P3×3 已修，见 `docs/code-review/browser-chromium-migration/2026-11-12.md`）。交付：`CefDisguise.h`（版本取自 `cef_version.h`）、UA、`sec-ch-ua*`（`CefResourceRequestHandler`）、`userAgentData`、`window.chrome` 清洗、`--cef-probe` 探针 + `scripts/cef-regression.sh`；口径见第三章「B3 落地口径」。取证：① 探针 14/14 PASS，**网络层没有覆盖我们设的 `sec-ch-ua`**（`"Not:A-Brand";v="99", "Chromium";v="156", "Google Chrome";v="156"` + `?0` + `"macOS"`），页面侧 brands/`[object NavigatorUAData]`/chrome 键（app,csi,loadTimes,runtime）三者互相自洽；② 谷歌登录从 `identifier` 直接进到 `/challenge/pwd`（20:10:51），百度首页/搜索/百科同时段正常无验证码 |
 | B4 | 2026-11-12 | 待提交 | **通过**（多 tab / popup 有取证；分屏与关闭回收靠人眼）。交付：popup 引擎跟 opener（D17）、秒关 tab 的 renderer 回收兜底、CEF 焦点判定修（见 9.2.9 / tier1-ux §3.1）。取证（20:25–20:28 那次运行）：6 个不同站点都落了 CEF profile（多 tab）；20:26:57 百度结果页点链接 → `[Browser] cef popup → new tab` + 新 tab 的 `baike.baidu.com` 记录 → popup 走的是我们自己的 tab（不再是裸原生窗）；退出后无残留 Helper 进程。**未验**：⌘W/⌘Shift+T 的焦点修复（这次构建早于修复），且该快捷键在 prod（WK）上也失效 → 记为 main 老 bug，不算本批验收项；分屏两窗格同时跑 CEF 未单独点验 |
+| B5 | 2026-11-12 | 待提交 | 待真机构建 + 人眼。交付：白名单生效（含短链）、提示条（D16 + 频率闸）、地址栏换引擎图标、主引擎降级横幅；口径见 §9.2.10。三层检测的第 2/3 层按 §9.2.10 末条推到 B7 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

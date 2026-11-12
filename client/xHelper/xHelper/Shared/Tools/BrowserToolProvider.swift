@@ -1598,6 +1598,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// CEF 初始化失败过就不再重试（否则每开一个标签都重跑 CefInitialize + 弹一次 Toast）
     private static var cefInitFailed = false
 
+    /// 主引擎已经确认起不来（缺 framework / CefInitialize 失败）→ 界面挂常驻横幅，别让用户以为
+    /// "浏览器坏了"。§9.2.5「崩溃 / 降级」要求的启动降级提示。
+    var isCefUnavailable: Bool { Self.cefInitFailed }
+
     /// 这台机器"能不能尝试 CEF"（平台层面）。真正起不来时由 `TabSession.makePage` 就地降级兼容引擎。
     static var cefAvailable: Bool {
         #if os(macOS)
@@ -2317,11 +2321,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 立即开新 tab 并加载 URL（收藏夹/历史点击打开，不等加载完成就显示 tab）。
     /// - Parameter openerEngine: `target=_blank` / `window.open` / `noopener` 跳转时传 opener 的引擎
     ///   （D17：引擎跟 opener 一致）。跨引擎会断 `window.opener` + cookie 域，登录弹窗必挂。
-    func openURL(_ url: URL, openerEngine: BrowserEngine? = nil) {
+    /// - Parameter engine: 用户/agent **显式指定**引擎（地址栏切换按钮、视频站提示条、`open_url` 的
+    ///   `engine`）。优先级最高（§9.2.2 第 2 条）。
+    func openURL(_ url: URL, openerEngine: BrowserEngine? = nil, engine: BrowserEngine? = nil) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let session = TabSession(engine: BrowserEngineRouter.resolveEngine(
-            url: url, openerEngine: openerEngine, cefAvailable: Self.cefAvailable))
+            url: url, override: engine, openerEngine: openerEngine, cefAvailable: Self.cefAvailable))
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()

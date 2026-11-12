@@ -25,8 +25,8 @@ enum BrowserEngineRouter {
         "b23.tv", "v.douyin.com", "xhslink.com",
     ]
 
-    /// 白名单是否生效。B2 先关（D-b：B2 期间视频站也走 CEF，靠隐藏开关手动回 WK），B5 打开。
-    static var videoWhitelistEnabled = false
+    /// 白名单是否生效。B2 先关（D-b：B2 期间视频站也走 CEF，靠隐藏开关手动回 WK），**B5 起打开**。
+    static var videoWhitelistEnabled = true
 
     /// 本文件同时编进 SwiftPM 纯逻辑测试包（那边拿不到 `LocalPaths`），所以环境后缀在这里就地取。
     /// **必须与 `LocalPaths.scoped` 同形**（`<key>_<env>`）：dev / prod 分开存，避免串味。
@@ -109,4 +109,43 @@ enum EnginePreferenceStore {
         }
         UserDefaults.standard.set(all, forKey: key)
     }
+}
+
+/// 跨引擎提示的频率闸（§9.2.3）：同一 host **24h 内最多提示 2 次**。
+///
+/// 纯逻辑 + 显式 `now`（可单测）；存储与偏好表同形（按 eTLD+1、带环境后缀）。
+/// 只负责"还能不能弹"，弹过之后由调用方 `record`。
+enum EngineHintGate {
+    static let maxPerWindow = 2
+    static let window: TimeInterval = 24 * 3600
+
+    private static var key: String { "xhan_engine_hint_" + BrowserEngineRouter.envSuffix }
+
+    /// host → [上次弹出的 epoch 秒, 窗口内已弹次数]
+    private static func load() -> [String: [String: Double]] {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: [String: Double]]) ?? [:]
+    }
+
+    private static func count(_ entry: [String: Double]?, now: Date) -> Int {
+        guard let last = entry?["t"], now.timeIntervalSince1970 - last < window else { return 0 }
+        return Int(entry?["n"] ?? 0)
+    }
+
+    /// 现在还能不能对该 host 提示（只读，不记账）
+    static func canShow(host: String?, now: Date = Date()) -> Bool {
+        guard let k = EnginePreferenceStore.hostKey(host) else { return false }
+        return count(load()[k], now: now) < maxPerWindow
+    }
+
+    /// 真的弹了才记账（窗口过期自动从 0 计）
+    static func record(host: String?, now: Date = Date()) {
+        guard let k = EnginePreferenceStore.hostKey(host) else { return }
+        var all = load()
+        let used = count(all[k], now: now)
+        all[k] = ["t": now.timeIntervalSince1970, "n": Double(used + 1)]
+        UserDefaults.standard.set(all, forKey: key)
+    }
+
+    /// 测试/调试用：清掉全部计数
+    static func reset() { UserDefaults.standard.removeObject(forKey: key) }
 }

@@ -298,6 +298,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return handleCloseTab(arguments, owner: context.owner)
         case "agent_browser_list_tabs":
             return handleListTabs()
+        case "agent_browser_download":
+            // 下载不操作任何标签页（用 URLSession + 来源页 Cookie）：不能进下面的 tabId 闸门，
+            // 它的签名里没有 tabId，否则就是"必须传 tabId / 但没这个参数"的死循环。
+            return await handleDownload(arguments: arguments)
         case "agent_browser_switch_tab":
             return handleSwitchTab(arguments, owner: context.owner)
         default:
@@ -387,8 +391,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 }
             case "agent_browser_get_media_sources":
                 return await handleGetMediaSources(session: session, arguments: arguments)
-            case "agent_browser_download":
-                return await handleDownload(arguments: arguments)
             case "agent_browser_click":
                 return await withNavContext(session) {
                     await interact(session: session, arguments: arguments, kind: .click, successKey: "clicked")
@@ -525,15 +527,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             _ = await session.jsBool(clickUpJS())
             return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
         case .fill:
-            let (ok, jsErr) = await session.jsBool(fillJS(sel, arguments["value"] as? String ?? ""))
-            return ok ? .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
-                      : .init(serverResult: nil, serverError: jsErr ?? "未找到元素: \(sel)", clientAction: nil)
+            let js = fillJS(sel, arguments["value"] as? String ?? "")
+            return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
         case .type:
             return await typeText(session: session, arguments: arguments, successKey: successKey)
         case .select:
-            let (ok, jsErr) = await session.jsBool(selectJS(sel, arguments["value"] as? String ?? ""))
-            return ok ? .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
-                      : .init(serverResult: nil, serverError: jsErr ?? "未找到元素: \(sel)", clientAction: nil)
+            let js = selectJS(sel, arguments["value"] as? String ?? "")
+            return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
         }
     }
 
@@ -582,9 +582,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return await interpretRefResult(await session.jsJSON(refCheckJS(handle, session, checked)), successKey: checked ? "checked" : "unchecked")
         }
         let sel = arguments["selector"] as? String ?? ""
-        let (ok, jsErr) = await session.jsBool(checkJS(sel, checked))
-        return ok ? .init(serverResult: Self.jsonDict([checked ? "checked" : "unchecked": true]), serverError: nil, clientAction: nil)
-                  : .init(serverResult: nil, serverError: jsErr ?? "未找到元素: \(sel)", clientAction: nil)
+        let js = checkJS(sel, checked)
+        return await interpretRefResult(await session.jsJSON(js), successKey: checked ? "checked" : "unchecked")
     }
 
     /// 真实系统级点击（CGEvent 兜底）：权限检查 → 定位元素中心 → 坐标转换 → 前置窗口 → 注入
@@ -912,7 +911,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
             let content = (result["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if content.isEmpty {
-                return .init(serverResult: Self.jsonDict(["content": "", "mode": "filter", "matched": false]), serverError: nil, clientAction: nil)
+                // 以前回 matched:false + 空 content，LLM 会误以为"页面没内容"。空命中要能看见原因。
+                return .init(serverResult: nil,
+                             serverError: "未匹配到关键词「\(query)」（页面正文里没有这个词；可先用 read(mode=outline) 看结构，或换关键词/等页面加载完）",
+                             clientAction: nil)
             }
             var body = Self.pageContentDisclaimer + "\n" + content
             var out: [String: Any] = ["content": body, "mode": "filter", "matched": true]
@@ -1604,7 +1606,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "agent_browser_type", "agent_browser_select", "agent_browser_check",
         "agent_browser_uncheck", "agent_browser_press", "agent_browser_cgclick",
         "agent_browser_drag", "agent_browser_go_back", "agent_browser_go_forward",
-        "agent_browser_close_tab", "agent_browser_download",
+        "agent_browser_close_tab",
     ]
 
     // MARK: - 用户标签写入授权（agent 操作用户标签需用户确认，按 owner 任务级缓存）
@@ -4254,9 +4256,27 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
     """
 
+    /// 可填写元素判定（fill/type 共用）：返回错误文案，空串 = 可以填。
+    /// 以前不校验，打到 <a> 上直接抛 JS 异常，报一句"JS 异常"谁也看不懂。
+    private static let fillGuardJS = """
+    var _fillGuard=function(e){
+      var tag=(e.tagName||'').toUpperCase();
+      var ty=(e.getAttribute('type')||'').toLowerCase();
+      if(e.isContentEditable)return '';
+      if(tag==='TEXTAREA')return '';
+      if(tag==='INPUT'){
+        if(['checkbox','radio','button','submit','reset','file','image','hidden'].indexOf(ty)>=0)
+          return '该 input 类型（'+(ty||'text')+'）不能填值，请改点 click / check / 下载';
+        return '';
+      }
+      return '元素不可填写（<'+(e.tagName||'').toLowerCase()+'>）：fill/type 只支持 input / textarea / contenteditable';
+    };
+    """
+
     private func refFillJS(_ handle: Int, _ session: TabSession, _ val: String) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))\(Self.fillGuardJS)" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
+            "var _g=_fillGuard(e);if(_g)return JSON.stringify({ok:false,err:_g});" +
             "e.focus();e.select();" +
             "var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype);" +
             "var setter=Object.getOwnPropertyDescriptor(proto,'value').set;" +
@@ -4267,22 +4287,66 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "return JSON.stringify({ok:true});})()"
     }
 
+    /// select 赋值（ref 与 selector 共用）：以前只写 e.value，传一个不存在的值也能"成功"，
+    /// 回读才是空的。现在先校验元素是 <select>、value 命中某个 option，不命中就报可选值。
+    private static let selectAssignJS = """
+    var _selAssign=function(e,val){
+      if(!e)return {ok:false,err:'未找到元素'};
+      if((e.tagName||'').toUpperCase()!=='SELECT')
+        return {ok:false,err:'元素不是 <select>（是 <'+(e.tagName||'').toLowerCase()+'>），select 只对下拉框有效'};
+      var names=[],hit=null;
+      for(var i=0;i<e.options.length;i++){var o=e.options[i];names.push(o.value);
+        if(o.value===val||(o.text||'').trim()===val)hit=o;}
+      if(!hit)return {ok:false,err:'没有匹配的选项：'+val+'；可选值：'+(names.slice(0,20).join(' / ')||'(空)')+
+        (names.length>20?' …（共 '+names.length+' 项）':'')};
+      e.focus();e.value=hit.value;
+      e.dispatchEvent(new Event('input',{bubbles:true}));
+      e.dispatchEvent(new Event('change',{bubbles:true}));
+      e.blur();
+      return {ok:true,value:hit.value};
+    };
+    """
+
     private func refSelectJS(_ handle: Int, _ session: TabSession, _ val: String) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))\(Self.selectAssignJS)" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "e.focus();e.value='\(esc(val))';" +
-            "e.dispatchEvent(new Event('input',{bubbles:true}));" +
-            "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-            "e.blur();return JSON.stringify({ok:true});})()"
+            "return JSON.stringify(_selAssign(e,'\(esc(val))'));})()"
     }
 
+    /// check/uncheck 共用：先确认元素真的是勾选框。
+    /// 以前不校验 —— 打到普通链接上会退化成一次真点击（页面真的跳走）还回 checked:true。
+    private static let checkToggleJS = """
+    var _checkable=function(e){
+      var tag=(e.tagName||'').toUpperCase();
+      var ty=(e.getAttribute('type')||'').toLowerCase();
+      if(tag==='INPUT'&&(ty==='checkbox'||ty==='radio'))return '';
+      if((e.getAttribute('role')||'')==='checkbox')return '';
+      return '元素不是复选框/单选框（<'+(e.tagName||'').toLowerCase()+(ty?' type='+ty:'')+'>），check/uncheck 只对它们有效';
+    };
+    var _isChecked=function(e){
+      var tag=(e.tagName||'').toUpperCase();
+      if(tag==='INPUT')return !!e.checked;
+      return (e.getAttribute('aria-checked')||'').toLowerCase()==='true';
+    };
+    var _checkToggle=function(e,checked){
+      if(!e)return {ok:false,err:'未找到元素'};
+      var bad=_checkable(e);if(bad)return {ok:false,err:bad};
+      var ty=(e.getAttribute('type')||'').toLowerCase();
+      if(!checked&&ty==='radio')
+        return {ok:false,err:'单选框只能选中、不能取消（radio 没有 unchecked 状态）'};
+      var before=_isChecked(e);
+      if(before!==checked){e.focus();e.click();}
+      e.dispatchEvent(new Event('change',{bubbles:true}));
+      var after=_isChecked(e);
+      if(after!==checked)return {ok:false,err:'切换失败（目标状态 '+checked+'，实际 '+after+'），该控件可能被页面脚本接管'};
+      return {ok:true,was:before,now:after};
+    };
+    """
+
     private func refCheckJS(_ handle: Int, _ session: TabSession, _ checked: Bool) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))\(Self.checkToggleJS)" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "e.focus();" +
-            "if(!!e.checked!==\(checked))e.click();" +
-            "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-            "return JSON.stringify({ok:true});})()"
+            "return JSON.stringify(_checkToggle(e,\(checked)));})()"
     }
 
     /// 页面可见文本 + 表单值（input/select/textarea 的 value 与 checkbox/radio 的 checked）的 FNV 哈希
@@ -4348,7 +4412,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func fillJS(_ sel: String, _ val: String) -> String {
         // 原生 property setter 赋值（React/Vue 受控组件可感知），保留焦点
-        "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;" +
+        "(function(){\(Self.fillGuardJS)" +
+        "var e=document.querySelector('\(esc(sel))');if(!e)return JSON.stringify({ok:false,err:'未找到元素: \(esc(sel))'});" +
+        "var _g=_fillGuard(e);if(_g)return JSON.stringify({ok:false,err:_g});" +
         "e.focus();e.select();" +
         "var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype);" +
         "var setter=Object.getOwnPropertyDescriptor(proto,'value').set;" +
@@ -4356,7 +4422,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "e.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,inputType:'insertText',data:'\(esc(val))'}));" +
         "e.dispatchEvent(new Event('input',{bubbles:true}));" +
         "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "return true;})()"
+        "return JSON.stringify({ok:true});})()"
     }
 
     /// ref 点击第一步（含 _blank 拦截，按稳定句柄定位）。元素不在视口内先居中滚动。
@@ -4442,19 +4508,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "a.dispatchEvent(new KeyboardEvent('keyup',o));return true;})()"
     }
     private func selectJS(_ sel: String, _ val: String) -> String {
-        "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;" +
-        "e.focus();e.value='\(esc(val))';" +
-        "e.dispatchEvent(new Event('input',{bubbles:true}));" +
-        "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "e.blur();return true;})()"
+        "(function(){\(Self.selectAssignJS)" +
+        "var e=document.querySelector('\(esc(sel))');" +
+        "return JSON.stringify(_selAssign(e,'\(esc(val))'));})()"
     }
     private func checkJS(_ sel: String, _ checked: Bool) -> String {
-        // 仿真实用户：原生 el.click()（可信事件+默认 toggle），当前状态与目标不符才点击
-        "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;" +
-        "e.focus();" +
-        "if(!!e.checked!==\(checked))e.click();" +
-        "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "return true;})()"
+        "(function(){\(Self.checkToggleJS)" +
+        "var e=document.querySelector('\(esc(sel))');" +
+        "return JSON.stringify(_checkToggle(e,\(checked)));})()"
     }
 
     private func esc(_ s: String) -> String {

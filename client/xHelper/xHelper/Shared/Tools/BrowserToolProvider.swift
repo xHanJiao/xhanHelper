@@ -177,15 +177,47 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 rs.keptAliveTabIds.remove(tabId)
                 continue
             }
-            session.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
-                let hasMedia = error == nil && (result as? Bool) == true
-                guard !hasMedia else { return }
-                DispatchQueue.main.async {
-                    guard let self, self.activeTabId != tabId else { return }
-                    LogBuffer.shared.info("[Browser] keep-alive tab \(tabId) 媒体已停止，摘除视图层级")
-                    self.rightSidebar?.keptAliveTabIds.remove(tabId)
-                    session.webView.pauseAllMediaPlayback()
-                }
+            Task { @MainActor [weak self] in
+                guard let hasMedia = await Self.probeMedia(session, tabId: tabId) else { return }
+                guard !hasMedia, let self, self.activeTabId != tabId else { return }
+                LogBuffer.shared.info("[Browser] keep-alive tab \(tabId) 媒体已停止，摘除视图层级")
+                self.rightSidebar?.keptAliveTabIds.remove(tabId)
+                self.pauseMedia(session)
+            }
+        }
+    }
+
+    /// 探测页内是否有媒体在播；nil = 本次探测失败（调用方保持现状，别误摘保活）。
+    /// 连续失败 3 次就当"没媒体"收尾：坏页 / 已崩的渲染进程不能永久占着保活位（还会 30s 刷一条日志）。
+    private static func probeMedia(_ session: TabSession, tabId: String) async -> Bool? {
+        do {
+            let hasMedia = (try await session.page.evaluateJS(mediaCheckScript)) as? Bool ?? false
+            session.mediaProbeFailures = 0
+            return hasMedia
+        } catch {
+            session.mediaProbeFailures += 1
+            if session.mediaProbeFailures >= 3 {
+                session.mediaProbeFailures = 0
+                LogBuffer.shared.info("[Browser] mediaCheck 连续失败，按无媒体处理（\(tabId)）：\(error.localizedDescription)")
+                return false
+            }
+            LogBuffer.shared.diag("[Browser] mediaCheck JS 失败（\(tabId)）：\(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// 暂停页内媒体。WK 有原生 `pauseAllMediaPlayback`；CEF 只能走 JS
+    /// （只 pause，不摘 src —— 摘了再播要重新加载）。
+    private func pauseMedia(_ session: TabSession) {
+        if let webView = session.webView {
+            webView.pauseAllMediaPlayback()
+            return
+        }
+        Task { @MainActor in
+            do {
+                _ = try await session.page.evaluateJS(Self.pauseMediaScript)
+            } catch {
+                LogBuffer.shared.diag("[Browser] pauseMedia JS 失败：\(error.localizedDescription)")
             }
         }
     }
@@ -194,7 +226,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。优先接管用户已打开的页：用户已自己开好/已登录/已过验证码时，先 list_tabs 取 owner=user 的 tabId 直接操作该页，不要另开新页（另开新页可能重新触发站点风控/验证）。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理（主会话无 ui__ask_user 时改为文字告知用户，页面已升栏并已发系统通知），用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。优先接管用户已打开的页：用户已自己开好/已登录/已过验证码时，先 list_tabs 取 owner=user 的 tabId 直接操作该页，不要另开新页（另开新页可能重新触发站点风控/验证）。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理（主会话无 ui__ask_user 时改为文字告知用户，页面已升栏并已发系统通知），用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"),
+                                   "background": boolProp("是否后台打开（不切走当前标签页），默认 true"),
+                                   "engine": ["type": "string",
+                                              "enum": ["cef", "compat"],
+                                              "description": "指定内核（可选）：cef=主引擎 Chromium（默认，谷歌登录/风控正常），compat=兼容 WebKit（看视频、主引擎渲染异常时的兜底）。不填按域名规则自动选（视频站自动走 compat）"]]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭本任务打开的全部标签页（只关 agent 标签，用户自己的标签不受影响）", inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭。只能关闭本任务（owner 相同）的标签；用户自己的标签需用户授权", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title/owner）。每项带 owner 标注：user=用户自己的标签，main:<convID> / subagent:<convID>=agent 自己任务的标签。返回的 activeTabId 就是用户当前正在看的那页。用户要求操作他自己打开的页面时（如「帮我操作我打开的这个页」），用 owner=user 对应的 tabId：读取免费，写/交互首次会弹一次授权确认，允许后同一任务/会话内免再确认", inputSchema: objProps([:]), isReadOnly: true),
@@ -237,11 +273,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_click",            description: "点击元素。ref（@eN 稳定句柄，须先 snapshot 获取，DOM 变化后仍有效）优先；selector 仅用于 snapshot 无法捕获的元素（自定义/动态组件）。密码等敏感字段禁止用 selector 定位。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL。agent 调用必须显式 tabId", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。ref（@eN 稳定句柄，须先 snapshot 获取）优先。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）。仅对屏幕可见的标签生效（agent 需 background:false 打开或用户正在查看该页）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（@eN 稳定句柄，须先 snapshot 获取）或 x/y。仅对屏幕可见的标签生效", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("填充值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "text": strProp("输入文本"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键。agent 调用必须显式 tabId；真实按键（Enter 等）仅对屏幕可见标签生效", inputSchema: objProps(["key": strProp("按键名称"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键。agent 调用必须显式 tabId。兼容（WK）标签走真实键盘事件：仅对屏幕可见标签生效，Enter 等能触发浏览器默认行为；Chromium（CEF）标签走 JS 合成事件：后台可用，但不触发默认行为（提交表单请点按钮）", inputSchema: objProps(["key": strProp("按键名称"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_select",           description: "选择下拉选项。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e6"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("选项值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_check",            description: "勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_uncheck",          description: "取消勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
@@ -251,7 +285,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页。agent 调用必须显式 tabId",      inputSchema: objProps(["tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）。agent 调用必须显式 tabId", inputSchema: objProps(["tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_get_media_sources", description: "获取页面中的视频/图片资源列表（分页，实时抓取）。页面为动态内容（广告自动播放、懒加载）会导致资源随时变化，下载失败或列表疑似过期时重新调用本函数获取最新列表。videos 的 playing 字段标识当前播放中的视频（自动播放的广告可能稍后消失，要下载需趁早）。agent 调用必须显式 tabId", inputSchema: objProps(["page": numProp("页码，从 1 开始，默认 1"), "limit": numProp("每页数量，默认 15（视频和图片共用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_download",          description: "下载指定 URL 到本地（~/Downloads/xhanHelper/）。使用真实浏览器请求特征（UA/Referer/Cookie），每次都会弹确认条，等用户允许后才下载。仅允许媒体文件（视频/图片/音频），危险类型（可执行/压缩/脚本）会被拒绝。下载前建议先 get_media_sources 确认地址；失败（404/403）时资源可能已失效，请重新 get_media_sources 获取最新地址。调用时尽量传 filename（带扩展名），让用户确认条能看到文件名和类型", inputSchema: objProps(["url": strProp("要下载的资源 URL（http/https）"), "filename": strProp("可选：自定义文件名（含扩展名），默认从响应或 URL 推断")]), isReadOnly: false), // 写盘工具 → 非只读
+            LocalToolSchema(name: "agent_browser_download",          description: "下载指定 URL 到本地（~/Downloads/xhanHelper/）。使用真实浏览器请求特征（UA/Referer/Cookie），每次都会弹确认条，等用户允许后才下载。来源页按 tabId → 本任务最近操作的标签 → 当前激活页顺序取：**需登录/防盗链的媒体务必传 tabId**，否则 Cookie/Referer 可能来自别的页（403 的常见原因）。仅允许媒体文件（视频/图片/音频），危险类型（可执行/压缩/脚本）会被拒绝。下载前建议先 get_media_sources 确认地址；失败（404/403）时资源可能已失效，请重新 get_media_sources 获取最新地址。调用时尽量传 filename（带扩展名），让用户确认条能看到文件名和类型", inputSchema: objProps(["url": strProp("要下载的资源 URL（http/https）"), "filename": strProp("可选：自定义文件名（含扩展名），默认从响应或 URL 推断"), "tabId": strProp("（可选）来源标签页ID，从 list_tabs 获取：用该页的 UA/Referer/Cookie（需登录的媒体必传）")]), isReadOnly: false), // 写盘工具 → 非只读
         ]
         return schemas
     }
@@ -289,6 +323,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return handleCloseTab(arguments, owner: context.owner)
         case "agent_browser_list_tabs":
             return handleListTabs()
+        case "agent_browser_download":
+            // 下载不操作任何标签页（用 URLSession + 来源页 Cookie）：不能进下面的 tabId 闸门。
+            // 来源页必须自己解析（见 handleDownload）：agent 标签恒后台，只用 activeSession 会拿错 Cookie。
+            return await handleDownload(arguments: arguments, owner: context.owner)
         case "agent_browser_switch_tab":
             return handleSwitchTab(arguments, owner: context.owner)
         default:
@@ -319,23 +357,25 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                !userTabGrants.contains(owner) {
                 return .init(serverResult: nil, serverError: "该标签是用户自己的标签，agent 操作用户标签需用户授权（确认条允许后同一任务/会话内可继续）", clientAction: nil)
             }
-            // 真实系统事件工具（CGEvent）需页面在屏幕可见：工作区/后台 agent 标签不可见时拒绝
+            // 真实系统事件工具（CGEvent）需页面在屏幕可见：工作区/后台 agent 标签不可见时拒绝。
+            // CEF 标签没有 CGEvent 路径（press 走 JS 合成事件），不受这条限制。
             if let owner = context.owner,
-               (tool == "agent_browser_cgclick" || tool == "agent_browser_drag" || tool == "agent_browser_press"),
+               tool == "agent_browser_press",
+               session.webView != nil,
                tabs[activeTabId ?? ""] !== session {
                 return .init(serverResult: nil, serverError: "\(tool) 需要页面在屏幕可见（真实系统事件），当前标签在后台/工作区不可见。请用 background:false 打开让用户看到该页，或改用 agent_browser_click 等 JS 交互", clientAction: nil)
             }
             switch tool {
             case "agent_browser_get_url":
-                guard session.webView.url != nil else {
+                guard session.page.url != nil else {
                     return .init(serverResult: nil, serverError: "页面未加载", clientAction: nil)
                 }
-                return .init(serverResult: Self.jsonDict(["url": session.webView.url?.absoluteString ?? ""]), serverError: nil, clientAction: nil)
+                return .init(serverResult: Self.jsonDict(["url": session.page.url?.absoluteString ?? ""]), serverError: nil, clientAction: nil)
             case "agent_browser_get_title":
-                guard session.webView.url != nil else {
+                guard session.page.url != nil else {
                     return .init(serverResult: nil, serverError: "页面未加载", clientAction: nil)
                 }
-                let title = session.webView.title ?? ""
+                let title = session.page.title ?? ""
                 if isBlockedPageTitle(title) {
                     return .init(serverResult: nil, serverError: "页面被拦截（标题：\(title)）：该站存在人机验证/反爬墙，无法读取内容，请换源", clientAction: nil)
                 }
@@ -368,29 +408,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 }
             case "agent_browser_go_back":
                 return await withNavContext(session) {
-                    session.webView.goBack()
+                    session.page.goBack()
                     return .init(serverResult: Self.jsonDict(["back": true]), serverError: nil, clientAction: nil)
                 }
             case "agent_browser_go_forward":
                 return await withNavContext(session) {
-                    if session.webView.canGoForward { session.webView.goForward() }
-                    return .init(serverResult: Self.jsonDict(["forward": session.webView.canGoForward]), serverError: nil, clientAction: nil)
+                    if session.page.canGoForward { session.page.goForward() }
+                    return .init(serverResult: Self.jsonDict(["forward": session.page.canGoForward]), serverError: nil, clientAction: nil)
                 }
             case "agent_browser_get_media_sources":
                 return await handleGetMediaSources(session: session, arguments: arguments)
-            case "agent_browser_download":
-                return await handleDownload(arguments: arguments)
             case "agent_browser_click":
                 return await withNavContext(session) {
                     await interact(session: session, arguments: arguments, kind: .click, successKey: "clicked")
-                }
-            case "agent_browser_cgclick":
-                return await withNavContext(session) {
-                    await cgClick(session: session, arguments: arguments)
-                }
-            case "agent_browser_drag":
-                return await withNavContext(session) {
-                    await cgDrag(session: session, arguments: arguments)
                 }
             case "agent_browser_click_text":
                 return await withNavContext(session) {
@@ -421,12 +451,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     // 特殊键（Enter/方向键/Tab/Escape 等）走真实键盘事件（仅 macOS，需辅助功能权限），
                     // 触发浏览器默认行为；iOS 无 CGEvent 注入，回退到 JS 合成键盘事件
                     #if os(macOS)
-                    if let code = CGEventInput.keyCode(for: key) {
+                    if let webView = session.webView, let code = CGEventInput.keyCode(for: key) {
+                        // 未授权时 CGEvent.post 静默无效：不能照旧报 pressed=true（docs/bugs/065 同类）
+                        guard CGEventInput.isTrusted() else {
+                            CGEventInput.requestPermission()
+                            return .init(serverResult: nil, serverError: "真实按键需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）；也可改用 click 点提交按钮", clientAction: nil)
+                        }
                         #if DEBUG
                         print("[B-Press] key=\(key) vk=\(code)")
                         #endif
-                        CGEventInput.activateWindow(for: session.webView)
-                        session.webView.window?.makeFirstResponder(session.webView)
+                        CGEventInput.activateWindow(for: webView)
+                        webView.window?.makeFirstResponder(webView)
                         CGEventInput.pressKey(code)
                         return .init(serverResult: Self.jsonDict(["pressed": true, "real": true]), serverError: nil, clientAction: nil)
                     }
@@ -491,12 +526,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
             case .fill:
                 let js = refFillJS(handle, session, arguments["value"] as? String ?? "")
-                return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
+                let (value, jsErr) = await session.jsJSONResult(js)
+                return interpretRefResult(value, jsError: jsErr, successKey: successKey)
             case .type:
                 return await typeText(session: session, arguments: arguments, successKey: successKey)
             case .select:
                 let js = refSelectJS(handle, session, arguments["value"] as? String ?? "")
-                return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
+                let (value, jsErr) = await session.jsJSONResult(js)
+                return interpretRefResult(value, jsError: jsErr, successKey: successKey)
             }
         }
         let sel = arguments["selector"] as? String ?? ""
@@ -516,15 +553,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             _ = await session.jsBool(clickUpJS())
             return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
         case .fill:
-            let (ok, jsErr) = await session.jsBool(fillJS(sel, arguments["value"] as? String ?? ""))
-            return ok ? .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
-                      : .init(serverResult: nil, serverError: jsErr ?? "未找到元素: \(sel)", clientAction: nil)
+            let js = fillJS(sel, arguments["value"] as? String ?? "")
+            let (value, jsErr) = await session.jsJSONResult(js)
+            return interpretRefResult(value, jsError: jsErr, successKey: successKey)
         case .type:
             return await typeText(session: session, arguments: arguments, successKey: successKey)
         case .select:
-            let (ok, jsErr) = await session.jsBool(selectJS(sel, arguments["value"] as? String ?? ""))
-            return ok ? .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
-                      : .init(serverResult: nil, serverError: jsErr ?? "未找到元素: \(sel)", clientAction: nil)
+            let js = selectJS(sel, arguments["value"] as? String ?? "")
+            let (value, jsErr) = await session.jsJSONResult(js)
+            return interpretRefResult(value, jsError: jsErr, successKey: successKey)
         }
     }
 
@@ -570,79 +607,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func interactChecked(session: TabSession, arguments: [String: Any], checked: Bool) async -> LocalToolResult {
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            return await interpretRefResult(await session.jsJSON(refCheckJS(handle, session, checked)), successKey: checked ? "checked" : "unchecked")
+            let (value, jsErr) = await session.jsJSONResult(refCheckJS(handle, session, checked))
+            return interpretRefResult(value, jsError: jsErr, successKey: checked ? "checked" : "unchecked")
         }
         let sel = arguments["selector"] as? String ?? ""
-        let (ok, jsErr) = await session.jsBool(checkJS(sel, checked))
-        return ok ? .init(serverResult: Self.jsonDict([checked ? "checked" : "unchecked": true]), serverError: nil, clientAction: nil)
-                  : .init(serverResult: nil, serverError: jsErr ?? "未找到元素: \(sel)", clientAction: nil)
-    }
-
-    /// 真实系统级点击（CGEvent 兜底）：权限检查 → 定位元素中心 → 坐标转换 → 前置窗口 → 注入
-    private func cgClick(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
-        #if os(macOS)
-        guard CGEventInput.isTrusted() else {
-            let granted = CGEventInput.requestPermission()
-            #if DEBUG
-            print("[CGEvent] permission granted=\(granted)")
-            #endif
-            return .init(serverResult: nil, serverError: "需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）", clientAction: nil)
-        }
-
-        // 定位目标点：ref（元素中心）或直接 x/y（调试）
-        var viewportPoint: CGPoint?
-        var targetDesc = ""
-        if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(refCenterJS(handle, session))
-            guard let dict = result as? [String: Any],
-                  let ok = dict["ok"] as? Bool, ok,
-                  let x = (dict["x"] as? NSNumber)?.doubleValue,
-                  let y = (dict["y"] as? NSNumber)?.doubleValue
-            else {
-                return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "cgclick 定位失败，请重新 snapshot"), clientAction: nil)
-            }
-            viewportPoint = CGPoint(x: x, y: y)
-            targetDesc = "ref @e\(handle)"
-        } else if let x = (arguments["x"] as? NSNumber)?.doubleValue,
-                  let y = (arguments["y"] as? NSNumber)?.doubleValue {
-            viewportPoint = CGPoint(x: x, y: y)
-            targetDesc = "viewport(\(Int(x)),\(Int(y)))"
-        }
-
-        guard let vp = viewportPoint else {
-            return .init(serverResult: nil, serverError: "cgclick 需要 ref（@eN）或 x/y 坐标", clientAction: nil)
-        }
-        guard let screenPoint = CGEventInput.screenPoint(for: vp, in: session.webView) else {
-            // Bad Case 17 诊断：窗口不可用时输出工具层上下文
-            #if DEBUG
-            print("[B-CGClick] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
-            #endif
-            return .init(serverResult: nil, serverError: "cgclick 坐标转换失败：页面窗口不可用", clientAction: nil)
-        }
-        // 越界校验：目标超出屏幕范围会被 macOS clamp 到屏幕边缘，可能误触 Dock/其他区域，拒绝注入
-        guard CGEventInput.isPointOnScreen(screenPoint) else {
-            let maxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
-            let screenSize = NSScreen.screens.first?.frame.size ?? .zero
-            return .init(serverResult: nil, serverError: "cgclick 目标超出屏幕范围 (screen=\(Int(screenSize.width))x\(Int(screenSize.height)), target=\(Int(screenPoint.x)),\(Int(screenPoint.y)))，请移动窗口或滚动页面后重试", clientAction: nil)
-        }
-
-        CGEventInput.activateWindow(for: session.webView)
-        CGEventInput.click(at: screenPoint)
-
-        // 拟人化诊断：回读页面焦点，确认点击命中
-        if let active = await session.jsJSON("(function(){var e=document.activeElement;return JSON.stringify({tag:e?e.tagName.toLowerCase():'',id:e?e.id:'',name:e?e.name:''});})()") as? [String: Any] {
-            let tag = active["tag"] as? String ?? ""
-            let id = active["id"] as? String ?? ""
-            let name = active["name"] as? String ?? ""
-            #if DEBUG
-            print("[B-CGClick] active=\(tag) id=\(id) name=\(name)")
-            #endif
-        }
-
-        return .init(serverResult: Self.jsonDict(["clicked": true, "target": targetDesc, "point_debug": "viewport=\(Int(vp.x)),\(Int(vp.y)) screen=\(Int(screenPoint.x)),\(Int(screenPoint.y))"]), serverError: nil, clientAction: nil)
-        #else
-        return .init(serverResult: nil, serverError: "cgclick 仅 macOS 支持", clientAction: nil)
-        #endif
+        let js = checkJS(sel, checked)
+        let (value, jsErr) = await session.jsJSONResult(js)
+        return interpretRefResult(value, jsError: jsErr, successKey: checked ? "checked" : "unchecked")
     }
 
     private func dictErr(dict: Any?, fallback: String) -> String {
@@ -652,90 +623,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return fallback
     }
 
-    /// 真实系统级拖拽（CGEvent，地图/滑块/canvas）：起点定位 → 转换 → 逐点越界预检 → 注入
-    private func cgDrag(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
-        #if os(macOS)
-        guard CGEventInput.isTrusted() else {
-            let granted = CGEventInput.requestPermission()
-            #if DEBUG
-            print("[CGEvent] permission granted=\(granted)")
-            #endif
-            return .init(serverResult: nil, serverError: "需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）", clientAction: nil)
-        }
-        let dx = (arguments["dx"] as? NSNumber)?.doubleValue ?? 0
-        let dy = (arguments["dy"] as? NSNumber)?.doubleValue ?? 0
-        let steps = max(2, min(30, (arguments["steps"] as? NSNumber)?.intValue ?? 10))
-        guard dx != 0 || dy != 0 else {
-            return .init(serverResult: nil, serverError: "drag 需要 dx/dy 位移量", clientAction: nil)
-        }
-
-        var vpStart: CGPoint?
-        if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(refCenterJS(handle, session))
-            guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, ok,
-                  let x = (dict["x"] as? NSNumber)?.doubleValue,
-                  let y = (dict["y"] as? NSNumber)?.doubleValue
-            else {
-                return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "drag 定位失败，请重新 snapshot"), clientAction: nil)
-            }
-            vpStart = CGPoint(x: x, y: y)
-        } else if let x = (arguments["x"] as? NSNumber)?.doubleValue,
-                  let y = (arguments["y"] as? NSNumber)?.doubleValue {
-            vpStart = CGPoint(x: x, y: y)
-        }
-        guard let start = vpStart else {
-            return .init(serverResult: nil, serverError: "drag 需要 ref（@eN）或 x/y 起点坐标", clientAction: nil)
-        }
-
-        let end = CGPoint(x: start.x + dx, y: start.y + dy)
-        guard let screenStart = CGEventInput.screenPoint(for: start, in: session.webView),
-              let screenEnd = CGEventInput.screenPoint(for: end, in: session.webView) else {
-            #if DEBUG
-            print("[B-Drag] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
-            #endif
-            return .init(serverResult: nil, serverError: "drag 坐标转换失败：页面窗口不可用", clientAction: nil)
-        }
-        // 逐插值点越界预检（不注入任何事件，杜绝 clamp 误触）
-        for i in 0...steps {
-            let t = CGFloat(i) / CGFloat(steps)
-            let p = CGPoint(x: screenStart.x + (screenEnd.x - screenStart.x) * t,
-                            y: screenStart.y + (screenEnd.y - screenStart.y) * t)
-            guard CGEventInput.isPointOnScreen(p) else {
-                return .init(serverResult: nil, serverError: "drag 路径超出屏幕范围（step \(i)/\(steps)），请移动窗口或缩小拖拽距离", clientAction: nil)
-            }
-        }
-
-        CGEventInput.activateWindow(for: session.webView)
-        CGEventInput.drag(from: screenStart, to: screenEnd, steps: steps)
-        return .init(serverResult: Self.jsonDict(["dragged": true, "target": "viewport(\(Int(start.x)),\(Int(start.y)))→(\(Int(end.x)),\(Int(end.y)))"]), serverError: nil, clientAction: nil)
-        #else
-        return .init(serverResult: nil, serverError: "drag 仅 macOS 支持", clientAction: nil)
-        #endif
-    }
-
-    /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）。
-    /// 元素不在视口内时先 scrollIntoView 居中（document scope 下可用）。
-    private func refCenterJS(_ handle: Int, _ session: TabSession) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
-            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "var _vr=function(el){var r=el.getBoundingClientRect();var w=el.ownerDocument.defaultView;while(w&&w!==window){var fe=w.frameElement;if(!fe)break;var fr=fe.getBoundingClientRect();r={left:r.left+fr.left,top:r.top+fr.top,width:r.width,height:r.height};w=fe.ownerDocument.defaultView;}return r;};" +
-            "var _r0=_vr(e);" +
-            "if(_r0.top<0||_r0.bottom>window.innerHeight||_r0.left<0||_r0.right>window.innerWidth)e.scrollIntoView({block:'center'});" +
-            "var r=_vr(e);" +
-            "var x=Math.round(r.left+r.width/2+(Math.random()-0.5)*r.width*0.4);" +
-            "var y=Math.round(r.top+r.height/2+(Math.random()-0.5)*r.height*0.4);" +
-            "return JSON.stringify({ok:true,x:x,y:y});})()"
-    }
-
     /// 解析 ref 交互 JS 的 {"ok": bool, "err": string?} 结果
-    private func interpretRefResult(_ result: Any?, successKey: String) -> LocalToolResult {
+    private func interpretRefResult(_ result: Any?, jsError: String? = nil, successKey: String) -> LocalToolResult {
         if let dict = result as? [String: Any], let ok = dict["ok"] as? Bool {
             if ok {
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
             }
             return .init(serverResult: nil, serverError: dict["err"] as? String ?? "元素交互失败", clientAction: nil)
         }
-        return .init(serverResult: nil, serverError: "元素交互失败：JS 异常", clientAction: nil)
+        // 没拿到 JSON：JS 层错误（超时 / 页面未就绪）比"元素交互失败"更接近真相
+        return .init(serverResult: nil, serverError: jsError ?? "元素交互失败：JS 异常", clientAction: nil)
     }
 
     // MARK: - Snapshot
@@ -773,8 +670,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         var lines: [String] = []
         lines.append(Self.pageContentDisclaimer)
-        lines.append("Page: \(session.webView.title ?? "")")
-        lines.append("URL: \(session.webView.url?.absoluteString ?? "")")
+        lines.append("Page: \(session.page.title ?? "")")
+        lines.append("URL: \(session.page.url?.absoluteString ?? "")")
         lines.append("")
         if arr.isEmpty {
             lines.append("（当前范围内无可交互元素）")
@@ -897,7 +794,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
             let content = (result["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if content.isEmpty {
-                return .init(serverResult: Self.jsonDict(["content": "", "mode": "filter", "matched": false]), serverError: nil, clientAction: nil)
+                // 以前回 matched:false + 空 content，LLM 会误以为"页面没内容"。空命中要能看见原因。
+                return .init(serverResult: nil,
+                             serverError: "未匹配到关键词「\(query)」（页面正文里没有这个词；可先用 read(mode=outline) 看结构，或换关键词/等页面加载完）",
+                             clientAction: nil)
             }
             var body = Self.pageContentDisclaimer + "\n" + content
             var out: [String: Any] = ["content": body, "mode": "filter", "matched": true]
@@ -1006,7 +906,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let result = await session.jsJSON(elementTextSelJS(sel, maxChars))
             return interpretTextResult(result)
         }
-        let (text, _) = await session.jsResult("document.body?.innerText ?? ''")
+        let (text, jsErr) = await session.jsResult("document.body?.innerText ?? ''")
+        if let jsErr {
+            // 静默回空会让 LLM 以为"页面没内容"，实际是 JS 通道/页面本身挂了
+            return .init(serverResult: nil, serverError: "读取正文失败：\(jsErr)", clientAction: nil)
+        }
         let raw = text ?? ""
         var body = String(raw.prefix(maxResultChars))
         var out: [String: Any] = ["text": body.isEmpty ? "" : Self.pageContentDisclaimer + "\n" + body]
@@ -1102,7 +1006,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// download：拟人化下载（真实浏览器 UA/Referer/Cookie + 随机延迟）到 ~/Downloads/xhanHelper/。
     /// L3 确认由 LocalToolRegistry riskLevel 层处理（handleClientToolCall），此处只负责执行。
     /// 安全（逐条保留）：scheme 白名单 / 危险扩展名黑名单 / cookie 域匹配 / sanitize / 魔数媒体校验。
-    private func handleDownload(arguments: [String: Any]) async -> LocalToolResult {
+    private func handleDownload(arguments: [String: Any], owner: String?) async -> LocalToolResult {
         guard let urlStr = arguments["url"] as? String,
               let url = URL(string: urlStr),
               url.scheme == "http" || url.scheme == "https",
@@ -1120,7 +1024,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
             return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）：仅允许媒体文件", clientAction: nil)
         }
-        return await runDownload(url: url, preferredName: customName, delay: true, enforceMedia: true)
+        // 来源页：显式 tabId > 该 owner 最近操作的 agent 标签 > 当前激活页。
+        // 不能只用 activeSession：agent 标签恒后台，UA/Referer/Cookie 会取错页（需登录的媒体直接 403）。
+        let srcSession = owner.flatMap { sessionForAgent(arguments, owner: $0) } ?? activeSession
+        return await runDownload(url: url, preferredName: customName, delay: true,
+                                 enforceMedia: true, session: srcSession)
     }
 
     /// 历史页重试：用记录的 URL 重新走同一条下载链（delay=false 无拟人延迟；enforceMedia 按原记录）。
@@ -1154,7 +1062,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
             return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）", clientAction: nil)
         }
-        let session = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.webView === wv })?.value }
+        let session = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.page.wkWebView === wv })?.value }
         return await runDownload(url: url, preferredName: preferredName?.trimmingCharacters(in: .whitespaces),
                                  delay: false, enforceMedia: true, session: session)
     }
@@ -1169,15 +1077,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
               let host = url.host, !host.isEmpty else {
             return (nil, 0, "无效的 URL")
         }
-        let srcSession = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.webView === wv })?.value }
+        let srcSession = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.page.wkWebView === wv })?.value }
         var ua = Self.defaultBrowserUA
         var referer = ""
         var cookieHeader = ""
         if let session = srcSession {
             ua = (await session.jsResult("navigator.userAgent")).text ?? ua
-            referer = session.webView.url?.absoluteString ?? ""
-            let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-            let matched = Self.matchingCookies(allCookies, for: url)
+            referer = session.page.url?.absoluteString ?? ""
+            let matched = await session.page.cookies(for: url)
             if !matched.isEmpty {
                 cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
             }
@@ -1216,19 +1123,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             try? await Task.sleep(for: .milliseconds(Int.random(in: 1000...3000)))
         }
 
-        // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、Cookie（WebView 会话）
+        // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、
+        // Cookie（`page.cookies` 按引擎取：WK 的 HTTPCookieStore / CEF 的 CefCookieManager）
         let srcSession = session ?? activeSession
+        if srcSession == nil {
+            LogBuffer.shared.diag("[Browser] download 无来源页，UA/Cookie 用默认值")
+        }
         let ua = (await srcSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultBrowserUA
-        let referer = srcSession?.webView.url?.absoluteString ?? ""
+        let referer = srcSession?.page.url?.absoluteString ?? ""
         var cookieHeader = ""
         if let session = srcSession {
-            let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-            if !allCookies.isEmpty {
-                // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露
-                let matched = Self.matchingCookies(allCookies, for: url)
-                if !matched.isEmpty {
-                    cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
-                }
+            let matched = await session.page.cookies(for: url)
+            if !matched.isEmpty {
+                cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
             }
         }
 
@@ -1403,19 +1310,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         Set(UserConfigStore.shared.mergedDangerousExtensions)
     }
 
-    /// RFC 6265 domain-match：只返回匹配目标 URL 的 cookie（杜绝跨站 cookie 泄露）。
-    /// 规则：host 精确匹配或子域匹配；secure cookie 仅 https 发送。
-    private static func matchingCookies(_ cookies: [HTTPCookie], for url: URL) -> [HTTPCookie] {
-        guard let host = url.host?.lowercased() else { return [] }
-        let isHTTPS = url.scheme == "https"
-        return cookies.filter { c in
-            if c.isSecure && !isHTTPS { return false }
-            let d = c.domain.lowercased()
-            let domain = d.hasPrefix(".") ? String(d.dropFirst()) : d
-            return host == domain || host.hasSuffix("." + domain)
-        }
-    }
-
     /// 文件名 sanitize：只保留路径最后一段（防 ../ 路径穿越），去控制字符。
     nonisolated private static func sanitizeFileName(_ raw: String) -> String {
         let last = (raw as NSString).lastPathComponent
@@ -1426,6 +1320,28 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return "download-\(Int(Date().timeIntervalSince1970))"
         }
         return cleaned
+    }
+
+    /// 用户下载的落盘路径：~/Downloads/xhanHelper/ + sanitize + 重名序号（WK 与 CEF 共用同一套规则）。
+    /// 建目录失败返回 nil（调用方按"取消下载"处理）。
+    nonisolated static func userDownloadDestination(_ suggestedName: String) -> URL? {
+        let dir: URL
+        #if os(macOS)
+        dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
+        #else
+        dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("xhanHelper", isDirectory: true)
+        #endif
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            Task { @MainActor in
+                LogBuffer.shared.error("[B-Download] create dir failed: \(error)")
+            }
+            return nil
+        }
+        return uniqueDestination(in: dir, name: sanitizeFileName(suggestedName))
     }
 
     /// 目标路径：目录内重名自动加序号（foo.txt → foo-1.txt）。
@@ -1472,7 +1388,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 交互操作统一附加 url/title/nav + 内容 hash/changed（供 LLM 判断页面是否变化，避免重复快照）
     private func withNavContext(_ session: TabSession, _ run: () async -> LocalToolResult) async -> LocalToolResult {
-        let beforeURL = session.webView.url?.absoluteString
+        let beforeURL = session.page.url?.absoluteString
         let beforeHash = session.lastContentHash
         let beforeTime = Date()
         var result = await run()
@@ -1480,15 +1396,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            var dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             // 短轮询等待异步导航开始（合成 click 后导航是异步的，URL 在 didStart 后同步）
             let deadline = Date().addingTimeInterval(1.0)
-            var url = session.webView.url?.absoluteString ?? ""
+            var url = session.page.url?.absoluteString ?? ""
             while url == beforeURL && Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
-                url = session.webView.url?.absoluteString ?? ""
+                url = session.page.url?.absoluteString ?? ""
             }
             // 导航判定：URL 对比（SPA 路由/pushState）+ didStart 事件兜底
             let navStarted = url != beforeURL || (session.lastNavStartAt ?? .distantPast) >= beforeTime
             dict["url"] = url
-            dict["title"] = session.webView.title ?? ""
+            dict["title"] = session.page.title ?? ""
             dict["nav"] = navStarted
             if navStarted {
                 // 导航发生：内容必然变化，重置 hash 基准（新页面加载中 hash 不稳定）；
@@ -1558,9 +1474,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     static let userTabWriteTools: Set<String> = [
         "agent_browser_click", "agent_browser_click_text", "agent_browser_fill",
         "agent_browser_type", "agent_browser_select", "agent_browser_check",
-        "agent_browser_uncheck", "agent_browser_press", "agent_browser_cgclick",
-        "agent_browser_drag", "agent_browser_go_back", "agent_browser_go_forward",
-        "agent_browser_close_tab", "agent_browser_download",
+        "agent_browser_uncheck", "agent_browser_press",
+        "agent_browser_go_back", "agent_browser_go_forward",
+        "agent_browser_close_tab",
     ]
 
     // MARK: - 用户标签写入授权（agent 操作用户标签需用户确认，按 owner 任务级缓存）
@@ -1581,9 +1497,28 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return !userTabGrants.contains(owner)
     }
 
-    var activeURL: URL? { activeSession?.webView.url }
+    /// CEF 初始化失败过就不再重试（否则每开一个标签都重跑 CefInitialize + 弹一次 Toast）
+    private static var cefInitFailed = false
 
-    /// 激活 tab 的 webView（快捷键/焦点路由用）
+    /// 主引擎已经确认起不来（缺 framework / CefInitialize 失败）→ 界面挂常驻横幅，别让用户以为
+    /// "浏览器坏了"。§9.2.5「崩溃 / 降级」要求的启动降级提示。
+    var isCefUnavailable: Bool { Self.cefInitFailed }
+
+    /// 这台机器"能不能尝试 CEF"（平台层面）。真正起不来时由 `TabSession.makePage` 就地降级兼容引擎。
+    static var cefAvailable: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    var activeURL: URL? { activeSession?.page.url }
+
+    /// 激活 tab 的页面（快捷键/焦点路由用，WK 与 CEF 都覆盖）
+    var activePage: BrowserPage? { activeSession?.page }
+
+    /// 激活 tab 的 webView（**仅 WK**：页内查找/缩放这类 WK 专属能力用）
     var activeWebView: WKWebView? { activeSession?.webView }
 
     // MARK: - 风险分级（S2 高敏域 / G6 明文页）
@@ -1617,7 +1552,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         let targetURL: URL?
         if let tabId = arguments["tabId"] as? String, !tabId.isEmpty, let s = tabs[tabId] {
-            targetURL = s.webView.url
+            targetURL = s.page.url
         } else {
             targetURL = activeURL
         }
@@ -1683,17 +1618,23 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let quotaLeft = Self.agentTabQuotaLimit - agentTabs.count
         if quotaLeft <= 0 {
             let openList = agentTabs.map { id, session in
-                let title = session.webView.title?.prefix(40) ?? ""
-                return "\(id) \(session.webView.url?.host ?? "?") \(title)"
+                let title = session.page.title?.prefix(40) ?? ""
+                return "\(id) \(session.page.url?.host ?? "?") \(title)"
             }.joined(separator: "；")
             let errorMsg = "agent 标签页配额已满（上限 \(Self.agentTabQuotaLimit)，当前已用 \(agentTabs.count)）。请先调用 agent_browser_close_tab（close_tab）关闭不需要的页面腾出配额再打开，已有 agent 标签(tabId host 标题): \(openList)"
             return .init(serverResult: nil, serverError: errorMsg, clientAction: nil)
         }
 
+        // D19：agent 显式指定引擎（"cef" / "compat"），优先级最高
+        let engineArg = (args["engine"] as? String).flatMap { BrowserEngine(rawValue: $0.lowercased()) }
+
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let isAgent = owner != nil
-        let session = TabSession()
+        // B7 起 agent 标签也走 resolveEngine：CEF 有了 JS 求值通道（渲染进程代跑 + JSON 回包），
+        // 快照/读正文/点击这些工具不再依赖 WKWebView。
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(
+            url: url, override: engineArg, cefAvailable: Self.cefAvailable))
         session.isAgentTab = isAgent
         session.owner = owner
         tabs[tabId] = session
@@ -1707,7 +1648,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         bindSessionUI(session: session)
         refreshBrowserGroup()
 
-        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
+        session.page.load(url)
 
         let errorMsg = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             session.loadContinuation = cont
@@ -1725,18 +1666,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     Task { @MainActor in
                         await self?.retryOpen(session: session, tabId: tabId, url: url)
                     }
-                })), activate: activate, isAgentTab: isAgent, agentOwner: owner)
+                })), activate: activate, isAgentTab: isAgent, agentOwner: owner, engine: session.engine)
             // P0-1 失败传播：加载失败/超时必须是硬失败（serverError），
             // 否则 LLM 看到 success=true 会误判成功并无效重试。
             return .init(serverResult: nil, serverError: "打开失败: \(msg)（tabId: \(tabId)）。页面未加载成功，请换源或先 close_tab 关闭该页", clientAction: nil)
         }
 
-        let title = session.webView.title ?? url.host ?? urlStr
+        let title = session.page.title ?? url.host ?? urlStr
         // P0-2 拦截页识别：bot 墙（Cloudflare/403 等反爬墙）→ 硬失败止损，人解也无用，防止反复打断/重试
         if isBlockedPageTitle(title) {
             return .init(serverResult: nil, serverError: "页面被拦截（标题：\(title)）：该站存在人机验证/反爬墙，无法读取内容，请换源，不要再重试此站", clientAction: nil)
         }
-        let content: AnyView = AnyView(BrowserTabView(webView: session.webView,
+        let content: AnyView = AnyView(BrowserTabView(page: session.page,
                                                       onSetupErrorBinding: { [weak session] onError in
                                                           session?.onNavigationError = onError
                                                       }))
@@ -1744,7 +1685,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // agent 标签默认进工作区（不抢视图）；检测到人可解墙 → 自动手递手升主栏；
             // background:false（用户明确要求查看）→ 升主栏并激活。
             let reason = await wallReason(session: session)
-            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true, agentOwner: agentOwner)
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true, agentOwner: agentOwner, engine: session.engine)
             if let reason {
                 pendingHandoff[agentOwner] = (tabId: tabId, at: Date())
                 rightSidebar?.setTabNeedsAttention(id: tabId, needs: true)
@@ -1762,7 +1703,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 promoteAgentTab(tabId, activate: true)
             }
         } else {
-            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: activate, isAgentTab: false)
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: activate, isAgentTab: false, engine: session.engine)
         }
         return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId, "background": background,
                                                   "remainingAgentTabQuota": quotaLeft - 1]), serverError: nil, clientAction: nil)
@@ -1788,10 +1729,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     })()
     """
     private func wallReason(session: TabSession) async -> String? {
-        guard let url = session.webView.url else { return nil }
+        guard let url = session.page.url else { return nil }
         let js = (await session.jsResult(Self.wallProbeJS)).text ?? ""
         if !js.isEmpty { return js }
-        let t = (session.webView.title ?? "").lowercased()
+        let t = (session.page.title ?? "").lowercased()
         let host = (url.host ?? "").lowercased()
         let path = (url.path + (url.query ?? "")).lowercased()
         let strongTitle = ["验证码", "人机验证", "安全验证", "captcha"].contains { t.contains($0) }
@@ -1801,7 +1742,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     private func retryOpen(session: TabSession, tabId: String, url: URL) async {
-        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
+        session.page.load(url)
         let errorMsg = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             session.loadContinuation = cont
             session.loadTimeout = Task {
@@ -1821,10 +1762,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     }
                 })))
         } else {
-            let title = session.webView.title ?? url.host ?? url.absoluteString
+            let title = session.page.title ?? url.host ?? url.absoluteString
             rightSidebar?.updateTabTitle(id: tabId, title: title)
             rightSidebar?.replaceTabContent(id: tabId,
-                content: AnyView(BrowserTabView(webView: session.webView,
+                content: AnyView(BrowserTabView(page: session.page,
                                                 onSetupErrorBinding: { [weak session] onError in
                                                     session?.onNavigationError = onError
                                                 })))
@@ -1942,7 +1883,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             #if os(macOS)
             presentCloseConfirmation(
                 title: "关闭标签页",
-                message: "该页面有下载进行中（\(session.webView.title ?? session.webView.url?.host ?? "当前页面")），关闭页面将取消下载。确认关闭？"
+                message: "该页面有下载进行中（\(session.page.title ?? session.page.url?.host ?? "当前页面")），关闭页面将取消下载。确认关闭？"
             ) { [weak self, weak session] allow in
                 guard allow, let session, let self,
                       self.tabs[tabId] === session else { return }
@@ -1965,7 +1906,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let hadDownloads = session.hasActiveDownloads
         // 无下载的 tab 才进恢复栈；取消了下载的 tab 恢复无意义（重开会再次触发下载/确认）
         if !hadDownloads {
-            closedStack.append((url: session.webView.url, title: session.webView.title ?? session.webView.url?.host ?? "", artifactID: nil))
+            closedStack.append((url: session.page.url, title: session.page.title ?? session.page.url?.host ?? "", artifactID: nil))
         }
         session.cancelLoadWait()
         session.forceCancelDownloads()
@@ -2017,23 +1958,29 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #if os(macOS)
         // 活动埋点：关标签时收掉悬挂的 nav 与当前页 dwell
         if var browser = session.activityBrowser {
-            let events = browser.closed(pageTitle: session.webView.title)
+            let events = browser.closed(pageTitle: session.page.title)
             ActivityClient.emit(events)
             session.activityBrowser = nil // 已收尾：置空挡将来多出的 teardown 调用点双发 dwell
         }
         #endif
         session.cleanupObservations()
-        session.webView.stopLoading()
-        session.webView.evaluateJavaScript(
-            "document.querySelectorAll('video,audio').forEach(function(e){e.pause();e.removeAttribute('src')})",
-            completionHandler: nil)
-        session.webView.configuration.userContentController.removeAllUserScripts()
-        if let ruleList = ContentBlocker.ruleList {
-            session.webView.configuration.userContentController.remove(ruleList)
+        if let webView = session.webView {
+            session.page.stopLoading()
+            webView.evaluateJavaScript(
+                "document.querySelectorAll('video,audio').forEach(function(e){e.pause();e.removeAttribute('src')})",
+                completionHandler: nil)
+            webView.configuration.userContentController.removeAllUserScripts()
+            if let ruleList = ContentBlocker.ruleList {
+                webView.configuration.userContentController.remove(ruleList)
+            }
+            webView.uiDelegate = nil
+            webView.navigationDelegate = nil
+            webView.removeFromSuperview()
+        } else {
+            // CEF：CloseBrowser(force_close)，等 OnBeforeClose 回收 renderer 进程
+            session.page.close()
         }
-        session.webView.uiDelegate = nil
-        session.webView.navigationDelegate = nil
-        session.webView.removeFromSuperview()
+        session.page.onLoadFinish = nil
         session.onTitleChange = nil
         session.onURLChanged = nil
         session.onNewWindowRequest = nil
@@ -2138,18 +2085,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func openBlankTab(intoRight: Bool = false) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let session = TabSession()
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(url: nil, cefAvailable: Self.cefAvailable))
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
-        session.webView.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
+        session.page.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView,
+                              content: AnyView(BrowserTabView(page: session.page,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
                                                               })),
-                              intoRightPane: intoRight)
+                              intoRightPane: intoRight, engine: session.engine)
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
     }
@@ -2275,22 +2222,65 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 立即开新 tab 并加载 URL（收藏夹/历史点击打开，不等加载完成就显示 tab）。
-    func openURL(_ url: URL) {
+    /// - Parameter openerEngine: `target=_blank` / `window.open` / `noopener` 跳转时传 opener 的引擎
+    ///   （D17：引擎跟 opener 一致）。跨引擎会断 `window.opener` + cookie 域，登录弹窗必挂。
+    /// - Parameter engine: 用户/agent **显式指定**引擎（地址栏切换按钮、视频站提示条、`open_url` 的
+    ///   `engine`）。优先级最高（§9.2.2 第 2 条）。
+    func openURL(_ url: URL, openerEngine: BrowserEngine? = nil, engine: BrowserEngine? = nil) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let session = TabSession()
+        let session = TabSession(engine: BrowserEngineRouter.resolveEngine(
+            url: url, override: engine, openerEngine: openerEngine, cefAvailable: Self.cefAvailable))
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
-        rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView,
+        presentTab(tabId: tabId, session: session, title: url.host ?? "新标签页")
+        session.page.load(url)
+    }
+
+    /// 把 session 挂进右侧栏的 tab 条（openURL 与 CEF 弹窗共用）
+    private func presentTab(tabId: String, session: TabSession, title: String,
+                            isAgentTab: Bool = false, agentOwner: String? = nil) {
+        rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
+                              content: AnyView(BrowserTabView(page: session.page,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
-                                                              })))
-        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
+                                                              })), isAgentTab: isAgentTab, agentOwner: agentOwner,
+                              engine: session.engine)
     }
+
+    /// 按页面反查 session（弹窗回调 / 页面自关窗只拿得到页面）
+    private func sessionOwning(page: BrowserPage) -> TabSession? {
+        tabs.first(where: { $0.value.page === page })?.value
+    }
+
+    #if os(macOS)
+    /// `window.open` / `target=_blank` 的真弹窗（D20）：CEF 已经建好了 popup browser
+    /// （`window.opener` 是真的，`window.open()` 不再返回 null），这里只要把宿主视图装进新 tab。
+    /// 必须同步完成 —— 视图在 CEF 创建浏览器的窗口期里得有人持有。
+    private func adoptCefPopupPage(_ view: XHCefBrowserView, urlString: String, opener: TabSession?) {
+        let tabId = "browser-\(tabCounter)"
+        tabCounter += 1
+        let page = CefPage(popupView: view, url: URL(string: urlString))
+        let session = TabSession(page: page)
+        // 归属跟 opener（与 WK 弹窗同一口径）：agent 的弹窗不许变成"用户标签"，
+        // 否则它不计入 agent 配额、close_all 收不掉、agent 自己也写不进去（要用户授权）
+        session.isAgentTab = opener?.isAgentTab ?? false
+        session.owner = opener?.owner
+        tabs[tabId] = session
+        // agent 弹窗进工作区，不切走用户视图；用户弹窗才激活
+        if !session.isAgentTab {
+            switchActiveTab(to: tabId)
+        }
+        refreshBrowserGroup()
+        bindSessionTitle(session: session, tabId: tabId)
+        bindSessionUI(session: session)
+        presentTab(tabId: tabId, session: session, title: page.url?.host ?? "新标签页",
+                   isAgentTab: session.isAgentTab, agentOwner: session.owner)
+    }
+    #endif
 
     /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
     /// 用户主动操作：传 tab 自身 owner（self-close，绕过并发任务归属保护）。
@@ -2305,7 +2295,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// UI（tab 条右键菜单）重新加载指定 tab；特殊 tab（下载/收藏/历史/配置/本页资源）无 webView，静默忽略
     func reloadTab(_ id: String) {
-        tabs[id]?.webView.reload()
+        tabs[id]?.page.reload()
     }
 
     /// UI（tab 条 X 按钮）关闭指定 tab：与工具 close_tab 同路径（含 closedStack 记录），可被 Cmd+Shift+T 恢复。
@@ -2366,23 +2356,22 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if let prev = activeTabId, prev != id, let prevSession = tabs[prev] {
             if prevSession.isAgentTab {
                 // agent 标签不保活：直接暂停（原有节能逻辑）
-                prevSession.webView.pauseAllMediaPlayback()
+                pauseMedia(prevSession)
             } else {
                 saveScrollPosition(prevSession)
                 // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
                 rightSidebar?.keptAliveTabIds.insert(prev)
-                prevSession.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
-                    let hasMedia = error == nil && (result as? Bool) == true
+                Task { @MainActor [weak self] in
+                    guard let hasMedia = await Self.probeMedia(prevSession, tabId: prev) else { return }
+                    guard let self else { return }
                     if hasMedia {
                         LogBuffer.shared.info("[Browser] keep-alive tab \(prev) 有媒体播放，后台续播")
-                    } else {
-                        // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
-                        DispatchQueue.main.async {
-                            guard let self, self.activeTabId != prev else { return }
-                            self.rightSidebar?.keptAliveTabIds.remove(prev)
-                            prevSession.webView.pauseAllMediaPlayback()
-                        }
+                        return
                     }
+                    // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
+                    guard self.activeTabId != prev else { return }
+                    self.rightSidebar?.keptAliveTabIds.remove(prev)
+                    self.pauseMedia(prevSession)
                 }
             }
         }
@@ -2398,17 +2387,26 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 摘除层级前保存滚动位置与 marker（marker 在 reload 后消失，用于防止把恢复值打到新页面上）。
     private func saveScrollPosition(_ session: TabSession) {
-        session.webView.evaluateJavaScript(Self.scrollStateScript) { result, error in
-            if let error {
-                print("[BrowserDiag] saveScroll JS error url=\(session.webView.url?.absoluteString ?? "nil") err=\(error.localizedDescription)")
+        Task { @MainActor in
+            let text: String
+            do {
+                text = (try await session.page.evaluateJS(Self.scrollStateScript)) as? String ?? ""
+            } catch {
+                LogBuffer.shared.diag("[Browser] saveScroll JS 失败 url=\(session.page.url?.absoluteString ?? "nil")：\(error.localizedDescription)")
                 return
             }
-            guard let s = result as? String,
-                  let data = s.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let y = obj["y"] as? Double, y > 0,
-                  let m = obj["m"] as? Double else {
-                session.savedScrollY = nil
+            guard let data = text.data(using: .utf8) else { return }
+            guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                // 解析失败保留上一次的位置（别把好值抹掉），只留痕
+                LogBuffer.shared.diag("[Browser] saveScroll 回包不是 JSON url=\(session.page.url?.absoluteString ?? "nil")")
+                return
+            }
+            guard let y = obj["y"] as? Double, let m = obj["m"] as? Double else {
+                LogBuffer.shared.diag("[Browser] saveScroll 回包缺字段 url=\(session.page.url?.absoluteString ?? "nil")")
+                return
+            }
+            guard y > 0 else {
+                session.savedScrollY = nil   // 本来就没滚动：清掉旧值，切回来不用恢复
                 return
             }
             session.savedScrollY = y
@@ -2420,27 +2418,34 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 故每 120ms 轮询一次，等视口/内容高度恢复正常再 scrollTo；最多 15 次。
     private func scheduleScrollRestore(_ session: TabSession, attempt: Int = 0) {
         guard attempt < 15 else {
-            print("[BrowserDiag] restore gave up (layout never ready) url=\(session.webView.url?.absoluteString ?? "nil")")
+            LogBuffer.shared.diag("[Browser] restore gave up (layout never ready) url=\(session.page.url?.absoluteString ?? "nil")")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak session] in
             guard let self, let session else { return }
-            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else { return }
+            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else {
+                // 保存是异步的（CEF 是渲染进程往返）：A→B→A 快速切换时先等下一轮
+                if session.savedScrollY == nil, attempt < 5 {
+                    self.scheduleScrollRestore(session, attempt: attempt + 1)
+                }
+                return
+            }
             let script = """
             (function(){if(window.__xhDiag!==\(Int(m)))return'reloaded';
             if(window.innerHeight<50||document.documentElement.scrollHeight<100)return'wait';
             window.scrollTo(0,\(Int(y)));return'ok:'+window.scrollY;})()
             """
-            session.webView.evaluateJavaScript(script) { result, error in
-                if error == nil, let s = result as? String {
-                    if s.hasPrefix("ok") {
+            Task { @MainActor in
+                do {
+                    let s = (try await session.page.evaluateJS(script)) as? String
+                    if let s, s.hasPrefix("ok") {
                         // 正常恢复成功，不打日志
                     } else if s == "reloaded" {
-                        print("[BrowserDiag] restore skipped (page reloaded) url=\(session.webView.url?.absoluteString ?? "nil")")
+                        LogBuffer.shared.diag("[Browser] restore skipped (page reloaded) url=\(session.page.url?.absoluteString ?? "nil")")
                     } else {
                         self.scheduleScrollRestore(session, attempt: attempt + 1)
                     }
-                } else {
+                } catch {
                     self.scheduleScrollRestore(session, attempt: attempt + 1)
                 }
             }
@@ -2450,6 +2455,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private static let scrollStateScript = """
     (function(){window.__xhDiag=window.__xhDiag||Date.now();
     return JSON.stringify({y:window.scrollY,m:window.__xhDiag});})()
+    """
+
+    /// 暂停页内所有视频/音频（CEF 没有 WK 的原生暂停 API）。
+    /// 边界：只覆盖主文档里的 `video,audio` —— shadow DOM / 跨域 iframe 内的媒体暂停不到（WK 是全覆盖）。
+    private static let pauseMediaScript = """
+    (function(){var all=document.querySelectorAll('video,audio');
+    for(var i=0;i<all.length;i++){try{all[i].pause();}catch(e){}}})()
     """
 
     /// 页面内活跃媒体检测脚本：任一未暂停/未结束的 video/audio 即视为有媒体播放。
@@ -2530,7 +2542,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         // 浏览历史：仅 http/https（about:blank 等被 HistoryStore scheme 过滤）
         HistoryStore.shared.record(
-            title: session.webView.title ?? host,
+            title: session.page.title ?? host,
             url: url.absoluteString,
             host: host
         )
@@ -2540,7 +2552,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             browser.setAgentContext(session.owner.flatMap { agentActivityContexts[$0] })
             let events = browser.urlChanged(
                 url: url.absoluteString, host: host, owner: session.owner,
-                finished: phase == .finished, pageTitle: session.webView.title)
+                finished: phase == .finished, pageTitle: session.page.title)
             session.activityBrowser = browser
             ActivityClient.emit(events)
         }
@@ -2550,15 +2562,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 提取当前页 favicon href 并交给 FaviconStore 缓存。host / pageURL 在 await 前一起捕获，
     /// JS 返回后页面若已跳走则作废，避免把上一页图标写到别的 host。
     private func refreshFavicon(for tabId: String) {
-        guard let session = tabs[tabId], let pageURL = session.webView.url, let host = pageURL.host else { return }
+        guard let session = tabs[tabId], let pageURL = session.page.url, let host = pageURL.host else { return }
         Task { @MainActor in
             let href = (await session.jsResult(BrowserToolProvider.faviconJS)).text ?? ""
             guard !href.isEmpty else {
                 LogBuffer.shared.diag("[Favicon] \(host) 无 <link rel=icon>，跳过")
                 return
             }
-            guard session.webView.url?.host == host else {
-                let now = session.webView.url?.host ?? "nil"
+            guard session.page.url?.host == host else {
+                let now = session.page.url?.host ?? "nil"
                 LogBuffer.shared.diag("[Favicon] \(host) 提取期间页面已跳走（现 host=\(now)），丢弃")
                 return
             }
@@ -2566,7 +2578,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 href: href,
                 pageURL: pageURL,
                 host: host,
-                userAgent: session.webView.customUserAgent
+                userAgent: session.webView?.customUserAgent ?? Self.defaultBrowserUA
             )
         }
     }
@@ -2599,7 +2611,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
             // window.open / form target=_blank → 弹确认
             let targetStr = targetURL?.absoluteString ?? "(未知)"
-            let sourceHost = session.webView.url?.host ?? "当前页面"
+            let sourceHost = session.page.url?.host ?? "当前页面"
 
             #if os(macOS)
             Self.presentJSDialog(
@@ -2607,7 +2619,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 message: "来源: \(sourceHost)\n目标: \(String(targetStr.prefix(160)))",
                 primary: "允许",
                 secondary: "取消",
-                onWindow: session.webView.window ?? NSApp.keyWindow,
+                onWindow: session.webView?.window ?? NSApp.keyWindow,
                 onDone: { [weak self, weak session] confirmed in
                     guard let self, confirmed else { return }
                     let agentTab = session?.isAgentTab ?? false
@@ -2629,7 +2641,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     _ = await self.handleOpen(["url": url.absoluteString, "background": true], owner: owner)
                 }
             } else {
-                self.openURL(url)
+                self.openURL(url, openerEngine: session?.page.engine)
             }
         }
         // JS 弹窗：用 beginSheetModal（非阻塞 sheet）而非 runModal——runModal 会在主线程开嵌套
@@ -2641,7 +2653,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 title: "网页提示",
                 message: message,
                 primary: "好",
-                onWindow: session?.webView.window ?? NSApp.keyWindow,
+                onWindow: session?.webView?.window ?? NSApp.keyWindow,
                 onDone: { _ in completion() }
             )
             #else
@@ -2655,7 +2667,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 message: message,
                 primary: "确定",
                 secondary: "取消",
-                onWindow: session?.webView.window ?? NSApp.keyWindow,
+                onWindow: session?.webView?.window ?? NSApp.keyWindow,
                 onDone: { confirmed in completion(confirmed) }
             )
             #else
@@ -2699,7 +2711,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?, isAgentTab: Bool = false, owner: String? = nil) -> WKWebView? {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
-        let newSession = TabSession(configuration: configuration)
+        // CEF 的 popup 走 CefLifeSpanHandler::OnBeforePopup（B4 接），这里只会从 WK 弹窗回调进来
+        let newSession = TabSession(engine: .compat, configuration: configuration)
         newSession.isAgentTab = isAgentTab
         newSession.owner = owner
         tabs[tabId] = newSession
@@ -2713,12 +2726,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 否则该 tab 内再点 target=_blank / window.open 会静默失败（createWebViewWith 返回 nil）。
         bindSessionUI(session: newSession)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: newSession.webView,
+                              content: AnyView(BrowserTabView(page: newSession.page,
                                                               onSetupErrorBinding: { [weak newSession] onError in
                                                                   newSession?.onNavigationError = onError
-                                                              })), isAgentTab: isAgentTab, agentOwner: owner)
+                                                              })), isAgentTab: isAgentTab, agentOwner: owner, engine: newSession.engine)
         if let targetURL {
-            newSession.webView.load(URLRequest(url: targetURL, timeoutInterval: 15))
+            newSession.page.load(targetURL)
         }
         return newSession.webView
     }
@@ -2795,7 +2808,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         return """
         <!DOCTYPE html>
-        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+        <html><head><meta charset="utf-8"><title>新标签页</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>
         html,body{height:100%}
         body{min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:0;background:#f5f5f7;color:#1d1d1f}
         h1{font-size:20px;font-weight:600;margin-bottom:32px}
@@ -2817,9 +2830,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func tabInfoList() -> [[String: Any]] {
         tabs.map { id, session in
             ["id": id,
-             "url": session.webView.url?.absoluteString ?? "",
-             "title": session.webView.title ?? "",
+             "url": session.page.url?.absoluteString ?? "",
+             "title": session.page.title ?? "",
              "isAgentTab": session.isAgentTab,
+             "engine": session.engine.rawValue,
              "owner": session.owner ?? "user"] // 归属标注：并发任务据此区分自己的标签，避免误关/误用
         }
     }
@@ -2834,7 +2848,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-        let webView: WKWebView
+        let engine: BrowserEngine
+        let page: BrowserPage
+        /// 过渡口（见 `BrowserPage.wkWebView`）：CEF 标签为 nil，只剩 WK 专属能力
+        /// （媒体嗅探 / 真实按键 / `pauseAllMediaPlayback`）的调用方需要它，必须显式处理 nil。
+        var webView: WKWebView? { page.wkWebView }
         var loadContinuation: CheckedContinuation<String?, Never>?
         var loadTimeout: Task<Void, Never>?
         /// readyState 轮询兜底（SPA/懒加载页面 didFinish 可能不来）
@@ -2849,6 +2867,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 再恢复，窗口期内内容高度塌缩、scrollTop 被内核钳制归零（虚拟列表站点必丢）
         var savedScrollY: Double?
         var savedScrollMarker: Double?
+        /// 媒体探测连续失败次数（坏页兜底：连续 3 次按"无媒体"收尾）
+        var mediaProbeFailures = 0
         /// 最近一次 snapshot 时各 @eN 元素的特征签名（ref 校验基准；导航时清空）
         var lastSnapshotItems: [[String: Any]]?
         /// 页面标题变化回调（tab 标题跟随）
@@ -2870,20 +2890,31 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// 是否有进行中的用户下载（关 tab 时用于决定 session 是否保活）
         var hasActiveDownloads: Bool {
-            !activeRecordIDs.isEmpty
+            !activeRecordIDs.isEmpty || !cefDownloadRecords.isEmpty
         }
 
         func forceCancelDownloads() {
             for (_, recordID) in activeRecordIDs {
                 DownloadHistoryStore.shared.cancel(id: recordID)
             }
+            for (_, recordID) in cefDownloadRecords {
+                DownloadHistoryStore.shared.cancel(id: recordID)
+            }
             activeRecordIDs.removeAll()
+            cefDownloadRecords.removeAll()
             downloadProgressObservations.removeAll()
         }
 
         /// 活动下载记录（user-initiated）：WKDownload 对象 → 历史记录 id
         private var activeRecordIDs: [ObjectIdentifier: UUID] = [:]
         private var downloadProgressObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
+        /// CEF 下载：CEF download id → 历史记录 id（WK 那条走 activeRecordIDs）
+        var cefDownloadRecords: [Int64: UUID] = [:]
+
+        /// CEF 侧取消下载（store 的取消按钮/关标签时调）
+        func cancelCefDownload(_ downloadId: Int64) {
+            (page as? CefPage)?.cancelDownload(downloadId)
+        }
 
         /// agent 打开的标签（用于空闲超时自动关闭，用户自开的标签不受影响）
         var isAgentTab = false
@@ -2907,17 +2938,40 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             urlObservation = nil
         }
 
-        override init() {
-            webView = TabSession.makeWebView(configuration: WKWebViewConfiguration())
+        /// 建一个指定引擎的标签。`cef` 走 Chromium 主引擎（B2 起 dev 默认），`compat` 走 WKWebView。
+        convenience init(engine: BrowserEngine) {
+            self.init(engine: engine, configuration: WKWebViewConfiguration())
+        }
+
+        /// 新窗口（target=_blank / window.open）：外部传入 configuration（保留 opener 关系）。
+        /// 引擎跟 opener 一致（D17）——跨引擎会断 window.opener + cookie 域，登录弹窗必挂。
+        convenience init(engine: BrowserEngine, configuration: WKWebViewConfiguration) {
+            self.init(page: TabSession.makePage(engine: engine, configuration: configuration))
+        }
+
+        /// 页面已经是现成的（CEF 弹窗：browser 由 CEF 创建，`CefPage` 只是后包一层）。
+        init(page: BrowserPage) {
+            self.page = page
+            // 以实际造出来的页面为准：CEF 起不来会降级成 WKPage，engine 不能继续报 cef
+            self.engine = page.engine
             super.init()
             setupDelegates()
         }
 
-        /// 新窗口（target=_blank / window.open）：外部传入 configuration（保留 opener 关系）
-        init(configuration: WKWebViewConfiguration) {
-            webView = TabSession.makeWebView(configuration: configuration)
-            super.init()
-            setupDelegates()
+        /// 造页面：CEF 起不来（缺 framework / CefInitialize 失败）就地降级兼容引擎，
+        /// 不让"引擎选择"变成"浏览器打不开"。
+        private static func makePage(engine: BrowserEngine, configuration: WKWebViewConfiguration) -> BrowserPage {
+            #if os(macOS)
+            if engine == .cef, !cefInitFailed {
+                if XHCefRuntime.initialize(in: LocalPaths.dataRoot.path) {
+                    return CefPage(url: nil)
+                }
+                cefInitFailed = true
+                // 降级要说出来，不能"静默变回 WK 让人以为 CEF 生效了"（原因在 Console 的 [cef] 日志）
+                ToastCenter.shared.show("主引擎未启动，已切兼容模式")
+            }
+            #endif
+            return WKPage(webView: TabSession.makeWebView(configuration: configuration))
         }
 
         /// 站点脚本常探测的本机 App 协议：抖音会试探 `bitbrowser://`（比特指纹浏览器）这类
@@ -3057,6 +3111,105 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         private func setupDelegates() {
+            // CEF 没有 WK delegate：状态从 CefPage 的回调转成同一套 onTitleChange / onURLChanged
+            guard let webView else {
+                page.stateObservers.add { [weak self] in
+                    guard let self else { return }
+                    if let url = self.page.url { self.onURLChanged?(url, .provisional) }
+                    let title = self.page.title?.trimmingCharacters(in: .whitespaces) ?? ""
+                    if !title.isEmpty { self.onTitleChange?(title) }
+                }
+                page.onLoadFinish = { [weak self] ok in
+                    guard let self else { return }
+                    if ok {
+                        resumeLoad(nil, reason: "cef-didFinish")
+                        if let url = self.page.url { self.onURLChanged?(url, .finished) }
+                    } else {
+                        resumeLoad("加载失败", reason: "cef-didFail")
+                        self.onNavigationError?("加载失败")
+                    }
+                }
+                // window.open / target=_blank：CEF 自己建的 popup browser（保留 window.opener，D20），
+                // 这里把它的宿主视图装成新 tab；页面自己 window.close() 时收掉 tab。
+                #if os(macOS)
+                if let cefPage = page as? CefPage {
+                    cefPage.onPopupPageRequested = { [weak cefPage] popupView, urlString in
+                        LogBuffer.shared.diag("[Browser] cef popup → popup tab: \(urlString.prefix(160))")
+                        let provider = BrowserToolProvider.shared
+                        let opener = cefPage.flatMap { provider.sessionOwning(page: $0) }
+                        provider.adoptCefPopupPage(popupView, urlString: urlString, opener: opener)
+                    }
+                    cefPage.onPageClosedExternally = { [weak cefPage] in
+                        guard let cefPage else { return }
+                        let provider = BrowserToolProvider.shared
+                        guard let tabId = provider.tabs.first(where: { $0.value.page === cefPage })?.key else { return }
+                        LogBuffer.shared.diag("[Browser] cef page closed itself → close tab \(tabId)")
+                        provider.closeTab(tabId)
+                    }
+                    // JS 对话框复用 WK 那套 sheet（非阻塞）；reply 必须调一次，否则页面一直等
+                    cefPage.onJSDialog = { [weak self] kind, message, defaultText, reply in
+                        guard let self else { reply(false, nil); return }
+                        switch kind {
+                        case 0:   // alert
+                            if let handler = self.onJSAlert { handler(message) { reply(true, nil) } } else { reply(false, nil) }
+                        case 1:   // confirm
+                            if let handler = self.onJSConfirm { handler(message) { ok in reply(ok, nil) } } else { reply(false, nil) }
+                        default:  // prompt：与 WK 侧一致，简化为提示框，返回默认值
+                            if let handler = self.onJSAlert { handler(message) { reply(true, defaultText) } } else { reply(false, nil) }
+                        }
+                    }
+
+                    // 下载：落盘规则与 WK 同一套（~/Downloads/xhanHelper + 重名序号）。
+                    // 路径由 CEF 在 UI 线程同步问（RunOnMain 同步执行），所以这里必须同步返回。
+                    cefPage.onDownloadPathRequested = { suggestedName, _ in
+                        BrowserToolProvider.userDownloadDestination(suggestedName)?.path
+                    }
+                    cefPage.onDownloadUpdated = { [weak self] downloadId, state, received, total, fullPath, urlString in
+                        guard let self else { return }
+                        switch state {
+                        case 0:
+                            if let rid = self.cefDownloadRecords[downloadId] {
+                                DownloadHistoryStore.shared.updateProgress(
+                                    id: rid, fraction: 0, completed: received, total: total)
+                            } else if !fullPath.isEmpty {
+                                // 第一次收到进度才建记录：此时才有 fullPath / 真实文件名
+                                // （OnDownloadUpdated 早于 OnBeforeDownload 时 fullPath 还是空，等下一拍）
+                                let dest = URL(fileURLWithPath: fullPath)
+                                let rid = DownloadHistoryStore.shared.startDownload(
+                                    filename: dest.lastPathComponent,
+                                    url: urlString,
+                                    destination: dest
+                                )
+                                DownloadHistoryStore.shared.attachCancelHandler(id: rid) { [weak self] in
+                                    self?.cancelCefDownload(downloadId)
+                                }
+                                self.cefDownloadRecords[downloadId] = rid
+                                #if DEBUG
+                                print("[B-Download] cef download -> \(fullPath)")
+                                #endif
+                            }
+                        case 1:
+                            if let rid = self.cefDownloadRecords.removeValue(forKey: downloadId) {
+                                DownloadHistoryStore.shared.finish(id: rid, ok: true, sizeBytes: Int(received))
+                            }
+                        default:
+                            // 已取消（也可能是网络侧中断）：store 的状态守卫保证不会覆盖用户手动取消
+                            if let rid = self.cefDownloadRecords.removeValue(forKey: downloadId) {
+                                DownloadHistoryStore.shared.cancel(id: rid)
+                            }
+                        }
+                    }
+                    // 右键「用百度搜索选中文字」：App 内开新 tab（默认引擎会跳系统浏览器，与 WK 侧同因）
+                    cefPage.onContextSearch = { text in
+                        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !query.isEmpty,
+                              let url = AppBrowserWebView.searchURL(for: query, engine: "百度") else { return }
+                        BrowserToolProvider.shared.openURL(url)
+                    }
+                }
+                #endif
+                return
+            }
             webView.navigationDelegate = self
             webView.uiDelegate = self
 
@@ -3094,8 +3247,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 type: type,
                 timestamp: Date(),
                 appVersion: BrowserDiagnosticsCenter.appVersion(),
-                host: webView.url?.host,
-                url: webView.url?.absoluteString,
+                host: page.url?.host,
+                url: page.url?.absoluteString,
                 tabId: tabId,
                 isAgentTab: isAgentTab,
                 provCommitMs: provCommitMs,
@@ -3220,7 +3373,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         func jsResult(_ js: String) async -> (text: String?, jsError: String?) {
             do {
-                let result = try await webView.evaluateJavaScript(js)
+                let result = try await page.evaluateJS(js)
                 return ((result as? String), nil)
             } catch {
                 LogBuffer.shared.error("[Browser] JS error: \(error.localizedDescription)")
@@ -3230,7 +3383,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         func jsBool(_ js: String) async -> (ok: Bool, jsError: String?) {
             do {
-                let result = try await webView.evaluateJavaScript(js)
+                let result = try await page.evaluateJS(js)
                 return ((result as? Bool) ?? false, nil)
             } catch {
                 LogBuffer.shared.error("[Browser] JS error: \(error.localizedDescription)")
@@ -3245,6 +3398,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return try? JSONSerialization.jsonObject(with: data)
         }
 
+        /// 同 jsJSON，但把 JS 层错误一起交出来：「超时 / 页面还没准备好 / 渲染进程不可用」
+        /// 跟「元素交互失败」是两件事，别都糊成一句 JS 异常（docs/bugs/065 同类问题）。
+        func jsJSONResult(_ js: String) async -> (value: Any?, jsError: String?) {
+            let (text, err) = await jsResult(js)
+            guard let t = text, let data = t.data(using: .utf8) else { return (nil, err) }
+            guard let value = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) else {
+                return (nil, err ?? "JS 回包不是合法 JSON")
+            }
+            return (value, nil)
+        }
+
         /// 当前页面可见文本的内容哈希（JS 内计算，只回传 hash 字符串）
         func contentHash() async -> String? {
             let (hash, _) = await jsResult(BrowserToolProvider.contentHashJS)
@@ -3254,7 +3418,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         func eval(_ script: String) async -> LocalToolResult {
             do {
-                let result = try await webView.evaluateJavaScript(script)
+                let result = try await page.evaluateJS(script)
                 let text: String
                 if let s = result as? String {
                     text = s
@@ -3459,7 +3623,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             #if os(macOS)
             guard var browser = activityBrowser else { return }
             let ns = error as NSError
-            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)", pageTitle: webView.title)
+            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)", pageTitle: page.title)
             activityBrowser = browser
             ActivityClient.emit(events)
             #endif
@@ -3505,23 +3669,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 完成后 AppKit 自动写入，无需手工移动。
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                       suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-            let dir: URL
-            #if os(macOS)
-            dir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
-            #else
-            dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("xhanHelper", isDirectory: true)
-            #endif
-            do {
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            } catch {
-                LogBuffer.shared.error("[B-Download] create dir failed: \(error)")
+            guard let dest = BrowserToolProvider.userDownloadDestination(suggestedFilename) else {
                 completionHandler(nil)
                 return
             }
-            let name = BrowserToolProvider.sanitizeFileName(suggestedFilename)
-            let dest = BrowserToolProvider.uniqueDestination(in: dir, name: name)
             let url = download.originalRequest?.url?.absoluteString ?? response.url?.absoluteString ?? ""
             let itemID = DownloadHistoryStore.shared.startDownload(
                 filename: dest.lastPathComponent,
@@ -3640,7 +3791,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
       return false;
     };
     // 开放 shadow DOM + 同源 iframe 遍历（3c/3e）：querySelectorAll 不穿透 shadowRoot/iframe，
-    // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口，cgclick 兜底）。
+    // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口：跨域 iframe 不可结构化操作）。
     var __allEls=[];var __walk=function(root){var ns=root.querySelectorAll('*');for(var i=0;i<ns.length;i++){var n=ns[i];__allEls.push(n);if(n.shadowRoot)__walk(n.shadowRoot);if(n.tagName==='IFRAME'||n.tagName==='FRAME'){try{var cd=n.contentDocument;if(cd&&cd!==root)__walk(cd);}catch(x){}}}};__walk(document);
     var push=function(e){
       var r=e.getBoundingClientRect();
@@ -3759,7 +3910,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
           cands.push({el:e,meta:m,band:inBand?1:(r.top>=vh+THRESHOLD?2:0),css:cssHidden(e)});
         };
         // 开放 shadow DOM + 同源 iframe 遍历（3c/3e）：querySelectorAll 不穿透 shadowRoot/iframe，
-        // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口，cgclick 兜底）。
+        // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口：跨域 iframe 不可结构化操作）。
         var __allEls=[];var __walk=function(root){var ns=root.querySelectorAll('*');for(var i=0;i<ns.length;i++){var n=ns[i];__allEls.push(n);if(n.shadowRoot)__walk(n.shadowRoot);if(n.tagName==='IFRAME'||n.tagName==='FRAME'){try{var cd=n.contentDocument;if(cd&&cd!==root)__walk(cd);}catch(x){}}}};__walk(document);
         // 小页面全量扫描（语义候选 + 点击信号候选，含 shadow）；大页面退化语义集（限成本）
         var allCount=__allEls.length;
@@ -4047,9 +4198,27 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
     """
 
+    /// 可填写元素判定（fill/type 共用）：返回错误文案，空串 = 可以填。
+    /// 以前不校验，打到 <a> 上直接抛 JS 异常，报一句"JS 异常"谁也看不懂。
+    private static let fillGuardJS = """
+    var _fillGuard=function(e){
+      var tag=(e.tagName||'').toUpperCase();
+      var ty=(e.getAttribute('type')||'').toLowerCase();
+      if(e.isContentEditable)return '';
+      if(tag==='TEXTAREA')return '';
+      if(tag==='INPUT'){
+        if(['checkbox','radio','button','submit','reset','file','image','hidden'].indexOf(ty)>=0)
+          return '该 input 类型（'+(ty||'text')+'）不能填值，请改点 click / check / 下载';
+        return '';
+      }
+      return '元素不可填写（<'+(e.tagName||'').toLowerCase()+'>）：fill/type 只支持 input / textarea / contenteditable';
+    };
+    """
+
     private func refFillJS(_ handle: Int, _ session: TabSession, _ val: String) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))\(Self.fillGuardJS)" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
+            "var _g=_fillGuard(e);if(_g)return JSON.stringify({ok:false,err:_g});" +
             "e.focus();e.select();" +
             "var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype);" +
             "var setter=Object.getOwnPropertyDescriptor(proto,'value').set;" +
@@ -4060,22 +4229,68 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "return JSON.stringify({ok:true});})()"
     }
 
+    /// select 赋值（ref 与 selector 共用）：以前只写 e.value，传一个不存在的值也能"成功"，
+    /// 回读才是空的。现在先校验元素是 <select>、value 命中某个 option，不命中就报可选值。
+    private static let selectAssignJS = """
+    var _selAssign=function(e,val){
+      if(!e)return {ok:false,err:'未找到元素'};
+      if((e.tagName||'').toUpperCase()!=='SELECT')
+        return {ok:false,err:'元素不是 <select>（是 <'+(e.tagName||'').toLowerCase()+'>），select 只对下拉框有效'};
+      var names=[],hit=null;
+      for(var i=0;i<e.options.length;i++){var o=e.options[i];names.push(o.value);
+        if(o.value===val||(o.text||'').trim()===val)hit=o;}
+      if(!hit)return {ok:false,err:'没有匹配的选项：'+val+'；可选值：'+(names.slice(0,20).join(' / ')||'(空)')+
+        (names.length>20?' …（共 '+names.length+' 项）':'')};
+      e.focus();e.value=hit.value;
+      e.dispatchEvent(new Event('input',{bubbles:true}));
+      e.dispatchEvent(new Event('change',{bubbles:true}));
+      e.blur();
+      return {ok:true,value:hit.value};
+    };
+    """
+
     private func refSelectJS(_ handle: Int, _ session: TabSession, _ val: String) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))\(Self.selectAssignJS)" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "e.focus();e.value='\(esc(val))';" +
-            "e.dispatchEvent(new Event('input',{bubbles:true}));" +
-            "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-            "e.blur();return JSON.stringify({ok:true});})()"
+            "return JSON.stringify(_selAssign(e,'\(esc(val))'));})()"
     }
 
+    /// check/uncheck 共用：先确认元素真的是勾选框。
+    /// 以前不校验 —— 打到普通链接上会退化成一次真点击（页面真的跳走）还回 checked:true。
+    private static let checkToggleJS = """
+    var _checkable=function(e){
+      var tag=(e.tagName||'').toUpperCase();
+      var ty=(e.getAttribute('type')||'').toLowerCase();
+      if(tag==='INPUT'&&(ty==='checkbox'||ty==='radio'))return '';
+      if((e.getAttribute('role')||'')==='checkbox')return '';
+      return '元素不是复选框/单选框（<'+(e.tagName||'').toLowerCase()+(ty?' type='+ty:'')+'>），check/uncheck 只对它们有效';
+    };
+    var _isChecked=function(e){
+      var tag=(e.tagName||'').toUpperCase();
+      if(tag==='INPUT')return !!e.checked;
+      return (e.getAttribute('aria-checked')||'').toLowerCase()==='true';
+    };
+    var _checkToggle=function(e,checked){
+      if(!e)return {ok:false,err:'未找到元素'};
+      var bad=_checkable(e);if(bad)return {ok:false,err:bad};
+      var ty=(e.getAttribute('type')||'').toLowerCase();
+      if(!checked&&ty==='radio')
+        return {ok:false,err:'单选框只能选中、不能取消（radio 没有 unchecked 状态）'};
+      var before=_isChecked(e);
+      if(before!==checked){
+        e.focus();e.click();
+        e.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      var after=_isChecked(e);
+      if(after!==checked)return {ok:false,err:'切换失败（目标状态 '+checked+'，实际 '+after+'），该控件可能被页面脚本接管'};
+      return {ok:true,was:before,now:after};
+    };
+    """
+
     private func refCheckJS(_ handle: Int, _ session: TabSession, _ checked: Bool) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))\(Self.checkToggleJS)" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "e.focus();" +
-            "if(!!e.checked!==\(checked))e.click();" +
-            "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-            "return JSON.stringify({ok:true});})()"
+            "return JSON.stringify(_checkToggle(e,\(checked)));})()"
     }
 
     /// 页面可见文本 + 表单值（input/select/textarea 的 value 与 checkbox/radio 的 checked）的 FNV 哈希
@@ -4141,7 +4356,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func fillJS(_ sel: String, _ val: String) -> String {
         // 原生 property setter 赋值（React/Vue 受控组件可感知），保留焦点
-        "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;" +
+        "(function(){\(Self.fillGuardJS)" +
+        "var e=document.querySelector('\(esc(sel))');if(!e)return JSON.stringify({ok:false,err:'未找到元素: \(esc(sel))'});" +
+        "var _g=_fillGuard(e);if(_g)return JSON.stringify({ok:false,err:_g});" +
         "e.focus();e.select();" +
         "var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype);" +
         "var setter=Object.getOwnPropertyDescriptor(proto,'value').set;" +
@@ -4149,7 +4366,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "e.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,inputType:'insertText',data:'\(esc(val))'}));" +
         "e.dispatchEvent(new Event('input',{bubbles:true}));" +
         "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "return true;})()"
+        "return JSON.stringify({ok:true});})()"
     }
 
     /// ref 点击第一步（含 _blank 拦截，按稳定句柄定位）。元素不在视口内先居中滚动。
@@ -4180,9 +4397,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 按文本匹配第一步（贝壳「两居」类场景兜底；点击由 clickUpJS 完成）
     private func clickTextDownJS(_ text: String, _ index: Int) -> String {
-        return "(function(){\(collectEls(200))" +
+        // 用 innerText（渲染文本）而不是 textContent：后者会把 <script>/<style> 里的源码也算进来，
+        // 实测点"新闻"能匹配到一段 JS 代码。
+        let textOf = "var txt=function(e){var t=(e.getAttribute&&e.getAttribute('aria-label'))||(e.innerText!=null?e.innerText:e.textContent)||e.value||e.placeholder||'';return String(t).replace(/\\s+/g,' ').trim();};"
+        return "(function(){\(collectEls(200))\(textOf)" +
             "var hits=[];for(var i=0;i<out.length;i++){var e=out[i];" +
-            "var t=(e.getAttribute('aria-label')||e.textContent||e.value||e.placeholder||'').trim();" +
+            "var t=txt(e);" +
             "if(t.indexOf('\(esc(text))')>=0||(e.placeholder||'').indexOf('\(esc(text))')>=0)hits.push(i);}" +
             "if(hits.length===0)return JSON.stringify({ok:false,err:'未找到文本: \(esc(text))'});" +
             "if(\(index)>=hits.length)return JSON.stringify({ok:false,err:'匹配到 '+hits.length+' 个，可用 index 指定，当前 index=\(index)'});" +
@@ -4194,7 +4414,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "e.focus();" +
             "e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0}));" +
             "e.setAttribute('data-xh-down',Math.round(x)+','+Math.round(y));" +
-            "return JSON.stringify({ok:true,text:(e.getAttribute('aria-label')||e.textContent||e.value||e.placeholder||'').trim().slice(0,40),matches:hits.length,x:Math.round(x),y:Math.round(y)});})()"
+            "return JSON.stringify({ok:true,text:txt(e).slice(0,40),matches:hits.length,x:Math.round(x),y:Math.round(y)});})()"
     }
 
     // MARK: - 逐字符输入（拟人化）
@@ -4232,19 +4452,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "a.dispatchEvent(new KeyboardEvent('keyup',o));return true;})()"
     }
     private func selectJS(_ sel: String, _ val: String) -> String {
-        "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;" +
-        "e.focus();e.value='\(esc(val))';" +
-        "e.dispatchEvent(new Event('input',{bubbles:true}));" +
-        "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "e.blur();return true;})()"
+        "(function(){\(Self.selectAssignJS)" +
+        "var e=document.querySelector('\(esc(sel))');" +
+        "if(!e)return JSON.stringify({ok:false,err:'未找到元素: \(esc(sel))'});" +
+        "return JSON.stringify(_selAssign(e,'\(esc(val))'));})()"
     }
+
     private func checkJS(_ sel: String, _ checked: Bool) -> String {
-        // 仿真实用户：原生 el.click()（可信事件+默认 toggle），当前状态与目标不符才点击
-        "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;" +
-        "e.focus();" +
-        "if(!!e.checked!==\(checked))e.click();" +
-        "e.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "return true;})()"
+        "(function(){\(Self.checkToggleJS)" +
+        "var e=document.querySelector('\(esc(sel))');" +
+        "return JSON.stringify(_checkToggle(e,\(checked)));})()"
     }
 
     private func esc(_ s: String) -> String {

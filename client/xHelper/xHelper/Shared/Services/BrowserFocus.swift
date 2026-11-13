@@ -28,17 +28,37 @@ enum BrowserFocus {
     static func isFocused() -> Bool {
         guard let rs = BrowserToolProvider.shared.rightSidebar,
               rs.activeTabId != nil,
-              let webView = BrowserToolProvider.shared.activeWebView,
-              let window = webView.window,
+              let page = BrowserToolProvider.shared.activePage,
+              let window = page.hostingView.window,
               window.isKeyWindow
         else { return false }
 
+        // 点在页面里时 firstResponder 是 Chromium 自己的子视图（不是 NSTextView），
+        // 用"在页面视图子树里"认它 —— 比下面那条推断更直接，也不受 CEF 内部视图类型影响。
+        if let responder = window.firstResponder as? NSView,
+           responder.isDescendant(of: page.hostingView) {
+            return true
+        }
         // 正在编辑文本框：浏览器聚焦与否取决于该框是否为浏览器字段
         if window.firstResponder is NSTextView {
             return isUrlFieldFocused || isFindFieldFocused
         }
         // 页面内（WKWebView 及其子视图）或其他位置 → 浏览器聚焦
         return true
+    }
+
+    /// ⌘W / ⌘T 被吞掉时打一行：这条路径以前是纯静默的，用户只会看到"按了没反应"，
+    /// 而焦点问题的成因（activePage 为 nil / 视图没在窗口 / 焦点在聊天输入）从外部完全看不出来。
+    static func diagnosis() -> String {
+        let rs = BrowserToolProvider.shared.rightSidebar
+        let page = BrowserToolProvider.shared.activePage
+        let window = page?.hostingView.window
+        let responder = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        return "sidebar=\(rs != nil) open=\(rs?.isOpen == true) rsActive=\(rs?.activeTabId ?? "nil")"
+            + " split=\(rs?.splitTabIds.count ?? 0) left=\(rs?.leftDisplayTabId ?? "nil")"
+            + " right=\(rs?.rightDisplayTabId ?? "nil")"
+            + " page=\(page != nil) window=\(window != nil) key=\(window?.isKeyWindow == true)"
+            + " firstResponder=\(responder) urlField=\(isUrlFieldFocused) findField=\(isFindFieldFocused)"
     }
 #endif
 }

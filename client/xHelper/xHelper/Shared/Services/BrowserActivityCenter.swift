@@ -81,17 +81,11 @@ final class BrowserActivityCenter: ObservableObject {
             lines.append("将关闭所有标签页")
         case "agent_browser_close_tab", "agent_browser_switch_tab":
             lines.append("目标: 标签页 \(arg("tabId"))")
-        case "agent_browser_click", "agent_browser_cgclick":
+        case "agent_browser_click":
             lines.append("目标: \(elementLabel(arg("ref"), arg("selector")))")
-            if tool == "agent_browser_cgclick" {
-                lines.append("⚠ 真实系统级点击")
-            }
         case "agent_browser_click_text":
             let t = arg("text")
             lines.append("目标: \(t.isEmpty ? "(无文本)" : "「\(t)」")")
-        case "agent_browser_drag":
-            lines.append("目标: \(elementLabel(arg("ref"), ""))")
-            lines.append("位移: dx=\(num("dx")) dy=\(num("dy"))")
         case "agent_browser_fill", "agent_browser_type":
             let value = tool == "agent_browser_fill" ? arg("value") : arg("text")
             lines.append("目标: \(elementLabel(arg("ref"), arg("selector")))")

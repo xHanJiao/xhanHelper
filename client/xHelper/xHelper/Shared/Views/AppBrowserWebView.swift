@@ -50,7 +50,7 @@ final class AppBrowserWebView: WKWebView {
         return t
     }
 
-    private static func searchURL(for query: String, engine: String) -> URL? {
+    static func searchURL(for query: String, engine: String) -> URL? {
         let encoded = query.urlQueryEscaped
         let name = engine.trimmingCharacters(in: .whitespaces).lowercased()
         let base: String

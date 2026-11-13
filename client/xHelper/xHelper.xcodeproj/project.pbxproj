@@ -132,10 +132,13 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = BB0A7EA02FA41493007BD7D6 /* Build configuration list for PBXNativeTarget "xHelperMac" */;
 			buildPhases = (
+				CEF0A1B2C3D4E5F600000001 /* Prepare CEF */,
 				BB0A7E942FA41490007BD7D6 /* Sources */,
 				BB0A7E952FA41490007BD7D6 /* Frameworks */,
 				BB0A7E962FA41490007BD7D6 /* Resources */,
 				BB5C0DE1A2B3C4D5E6F70001 /* Bundle Backend */,
+				CEF0A1B2C3D4E5F600000002 /* Bundle CEF */,
+				CEF0A1B2C3D4E5F600000003 /* Check CEF */,
 			);
 			buildRules = (
 			);
@@ -237,6 +240,63 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/scripts/bundle-backend.sh\"\n";
+		};
+		CEF0A1B2C3D4E5F600000001 /* Prepare CEF */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Prepare CEF";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/fetch-cef.sh\"\n";
+		};
+		CEF0A1B2C3D4E5F600000002 /* Bundle CEF */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle CEF";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/fetch-cef.sh\" --install \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\n";
+		};
+		CEF0A1B2C3D4E5F600000003 /* Check CEF */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check CEF";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/check-cef-version.sh\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -448,8 +508,10 @@
 		BB0A7EA12FA41493007BD7D6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CEF_CACHE = "$(HOME)/Library/Caches/xhanHelper-cef/current";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -461,6 +523,10 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CEF_CACHE)/dist",
+				);
 				INFOPLIST_KEY_CFBundleDisplayName = "xhanHelper dev";
 				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
@@ -472,8 +538,16 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CEF_CACHE)/lib",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lcef_dll_wrapper",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = xhanx.cn.xHelperMac;
 				PRODUCT_NAME = xhanHelper;
 				REGISTER_APP_GROUPS = YES;
@@ -482,6 +556,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "xHelperMac/xHelperMac-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -491,8 +566,10 @@
 		BB0A7EA22FA41493007BD7D6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CEF_CACHE = "$(HOME)/Library/Caches/xhanHelper-cef/current";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -504,6 +581,10 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CEF_CACHE)/dist",
+				);
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "读取你的日历来回答日程问题，并把提醒写成日历事件（iCloud 会同步到你的其他设备）";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -513,8 +594,16 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CEF_CACHE)/lib",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lcef_dll_wrapper",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = xhanx.cn.xHelperMac;
 				PRODUCT_NAME = xhanHelper;
 				REGISTER_APP_GROUPS = YES;

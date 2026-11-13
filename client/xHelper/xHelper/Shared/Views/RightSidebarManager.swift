@@ -15,6 +15,9 @@ struct RightSidebarTab: Identifiable {
     var agentOwner: String? = nil
     /// 手递手标签：agent 检测到验证码/登录墙升入主栏，需用户处理（⚠ 角标）
     var needsUserAttention: Bool = false
+    /// 该标签用的浏览器内核（cef = Chromium / compat = WKWebView）。**创建后不变**（D15 tab 粘性），
+    /// 要换引擎就新开一个 tab。非网页 tab（下载/收藏/灵阅…）恒为默认值，没人读。
+    var engine: BrowserEngine = .compat
 }
 
 final class RightSidebarManager: ObservableObject {
@@ -183,11 +186,11 @@ final class RightSidebarManager: ObservableObject {
         rightActiveTabId = nil
     }
 
-    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false, agentOwner: String? = nil, intoRightPane: Bool = false) {
+    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false, agentOwner: String? = nil, intoRightPane: Bool = false, engine: BrowserEngine = .compat) {
         if isAgentTab {
             // agent 标签进工作区（不参与主栏/分屏/特殊 tab 逻辑），激活忽略（工作区恒不抢视图）
             if !agentTabs.contains(where: { $0.id == id }) {
-                agentTabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: true, agentOwner: agentOwner))
+                agentTabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: true, agentOwner: agentOwner, engine: engine))
             }
             // agent/subagent 后台开标签不自动展开右栏，只由用户或手递手展开
             return
@@ -195,7 +198,7 @@ final class RightSidebarManager: ObservableObject {
         if tabs.contains(where: { $0.id == id }) {
             if activate { activeTabId = id }
         } else {
-            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: isAgentTab, agentOwner: agentOwner)
+            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: isAgentTab, agentOwner: agentOwner, engine: engine)
             if Self.specialTabIDs.contains(id) {
                 // 特殊 tab（下载/收藏/历史）固定最右：追加到末尾
                 tabs.append(tab)

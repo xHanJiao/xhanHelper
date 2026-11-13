@@ -70,7 +70,7 @@ return .none                                        // 其余直接执行
 | browser `open`（L3 一般风险） | `.none` | 直接执行 |
 | fs 写 / fs 读未授权路径 | `.confirm` | 必弹确认（批准后该路径临时授权 1h） |
 | 强制确认（`forcedL3`：高敏域 / http 明文页 / 用户标签授权） | 调用方只升不降 | 必弹确认 |
-| L4：shell 写 / 执行，browser `download` / `cgclick` / `drag` | `.hardened` | 必弹确认，红色 |
+| L4：shell 写 / 执行，browser `download` | `.hardened` | 必弹确认，红色 |
 
 ## 四、命令分档（v2）
 

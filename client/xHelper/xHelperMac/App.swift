@@ -20,6 +20,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // dev 视觉标识（UI-7）：Dock 图标右下角打一个 dev 角标（两个 .app 图标否则一模一样）。
         applyDevIconBadgeIfNeeded()
 
+        #if DEBUG
+        // CEF 合成冒烟（隐藏入口、无菜单项）：⌃⌥⌘B。
+        // 见 docs/design/mac-apps/browser-chromium-migration.md 第十三章
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 11,
+                  event.modifierFlags.intersection([.control, .option, .command])
+                    == [.control, .option, .command]
+            else { return event }
+            CefSmokeWindowController.shared.show()
+            return nil
+        }
+
+        // 同一个冒烟窗的免手按入口：`open <app> --args --cef-smoke[=https://某站]`。
+        // 让 agent 能自己跑一遍（合成按键要系统自动化权限，跑不了），也方便指定要验的站。
+        if let arg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--cef-smoke") }) {
+            let url = arg.split(separator: "=", maxSplits: 1).count == 2
+                ? String(arg.split(separator: "=", maxSplits: 1)[1])
+                : nil
+            DispatchQueue.main.async { CefSmokeWindowController.shared.show(urlString: url) }
+        }
+
+        // 四层伪装的回归探针：`open <app> --args --cef-probe[=回显请求头的地址]`。
+        // 落盘 `cef-probe.json` 后自己退出（由 scripts/cef-regression.sh 判读）；不需要后端。
+        if let arg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--cef-probe") }) {
+            let parts = arg.split(separator: "=", maxSplits: 1)
+            let url = parts.count == 2 ? String(parts[1]) : "https://httpbin.org/headers"
+            DispatchQueue.main.async { CefSmokeWindowController.shared.runProbe(urlString: url) }
+            return
+        }
+        #endif
+
         // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。
         // 未配密钥时不起后端——先走首次配置（UI-1），配置完成后再 start。
         if LocalBackendManager.isActive && LocalBackendManager.shared.isConfigured {
@@ -169,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     BrowserToolProvider.shared.closeTab(id)
                 } else if BrowserFocus.isFocused() {
                     BrowserToolProvider.shared.closeActiveTab()
+                } else {
+                    LogBuffer.shared.diag("[Shortcut] ⌘W 未处理：\(BrowserFocus.diagnosis())")
                 }
                 return nil
             }
@@ -188,23 +221,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if BrowserFocus.isFocused() {
                 switch event.keyCode {
                 case 33: // Cmd+[ 后退
-                    BrowserToolProvider.shared.activeWebView?.goBack()
+                    BrowserToolProvider.shared.activePage?.goBack()
                     return nil
                 case 30: // Cmd+] 前进
-                    BrowserToolProvider.shared.activeWebView?.goForward()
+                    BrowserToolProvider.shared.activePage?.goForward()
                     return nil
                 case 15: // Cmd+R 刷新
-                    BrowserToolProvider.shared.activeWebView?.reload()
+                    BrowserToolProvider.shared.activePage?.reload()
                     return nil
                 case 24: // Cmd+= 页面放大
-                    Self.zoomWebView(by: 0.1)
+                    Self.zoomActivePage(by: 0.1)
                     return nil
                 case 27: // Cmd+- 页面缩小
-                    Self.zoomWebView(by: -0.1)
+                    Self.zoomActivePage(by: -0.1)
                     return nil
-                case 3: // Cmd+F 页内查找
-                    if let wv = BrowserToolProvider.shared.activeWebView {
-                        BrowserFindCoordinator.shared.requestShow(wv)
+                case 29: // Cmd+0 缩放复位（对齐 Chrome）
+                    BrowserToolProvider.shared.activePage?.setZoomScale(1.0)
+                    return nil
+                case 3: // Cmd+F 页内查找（WK / CEF 都接）
+                    if let page = BrowserToolProvider.shared.activePage {
+                        BrowserFindCoordinator.shared.requestShow(page)
                     }
                     return nil
                 case 5: // Cmd+G / Cmd+Shift+G 查找跳转（栏显示时才拦截）
@@ -249,19 +285,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）
-    private static func zoomWebView(by delta: CGFloat) {
-        guard let wv = BrowserToolProvider.shared.activeWebView else { return }
-        wv.pageZoom = min(max(wv.pageZoom + delta, 0.5), 2.5)
+    /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）。走内核协议：WK 是 `pageZoom`，CEF 是 zoom level。
+    private static func zoomActivePage(by delta: Double) {
+        guard let page = BrowserToolProvider.shared.activePage else { return }
+        page.setZoomScale(min(max(page.zoomScale + delta, 0.5), 2.5))
     }
 
     /// 收藏/取消收藏当前页（Cmd+D，与地址栏星标按钮逻辑一致）
     private static func toggleBookmarkForActivePage() {
-        guard let wv = BrowserToolProvider.shared.activeWebView,
-              let url = wv.url,
+        guard let page = BrowserToolProvider.shared.activePage,
+              let url = page.url,
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else { return }
-        BookmarkStore.shared.toggle(title: wv.title ?? url.host ?? "", url: url.absoluteString)
+        BookmarkStore.shared.toggle(title: page.title ?? url.host ?? "", url: url.absoluteString)
     }
 
     /// 读剪贴板里的图片字节：Finder 复制的图片文件 → 位图（截图/网页复制）→ 都没有则 nil。
@@ -594,6 +630,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 @main
+enum xhanHelperLauncher {
+    /// 不能用 `@main` 直接挂在 App 上：CEF 的子进程分支必须赶在 NSApplication 起来之前跑。
+    /// （macOS 上子进程由 Helper.app 承担，这条是兜底；`swiftc -typecheck` 覆盖不到本文件，只能真机验）
+    static func main() {
+        _ = XHCefRuntime.executeSubprocessIfNeeded()
+        xhanHelperMacApp.main()
+    }
+}
+
 struct xhanHelperMacApp: App {
     init() {
         NotificationDelegateRegistrar.register()
@@ -921,6 +966,8 @@ struct MacSettingsView: View {
     // 「使用本地后端」开关：默认关（dev/prod 一致）。仅在 serverURL 为空时生效。
     @AppStorage(LocalBackendPreference.useLocalKey) private var useLocalBackend = LocalBackendPreference.useLocalDefault
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
+    // 浏览器内核开关（D-a / 2026-11-13 起对用户露出）：默认 CEF，可一键回兼容 WebKit。
+    @AppStorage(BrowserEngineRouter.defaultEngineKey) private var browserEngine = BrowserEngine.cef.rawValue
     // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
     @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
     @State private var calendarStatus = ""
@@ -1408,6 +1455,24 @@ struct MacSettingsView: View {
                 ))
                 BrowseRow("已归档会话", icon: "archivebox", destination: ArchivedConversationListView(apiClient: apiClient))
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
+            }
+
+            Section {
+                Picker("新标签页内核", selection: $browserEngine) {
+                    Text("Chromium（CEF）").tag(BrowserEngine.cef.rawValue)
+                    Text("兼容（WebKit）").tag(BrowserEngine.compat.rawValue)
+                }
+                .pickerStyle(.segmented)
+                Text("只影响之后新开的标签；已打开的标签保持原内核（引擎粘性）。视频站（B站/抖音/小红书）始终走兼容引擎；CEF 起不来会自动降级兼容引擎。单个站点在地址栏点过「换内核」的，以那次选择为准 —— 用下面的按钮清掉。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("清除站点内核偏好") {
+                    EnginePreferenceStore.reset()
+                }
+                .font(.caption)
+            } header: {
+                Text("浏览器内核")
             }
 
             Section("帮助") {

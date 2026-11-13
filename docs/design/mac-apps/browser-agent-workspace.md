@@ -38,7 +38,7 @@
 **寻址沙箱**
 - 新增 `lastAgentTabByOwner: [String: String]`：agent 无 tabId 读工具解析到该 owner 最近触摸的 agent 标签；写工具无 tabId 直接报错。
 - 读工具：tabId 可任意（用户/agent 标签都可读）；无 tabId → `lastAgentTabByOwner[owner]`。
-- 写工具（`userTabWriteTools`：click/click_text/fill/type/select/check/uncheck/press/cgclick/drag/go_back/go_forward/close_tab/download/scroll）：必须 tabId；目标为**用户标签**（owner==nil）且 owner 未授权 → 报错提示需用户授权。
+- 写工具（`userTabWriteTools`：click/click_text/fill/type/select/check/uncheck/press/go_back/go_forward/close_tab/download/scroll）：必须 tabId；目标为**用户标签**（owner==nil）且 owner 未授权 → 报错提示需用户授权。
 - `switch_tab`：agent 只更新 `lastAgentTabByOwner[owner]`，不再改 UI 激活页（用户视图不闪）。
 - `close_tab`：自身 agent 标签可关（既有归属保护）；用户标签需授权；其他任务标签拒绝（既有）。
 - **`agent_browser_close`（关闭全部）**：agent 上下文只关 agent 标签（原 `performCloseAll` 无归属过滤，会清光用户标签——补洞）。
@@ -79,7 +79,7 @@
 
 - ask_user 分支透传 owner；resolve 后 demote 手递手标签。
 - 浏览器写工具 + `tabIsUserOwned` + 未授权 → 复用 `awaitToolConfirmation` 拦截，允许后 `grantUserTabOps(owner)`。
-- 工具 schema（click/fill/type/select/check/uncheck/press/scroll/cgclick/drag/go_back/go_forward）补 `tabId` 参数。
+- 工具 schema（click/fill/type/select/check/uncheck/press/scroll/go_back/go_forward）补 `tabId` 参数。
 
 ### 3.6 服务端
 

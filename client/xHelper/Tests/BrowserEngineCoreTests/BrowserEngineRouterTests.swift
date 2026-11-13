@@ -1,0 +1,74 @@
+import XCTest
+@testable import BrowserEngineCore
+
+final class BrowserEngineRouterTests: XCTestCase {
+
+    func testNonHTTPSchemeFallsBackToCompat() {
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: URL(string: "file:///tmp/a.pdf")), .compat)
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: URL(string: "about:blank")), .compat)
+    }
+
+    func testExplicitOverrideWinsOverWhitelist() {
+        // agent 显式要 cef 的 bilibili 页（D19）
+        let url = URL(string: "https://www.bilibili.com/video/av1")!
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: url, override: .cef), .cef)
+    }
+
+    func testOpenerEngineIsInheritedEvenForVideoHost() {
+        // D17：弹窗跟 opener，即使目标是白名单域名
+        let url = URL(string: "https://www.bilibili.com/")!
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: url, openerEngine: .cef), .cef)
+    }
+
+    func testVideoHostsMatchSubdomainAndShortLinkOnly() {
+        XCTAssertTrue(BrowserEngineRouter.isVideoHost("www.bilibili.com"))
+        XCTAssertTrue(BrowserEngineRouter.isVideoHost("b23.tv"))
+        XCTAssertFalse(BrowserEngineRouter.isVideoHost("notbilibili.com"))
+        XCTAssertFalse(BrowserEngineRouter.isVideoHost(nil))
+    }
+
+    func testWhitelistKeepsVideoOnCompatWhenEnabled() {
+        let original = BrowserEngineRouter.videoWhitelistEnabled
+        defer { BrowserEngineRouter.videoWhitelistEnabled = original }
+        let url = URL(string: "https://m.douyin.com/x")!
+        BrowserEngineRouter.videoWhitelistEnabled = false
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: url), .cef)   // B2 阶段白名单未生效（D-b）
+        BrowserEngineRouter.videoWhitelistEnabled = true
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: url), .compat)
+    }
+
+    func testVideoHostGoesCompatByDefault() {
+        // B5 起白名单默认生效：视频站（含短链）不配置任何东西就落兼容引擎
+        XCTAssertTrue(BrowserEngineRouter.videoWhitelistEnabled)
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: URL(string: "https://www.bilibili.com/video/BV1")!), .compat)
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: URL(string: "https://b23.tv/abc")!), .compat)
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: URL(string: "https://www.xiaohongshu.com/x")!), .compat)
+    }
+
+    func testHintGateAllowsTwicePerDay() {
+        EngineHintGate.reset()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let host = "www.bilibili.com"
+        XCTAssertTrue(EngineHintGate.canShow(host: host, now: now))
+        EngineHintGate.record(host: host, now: now)
+        EngineHintGate.record(host: host, now: now)
+        // 24h 内最多 2 次
+        XCTAssertFalse(EngineHintGate.canShow(host: host, now: now.addingTimeInterval(3600)))
+        // 子域并到同一个 eTLD+1 计数
+        XCTAssertFalse(EngineHintGate.canShow(host: "m.bilibili.com", now: now.addingTimeInterval(3600)))
+        // 过了窗口重新计数
+        XCTAssertTrue(EngineHintGate.canShow(host: host, now: now.addingTimeInterval(EngineHintGate.window + 1)))
+        EngineHintGate.reset()
+    }
+
+    func testCefUnavailableFallsBackToCompat() {
+        let url = URL(string: "https://www.google.com/")!
+        XCTAssertEqual(BrowserEngineRouter.resolveEngine(url: url, cefAvailable: false), .compat)
+    }
+
+    func testHostKeyMergesSubdomains() {
+        XCTAssertEqual(EnginePreferenceStore.hostKey("pan.baidu.com"), "baidu.com")
+        XCTAssertEqual(EnginePreferenceStore.hostKey("baidu.com"), "baidu.com")
+        XCTAssertNil(EnginePreferenceStore.hostKey(nil))
+    }
+}

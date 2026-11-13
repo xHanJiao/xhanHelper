@@ -5,11 +5,10 @@ import XCTest
 /// （映射本身见下面的 `ToolConfirmPolicyTests`。）
 final class ToolRiskLevelsTests: XCTestCase {
 
-    /// 这三个是 review 后特意提到 L4 的：写盘 / 注入系统事件，必须红色必弹。
-    func testBrowserWriteAndSystemEventToolsAreL4() {
+    /// download 是 review 后特意提到 L4 的：写盘，必须红色必弹。
+    /// （`cgclick` / `drag` 已于 2026-11-13 删除——用户从未用过，CEF 上也不可用。）
+    func testBrowserDownloadIsL4() {
         XCTAssertEqual(ToolRiskLevels.level(for: "browser__agent_browser_download"), 4)
-        XCTAssertEqual(ToolRiskLevels.level(for: "browser__agent_browser_cgclick"), 4)
-        XCTAssertEqual(ToolRiskLevels.level(for: "browser__agent_browser_drag"), 4)
     }
 
     /// 日历读是 L2 免确认；建/改/删是 L4 必弹（会同步到手机、删改难回滚）。

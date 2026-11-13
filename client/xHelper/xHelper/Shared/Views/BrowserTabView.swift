@@ -2,7 +2,8 @@ import SwiftUI
 import WebKit
 
 struct BrowserTabView: View {
-    let webView: WKWebView
+    /// 只认内核协议（`BrowserPage`）：WK 与 CEF 走同一份地址栏/工具栏。
+    let page: BrowserPage
     let onSetupErrorBinding: ((_ onError: @escaping (String) -> Void) -> Void)?
     @State private var urlText = ""
     @State private var isLoading = false
@@ -11,8 +12,17 @@ struct BrowserTabView: View {
     @State private var canGoBack = false
     @State private var canGoForward = false
     @State private var isHovered = false
-    @State private var observations: [NSKeyValueObservation] = []
+    /// 页面状态订阅（切走时撤销，避免 TabSession 与面板双份残留在旧视图上）
+    @State private var stateToken: UUID?
     @State private var loadError: String?
+    /// 换引擎提示条：当前显示的是哪个 host（nil = 不显示）
+    @State private var videoHintHost: String?
+    /// 本 tab 会话里已经提示/关掉过的 host（同一页别再弹第二遍）
+    @State private var videoHintSeen: Set<String> = []
+    /// 媒体检测第 2/3 层的提示文案（页面自己报了"播不了"），nil = 不显示
+    @State private var mediaHintNote: String?
+    /// 弹这条提示时所在的 host：换站/换页就收起，别把 A 站的结论带到 B 站
+    @State private var mediaHintHost: String?
     @State private var suggestions: [URLSuggestion] = []
     @State private var selectedSuggestion = -1
     @State private var showSuggestions = false
@@ -59,19 +69,20 @@ struct BrowserTabView: View {
             // 浏览器内确认条：仅内部确认（有下载时关标签、用户点链接下载）。
             // agent 操作可见性与 L3 工具确认均已移入聊天栏，此处不再放活动指示条（避免挤压页面）。
             BrowserAgentConfirmBar()
+            engineNoticeBar
             if downloadStore.records.contains(where: { $0.state == .downloading }) {
                 downloadsBar
                 Divider()
             }
             if let error = loadError {
                 BrowserErrorPageView(
-                    url: urlText.isEmpty ? (webView.url?.absoluteString ?? "") : urlText,
+                    url: urlText.isEmpty ? (page.url?.absoluteString ?? "") : urlText,
                     error: error,
-                    onRetry: { webView.reload() }
+                    onRetry: { page.reload() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                BrowserWebView(webView: webView)
+                BrowserWebView(page: page)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             }
@@ -80,20 +91,15 @@ struct BrowserTabView: View {
             // 重置浏览器字段焦点标志（防旧 tab 残留；FocusState 初始 false 不触发 onChange）
             BrowserFocus.isUrlFieldFocused = false
             BrowserFocus.isFindFieldFocused = false
-            let initial = webView.url?.absoluteString ?? ""
-            urlText = initial == "about:blank" ? "" : initial
-            currentURL = webView.url
-            isLoading = webView.isLoading
-            canGoBack = webView.canGoBack
-            canGoForward = webView.canGoForward
-            onSetupErrorBinding?({ [weak webView] msg in
-                // 确保 error 只更新给当前 webView 对应的 tab
+            syncPageState()
+            onSetupErrorBinding?({ msg in
                 loadError = msg
             })
-            startObserving()
-            findCoordinator.attach(webView)
+            stateToken = page.stateObservers.add { syncPageState() }
+            // 页内查找按内核协议接（WK 报命中与否、CEF 报命中数）
+            findCoordinator.attach(page)
             // 新标签页自动聚焦地址栏
-            if webView.url == nil || webView.url?.absoluteString == "about:blank" {
+            if page.url == nil || Self.isLocalPlaceholder(page.url) {
                 DispatchQueue.main.async { urlFocused = true }
             }
         }
@@ -116,8 +122,8 @@ struct BrowserTabView: View {
         .onDisappear {
             BrowserFocus.isUrlFieldFocused = false
             BrowserFocus.isFindFieldFocused = false
-            for obs in observations { obs.invalidate() }
-            observations = []
+            if let stateToken { page.stateObservers.remove(stateToken) }
+            stateToken = nil
         }
     }
 
@@ -136,7 +142,7 @@ struct BrowserTabView: View {
         HStack(spacing: 6) {
             // 后退 / 前进
             Button {
-                webView.goBack()
+                page.goBack()
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .semibold))
@@ -149,7 +155,7 @@ struct BrowserTabView: View {
             .help("后退")
 
             Button {
-                webView.goForward()
+                page.goForward()
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
@@ -164,9 +170,9 @@ struct BrowserTabView: View {
             // 加载中显示停止，否则刷新（放在 < > 右边）
             Button {
                 if isLoading {
-                    webView.stopLoading()
+                    page.stopLoading()
                 } else {
-                    webView.reload()
+                    page.reload()
                 }
             } label: {
                 Image(systemName: isLoading ? "xmark" : "arrow.clockwise")
@@ -198,16 +204,48 @@ struct BrowserTabView: View {
                 .onKeyPress(.escape, phases: .down) { _ in handleEscapeKey() }
 
             mediaPanelButton
+            engineSwitchButton
             bookmarkButton
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
     }
 
+    /// 换引擎打开：主引擎（Chromium）↔ 兼容（WebKit）。
+    ///
+    /// 这是 §9.2.4 的"兜底出口"——检测永远有漏网（H.264 缺失可能黑屏不报错），所以任何 tab 都要能
+    /// 一键换个内核重开，而不是让用户自己去猜。点一次同时记进偏好表（D15 第 4 条：别再问同一站）。
+    private var engineSwitchButton: some View {
+        let other: BrowserEngine = page.engine == .cef ? .compat : .cef
+        let url = currentPageURL().flatMap(URL.init(string:))
+        // 目标引擎是 CEF 但主引擎起不来时，别给一个点了必然降级回来的按钮
+        let enabled = url != nil && (other != .cef || !BrowserToolProvider.shared.isCefUnavailable)
+        return Button {
+            guard let url else { return }
+            EnginePreferenceStore.setEngine(other, for: url.host)
+            BrowserToolProvider.shared.openURL(url, engine: other)
+        } label: {
+            // 图标表示**当前**引擎（globe=主引擎 Chromium / safari=兼容 WebKit），动作由 tooltip 说明：
+            // 显示"目标引擎"会让人误读成"我现在在另一个引擎里"。
+            Image(systemName: page.engine == .cef ? "globe" : "safari")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.3)
+        .help(page.engine == .cef
+            ? "当前：主引擎（Chromium）· 点击用兼容模式（WebKit）打开本页"
+            : "当前：兼容模式（WebKit）· 点击用主引擎（Chromium）打开本页")
+    }
+
     /// 本页资源（媒体下载面板）：捕获当前页 webView 打开侧栏「本页资源」tab。
     /// 仅 http(s) 页面可用；每次点击都重新绑定来源页并重扫。
     private var mediaPanelButton: some View {
         Button {
+            guard let webView = page.wkWebView else { return }
             BrowserToolProvider.shared.rightSidebar?.openMediaPanel(sourceWebView: webView)
         } label: {
             Image(systemName: "photo.on.rectangle.angled")
@@ -217,9 +255,80 @@ struct BrowserTabView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(currentPageURL() == nil)
-        .opacity(currentPageURL() == nil ? 0.3 : 1)
-        .help("本页媒体资源（视频/图片下载）")
+        // 媒体面板只认 WK 会话（Cookie/媒体嗅探都走 WK），CEF 标签暂不提供
+        .disabled(currentPageURL() == nil || page.wkWebView == nil)
+        .opacity(currentPageURL() == nil || page.wkWebView == nil ? 0.3 : 1)
+        .help(page.wkWebView == nil ? "本页资源仅兼容引擎可用" : "本页媒体资源（视频/图片下载）")
+    }
+
+    /// 换引擎提示条（§9.2.3）：
+    /// - CEF 标签落到视频白名单域名 → 「此站的视频需要兼容模式」+ 一键换（D16：留在原引擎、不自动切）；
+    /// - 主引擎起不来（缺 framework / 初始化失败）→ 常驻「当前为兼容模式」横幅（§9.2.5 的启动降级）。
+    ///
+    /// 提示频率由 `EngineHintGate` 控（同站 24h 最多 2 次）；用户已经在偏好表里选过的站不再提示。
+    @ViewBuilder
+    private var engineNoticeBar: some View {
+        if videoHintHost != nil || mediaHintNote != nil {
+            noticeBar(
+                icon: "play.slash",
+                text: mediaHintNote ?? "此站的视频需要兼容模式（主引擎不含 H.264）",
+                actionTitle: "用兼容模式打开",
+                action: {
+                    guard let url = page.url else { return }
+                    EnginePreferenceStore.setEngine(.compat, for: url.host)
+                    BrowserToolProvider.shared.openURL(url, engine: .compat)
+                },
+                onClose: {
+                    videoHintHost = nil
+                    mediaHintNote = nil
+                    mediaHintHost = nil
+                }
+            )
+        } else if page.engine == .compat, BrowserToolProvider.shared.isCefUnavailable {
+            noticeBar(
+                icon: "exclamationmark.triangle",
+                text: "主引擎未启动，当前为兼容模式（原因见 Console 的 [cef]）",
+                actionTitle: nil,
+                action: nil,
+                onClose: nil
+            )
+        }
+    }
+
+    private func noticeBar(icon: String,
+                           text: String,
+                           actionTitle: String?,
+                           action: (() -> Void)?,
+                           onClose: (() -> Void)?) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+            Text(text)
+                .font(.system(size: 11))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color("appAccent"))
+            }
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help("本次不再提示")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.orange.opacity(0.12))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+        }
     }
 
     // MARK: - 地址栏建议（历史 + 收藏，前缀匹配，兼容有无协议头）
@@ -337,10 +446,10 @@ struct BrowserTabView: View {
     private var bookmarkButton: some View {
         let isBookmarked = currentPageBookmarked()
         return Button {
-            guard let url = currentURL ?? webView.url,
+            guard let url = currentURL ?? page.url,
                   let scheme = url.scheme?.lowercased(),
                   scheme == "http" || scheme == "https" else { return }
-            BookmarkStore.shared.toggle(title: webView.title ?? url.host ?? "", url: url.absoluteString)
+            BookmarkStore.shared.toggle(title: page.title ?? url.host ?? "", url: url.absoluteString)
         } label: {
             Image(systemName: isBookmarked ? "star.fill" : "star")
                 .font(.system(size: 12))
@@ -360,7 +469,7 @@ struct BrowserTabView: View {
     }
 
     private func currentPageURL() -> String? {
-        guard let url = (currentURL ?? webView.url)?.absoluteString,
+        guard let url = (currentURL ?? page.url)?.absoluteString,
               let scheme = URL(string: url)?.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else { return nil }
         return url
@@ -381,7 +490,7 @@ struct BrowserTabView: View {
             guard let u = URL(string: "https://cn.bing.com/search?q=\(q)") else { return }
             target = u
         }
-        webView.load(URLRequest(url: target, timeoutInterval: 15))
+        page.load(target)
         loadError = nil
     }
     /// 地址栏安全指示：https=锁 / http=警示 / 其他（空白页等）=globe
@@ -521,72 +630,100 @@ struct BrowserTabView: View {
         .background(.ultraThinMaterial)
     }
 
-    private func startObserving() {
-        observations = [
-            webView.observe(\.url, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    guard let url = change.newValue as? URL?,
-                          let u = url else { return }
-                    // currentURL 无条件跟随（媒体按钮/收藏等内部判断依赖它）。
-                    // 此前整段被 !urlFocused 拦截：新标签页 onAppear 自动聚焦地址栏，
-                    // 首次导航的 URL 更新被吞 → currentURL 永 nil → 按钮/收藏永远不可用。
-                    currentURL = u
-                    // 地址栏文本仅在未聚焦时同步（聚焦 = 用户可能正在输入，别覆盖）
-                    if !urlFocused {
-                        // 新标签页默认页（about:blank）不显示在地址栏
-                        urlText = u.absoluteString == "about:blank" ? "" : u.absoluteString
-                    }
-                }
-            },
-            webView.observe(\.isLoading, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { isLoading = v }
-                }
-            },
-            webView.observe(\.estimatedProgress, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { progress = v }
-                }
-            },
-            webView.observe(\.canGoBack, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { canGoBack = v }
-                }
-            },
-            webView.observe(\.canGoForward, options: [.new]) { _, change in
-                DispatchQueue.main.async {
-                    if let v = change.newValue { canGoForward = v }
-                }
-            },
-        ]
+    /// 本地占位页（新标签页的 data: URL / about:blank）不该显示在地址栏里
+    private static func isLocalPlaceholder(_ url: URL?) -> Bool {
+        guard let scheme = url?.scheme?.lowercased() else { return true }
+        return scheme == "about" || scheme == "data" || scheme == "file"
+    }
+
+    /// 从内核读一次全量状态（URL/标题/加载/前进后退），面板不再各自 KVO。
+    private func syncPageState() {
+        let u = page.url
+        currentURL = u
+        // 地址栏文本仅在未聚焦时同步（聚焦 = 用户可能正在输入，别覆盖）
+        if !urlFocused {
+            urlText = u.map { Self.isLocalPlaceholder($0) ? "" : $0.absoluteString } ?? ""
+        }
+        isLoading = page.isLoading
+        canGoBack = page.canGoBack
+        canGoForward = page.canGoForward
+        // CEF 没有 estimatedProgress，进度条自然不显示（条件要求 progress > 0）
+        progress = page.wkWebView?.estimatedProgress ?? 0
+        updateVideoHint(for: u)
+        updateMediaHint(for: u)
+    }
+
+    /// 页面自己报了视频播不了（主引擎缺 H.264 / 源格式不支持）→ 同一条提示条，文案说清原因。
+    /// 与白名单提示共用频率闸：同一 host 24h 最多 2 次，用户选过引擎就不再烦。
+    private func updateMediaHint(for url: URL?) {
+        // 换站了：上一条"这个站播不了"的结论不再适用（页面自己的 mediaIssueReason 也已被重置）
+        if let shown = mediaHintHost, shown != url?.host {
+            mediaHintNote = nil
+            mediaHintHost = nil
+        }
+        guard mediaHintNote == nil,
+              page.engine == .cef,
+              let reason = page.mediaIssueReason,
+              (url?.scheme == "http" || url?.scheme == "https"),
+              let host = url?.host,
+              !videoHintSeen.contains(host),
+              EnginePreferenceStore.engine(for: host) == nil,
+              EngineHintGate.canShow(host: host)
+        else { return }
+        videoHintSeen.insert(host)
+        EngineHintGate.record(host: host)
+        mediaHintHost = host
+        mediaHintNote = reason == "no-h264"
+            ? "此页视频需要 H.264 解码，主引擎不含（会黑屏/无声）"
+            : "此页视频的编码主引擎不支持（会黑屏/无声）"
+    }
+
+    /// 视频站落到主引擎上 → 挂提示条（不自动切，D16）。离开那个域就收起。
+    private func updateVideoHint(for url: URL?) {
+        guard page.engine == .cef,
+              (url?.scheme == "http" || url?.scheme == "https"),
+              let host = url?.host,
+              BrowserEngineRouter.isVideoHost(host)
+        else {
+            if videoHintHost != nil { videoHintHost = nil }
+            return
+        }
+        guard videoHintHost != host,
+              !videoHintSeen.contains(host),
+              EnginePreferenceStore.engine(for: host) == nil,   // 用户选过一次就别再烦
+              EngineHintGate.canShow(host: host)
+        else { return }
+        videoHintSeen.insert(host)
+        EngineHintGate.record(host: host)
+        videoHintHost = host
     }
 }
 
 #if os(macOS)
 private struct BrowserWebView: NSViewRepresentable {
-    let webView: WKWebView
+    let page: BrowserPage
 
-    func makeNSView(context: Context) -> WKWebView {
-        return webView
+    func makeNSView(context: Context) -> XHPageView {
+        return page.hostingView
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {
-        if nsView !== webView {
-            pipLog("webview UPDATE (stale!): attached=\(ObjectIdentifier(nsView)) want=\(ObjectIdentifier(webView))")
+    func updateNSView(_ nsView: XHPageView, context: Context) {
+        if nsView !== page.hostingView {
+            pipLog("page hosting view UPDATE (stale!): attached=\(ObjectIdentifier(nsView)) want=\(ObjectIdentifier(page.hostingView))")
         }
     }
 }
 #else
 private struct BrowserWebView: UIViewRepresentable {
-    let webView: WKWebView
+    let page: BrowserPage
 
-    func makeUIView(context: Context) -> WKWebView {
-        return webView
+    func makeUIView(context: Context) -> XHPageView {
+        return page.hostingView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        if uiView !== webView {
-            pipLog("webview UPDATE (stale!): attached=\(ObjectIdentifier(uiView)) want=\(ObjectIdentifier(webView))")
+    func updateUIView(_ uiView: XHPageView, context: Context) {
+        if uiView !== page.hostingView {
+            pipLog("page hosting view UPDATE (stale!): attached=\(ObjectIdentifier(uiView)) want=\(ObjectIdentifier(page.hostingView))")
         }
     }
 }

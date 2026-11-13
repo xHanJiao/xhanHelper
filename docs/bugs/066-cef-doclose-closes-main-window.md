@@ -38,6 +38,9 @@ void CefBrowserPlatformDelegateNativeMac::CloseHostWindow() {
    - `_closeRequested` 已置（⌘W / 关 tab / agent close 发起的）→ 只置 `_cefDoCloseSeen`，不重复通知；
    - 否则（页面自关 / popup 自关）→ 置标记并调 `pageClosedExternally`，宿主关掉这个 tab。
 3. 浏览器真正销毁走既有链：宿主关 tab → 视图被释放 → CEF 内部 `CefBrowserHostView` dealloc → `WindowDestroyed()` → `OnBeforeClose` → `cefBrowserDidClose`（renderer 回收）。
+   这条链要求**视图真的被释放**：后台标签停在 parking window 里时，`addSubview:` 会强持有它，
+   所以 `closeBrowser` 先把"superview 就是 parking contentView"的视图摘掉（否则 view 永不 dealloc、
+   renderer 永不回收——评审 P1）。
 4. 顺手：`XHCefParkingWindow()` 若已被关掉（`!isVisible`）就 `orderFront` 救回来（alpha 0，用户看不见）。
 5. `closeBrowser` 在"已经进过 `DoClose`"时不再重复 `CloseBrowser(true)`（CEF 156 没有 `IsClosing()`，用自己记的 `_cefDoCloseSeen`）。
 

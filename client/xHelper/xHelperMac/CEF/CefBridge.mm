@@ -773,6 +773,7 @@ static NSWindow *XHCefParkingWindow(void) {
   });
   // 曾经被 performClose: 关掉过（DoClose 没接管前，关后台 tab 会打到这个隐藏窗）：
   // 关掉的窗口仍能 addSubview，但已脱离窗口层级，CEF 会建不出渲染宿主（白屏）。
+  NSCAssert(NSThread.isMainThread, @"XHCefParkingWindow 只能在主线程调（要碰 AppKit）");
   if (!window.isVisible) [window orderFront:nil];
   return window;
 }
@@ -1062,9 +1063,13 @@ static NSWindow *XHCefParkingWindow(void) {
 
 - (void)closeBrowser {
   _closeRequested = YES;
+  // 停进 parking window 的后台 tab 由那个窗口的 contentView 强持有（addSubview 会 retain），
+  // 不主动摘掉就永远不会 dealloc → CEF 的内部宿主视图不放 → 浏览器/renderer 永不销毁。
+  // 摘掉之后没人再持有本视图时立即 dealloc，销毁链（WindowDestroyed → OnBeforeClose）才走得通。
+  if (self.superview == XHCefParkingWindow().contentView) [self removeFromSuperview];
   if (!_browser) return;   // 还在创建中：OnAfterCreated 里看到标记会立刻关（见 cefBrowserCreated）
-  // 页面自关（window.close()）已经进过 DoClose：再 CloseBrowser 一次没意义，
-  // 现在只需要等宿主关掉 tab、视图释放，CEF 那边自己销毁浏览器（见 cefBrowserShouldClose）。
+  // 页面自关（window.close()）已经进过 DoClose：再 CloseBrowser 一次不会推进销毁
+  // （DoClose 返回 true 时销毁靠视图释放），这里只等宿主关 tab 时把视图摘掉。
   // CEF 156 没有 IsClosing()，只能自己记（cef_browser.h 只有 IsValid）。
   if (_cefDoCloseSeen) return;
   // force_close=true：否则 renderer 进程会赖着（240MB/页的先例）
@@ -1106,13 +1111,21 @@ static NSWindow *XHCefParkingWindow(void) {
   // 我们自己发起的关闭（⌘W / 关 tab / agent close → tearDownWebView → CloseBrowser）：
   // 宿主马上会拆视图，视图释放后 CEF 自己销毁浏览器 —— 这里不要重复通知宿主。
   if (_closeRequested) return;
+  void (^notify)(void) = self.pageClosedExternally;
+  if (!notify) {
+    // 没人接这条回调（裸视图 / --cef-smoke）：没人会来拆视图，自己再催一次关闭
+    _closeRequested = YES;
+    CefRefPtr<CefBrowser> browser = _browser;
+    NSLog(@"[cef] DoClose 但没接 pageClosedExternally：自收（url=%@）", _startURL);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (browser) browser->GetHost()->CloseBrowser(true);
+    });
+    return;
+  }
   // 页面自己 window.close()（弹窗登录完自关那种）：通知宿主收掉这个 tab。
   // 不复用 cefBrowserDidClose 的通知 —— 那条要等浏览器真销毁，而浏览器要等视图被拆才销毁。
   _closeRequested = YES;
-  if (self.pageClosedExternally) {
-    void (^notify)(void) = self.pageClosedExternally;
-    dispatch_async(dispatch_get_main_queue(), notify);   // 别在 DoClose 栈里关 tab
-  }
+  dispatch_async(dispatch_get_main_queue(), notify);   // 别在 DoClose 栈里关 tab
 }
 
 - (void)cefBrowserDidClose {

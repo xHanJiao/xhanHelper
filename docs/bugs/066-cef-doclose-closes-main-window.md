@@ -36,7 +36,9 @@ void CefBrowserPlatformDelegateNativeMac::CloseHostWindow() {
 1. `XHCefClient` 实现 `DoClose`，**返回 `true`**（= "窗口的事我自己处理，别发 `performClose:`"），并 `RunOnMain` 调 `[view cefBrowserShouldClose]`。
 2. `XHCefBrowserView.cefBrowserShouldClose`：
    - `_closeRequested` 已置（⌘W / 关 tab / agent close 发起的）→ 只置 `_cefDoCloseSeen`，不重复通知；
-   - 否则（页面自关 / popup 自关）→ 置标记并调 `pageClosedExternally`，宿主关掉这个 tab。
+   - 否则（页面自关 / popup 自关）→ 置标记并调 `pageClosedExternally`，宿主关掉这个 tab；
+     没人接这条回调（裸视图 / `--cef-smoke`）→ NSLog + 异步 `CloseBrowser(true)` 自收，
+     不能只置标记（会留下半关闭、无人销毁的 browser）。
 3. 浏览器真正销毁走既有链：宿主关 tab → 视图被释放 → CEF 内部 `CefBrowserHostView` dealloc → `WindowDestroyed()` → `OnBeforeClose` → `cefBrowserDidClose`（renderer 回收）。
    这条链要求**视图真的被释放**：后台标签停在 parking window 里时，`addSubview:` 会强持有它，
    所以 `closeBrowser` 先把"superview 就是 parking contentView"的视图摘掉（否则 view 永不 dealloc、
@@ -53,4 +55,6 @@ void CefBrowserPlatformDelegateNativeMac::CloseHostWindow() {
 
 ## 后续变更
 
-（暂无）
+| 日期 | 变更 | 影响文件 |
+|---|---|---|
+| 2026-11-14 | 评审 P1：parking window 用 `addSubview` 强持有后台视图，`closeBrowser` 补"摘掉 parked 视图"，否则视图永不 dealloc、CEF 浏览器/renderer 跟着永不销毁；无 `pageClosedExternally` 分支补自收；`closeBrowser` 用 `objc_precise_lifetime` 钉住 self（摘视图可能就是最后一个引用） | `client/xHelper/xHelperMac/CEF/CefBridge.mm` |

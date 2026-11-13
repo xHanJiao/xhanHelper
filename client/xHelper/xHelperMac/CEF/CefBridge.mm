@@ -1063,13 +1063,18 @@ static NSWindow *XHCefParkingWindow(void) {
 
 - (void)closeBrowser {
   _closeRequested = YES;
+  // removeFromSuperview 可能就是最后一个强引用（dealloc 里也会走到本方法）：先钉住 self，
+  // 否则下面 _browser 的访问会落在已释放内存上。
+  __attribute__((objc_precise_lifetime)) XHCefBrowserView *keepAlive = self;
+  (void)keepAlive;
   // 停进 parking window 的后台 tab 由那个窗口的 contentView 强持有（addSubview 会 retain），
   // 不主动摘掉就永远不会 dealloc → CEF 的内部宿主视图不放 → 浏览器/renderer 永不销毁。
   // 摘掉之后没人再持有本视图时立即 dealloc，销毁链（WindowDestroyed → OnBeforeClose）才走得通。
   if (self.superview == XHCefParkingWindow().contentView) [self removeFromSuperview];
   if (!_browser) return;   // 还在创建中：OnAfterCreated 里看到标记会立刻关（见 cefBrowserCreated）
   // 页面自关（window.close()）已经进过 DoClose：再 CloseBrowser 一次不会推进销毁
-  // （DoClose 返回 true 时销毁靠视图释放），这里只等宿主关 tab 时把视图摘掉。
+  // （DoClose 返回 true 时销毁靠视图释放）。上面已经把 parked 视图摘掉了，
+  // 这里只要别再发一次 CloseBrowser。
   // CEF 156 没有 IsClosing()，只能自己记（cef_browser.h 只有 IsValid）。
   if (_cefDoCloseSeen) return;
   // force_close=true：否则 renderer 进程会赖着（240MB/页的先例）

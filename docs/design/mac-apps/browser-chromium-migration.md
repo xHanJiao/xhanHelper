@@ -534,7 +534,7 @@ B4 把 `window.open` / `target=_blank` 拦成**兄弟 tab**，代价是弹窗页
 | 闸门 | 触发 | 行为 | 耗时 |
 |---|---|---|---|
 | **A 构建期** | Xcode Run Script「Check CEF」（macOS target，排在 **Bundle CEF 之后**） | 落后就 `warning:`（黄标），**构建照常成功** | 缓存命中 ~50ms |
-| **B 发版期** | `scripts/check-cef-version.sh --strict`（发版前手动跑） | 超阈值红字 + 非 0 退出 | ~1s |
+| **B 发版期** | `scripts/check-cef-version.sh --strict [app 路径]`（发版前手动跑；不给路径就取最新一次 DerivedData 构建，找不到直接算失败） | 超阈值红字 + 非 0 退出 | ~1s |
 
 不默认硬失败的理由：每天发版，网络抖动或 CEF 发版当天没升，不该卡住构建。
 
@@ -558,8 +558,8 @@ PINNED_AT=$(cat "$SRCROOT/CEF_VERSION_AT")  # 2026-11-12
 | 落后程度 | 输出 |
 |---|---|
 | ≤1 个大版本 且 ≤90 天 | 静默 |
-| ≥2 个大版本 **或** ≥90 天 | `warning: CEF 落后 N 个大版本（156 → 159），已停更 M 天` |
-| ≥4 个大版本 **或** ≥180 天，且 `${ACTION}` 是 archive | 强提示（`CEF_STRICT=1` 时 `exit 1`） |
+| ≥2 个大版本 **或** ≥90 天 | `warning: CEF 落后 N 个大版本（156 → 159）[，已停更 M 天]`（两段都命中就都写） |
+| ≥4 个大版本 **或** ≥180 天 | 强提示（`--strict` 时 `exit 1`） |
 
 **两个附加检查（更值钱）**
 
@@ -568,7 +568,7 @@ PINNED_AT=$(cat "$SRCROOT/CEF_VERSION_AT")  # 2026-11-12
 
 ### 10.3 工程细节（已核实）
 
-- macOS target 的 `ENABLE_USER_SCRIPT_SANDBOXING = NO`（`project.pbxproj` 461/504 行），**脚本可联网**；iOS target 是 YES，但 iOS 已砍浏览器。
+- macOS target 的 `ENABLE_USER_SCRIPT_SANDBOXING = NO`（`project.pbxproj` 里 xHelperMac 的 Debug/Release 两处配置；行号会漂，按设置名找），**脚本可联网**；iOS target 是 YES，但 iOS 已砍浏览器。
 - 已有 `scripts/bundle-backend.sh` 这个 Run Script 先例，加一个 phase 同构。
 - 首次构建 framework 还不存在 → 静默跳过，不报红。
 - 网络失败 → 只用缓存，最多提示"无法检查更新（离线）"。

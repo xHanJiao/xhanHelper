@@ -110,8 +110,9 @@ make_helpers() {
   local missing=0
   for name in "${HELPER_NAMES[@]}"; do
     [ -f "$HELPERS_DIR/$name.app/Contents/Info.plist" ] || missing=1
-    # Helper 里的可执行文件是 stub 的拷贝，stub 重编过就得重造
-    [ "$HELPERS_DIR/$name.app/Contents/MacOS/$name" -nt "$STUB" ] || missing=1
+    # Helper 里的可执行文件是 stub 的拷贝，stub 重编过就得重造。
+    # 用 `! -ot` 而不是 `-nt`：同一秒内编完 stub 再 cp，mtime 相等时 `-nt` 为假 → 每次构建都重造一遍
+    [ "$HELPERS_DIR/$name.app/Contents/MacOS/$name" -ot "$STUB" ] && missing=1
   done
   # CEF 升级换了版本号时 plist 也要跟着变 → 用版本文件当戳
   [ -f "$HELPERS_DIR/.version" ] && [ "$(cat "$HELPERS_DIR/.version")" != "$version" ] && missing=1

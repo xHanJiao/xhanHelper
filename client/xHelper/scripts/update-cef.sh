@@ -25,6 +25,7 @@ INDEX_CACHE="${CEF_INDEX_CACHE:-$CACHE_ROOT/index.json}"
 log() { echo "[cef] $*"; }
 
 CURRENT="$(tr -d '[:space:]' < "$SRCROOT/CEF_VERSION")"
+CURRENT_AT="$(tr -d '[:space:]' < "$SRCROOT/CEF_VERSION_AT" 2>/dev/null || true)"
 ARG="${1:-}"
 
 # ── 版本解析：能自己补全就不联网（离线也能按写全的版本升级）
@@ -36,15 +37,17 @@ else
   else
     mkdir -p "$(dirname "$INDEX_CACHE")"
     log "拉 index.json"
-    curl -fsSL --retry 2 -m 20 -o "$INDEX_CACHE.part" "$INDEX_URL"
-    mv -f "$INDEX_CACHE.part" "$INDEX_CACHE"
+    curl -fsSL --retry 2 -m 20 -o "$INDEX_CACHE.part.$$" "$INDEX_URL"
+    mv -f "$INDEX_CACHE.part.$$" "$INDEX_CACHE"
   fi
   NEW="$(python3 - "$INDEX_CACHE" "$ARG" <<'PY'
 import json, sys
 path, want = sys.argv[1], sys.argv[2]
 vs = [v for v in json.load(open(path))["macosarm64"]["versions"] if v.get("channel") == "stable"]
 if want:
-    hit = [v for v in vs if v["cef_version"].startswith(want)]
+    hit = [v for v in vs if v["cef_version"] == want
+           or v["cef_version"].startswith(want + ".")
+           or v["cef_version"].startswith(want + "+")]
     if not hit:
         sys.exit("index 里没有匹配 %r 的 stable 版本（写全 x.y.z+gHASH+chromium-A.B.C.D 可跳过匹配）" % want)
     # 同前缀多命中取最新的
@@ -64,11 +67,29 @@ if [ "$NEW" = "$CURRENT" ]; then
 fi
 
 log "CEF_VERSION: $CURRENT → $NEW"
-printf '%s\n' "$NEW" > "$SRCROOT/CEF_VERSION"
-date +%Y-%m-%d > "$SRCROOT/CEF_VERSION_AT"
+
+# 降级要明说（多半是打错版本号或想回滚，别以为在升级）
+NEW_CHROMIUM="${NEW#*+chromium-}"
+CURRENT_CHROMIUM="${CURRENT#*+chromium-}"
+if python3 -c 'import sys
+a = [int(x) for x in sys.argv[1].split(".")]
+b = [int(x) for x in sys.argv[2].split(".")]
+sys.exit(0 if a < b else 1)' "$NEW_CHROMIUM" "$CURRENT_CHROMIUM" 2>/dev/null; then
+  log "注意：这是降级（${CURRENT_CHROMIUM} → ${NEW_CHROMIUM}）"
+fi
+
+# 先落版本文件（fetch-cef.sh 按它决定目录名），失败再回滚：留下"pin 新、缓存旧"的脏状态
+# 会让下一次构建莫名失败，而且没人知道是这次升级没跑完导致的
+printf '%s\n' "$NEW" > "$SRCROOT/CEF_VERSION.tmp" && mv -f "$SRCROOT/CEF_VERSION.tmp" "$SRCROOT/CEF_VERSION"
+date +%Y-%m-%d > "$SRCROOT/CEF_VERSION_AT.tmp" && mv -f "$SRCROOT/CEF_VERSION_AT.tmp" "$SRCROOT/CEF_VERSION_AT"
 
 # 下载 / 编 wrapper / 编 Helper / 造 5 个 Helper.app / 切 current 软链，全在这里
-"$SRCROOT/scripts/fetch-cef.sh"
+if ! "$SRCROOT/scripts/fetch-cef.sh"; then
+  printf '%s\n' "$CURRENT" > "$SRCROOT/CEF_VERSION"
+  [ -n "$CURRENT_AT" ] && printf '%s\n' "$CURRENT_AT" > "$SRCROOT/CEF_VERSION_AT"
+  echo "error: [cef] fetch-cef.sh 失败，版本文件已回滚到 ${CURRENT}（半截缓存重跑本脚本会续传）" >&2
+  exit 1
+fi
 
 log "产物就绪。接下来："
 log "  1) ⌘B 构建（Bundle CEF 会按版本号重装 framework + Helper）"

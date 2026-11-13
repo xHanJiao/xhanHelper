@@ -172,8 +172,11 @@ final class CefPage: NSObject, BrowserPage {
     private var currentTitle: String?
 
     var onLoadFinish: ((Bool) -> Void)?
-    /// `target=_blank` / `window.open` 的目标：CEF 的原生弹窗已拦掉，由宿主开新 tab
-    var onPopupRequested: ((URL) -> Void)?
+    /// `window.open` / `target=_blank` 的真弹窗（D20）：CEF 已经建好了 popup browser（保留
+    /// `window.opener`），交来的是它的宿主视图。宿主必须**同步**把这个视图装进新 tab。
+    var onPopupPageRequested: ((XHCefBrowserView, String) -> Void)?
+    /// 页面自己 `window.close()` 了：宿主把 tab 关掉（别留一张死页面）
+    var onPageClosedExternally: (() -> Void)?
     /// JS 对话框：kind 0=alert / 1=confirm / 2=prompt。reply **必须调一次**（否则页面一直等）。
     var onJSDialog: ((_ kind: Int, _ message: String, _ defaultText: String,
                      _ reply: @escaping (Bool, String?) -> Void) -> Void)?
@@ -193,6 +196,19 @@ final class CefPage: NSObject, BrowserPage {
         currentURL = url
         browserView = XHCefBrowserView(frame: .zero, urlString: url?.absoluteString ?? "about:blank")
         super.init()
+        wireCallbacks()
+    }
+
+    /// 弹窗页：浏览器由 CEF 自己创建（只有那样才有真 `window.opener`），这里只接管回调。
+    /// **不再调用 `load`**：CEF 建浏览器时已经按 `target_url` 开始加载了。
+    init(popupView: XHCefBrowserView, url: URL?) {
+        currentURL = url
+        browserView = popupView
+        super.init()
+        wireCallbacks()
+    }
+
+    private func wireCallbacks() {
         // 这些 block 由 ObjC 侧 RunOnMain 保证在主线程回调
         browserView.titleDidChange = { [weak self] title in
             MainActor.assumeIsolated {
@@ -212,11 +228,11 @@ final class CefPage: NSObject, BrowserPage {
         browserView.loadDidFinish = { [weak self] ok in
             MainActor.assumeIsolated { self?.onLoadFinish?(ok) }
         }
-        browserView.popupRequested = { [weak self] urlString in
-            MainActor.assumeIsolated {
-                guard let url = URL(string: urlString) else { return }
-                self?.onPopupRequested?(url)
-            }
+        browserView.popupPageRequested = { [weak self] popupView, urlString in
+            MainActor.assumeIsolated { self?.onPopupPageRequested?(popupView, urlString) }
+        }
+        browserView.pageClosedExternally = { [weak self] in
+            MainActor.assumeIsolated { self?.onPageClosedExternally?() }
         }
         browserView.findResultCount = { [weak self] count in
             MainActor.assumeIsolated { self?.onFindResult?(Int(count)) }

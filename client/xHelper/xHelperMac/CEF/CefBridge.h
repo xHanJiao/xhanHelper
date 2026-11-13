@@ -24,14 +24,22 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithFrame:(NSRect)frame URLString:(NSString *)urlString;
 
+/// 弹窗宿主（`window.open` / `target=_blank`）：浏览器由 CEF 在 `OnBeforePopup` 返回 false 后
+/// **自己创建**——只有这样弹窗页才有真的 `window.opener`（`window.open()` 不再返回 null）。
+/// 本视图只准备落脚视图和 client，等浏览器创建完再把 CEF 的渲染视图搬进来。
+- (instancetype)initAsPopupHostWithURLString:(NSString *)urlString;
+
 @property (nonatomic, copy, nullable) void (^titleDidChange)(NSString *title);
 @property (nonatomic, copy, nullable) void (^urlDidChange)(NSString *url);
 @property (nonatomic, copy, nullable) void (^loadDidFinish)(BOOL ok);
 /// 加载状态 / 前进后退可用性变化（任一变化时调一次，宿主据此刷新地址栏）
 @property (nonatomic, copy, nullable) void (^stateDidChange)(void);
-/// `target=_blank` / `window.open`：CEF 默认会自己开一个裸原生窗口（还会复用本视图的 client，
-/// 把地址栏串成弹窗的 URL）。这里一律拦下，交给 Swift 开成我们自己的 tab。
-@property (nonatomic, copy, nullable) void (^popupRequested)(NSString *url);
+/// `target=_blank` / `window.open` 的真弹窗：CEF 自己创建 popup browser（**保留 `window.opener`**），
+/// 回调交来还没绑定 browser 的宿主视图。宿主必须**立刻**（同步）把它装进一个新 tab ——
+/// 挪到下一拍的话，视图在创建期间没人持有，浏览器就成了孤儿。
+@property (nonatomic, copy, nullable) void (^popupPageRequested)(XHCefBrowserView *popupView, NSString *url);
+/// 页面自己关了窗口（`window.close()`）：宿主把这个 tab 关掉，否则留下的是一张不会再响应的死页面。
+@property (nonatomic, copy, nullable) void (^pageClosedExternally)(void);
 /// 页内 `console.log("XHPROBE:<json>")` 的内容（回归探针的回传通道：CEF 执行 JS 没有返回值）
 @property (nonatomic, copy, nullable) void (^probeReported)(NSString *payload);
 /// 页内查找命中数（CEF 的 Find 是异步的，结果从这里回；finalUpdate 时才回调）

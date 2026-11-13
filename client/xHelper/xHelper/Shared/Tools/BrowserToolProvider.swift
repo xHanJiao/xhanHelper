@@ -2367,13 +2367,36 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         refreshBrowserGroup()
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
-        rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
+        presentTab(tabId: tabId, session: session, title: url.host ?? "新标签页")
+        session.page.load(url)
+    }
+
+    /// 把 session 挂进右侧栏的 tab 条（openURL 与 CEF 弹窗共用）
+    private func presentTab(tabId: String, session: TabSession, title: String) {
+        rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
                               content: AnyView(BrowserTabView(page: session.page,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
                                                               })), engine: session.engine)
-        session.page.load(url)
     }
+
+    #if os(macOS)
+    /// `window.open` / `target=_blank` 的真弹窗（D20）：CEF 已经建好了 popup browser
+    /// （`window.opener` 是真的，`window.open()` 不再返回 null），这里只要把宿主视图装进新 tab。
+    /// 必须同步完成 —— 视图在 CEF 创建浏览器的窗口期里得有人持有。
+    private func adoptCefPopupPage(_ view: XHCefBrowserView, urlString: String) {
+        let tabId = "browser-\(tabCounter)"
+        tabCounter += 1
+        let page = CefPage(popupView: view, url: URL(string: urlString))
+        let session = TabSession(page: page)
+        tabs[tabId] = session
+        switchActiveTab(to: tabId)
+        refreshBrowserGroup()
+        bindSessionTitle(session: session, tabId: tabId)
+        bindSessionUI(session: session)
+        presentTab(tabId: tabId, session: session, title: page.url?.host ?? "新标签页")
+    }
+    #endif
 
     /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
     /// 用户主动操作：传 tab 自身 owner（self-close，绕过并发任务归属保护）。
@@ -3020,8 +3043,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// 新窗口（target=_blank / window.open）：外部传入 configuration（保留 opener 关系）。
         /// 引擎跟 opener 一致（D17）——跨引擎会断 window.opener + cookie 域，登录弹窗必挂。
-        init(engine: BrowserEngine, configuration: WKWebViewConfiguration) {
-            let page = TabSession.makePage(engine: engine, configuration: configuration)
+        convenience init(engine: BrowserEngine, configuration: WKWebViewConfiguration) {
+            self.init(page: TabSession.makePage(engine: engine, configuration: configuration))
+        }
+
+        /// 页面已经是现成的（CEF 弹窗：browser 由 CEF 创建，`CefPage` 只是后包一层）。
+        init(page: BrowserPage) {
             self.page = page
             // 以实际造出来的页面为准：CEF 起不来会降级成 WKPage，engine 不能继续报 cef
             self.engine = page.engine
@@ -3200,15 +3227,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         self.onNavigationError?("加载失败")
                     }
                 }
-                // target=_blank / window.open：CEF 原生弹窗已在桥里拦掉，这里开成我们自己的 tab。
-                // 引擎跟 opener（D17）；CEF 没有 opener 关系（新 tab 是兄弟上下文），
-                // 依赖 window.opener.postMessage 的登录弹窗会退化成"新标签页里登录"。
+                // window.open / target=_blank：CEF 自己建的 popup browser（保留 window.opener，D20），
+                // 这里把它的宿主视图装成新 tab；页面自己 window.close() 时收掉 tab。
                 #if os(macOS)
                 if let cefPage = page as? CefPage {
-                    let openerEngine = page.engine
-                    cefPage.onPopupRequested = { url in
-                        LogBuffer.shared.diag("[Browser] cef popup → new tab: \(url.absoluteString.prefix(160))")
-                        BrowserToolProvider.shared.openURL(url, openerEngine: openerEngine)
+                    cefPage.onPopupPageRequested = { popupView, urlString in
+                        LogBuffer.shared.diag("[Browser] cef popup → popup tab: \(urlString.prefix(160))")
+                        BrowserToolProvider.shared.adoptCefPopupPage(popupView, urlString: urlString)
+                    }
+                    cefPage.onPageClosedExternally = { [weak cefPage] in
+                        guard let cefPage else { return }
+                        let provider = BrowserToolProvider.shared
+                        guard let tabId = provider.tabs.first(where: { $0.value.page === cefPage })?.key else { return }
+                        LogBuffer.shared.diag("[Browser] cef page closed itself → close tab \(tabId)")
+                        provider.closeTab(tabId)
                     }
                     // JS 对话框复用 WK 那套 sheet（非阻塞）；reply 必须调一次，否则页面一直等
                     cefPage.onJSDialog = { [weak self] kind, message, defaultText, reply in

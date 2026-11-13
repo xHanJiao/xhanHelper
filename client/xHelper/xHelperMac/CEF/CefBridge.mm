@@ -161,6 +161,10 @@ class XHCefApp : public CefApp {
 
 @interface XHCefBrowserView () <NSMenuDelegate>
 - (void)cefBrowserCreated:(CefRefPtr<CefBrowser>)browser;
+/// 弹窗：CEF 建 popup browser 时用的父视图（先停在隐藏窗口，created 后把渲染视图搬进本视图）
+- (NSView *)cefPopupParentView;
+/// 弹窗：本视图的 client（要在 `OnBeforePopup` 里交给 CEF，早于浏览器创建）
+- (CefRefPtr<CefClient>)cefPopupClient;
 /// 下载进行中：留下 CefDownloadItemCallback 的取消句柄（CEF 不允许把 item 留存到回调之外）
 - (void)cefDownloadRegister:(int64_t)downloadId callback:(CefRefPtr<CefDownloadItemCallback>)callback;
 - (void)cefDownloadDrop:(int64_t)downloadId;
@@ -427,7 +431,7 @@ class XHCefClient : public CefClient,
     });
   }
 
-  // target=_blank / window.open：拒绝 CEF 自己的原生窗口（见 CefBridge.h 的注释）
+  // target=_blank / window.open（见 CefBridge.h 的 popupPageRequested）
   bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
                      CefRefPtr<CefFrame> frame,
                      int popup_id,
@@ -441,17 +445,33 @@ class XHCefClient : public CefClient,
                      CefBrowserSettings &settings,
                      CefRefPtr<CefDictionaryValue> &extra_info,
                      bool *no_javascript_access) override {
-    // 无 URL 的 window.open（先开窗再 document.write）没法用 tab 承接，直接拒绝并留痕
-    if (target_url.empty()) {
-      NSLog(@"[cef] popup without url (frame=%@) dropped", CefStringToNSString(target_frame_name));
+    // target=_blank / window.open：**让 CEF 自己创建 popup browser**，只把创建的容器换掉。
+    // 只有 Chromium 自己建的浏览器才带 `window.opener` / `window.name` / 同源 opener 关系；
+    // 我们另开一个 tab 去 LoadURL 只能得到"兄弟页"，扫码登录 / `opener.postMessage` 必挂（D20）。
+    XHCefBrowserView *view = view_;
+    if (!view) return true;
+    NSString *url = CefStringToNSString(target_url);
+    __block XHCefBrowserView *popupView = nil;
+    RunOnMain(^{
+      // 没接弹窗回调（裸窗口 / --cef-smoke）：还是拦掉，别开一个没人管的原生窗
+      if (!view.popupPageRequested) return;
+      popupView = [[XHCefBrowserView alloc] initAsPopupHostWithURLString:url];
+      // 宿主同步开 tab：视图从这一刻起有人持有
+      view.popupPageRequested(popupView, url);
+    });
+    if (!popupView) {
+      NSLog(@"[cef] popup dropped (url=%@, no host)", url);
       return true;
     }
-    NSString *url = CefStringToNSString(target_url);
-    XHCefBrowserView *view = view_;
-    RunOnMain(^{
-      if (view.popupRequested) view.popupRequested(url);
-    });
-    return true;
+
+    // 浏览器由 CEF 创建，渲染视图先落在隐藏窗口（弹窗 tab 刚建出来，视图还没进窗口），
+    // OnAfterCreated 里再搬进 popupView —— 也就是 cefclient 的 ShowPopup 那套做法。
+    client = [popupView cefPopupClient];
+    windowInfo.SetAsChild((CefWindowHandle)(__bridge void *)[popupView cefPopupParentView],
+                          CefRect(0, 0, 1, 1));
+    windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+    settings.background_color = 0xFFFFFFFF;   // 与普通 tab 一致：首帧前白底，别黑闪
+    return false;
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
@@ -720,6 +740,8 @@ static NSWindow *XHCefParkingWindow(void) {
   /// JS 求值：request id → 待回包（回包/超时/关页三条路径都要把它取走，只走一次）
   int32_t _evalRequestCounter;
   NSMutableDictionary<NSNumber *, id> *_evalCompletions;
+  /// 弹窗宿主：CEF 建 popup browser 时给的父视图（停在隐藏窗口，created 后把渲染视图搬进自己）
+  NSView *_popupHostView;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URLString:(NSString *)urlString {
@@ -729,6 +751,38 @@ static NSWindow *XHCefParkingWindow(void) {
     _evalCompletions = [NSMutableDictionary dictionary];
   }
   return self;
+}
+
+/// 弹窗宿主：浏览器由 CEF 创建（见 `OnBeforePopup`），本视图只提供 client 和落脚视图。
+- (instancetype)initAsPopupHostWithURLString:(NSString *)urlString {
+  self = [self initWithFrame:NSZeroRect URLString:urlString];
+  if (self) {
+    // 浏览器由 CEF 建，viewDidMoveToWindow 里绝不能再建一个
+    _browserRequested = YES;
+    _popupHostView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
+    [XHCefParkingWindow().contentView addSubview:_popupHostView];
+    _client = new XHCefClient(self);
+
+    // 兜底：CEF 建浏览器失败不会通知我们（OnBeforePopupAborted 落在 opener 的 client 上），
+    // 12s 还没拿到 browser 就当这个 tab 废了 —— 别留一张永远空白的页。
+    __weak XHCefBrowserView *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     XHCefBrowserView *strongSelf = weakSelf;
+                     if (!strongSelf || strongSelf->_browser || strongSelf->_closeRequested) return;
+                     NSLog(@"[cef] popup browser 12s 未创建，关掉这个 tab");
+                     if (strongSelf.pageClosedExternally) strongSelf.pageClosedExternally();
+                   });
+  }
+  return self;
+}
+
+- (NSView *)cefPopupParentView {
+  return _popupHostView;
+}
+
+- (CefRefPtr<CefClient>)cefPopupClient {
+  return _client;
 }
 
 - (BOOL)isFlipped {
@@ -963,6 +1017,16 @@ static NSWindow *XHCefParkingWindow(void) {
     });
     return;
   }
+  // 弹窗：CEF 先把渲染视图挂在停车位里，这里搬到自己的视图树（cefclient 的 ShowPopup 同款）
+  if (_popupHostView) {
+    NSArray<NSView *> *renderViews = _popupHostView.subviews.copy;
+    for (NSView *subview in renderViews) {
+      [subview removeFromSuperview];
+      [self addSubview:subview];
+    }
+    [_popupHostView removeFromSuperview];
+    _popupHostView = nil;
+  }
   [self syncBrowserFrame];
   if (_pendingURL) {
     browser->GetMainFrame()->LoadURL(_pendingURL.UTF8String);
@@ -980,9 +1044,16 @@ static NSWindow *XHCefParkingWindow(void) {
   for (id block in pending) {
     ((void (^)(id, NSString *))block)(nil, @"页面已关闭");
   }
+  // 不是我们主动关的 → 页面自己 window.close() 了（弹窗登录完自动关自己的那种）：
+  // 通知宿主收掉 tab，否则留下的是一张不会再响应的死页面。
+  if (!_closeRequested && self.pageClosedExternally) {
+    void (^notify)(void) = self.pageClosedExternally;
+    dispatch_async(dispatch_get_main_queue(), notify);   // 别在 OnBeforeClose 栈里关 tab
+  }
 }
 
 - (void)dealloc {
+  [_popupHostView removeFromSuperview];   // 弹窗浏览器没建起来就走了：别在停车位里留个空视图
   [self closeBrowser];
 }
 

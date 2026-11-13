@@ -235,6 +235,7 @@ P1 只在**开发环境**看，不动主线（D4）。**默认引擎 = CEF**（D
 | D17 | popup / `window.open` | **引擎跟 opener 一致**（保 `window.opener` 与 cookie 域），不做 `noopener` 特例 | P2，见 9.2.2 |
 | D18 | 兼容 tab 的 agent 能力 | **只读开放**（snapshot / 读文 / 截图 / PDF）、**写操作禁止**，报结构化 `engine_unsupported` | P3 |
 | D19 | agent 打开页面 | 默认走判定，但 `open_url` 加 `engine` 覆盖参数（要读 bilibili 页面时可强制 CEF） | P3 |
+| D20 | CEF 的 `window.open` / `target=_blank` | **让 CEF 自己建 popup browser，再把它嵌进我们的 tab**（真 `window.opener`）；页面 `window.close()` 时自动收掉 tab | P2，见 9.2.14 |
 
 ### D1 细则：升级到底要做什么
 
@@ -428,16 +429,16 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - ~~agent 标签在 B2 里固定走兼容引擎~~ **B7 已改回 `resolveEngine`**（agent 标签与用户标签同一套判定 + `engine` 参数，D19）：JS 求值通道接通后快照/读正文/点击都不再依赖 WKWebView。
 - CEF 起不来（缺 framework / `CefInitialize` 失败）→ `TabSession.makePage` 就地降级 WK + Toast「主引擎未启动，已切兼容模式」，`engine` 以实际造出来的页面为准（不谎报 cef）。
 - 新标签页在 CEF 侧走 `data:text/html;base64,...`（CEF 没有 `loadHTMLString`）；地址栏对 `about/data/file` 一律显示空。
-- **`target=_blank` / `window.open`（从 B4 提前拉了一小块）**：不处理时 CEF 会自己开一个裸原生窗口，而且**复用 opener 的 client** → 弹窗的地址/标题会串到侧栏 tab 上（实测：页面还是百度首页、地址栏却是百度地图）。所以在 `CefLifeSpanHandler::OnBeforePopup` 一律拦掉，交给 Swift 用 `openURL` 开成我们自己的 tab。B4 已定：引擎跟 opener（D17）；**opener 关系不保留**（兄弟 tab，`window.open()` 返回 null）— 已拍板先接受、B9 一起解决；无 URL 的 `window.open`（先开窗再 document.write）仍丢弃并留痕（`[cef] popup without url`）；windowFeatures/尺寸不适用（我们不开原生窗）。
+- **`target=_blank` / `window.open`**：B4 时是"拦掉 → 用 `openURL` 开兄弟 tab"（`window.open()` 返回 null，opener 关系丢失）；**B9b 已改成真弹窗**（见 9.2.14）：CEF 自己建 popup browser，只把它的渲染视图嵌进我们的 tab。
 
 #### 9.2.9 B4 实现口径（多 tab 面）
 
-- **D17 落地**：CEF 的 popup（`CefLifeSpanHandler::OnBeforePopup` → `CefPage.onPopupRequested`）和 WK 的 `noopener` 跳转，一律 `openURL(url, openerEngine:)` 带上 opener 的引擎；收藏 / 历史 / 地址栏 / 右键搜索不带（按 URL 现算，它们不是"从某页弹出来的"）。
-- **已知限制（2026-11-12 已拍板：先接受，B9 一起解决）**：CEF 的弹窗被拦掉后开的是**兄弟 tab**，页面拿不到 `window.opener`（`window.open()` 返回 null）。依赖 `opener.postMessage` 的扫码登录 / 支付回调会退化成"在新标签页里登录"。WK 侧不受影响（`createWebViewWith` 从父 configuration 派生，opener 关系保留）。要恢复 CEF 的 opener 得让 CEF 自己建 popup browser 再嵌进我们的 tab —— 复杂度和 B9「多 tab 协作」重叠，到那时一起定。
+- **D17 落地**：WK 的 popup / `noopener` 跳转仍走 `openURL(url, openerEngine:)` 带上 opener 的引擎；CEF 侧 B9b 起由 CEF 自己建 popup browser（引擎天然跟 opener）；收藏 / 历史 / 地址栏 / 右键搜索不带（按 URL 现算，它们不是"从某页弹出来的"）。
+- **~~已知限制：CEF 弹窗没有 `window.opener`~~** 2026-11-13 已解决（B9b，见 9.2.14）：CEF 弹窗现在是真 popup browser，`window.open()` 返回可用的 WindowProxy，`postMessage` / `popup.close()` / `window.opener.location` 都能用。
 - **强制回收**：关 tab → `CloseBrowser(force_close)`；另补两处兜底，否则会留 renderer：① 视图已释放时 `OnAfterCreated` 里直接关（tab 开出来就被配额回收）；② `CreateBrowser` 的异步窗口期内被关（`_closeRequested`），created 后立刻关。
 - **标签恢复**：`closedStack` 只存 URL，开的时候现算引擎（§9.2.2）；目前没有跨启动的会话恢复。
 - **后台 tab（B7 前置）**：CEF 的 browser 在**视图进窗口时**才创建（`viewDidMoveToWindow`），而侧栏只挂激活 tab → 后台开的 tab 不会加载。现在没有"CEF 后台 tab"的用户路径（agent 标签 B2 起固定 compat），**B7 把 agent 标签接 CEF 之前必须先解决**（二选一：视图一创建就建 browser；或后台 tab 保留挂载）。
-- 无 URL 的 `window.open`（先开窗再 `document.write`）仍然丢弃，Console 留 `[cef] popup without url`。
+- ~~无 URL 的 `window.open`（先开窗再 `document.write`）仍然丢弃~~ B9b 起也能承接了（CEF 建的 popup browser 本身就是 about:blank，页面随后自己写内容）。
 
 #### 9.2.10 B5 实现口径（兼容 tab + 跨引擎）
 
@@ -490,6 +491,22 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **回报通道**：页内 `console.error("XHMEDIA:<reason>")` → 浏览器进程 `CefDisplayHandler::OnConsoleMessage` 抓前缀（与回归探针的 `XHPROBE:` 同一条通道，不新增协议）→ `CefPage.mediaIssueReason` → `stateObservers.fire()`。
 - **UI**：`BrowserTabView` 复用白名单那条提示条（`engineNoticeBar`），文案按原因区分（缺 H.264 / 编码不支持），动作仍是「用兼容模式打开」并写偏好表；频率闸复用 `EngineHintGate`（同 host 24h 2 次），同一 tab/view 只弹一次。
 - **自检**：探针 JS 抽出来用 node 跑桩对象 7/7（无 H.264 × loadstart / error4、有 H.264 × error4（编码不支持）、普通 error 不报、img 的 error 不报、audio 也覆盖）。
+
+#### 9.2.14 B9b 实现口径（`window.opener` 真弹窗）
+
+B4 把 `window.open` / `target=_blank` 拦成**兄弟 tab**，代价是弹窗页拿不到 `window.opener`：`window.open()` 返回 `null`、`opener.postMessage` 不存在、弹窗里的 `window.close()` 被浏览器拒绝（"Scripts may close only the windows that were opened by them"）。扫码登录、OAuth 回调、"登录完自动关窗"这类流程全都要靠它，所以这里改成**让 Chromium 自己建 popup browser**——只有它自己建的 WebContents 才带 opener 关系（CEF 没有"给已有浏览器设 opener"的 API）。
+
+- **`OnBeforePopup`（`CefLifeSpanHandler`）**：不再一律 `return true`（拦掉）。
+  1. 先造一个"弹窗宿主视图" `XHCefBrowserView initAsPopupHostWithURLString:`（浏览器不由它建，它只提供 client + 落脚视图）；
+  2. 回调 `popupPageRequested(popupView, url)` 给宿主 → Swift **同步**开 tab（视图从这一刻起有人持有）；
+  3. `client = popupView` 的 client、`windowInfo.SetAsChild(<隐藏窗口里的宿主视图>, 1×1)`、`return false`。
+- **落脚 + 搬家**：CEF 建浏览器要求父视图已经在某个窗口里，而弹窗 tab 这时刚建出来、视图还没进窗口 → 先挂在常驻的隐藏窗口（`XHCefParkingWindow`，B7 后台标签用的同一个）；`OnAfterCreated` 里把 CEF 的渲染子视图 `removeFromSuperview` + 加到自己身上（就是 cefclient `BrowserWindowStdMac::ShowPopup` 的做法）。
+- **必须给独立 client**：`OnBeforePopup` 不给 `client` 时 CEF 会复用 opener 的 client → 弹窗的 URL / 标题 / `OnBeforeClose` 全串到 opener 的 tab 上（B4 实测过"地址栏变百度地图、页面还是百度首页"，更糟的是会把 opener tab 关掉）。
+- **页面自己关窗**：`window.close()` → CEF 关浏览器 → 不是我们主动关的（`_closeRequested == NO`）→ 回调 `pageClosedExternally` → 宿主关掉这个 tab（否则留一张不会再响应的死页面）。通知走 `dispatch_async`，不在 `OnBeforeClose` 栈里关 tab。
+- **兜底**：CEF 建浏览器失败只回调 opener 的 `OnBeforePopupAborted`（拿不到弹窗视图），所以弹窗宿主自己挂 12s 定时器：还没 `OnAfterCreated` 就按"这个 tab 废了"关掉——不留永远空白的页。
+- **没接线的宿主**（`--cef-smoke` 那种裸窗口）仍按老口径拦掉，Console 留 `[cef] popup dropped (url=…, no host)`。
+- **引擎**：弹窗天然是主引擎（要真 opener 只能让 Chromium 建浏览器）。WK opener 的弹窗走原路径（父 configuration 派生），两边都保持 D17。
+- **未处理**：`windowFeatures` 里的尺寸/位置仍不适用（弹窗是我们的 tab，不是原生窗口）；`noopener` / `rel=noopener` 由 Chromium 自己处理。
 
 ## 十、CEF 版本运维
 
@@ -643,6 +660,9 @@ main                       ← 继续每天发版（WK，现状不变）
 | **`process_requirement.cc` 报错**（只在命令行真空壳里出现过；真机没复现，疑与上一条同源） | 自建 `.app` 里 CEF 初始化、Helper 起、browser 创建都正常（`--no-sandbox` 确实传给了子进程），但重跑时出现 `Unable to derive validation category for current process` + `ProcessIsSignedAndFulfillsRequirement`，renderer 活着、导航不提交。同环境下官方 `cefclient.app` 正常 | 真机构建第一件事就复验这条。若复现：优先试 ① Helper 里补 `CefScopedSandboxContext`（改用 CEF sandbox，去掉 `no_sandbox`）② 换 `cache_path`/`root_cache_path` 到非临时目录 ③ 对照 `cefclient.app` 的 Info.plist 逐项对齐 |
 | **CEF 156 删了一批老 API**（B3 实测） | `CefRegisterExtension`（`CEF_API_REMOVED(15400)`）、`CefRequestHandler::OnBeforeResourceLoad` 都已不在头文件里，照旧教程写会编译失败 | 注入走渲染进程 `OnContextCreated`；改请求头走 `GetResourceRequestHandler` → `CefResourceRequestHandler::OnBeforeResourceLoad` |
 | **渲染进程钩子要有 CefApp**（B3） | `CefExecuteProcess(main_args, nullptr, nullptr)` 时 `OnContextCreated` 永远不触发（症状：页面正常、伪装全无） | `helper_main.mm` 里传 `CefRefPtr<CefApp>`（带 `GetRenderProcessHandler`）；只改浏览器进程的 `XHCefApp` 没用 |
+| **popup 不给独立 client 会串台**（B4 实测 / B9b 定案） | `OnBeforePopup` 里不设 `client` → CEF 复用 opener 的 client：弹窗的 URL / 标题 / `OnBeforeClose` 全打到 opener 的视图上（地址栏变弹窗的 URL；弹窗关掉会把 opener tab 一起关） | 每个 popup 单独 `new XHCefClient(popupView)` 交回去；这是 cefclient `DefaultClientHandler` 注释里明写的要求 |
+| **popup 的父视图必须已经在窗口里**（B9b） | `OnBeforePopup` 返回 false 时 CEF 立刻需要一个能落渲染视图的 NSView；弹窗 tab 此刻刚建出来、视图还没 `viewDidMoveToWindow` → 不给父视图会建失败（或被 CEF 建成裸原生窗） | 先 `SetAsChild` 到隐藏窗口里的落脚视图，`OnAfterCreated` 再把渲染子视图搬进真视图（cefclient `ShowPopup` 同款）。反过来：**先让 Swift 同步开 tab 再返回 false**，否则视图没人持有 |
+
 
 ### 13.2 资源预算（8GB 内存 / ~47GB 空闲）
 
@@ -718,5 +738,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」+「检查元素」→ DevTools）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
 | B7 | 2026-11-12 | 待提交 | 待真机构建 + agent 实操（对 CEF 标签跑 snapshot / read / click / fill）。交付：CEF JS 求值通道（`xh_eval` / `xh_eval_result`，10s 超时 + 关页失败）、`BrowserPage.evaluateJS` 统一 WK/CEF、agent 标签改回 `resolveEngine` + `open` 的 `engine` 参数（D19）；口径见 §9.2.12 |
 | B9a | 2026-11-13 | 待提交 | 待真机构建 + 人眼（非白名单站的视频：微博/Twitter 等应弹提示条）。交付：媒体检测第 2/3 层（`MediaProbeJavaScript` document-start 探针 + `XHMEDIA:` 回报 + 提示条复用）；口径见 §9.2.13。自检：探针 JS 7/7 |
+| B9b | 2026-11-13 | 待提交 | 待真机构建 + 人眼（`window.open` 弹窗里 `window.opener` 非 null、`opener.postMessage` 能到、`window.close()` 能关掉 tab）。交付：CEF 真 popup browser 嵌进 tab（D20 / §9.2.14）；页面自关窗收 tab；12s 兜底。自检：clang++ / swiftc typecheck |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

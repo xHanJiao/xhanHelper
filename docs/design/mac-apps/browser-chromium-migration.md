@@ -777,7 +777,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | B7+ | 2026-11-13 | `bb0dba72` + `d2cd09b7` | 待真机构建（CEF：切 tab 回来滚动位置还在、B站/WK 后台继续播、需登录的媒体下载不再 403）。交付：删 `cg_click` / `cg_drag`（含 `CGEventInput` 的鼠标注入，只留键盘）；滚动位置保存/恢复、后台媒体保活探测、`download` 的 Cookie 三处两引擎打通；设置页「浏览器内核」开关转正（不再 dev-only）；D18 修订为「兼容 tab 读写都开放」。自检：clang++ / swiftc typecheck / `swift test` 436 条 |
 | B9b | 2026-11-13 | `80960128` + `551d7fae` | 待真机构建 + 人眼（`window.open` 弹窗里 `window.opener` 非 null、`opener.postMessage` 能到、`window.close()` 能关掉 tab）。交付：CEF 真 popup browser 嵌进 tab（D20 / §9.2.14）；页面自关窗收 tab；12s 兜底。review MINOR（P1×1 / P2×6 / P3×5，除「CEF 下载取 Cookie」外已修，见 `docs/code-review/browser-chromium-migration/2026-11-13.md`） |
 
-| B10 | 2026-11-13 | 待提交 | 脚本侧完成：`check-cef-version.sh`（A/B 两档 + framework/pin 一致性 + 回归戳）、pbxproj 新增「Check CEF」phase（排 Bundle CEF 之后）、`cef-regression.sh` 通过后写戳、`update-cef.sh`（解析版本 → 回写版本文件 → `fetch-cef.sh`）；体积/安装核对见 §10.5（435 MB / 5 Helper / codesign 通过）。**未做**：第十二章逐条真机验收（等一次 ⌘B）、`pre-cef` tag、并 main |
+| B10 | 2026-11-13 | `53c9119b` + `80ba2db8` | 脚本侧完成：`check-cef-version.sh`（A/B 两档 + framework/pin 一致性 + 回归戳）、pbxproj 新增「Check CEF」phase（排 Bundle CEF 之后）、`cef-regression.sh` 通过后写戳、`update-cef.sh`（解析版本 → 回写版本文件 → `fetch-cef.sh`）；体积/安装核对见 §10.5（435 MB / 5 Helper / codesign 通过）。评审 P0×1 / P1×4 / P2×4 / P3×5 批次内全修（见 `docs/code-review/browser-chromium-migration/2026-11-13-b10.md`）。**未做**：第十二章逐条真机验收（等一次 ⌘B）、`pre-cef` tag、并 main |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。
 

@@ -52,6 +52,10 @@ protocol BrowserPage: AnyObject {
     func stopFinding(clearSelection: Bool)
     var onFindResult: ((Int) -> Void)? { get set }
 
+    /// 与该 URL 相关的 cookie（已按 RFC 6265 域匹配 + secure 过滤）。
+    /// 下载 / 原生请求靠它带登录态：WK 走 `HTTPCookieStore`，CEF 走 `CefCookieManager`（两套库互不相通）。
+    func cookies(for url: URL) async -> [HTTPCookie]
+
     /// 执行 JS 并取结果（agent 工具的快照/读正文/点击都靠它）。
     /// 返回 JSON 可序列化的对象；`undefined`/`null` 给 `NSNull`。CEF 侧经渲染进程回包。
     func evaluateJS(_ script: String) async throws -> Any
@@ -59,6 +63,21 @@ protocol BrowserPage: AnyObject {
     /// 本页视频"播不了"的迹象（`no-h264` / `media-src-unsupported`），nil = 正常。
     /// 只有主引擎（CEF）会报：标准构建不含 H.264，非白名单站点会静默黑屏。
     var mediaIssueReason: String? { get }
+}
+
+/// cookie 的 RFC 6265 域匹配：只发匹配目标域名的 cookie，杜绝跨站泄露。
+/// 两个引擎共用（WK 的 store 给全量、CEF 的 manager 已按 URL 过滤，这里统一再收敛一次）。
+enum BrowserCookieMatching {
+    static func matching(_ cookies: [HTTPCookie], for url: URL) -> [HTTPCookie] {
+        guard let host = url.host?.lowercased() else { return [] }
+        let isHTTPS = url.scheme == "https"
+        return cookies.filter { c in
+            if c.isSecure && !isHTTPS { return false }
+            let d = c.domain.lowercased()
+            let domain = d.hasPrefix(".") ? String(d.dropFirst()) : d
+            return host == domain || host.hasSuffix("." + domain)
+        }
+    }
 }
 
 /// 页面状态的一对多广播（面板要刷新地址栏，TabSession 要更新标题/host，两边都得收）。
@@ -151,6 +170,11 @@ final class WKPage: NSObject, BrowserPage {
 
     func evaluateJS(_ script: String) async throws -> Any {
         try await webView.evaluateJavaScript(script)
+    }
+
+    func cookies(for url: URL) async -> [HTTPCookie] {
+        let all = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        return BrowserCookieMatching.matching(all, for: url)
     }
 
     /// 兼容引擎自带完整解码器，不存在"静默播不了"
@@ -320,6 +344,29 @@ final class CefPage: NSObject, BrowserPage {
                 }
             }
         }
+    }
+
+    /// CEF 的 cookie 在自己的库里（`CefCookieManager`），WK 的 `HTTPCookieStore` 取不到。
+    func cookies(for url: URL) async -> [HTTPCookie] {
+        let raw = await withCheckedContinuation { (cont: CheckedContinuation<[[String: Any]], Never>) in
+            browserView.cookies(forURLString: url.absoluteString) { dicts in
+                cont.resume(returning: dicts)
+            }
+        }
+        let cookies: [HTTPCookie] = raw.compactMap { item in
+            var props: [HTTPCookiePropertyKey: Any] = [
+                .name: item["name"] as? String ?? "",
+                .value: item["value"] as? String ?? "",
+            ]
+            guard let name = props[.name] as? String, !name.isEmpty else { return nil }
+            if let domain = item["domain"] as? String, !domain.isEmpty { props[.domain] = domain }
+            // CEF 偶尔给空 path；HTTPCookie 不接受空 path（会返回 nil）
+            let path = item["path"] as? String
+            props[.path] = (path?.isEmpty == false) ? path! : "/"
+            if (item["secure"] as? Bool) == true { props[.secure] = "TRUE" }
+            return HTTPCookie(properties: props)
+        }
+        return BrowserCookieMatching.matching(cookies, for: url)
     }
 }
 

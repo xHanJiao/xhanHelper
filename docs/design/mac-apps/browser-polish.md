@@ -11,7 +11,7 @@
 - 共享持久化 `WKWebsiteDataStore`（cookie/localStorage 跨 tab 共享，同真实浏览器）。
 - 协议白名单：仅 http/https/about，其余 `.cancel`（防 file:// 等绕过）。
 - JS 弹窗 → NSAlert；window.open/target=_blank → 新 tab。
-- agent 工具链：open/close/switch/read/snapshot/get_text/get_value/click/click_text/cgclick/drag/fill/type/press/select/check/uncheck/scroll/wait_for_* /get_media_sources/download（L3 确认 + 媒体白名单）。
+- agent 工具链：open/close/switch/read/snapshot/get_text/get_value/click/click_text/fill/type/press/select/check/uncheck/scroll/wait_for_* /get_media_sources/download（L3 确认 + 媒体白名单）。
 - 浏览器 UI：地址栏（后退/前进/刷新）+ tab 条 + PiP 按钮。
 
 ## 二、安全审查（风险优先级排序）

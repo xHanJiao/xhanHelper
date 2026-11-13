@@ -137,3 +137,7 @@ viewport 空间感知（阶段 2 的可见性模型）为桌面宠物提供"屏�
 
 - **阶段 1**：`BrowserToolProvider.swift`（a11y 注册表、collectEls/locateElJS、交互迁移、snapshotItem/snapshotText 按 handle、blank guard、handleGetValue dictErr）、`BrowserActivityCenter.swift`（confirmationBody）、`ChatViewModel.swift`（接 confirmationBody）、`BrowserAgentBar.swift`（完成态浅绿 + lineLimit(3)）、`ChatView.swift`（lineLimit(3)）。
 - **阶段 2**：`BrowserToolProvider.swift`（collectSnapshotJS scope/offset/limit/filter/hidden_below/pagination、handleSnapshot 重写、scrollIntoView、snapshot 工具描述）。
+
+## 后续变更
+
+- **2026-11-13**：`cg_click` / `cg_drag` 已删除（用户从未使用；CEF 引擎上本来也不可用），本文里「跨域 iframe 用 cgclick 兜底」的口径作废 —— 跨域 iframe 现在是**明确的缺口**（访问 `contentDocument` 抛错就跳过）。影响 `Shared/Tools/BrowserToolProvider.swift`。

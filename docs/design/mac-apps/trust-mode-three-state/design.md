@@ -76,3 +76,7 @@ browser 的 `download / cgclick / drag` 是 review 后从 L3 提到 L4 的（写
 `calendar__create_event` / `update_event` / `delete_event` 登记为 **L4（红色必弹）**：会写进用户日历并同步到手机，删改也难以回滚。
 `calendar__list_events` / `search_events` 属只读，走默认 L2 免确认。见 `../calendar-native/design.md`。
 
+### 2026-11-13 · `cgclick` / `drag` 删除
+
+两个工具已删除（用户从未使用；CEF 引擎上本来也不可用），L4 表里只剩 browser 的 `download`。
+`Shared/Tools/CGEventInput.swift` 只保留键盘注入（`press`）。见 `../browser-chromium-migration.md` §15。

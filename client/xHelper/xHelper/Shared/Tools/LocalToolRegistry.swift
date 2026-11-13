@@ -67,8 +67,6 @@ final class LocalToolRegistry {
         "browser__agent_browser_get_title": "读取标题",
         "browser__agent_browser_click": "点击页面元素",
         "browser__agent_browser_click_text": "点击文本",
-        "browser__agent_browser_cgclick": "真实点击",
-        "browser__agent_browser_drag": "拖拽元素",
         "browser__agent_browser_fill": "填写表单",
         "browser__agent_browser_type": "输入文本",
         "browser__agent_browser_press": "按键",

@@ -167,7 +167,7 @@ P1 只在**开发环境**看，不动主线（D4）。**默认引擎 = CEF**（D
 - `BrowserEngineRouter`（判定函数 + 提示规则 + 域名偏好表，D15~D17）
 - `RightSidebarTab` 加不可变的 `engine` 字段；3 个视频域名 + 3 个短链域名默认开兼容 tab
 - 三层视频检测（白名单 / `document-start` 探针 / media error）+ 地址栏常驻「兼容模式」图标
-- `list_tabs` 标 `engine: compat, 只读`，写操作报 `engine_unsupported`（D18）
+- `list_tabs` 标 `engine`（`cef` / `compat`）；兼容 tab **读写都开放**（D18 2026-11-13 修订）
 - 兼容 tab 的其余能力按现有 WK 实现照搬（收藏/历史/下载/查找/全屏/嗅探）
 
 规则与全量 case 见 9.1 / 9.2。
@@ -180,7 +180,7 @@ P1 只在**开发环境**看，不动主线（D4）。**默认引擎 = CEF**（D
 
 26 个工具逐个迁移到 CDP（`Input.*` / `Accessibility.*` / `Network.*` / `Page.*`），工具名/参数/返回预算不变；手递手与工作区归属回归。
 
-- 兼容 tab 只读开放、写操作禁（D18）；`open_url` 加 `engine` 覆盖（D19）。
+- 兼容 tab 读写都开放（D18 修订）；`open_url` 加 `engine` 覆盖（D19）。
 - **`snapshot` 类工具的输出形态会变**：`Accessibility.getFullAXTree` 的节点结构和现在的 DOM 快照不同，提示词与返回预算要重调——P3 不是纯搬家，这块单独留时间。
 - **后台自动化只走 CDP**，`CGEventInput`（拟人化输入）只在面板可见且聚焦时启用——否则会打进用户当前前台窗口。
 
@@ -233,7 +233,7 @@ P1 只在**开发环境**看，不动主线（D4）。**默认引擎 = CEF**（D
 | D15 | 跨引擎切换方式 | **引擎粘性**：tab 创建时定引擎，之后不可变；换引擎 = 新开 tab（不做同 tab 切换） | P2，见 9.2.1 |
 | D16 | 白名单命中 | **留在原引擎 + 提示条**（不自动切）；用户点过即写入域名偏好，之后静默按偏好走 | P2，见 9.2.3 |
 | D17 | popup / `window.open` | **引擎跟 opener 一致**（保 `window.opener` 与 cookie 域），不做 `noopener` 特例 | P2，见 9.2.2 |
-| D18 | 兼容 tab 的 agent 能力 | **只读开放**（snapshot / 读文 / 截图 / PDF）、**写操作禁止**，报结构化 `engine_unsupported` | P3 |
+| D18 | 兼容 tab 的 agent 能力 | **读写都开放**（2026-11-13 修订：先按"只读"设计，实测视频站也需要 agent 点按钮；用户标签写入仍走既有授权闸门） | P3 |
 | D19 | agent 打开页面 | 默认走判定，但 `open_url` 加 `engine` 覆盖参数（要读 bilibili 页面时可强制 CEF） | P3 |
 | D20 | CEF 的 `window.open` / `target=_blank` | **让 CEF 自己建 popup browser，再把它嵌进我们的 tab**（真 `window.opener`）；页面 `window.close()` 时自动收掉 tab | P2，见 9.2.14 |
 
@@ -267,13 +267,13 @@ CEF 升级分三层，只有中间那层是"必须重编"：
 | 分享短链 `b23.tv` / `v.douyin.com` / `xhslink.com` | 同白名单：先判域名再决定引擎，别等 302 落到视频站才发现开错 |
 | **主框架导航每一步都重判**（不只是初始 URL、也不只新建 tab） | 从百度点进 bilibili、从短链 302 到 douyin、`target="_blank"` 开新 tab —— 都按**目标 URL** 判；命中白名单就在 CEF tab 顶部提示「此站在兼容模式更合适」并给一键切换 |
 | 任意页面 `<video>` 报 `MEDIA_ERR_SRC_NOT_SUPPORTED` | 顶部提示条「此页面需要兼容模式」→ 点一下同 URL 在当前面板重开为 WK 兼容 tab（**不做自动切换**，否则用户不知道自己在哪个引擎里，agent 也会莫名失效） |
-| agent 工具 | **写操作只对 CEF tab 生效**；兼容 tab 标 `engine: compat, 只读`（只读工具可用，见 D18），写操作返回 `engine_unsupported` |
+| agent 工具 | 两个引擎都可用（读写皆可，D18 修订）；`list_tabs` 标 `engine`；用户标签写入仍需用户授权（既有闸门） |
 | 兼容 tab 的功能边界 | 按现有 WK 实现照搬（收藏/历史/下载/查找/分屏能留就留）；不接 agent 写操作 |
 | **隐藏开关（回滚路径）** | 能让**任意 URL** 走 WK，不限于白名单 —— P2 并回 main 后 CEF 出大问题时的唯一退路，别把 WK 收窄到只会开 3 个站 |
 
 **收藏/历史不存引擎**：引擎由打开时的 URL 现算，否则白名单以后调整会让老收藏打开在错的引擎里。
 
-已知残留：小红书是图文 + 视频混合页，整站走 WK 后 agent 无法操作（用户当前不用该场景）。若将来需要，再单独决定"兼容 tab 是否开放只读工具"。
+已知残留：无（小红书走 WK 后 agent 也能操作，D18 修订后读写都开放）。
 
 **实现口径（判定函数 / 提示规则 / 全量 case / 数据模型）见 9.2。**
 
@@ -339,7 +339,7 @@ H.264 缺失**不一定报 `MEDIA_ERR_SRC_NOT_SUPPORTED`**：大量播放器先 
 | 聊天 / 文档 / 消息里的链接 | 判定 | 与地址栏同一入口 |
 | 收藏 / 历史点开 | 判定（现算） | 不存引擎 |
 | 右键"用 X 搜索"选中文字 | 判定 | `AppBrowserWebView` 那套只在 WK 侧有效，要补 CEF 版 |
-| agent `open_url` / `navigate` | 判定 + `engine` 覆盖 | 视频站默认 compat，但 agent 之后只能只读；需要读 bilibili 页面时显式传 `engine: cef`（D19） |
+| agent `open_url` / `navigate` | 判定 + `engine` 覆盖 | 视频站默认 compat，agent 可在 compat tab 上继续操作；要 Chrome 身份/登录态时显式传 `engine: cef`（D19） |
 | 拖入本地文件 | compat | 本地文件不需要 Chrome 身份；**CEF 能否显示 PDF 待实测**，不支持就写死 compat |
 
 **popup / 新窗口**
@@ -369,14 +369,14 @@ H.264 缺失**不一定报 `MEDIA_ERR_SRC_NOT_SUPPORTED`**：大量播放器先 
 | 设置里"清除浏览数据" | **必须两边都清**，否则用户以为清了、CEF 里还留着 |
 | 谷歌登录 | 全程 CEF；登录链是重定向，判定函数天然不会切 |
 
-**agent 工具与兼容 tab（D18）**
+**agent 工具与兼容 tab（D18，2026-11-13 修订为"读写都开放"）**
 
 | 能力 | 兼容 tab |
 |---|---|
-| 只读（`snapshot` / read_text / screenshot / PDF） | **开放**（WK 侧已有实现，成本≈0；顺带解决"让 agent 读小红书笔记"） |
-| 写操作（click / fill / press / select / 上传） | **禁止**（用户可能正在这上面看视频） |
-| `list_tabs` | 标 `engine: compat, 只读`，让模型一开始就不试 |
-| 写操作报错 | 结构化 `engine_unsupported` + "该 tab 为兼容模式，仅支持只读"，别让模型反复重试 |
+| 只读（`snapshot` / read_text / 截图 / PDF） | 开放 |
+| 写操作（click / fill / press / select / 滚动） | **开放**（原设计是禁止；实测视频站也需要 agent 点按钮/翻评论，见 §15） |
+| `list_tabs` | 标 `engine`（`cef` / `compat`），模型可据此选工具 |
+| 用户标签保护 | 不变：agent 动**用户自己的**标签仍需用户授权（`userTabWriteTools` 闸门），与引擎无关 |
 
 **会话恢复 / 历史 / 收藏 / 分享**：只存 URL；历史按 URL + 时间去重（同一 URL 两个引擎不记两条）；分享导出 URL，与引擎无关。
 
@@ -476,9 +476,12 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
   - `EvalWrapper` 用 `(0,eval)(<脚本字面量>)` 包一层：**表达式和语句都能跑**（取完成值），结果 `JSON.stringify`，异常转成 `{ok:false,error}`。**回包只认字符串**（`JSON.stringify({ok,…,json|error})` 的信封）——第一版回 V8 对象，实测跨回浏览器进程 `GetValue("ok")` 读不到值（表现为所有 eval 报”JS 抛异常”），改成信封字符串后稳定。脚本以 JS 字符串字面量传入（转义引号/换行/反斜杠/控制字符），不做拼接，避免注入与语法碎片。自检：8/8（表达式 / IIFE / 语句块 / throw / undefined / 可选链 / 嵌套结构 / 引号反斜杠）。
   - 三条收尾路径都必须只走一次：正常回包、**10s 超时**（renderer 崩了/页面在导航时回包可能永远不来，agent 工具不能挂死）、**关页**（`cefBrowserDidClose` 把待回包一律失败）。
 - **协议**：`BrowserPage.evaluateJS(_:) async throws -> Any`（WK = `webView.evaluateJavaScript`，CEF = 上面这条）。agent 的四个 JS 助手（`jsResult` / `jsBool` / `jsJSON` / `eval`）全部改成走 `page.evaluateJS`，`cefUnsupported` 在读写类工具上不再出现。
-- **agent 标签回到 `resolveEngine`**（含 `open` 的 `engine` 参数，D19）：不再固定兼容引擎。仍只在 WK 标签可用的：`cg_click` / `cg_drag`（真实鼠标注入按 WK 视图坐标写，CEF 上给明确失败 `cefUnsupportedCGEvent`）。
+- **agent 标签回到 `resolveEngine`**（含 `open` 的 `engine` 参数，D19）：不再固定兼容引擎。
+- **`cg_click` / `cg_drag` 已删除**（2026-11-13，用户拍板：从未用过，CEF 上本来也不可用）。`press` 的真实键盘注入保留。
 - **后台 renderer 必须关降频**：`XHCefApp::OnBeforeCommandLineProcessing` 追加 `--disable-background-timer-throttling` / `--disable-renderer-backgrounding` / `--disable-backgrounding-occluded-windows`。agent 标签停在隐藏窗口里，不关这三个就是「标题正确、`readyState` 永远不是 complete、页面空壳」。
-- **还留在 WK 侧的**（不阻塞读类工具）：滚动位置保存/恢复（CEF 切 tab 由内核维持）、后台媒体保活探测、媒体嗅探面板、活动埋点的浏览状态机。这些在 CEF 标签上是静默跳过，不是报错。
+- ~~还留在 WK 侧的：滚动位置保存/恢复、后台媒体保活探测~~ **2026-11-13 已两引擎打通**：`saveScrollPosition` / `scheduleScrollRestore` / `probeMedia` / `pauseMedia` 统一走 `page.evaluateJS`（CEF 没有 `pauseAllMediaPlayback`，用 JS `pause()`）。
+- **仍只在 WK 侧**：媒体嗅探面板（`get_media_sources` 依赖 WK 的请求嗅探）、活动埋点的浏览状态机、`press` 的**真实键盘注入**（CGEvent；CEF 的 `press` 走 JS 合成事件，不触发 Enter 提交表单这类浏览器默认行为 —— 需要时改用点提交按钮）。CEF 标签上静默跳过，不是报错。
+- **CEF 的 `download` 现在带 Cookie**：新增 `BrowserPage.cookies(for:)`（WK 走 `HTTPCookieStore`，CEF 走 `CefCookieManager::VisitUrlCookies`，3s 兜底），下载与原生请求共用同一条 RFC 6265 匹配。
 
 #### 9.2.13 B9 实现口径（三层媒体检测第 2/3 层）
 
@@ -621,7 +624,7 @@ main                       ← 继续每天发版（WK，现状不变）
 - 百度地图（高频工具，单列）：路线搜索 10 次成功 ≥9；拖动/缩放 30 秒不卡死、瓦片正常加载；全景/3D 能开；0 次验证码。
 - `docs/design/mac-apps/browser-agent-workspace.md` 的手递手用例全通过。
 - 视频：B站 / 抖音 / 小红书在**兼容 tab** 里能正常播放（拖动进度、全屏、弹幕），且启动页默认就落在兼容 tab。
-- 兼容 tab 的 agent 能力符合 D18：只读工具（snapshot / 读文 / 截图 / PDF）可用；写操作返回明确的 `engine_unsupported`，`list_tabs` 标注 `engine: compat, 只读`。
+- 兼容 tab 的 agent 能力符合 D18（修订后）：读写工具都可用，`list_tabs` 标注 `engine`。
 - 任意 CEF tab 内 `<video>` 播放失败时能出现「兼容模式」提示条，点一下同 URL 在 WK 里重开。
 - **跨引擎导航**（9.2.5 各表逐条走一遍）：
   - 百度搜"B站 ××"点进 B站 → 留在 CEF + 提示；点提示 → 新 compat tab，原 tab 仍停在百度结果
@@ -740,6 +743,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」+「检查元素」→ DevTools）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
 | B7 | 2026-11-12 | 待提交 | 待真机构建 + agent 实操（对 CEF 标签跑 snapshot / read / click / fill）。交付：CEF JS 求值通道（`xh_eval` / `xh_eval_result`，10s 超时 + 关页失败）、`BrowserPage.evaluateJS` 统一 WK/CEF、agent 标签改回 `resolveEngine` + `open` 的 `engine` 参数（D19）；口径见 §9.2.12 |
 | B9a | 2026-11-13 | `6dc29ca4` | 微博已验（真机弹出了提示条）。交付：媒体检测第 2/3 层（`MediaProbeJavaScript` document-start 探针 + `XHMEDIA:` 回报 + 提示条复用）；口径见 §9.2.13。评审后补：第 2 层只对像 H.264 的源报、提示条按 host 收起；自检 11/11 |
+| B7+ | 2026-11-13 | `c4db7451` | 待真机构建（CEF：切 tab 回来滚动位置还在、B站/WK 后台继续播、需登录的媒体下载不再 403）。交付：删 `cg_click` / `cg_drag`（含 `CGEventInput` 的鼠标注入，只留键盘）；滚动位置保存/恢复、后台媒体保活探测、`download` 的 Cookie 三处两引擎打通；设置页「浏览器内核」开关转正（不再 dev-only）；D18 修订为「兼容 tab 读写都开放」。自检：clang++ / swiftc typecheck / `swift test` 436 条 |
 | B9b | 2026-11-13 | `80960128` + `551d7fae` | 待真机构建 + 人眼（`window.open` 弹窗里 `window.opener` 非 null、`opener.postMessage` 能到、`window.close()` 能关掉 tab）。交付：CEF 真 popup browser 嵌进 tab（D20 / §9.2.14）；页面自关窗收 tab；12s 兜底。review MINOR（P1×1 / P2×6 / P3×5，除「CEF 下载取 Cookie」外已修，见 `docs/code-review/browser-chromium-migration/2026-11-13.md`） |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。
@@ -750,3 +754,7 @@ main                       ← 继续每天发版（WK，现状不变）
 |---|---|---|
 | 2026-11-13 | **D20**：CEF 的 `window.open` / `target=_blank` 不再拦成兄弟 tab，改成让 CEF 自己建 popup browser 再嵌进我们的 tab（真 `window.opener`）；页面 `window.close()` 自动收 tab。用户拍板「B9 一起解决」 | `xHelperMac/CEF/CefBridge.{h,mm}`、`Shared/Services/BrowserPage.swift`、`Shared/Tools/BrowserToolProvider.swift`、本文档 §9.2.14 / §13.1 |
 | 2026-11-13 | 三层媒体检测第 2 层收窄为「只对像 H.264 的源报」，避免 WebM/VP9 页面误报 | `xHelperMac/CEF/CefDisguise.h`、`Shared/Views/BrowserTabView.swift`、本文档 §9.2.13 |
+| 2026-11-13 | **D18 修订**：兼容 tab 从「只读开放、写操作禁」改为「读写都开放」（用户拍板：视频站也需要 agent 点按钮；用户标签写入仍走既有授权闸门）。改文档不改代码 | 本文档 D18 / §9.1 / §9.2.5 / 第十二章 |
+| 2026-11-13 | **删除 `cg_click` / `cg_drag`**（用户从未用过；CEF 上本来不可用）。`CGEventInput` 只保留键盘注入（`press`） | `Shared/Tools/BrowserToolProvider.swift`、`Shared/Services/CGEventInput.swift`、`ToolConfirmPolicy.swift`、`LocalToolRegistry.swift`、`BrowserActivityCenter.swift` |
+| 2026-11-13 | 设置页「浏览器内核」开关对用户露出（原为 dev-only 隐藏开关），合并 `main` 后仍可一键回兼容 WebKit | `xHelperMac/App.swift`、`Shared/Services/BrowserEngineRouter.swift` |
+| 2026-11-13 | CEF 标签补齐：滚动位置保存/恢复、后台媒体保活探测（JS `pause()`）、`download` 从 `CefCookieManager` 取 Cookie | `Shared/Tools/BrowserToolProvider.swift`、`Shared/Services/BrowserPage.swift`、`xHelperMac/CEF/CefBridge.{h,mm}` |

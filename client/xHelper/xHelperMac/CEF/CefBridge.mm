@@ -13,6 +13,7 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_cookie.h"
 #include "include/cef_browser_process_handler.h"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
@@ -703,6 +704,40 @@ static bool EnsureLibraryLoaded() {
 
 @end
 
+// MARK: - 下载用的 cookie 读取
+
+/// `CefCookieManager::VisitUrlCookies` 是异步的（visitor 在 IO 线程逐个回调），
+/// 收集完（visitor 析构）一次性回主线程。超时与析构由调用方去重。
+class XHCefCookieCollector : public CefCookieVisitor {
+ public:
+  explicit XHCefCookieCollector(void (^completion)(NSArray<NSDictionary *> *))
+      : completion_(completion) {}
+
+  bool Visit(const CefCookie &cookie, int count, int total, bool &deleteCookie) override {
+    NSMutableDictionary *item = [NSMutableDictionary dictionary];
+    item[@"name"] = CefStringToNSString(CefString(&cookie.name));
+    item[@"value"] = CefStringToNSString(CefString(&cookie.value));
+    item[@"domain"] = CefStringToNSString(CefString(&cookie.domain));
+    item[@"path"] = CefStringToNSString(CefString(&cookie.path));
+    item[@"secure"] = @(cookie.secure);
+    [items_ addObject:item];
+    return true;
+  }
+
+  ~XHCefCookieCollector() override {
+    void (^done)(NSArray *) = completion_;
+    NSArray *cookies = [items_ copy];
+    RunOnMain(^{
+      if (done) done(cookies);
+    });
+  }
+
+ private:
+  NSMutableArray<NSDictionary *> *items_ = [NSMutableArray array];
+  void (^completion_)(NSArray<NSDictionary *> *);
+  IMPLEMENT_REFCOUNTING(XHCefCookieCollector);
+};
+
 // MARK: - XHCefBrowserView
 
 /// 后台标签（agent 工作区）不会进任何窗口，但 CEF 的 `CreateBrowser` 要父视图落在一个窗口里才有渲染宿主。
@@ -1070,6 +1105,37 @@ static NSWindow *XHCefParkingWindow(void) {
     });
   }
   [self closeBrowser];
+}
+
+- (void)cookiesForURLString:(NSString *)urlString
+                 completion:(void (^)(NSArray<NSDictionary<NSString *, id> *> *))completion {
+  if (!_browser || urlString.length == 0) {
+    completion(@[]);
+    return;
+  }
+  CefRefPtr<CefCookieManager> manager = CefCookieManager::GetGlobalManager(nullptr);
+  if (!manager) {
+    NSLog(@"[cef] cookie manager 不可用，下载将不带 Cookie");
+    completion(@[]);
+    return;
+  }
+  __block BOOL finished = NO;
+  void (^finish)(NSArray *) = ^(NSArray *cookies) {
+    if (finished) return;   // 超时兜底与 visitor 析构只认第一个
+    finished = YES;
+    completion(cookies);
+  };
+  CefRefPtr<XHCefCookieCollector> visitor = new XHCefCookieCollector(finish);
+  if (!manager->VisitUrlCookies(urlString.UTF8String, true, visitor)) {
+    NSLog(@"[cef] VisitUrlCookies 失败（url=%@），下载将不带 Cookie", urlString);
+    finish(@[]);
+    return;
+  }
+  // 兜底：profile 还没初始化完时 visitor 可能迟迟不析构，别让下载卡住
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+                   finish(@[]);
+                 });
 }
 
 // MARK: 下载

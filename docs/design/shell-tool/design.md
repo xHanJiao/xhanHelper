@@ -90,7 +90,7 @@ return .none                                        // 其余直接执行
 | 普通 L3（`riskLevels` 表的 `browser__open`） | `.none` | **直接执行**（等价于原「信任档」语义） |
 | 强制确认（代码里的 `forcedL3`：高敏域 / http 明文页 / 用户标签授权） | 调用方只升不降 | **必弹** |
 | fs 写 / fs 读未授权路径 | `.confirm` | **必弹**（批准后该路径临时授权 1h） |
-| L4（shell 写/执行、browser download/cgclick/drag） | `.hardened` | **必弹**，红色 |
+| L4（shell 写/执行、browser download） | `.hardened` | **必弹**，红色 |
 
 也就是说，代码里**已经存在"不可跳的确认"**，只是它表现为 L3 上的一个 `forcedL3` 开关，而非独立等级。
 

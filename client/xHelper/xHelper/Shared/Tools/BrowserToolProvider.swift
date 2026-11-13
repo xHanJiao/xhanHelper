@@ -177,20 +177,38 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 rs.keptAliveTabIds.remove(tabId)
                 continue
             }
-            // CEF 标签没有 JS 通道：保活由 CEF 自己维持，这里直接摘掉保活标记
-            guard let webView = session.webView else {
-                rs.keptAliveTabIds.remove(tabId)
-                continue
+            Task { @MainActor [weak self] in
+                guard let hasMedia = await Self.probeMedia(session, tabId: tabId) else { return }
+                guard !hasMedia, let self, self.activeTabId != tabId else { return }
+                LogBuffer.shared.info("[Browser] keep-alive tab \(tabId) 媒体已停止，摘除视图层级")
+                self.rightSidebar?.keptAliveTabIds.remove(tabId)
+                self.pauseMedia(session)
             }
-            webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
-                let hasMedia = error == nil && (result as? Bool) == true
-                guard !hasMedia else { return }
-                DispatchQueue.main.async {
-                    guard let self, self.activeTabId != tabId else { return }
-                    LogBuffer.shared.info("[Browser] keep-alive tab \(tabId) 媒体已停止，摘除视图层级")
-                    self.rightSidebar?.keptAliveTabIds.remove(tabId)
-                    webView.pauseAllMediaPlayback()
-                }
+        }
+    }
+
+    /// 探测页内是否有媒体在播；nil = 探测失败（调用方保持现状，别误摘保活）
+    private static func probeMedia(_ session: TabSession, tabId: String) async -> Bool? {
+        do {
+            return (try await session.page.evaluateJS(mediaCheckScript)) as? Bool ?? false
+        } catch {
+            LogBuffer.shared.diag("[Browser] mediaCheck JS 失败（\(tabId)）：\(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// 暂停页内媒体。WK 有原生 `pauseAllMediaPlayback`；CEF 只能走 JS
+    /// （只 pause，不摘 src —— 摘了再播要重新加载）。
+    private func pauseMedia(_ session: TabSession) {
+        if let webView = session.webView {
+            webView.pauseAllMediaPlayback()
+            return
+        }
+        Task { @MainActor in
+            do {
+                _ = try await session.page.evaluateJS(Self.pauseMediaScript)
+            } catch {
+                LogBuffer.shared.diag("[Browser] pauseMedia JS 失败：\(error.localizedDescription)")
             }
         }
     }
@@ -246,8 +264,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_click",            description: "点击元素。ref（@eN 稳定句柄，须先 snapshot 获取，DOM 变化后仍有效）优先；selector 仅用于 snapshot 无法捕获的元素（自定义/动态组件）。密码等敏感字段禁止用 selector 定位。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL。agent 调用必须显式 tabId", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。ref（@eN 稳定句柄，须先 snapshot 获取）优先。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）。仅对屏幕可见的标签生效（agent 需 background:false 打开或用户正在查看该页）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（@eN 稳定句柄，须先 snapshot 获取）或 x/y。仅对屏幕可见的标签生效", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("填充值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "text": strProp("输入文本"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键。agent 调用必须显式 tabId；真实按键（Enter 等）仅对屏幕可见标签生效", inputSchema: objProps(["key": strProp("按键名称"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
@@ -332,9 +348,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                !userTabGrants.contains(owner) {
                 return .init(serverResult: nil, serverError: "该标签是用户自己的标签，agent 操作用户标签需用户授权（确认条允许后同一任务/会话内可继续）", clientAction: nil)
             }
-            // 真实系统事件工具（CGEvent）需页面在屏幕可见：工作区/后台 agent 标签不可见时拒绝
+            // 真实系统事件工具（CGEvent）需页面在屏幕可见：工作区/后台 agent 标签不可见时拒绝。
+            // CEF 标签没有 CGEvent 路径（press 走 JS 合成事件），不受这条限制。
             if let owner = context.owner,
-               (tool == "agent_browser_cgclick" || tool == "agent_browser_drag" || tool == "agent_browser_press"),
+               tool == "agent_browser_press",
+               session.webView != nil,
                tabs[activeTabId ?? ""] !== session {
                 return .init(serverResult: nil, serverError: "\(tool) 需要页面在屏幕可见（真实系统事件），当前标签在后台/工作区不可见。请用 background:false 打开让用户看到该页，或改用 agent_browser_click 等 JS 交互", clientAction: nil)
             }
@@ -394,14 +412,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             case "agent_browser_click":
                 return await withNavContext(session) {
                     await interact(session: session, arguments: arguments, kind: .click, successKey: "clicked")
-                }
-            case "agent_browser_cgclick":
-                return await withNavContext(session) {
-                    await cgClick(session: session, arguments: arguments)
-                }
-            case "agent_browser_drag":
-                return await withNavContext(session) {
-                    await cgDrag(session: session, arguments: arguments)
                 }
             case "agent_browser_click_text":
                 return await withNavContext(session) {
@@ -592,159 +602,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return interpretRefResult(value, jsError: jsErr, successKey: checked ? "checked" : "unchecked")
     }
 
-    /// 真实系统级点击（CGEvent 兜底）：权限检查 → 定位元素中心 → 坐标转换 → 前置窗口 → 注入
-    private func cgClick(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
-        #if os(macOS)
-        guard let webView = session.webView else {
-            return .init(serverResult: nil, serverError: TabSession.cefUnsupportedCGEvent, clientAction: nil)
-        }
-        guard CGEventInput.isTrusted() else {
-            let granted = CGEventInput.requestPermission()
-            #if DEBUG
-            print("[CGEvent] permission granted=\(granted)")
-            #endif
-            return .init(serverResult: nil, serverError: "需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）", clientAction: nil)
-        }
-
-        // 定位目标点：ref（元素中心）或直接 x/y（调试）
-        var viewportPoint: CGPoint?
-        var targetDesc = ""
-        if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(refCenterJS(handle, session))
-            guard let dict = result as? [String: Any],
-                  let ok = dict["ok"] as? Bool, ok,
-                  let x = (dict["x"] as? NSNumber)?.doubleValue,
-                  let y = (dict["y"] as? NSNumber)?.doubleValue
-            else {
-                return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "cgclick 定位失败，请重新 snapshot"), clientAction: nil)
-            }
-            viewportPoint = CGPoint(x: x, y: y)
-            targetDesc = "ref @e\(handle)"
-        } else if let x = (arguments["x"] as? NSNumber)?.doubleValue,
-                  let y = (arguments["y"] as? NSNumber)?.doubleValue {
-            viewportPoint = CGPoint(x: x, y: y)
-            targetDesc = "viewport(\(Int(x)),\(Int(y)))"
-        }
-
-        guard let vp = viewportPoint else {
-            return .init(serverResult: nil, serverError: "cgclick 需要 ref（@eN）或 x/y 坐标", clientAction: nil)
-        }
-        guard let screenPoint = CGEventInput.screenPoint(for: vp, in: webView) else {
-            // Bad Case 17 诊断：窗口不可用时输出工具层上下文
-            #if DEBUG
-            print("[B-CGClick] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
-            #endif
-            return .init(serverResult: nil, serverError: "cgclick 坐标转换失败：页面窗口不可用", clientAction: nil)
-        }
-        // 越界校验：目标超出屏幕范围会被 macOS clamp 到屏幕边缘，可能误触 Dock/其他区域，拒绝注入
-        guard CGEventInput.isPointOnScreen(screenPoint) else {
-            let maxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
-            let screenSize = NSScreen.screens.first?.frame.size ?? .zero
-            return .init(serverResult: nil, serverError: "cgclick 目标超出屏幕范围 (screen=\(Int(screenSize.width))x\(Int(screenSize.height)), target=\(Int(screenPoint.x)),\(Int(screenPoint.y)))，请移动窗口或滚动页面后重试", clientAction: nil)
-        }
-
-        CGEventInput.activateWindow(for: webView)
-        CGEventInput.click(at: screenPoint)
-
-        // 拟人化诊断：回读页面焦点，确认点击命中
-        if let active = await session.jsJSON("(function(){var e=document.activeElement;return JSON.stringify({tag:e?e.tagName.toLowerCase():'',id:e?e.id:'',name:e?e.name:''});})()") as? [String: Any] {
-            let tag = active["tag"] as? String ?? ""
-            let id = active["id"] as? String ?? ""
-            let name = active["name"] as? String ?? ""
-            #if DEBUG
-            print("[B-CGClick] active=\(tag) id=\(id) name=\(name)")
-            #endif
-        }
-
-        return .init(serverResult: Self.jsonDict(["clicked": true, "target": targetDesc, "point_debug": "viewport=\(Int(vp.x)),\(Int(vp.y)) screen=\(Int(screenPoint.x)),\(Int(screenPoint.y))"]), serverError: nil, clientAction: nil)
-        #else
-        return .init(serverResult: nil, serverError: "cgclick 仅 macOS 支持", clientAction: nil)
-        #endif
-    }
-
     private func dictErr(dict: Any?, fallback: String) -> String {
         if let d = dict as? [String: Any], let err = d["err"] as? String {
             return err
         }
         return fallback
-    }
-
-    /// 真实系统级拖拽（CGEvent，地图/滑块/canvas）：起点定位 → 转换 → 逐点越界预检 → 注入
-    private func cgDrag(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
-        #if os(macOS)
-        guard let webView = session.webView else {
-            return .init(serverResult: nil, serverError: TabSession.cefUnsupportedCGEvent, clientAction: nil)
-        }
-        guard CGEventInput.isTrusted() else {
-            let granted = CGEventInput.requestPermission()
-            #if DEBUG
-            print("[CGEvent] permission granted=\(granted)")
-            #endif
-            return .init(serverResult: nil, serverError: "需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）", clientAction: nil)
-        }
-        let dx = (arguments["dx"] as? NSNumber)?.doubleValue ?? 0
-        let dy = (arguments["dy"] as? NSNumber)?.doubleValue ?? 0
-        let steps = max(2, min(30, (arguments["steps"] as? NSNumber)?.intValue ?? 10))
-        guard dx != 0 || dy != 0 else {
-            return .init(serverResult: nil, serverError: "drag 需要 dx/dy 位移量", clientAction: nil)
-        }
-
-        var vpStart: CGPoint?
-        if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(refCenterJS(handle, session))
-            guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, ok,
-                  let x = (dict["x"] as? NSNumber)?.doubleValue,
-                  let y = (dict["y"] as? NSNumber)?.doubleValue
-            else {
-                return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "drag 定位失败，请重新 snapshot"), clientAction: nil)
-            }
-            vpStart = CGPoint(x: x, y: y)
-        } else if let x = (arguments["x"] as? NSNumber)?.doubleValue,
-                  let y = (arguments["y"] as? NSNumber)?.doubleValue {
-            vpStart = CGPoint(x: x, y: y)
-        }
-        guard let start = vpStart else {
-            return .init(serverResult: nil, serverError: "drag 需要 ref（@eN）或 x/y 起点坐标", clientAction: nil)
-        }
-
-        let end = CGPoint(x: start.x + dx, y: start.y + dy)
-        guard let screenStart = CGEventInput.screenPoint(for: start, in: webView),
-              let screenEnd = CGEventInput.screenPoint(for: end, in: webView) else {
-            #if DEBUG
-            print("[B-Drag] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
-            #endif
-            return .init(serverResult: nil, serverError: "drag 坐标转换失败：页面窗口不可用", clientAction: nil)
-        }
-        // 逐插值点越界预检（不注入任何事件，杜绝 clamp 误触）
-        for i in 0...steps {
-            let t = CGFloat(i) / CGFloat(steps)
-            let p = CGPoint(x: screenStart.x + (screenEnd.x - screenStart.x) * t,
-                            y: screenStart.y + (screenEnd.y - screenStart.y) * t)
-            guard CGEventInput.isPointOnScreen(p) else {
-                return .init(serverResult: nil, serverError: "drag 路径超出屏幕范围（step \(i)/\(steps)），请移动窗口或缩小拖拽距离", clientAction: nil)
-            }
-        }
-
-        CGEventInput.activateWindow(for: webView)
-        CGEventInput.drag(from: screenStart, to: screenEnd, steps: steps)
-        return .init(serverResult: Self.jsonDict(["dragged": true, "target": "viewport(\(Int(start.x)),\(Int(start.y)))→(\(Int(end.x)),\(Int(end.y)))"]), serverError: nil, clientAction: nil)
-        #else
-        return .init(serverResult: nil, serverError: "drag 仅 macOS 支持", clientAction: nil)
-        #endif
-    }
-
-    /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）。
-    /// 元素不在视口内时先 scrollIntoView 居中（document scope 下可用）。
-    private func refCenterJS(_ handle: Int, _ session: TabSession) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
-            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "var _vr=function(el){var r=el.getBoundingClientRect();var w=el.ownerDocument.defaultView;while(w&&w!==window){var fe=w.frameElement;if(!fe)break;var fr=fe.getBoundingClientRect();r={left:r.left+fr.left,top:r.top+fr.top,width:r.width,height:r.height};w=fe.ownerDocument.defaultView;}return r;};" +
-            "var _r0=_vr(e);" +
-            "if(_r0.top<0||_r0.bottom>window.innerHeight||_r0.left<0||_r0.right>window.innerWidth)e.scrollIntoView({block:'center'});" +
-            "var r=_vr(e);" +
-            "var x=Math.round(r.left+r.width/2+(Math.random()-0.5)*r.width*0.4);" +
-            "var y=Math.round(r.top+r.height/2+(Math.random()-0.5)*r.height*0.4);" +
-            "return JSON.stringify({ok:true,x:x,y:y});})()"
     }
 
     /// 解析 ref 交互 JS 的 {"ok": bool, "err": string?} 结果
@@ -1204,8 +1066,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if let session = srcSession {
             ua = (await session.jsResult("navigator.userAgent")).text ?? ua
             referer = session.page.url?.absoluteString ?? ""
-            let allCookies = await session.webView?.configuration.websiteDataStore.httpCookieStore.allCookies() ?? []
-            let matched = Self.matchingCookies(allCookies, for: url)
+            let matched = await session.page.cookies(for: url)
             if !matched.isEmpty {
                 cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
             }
@@ -1244,22 +1105,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             try? await Task.sleep(for: .milliseconds(Int.random(in: 1000...3000)))
         }
 
-        // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、Cookie（WebView 会话）
+        // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、
+        // Cookie（`page.cookies` 按引擎取：WK 的 HTTPCookieStore / CEF 的 CefCookieManager）
         let srcSession = session ?? activeSession
-        if srcSession?.webView == nil {
-            LogBuffer.shared.diag("[Browser] download on CEF tab: no WK session, UA/Cookie 降级为默认值")
+        if srcSession == nil {
+            LogBuffer.shared.diag("[Browser] download 无来源页，UA/Cookie 用默认值")
         }
         let ua = (await srcSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultBrowserUA
         let referer = srcSession?.page.url?.absoluteString ?? ""
         var cookieHeader = ""
-        if let session = srcSession, let webView = session.webView {
-            let allCookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-            if !allCookies.isEmpty {
-                // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露
-                let matched = Self.matchingCookies(allCookies, for: url)
-                if !matched.isEmpty {
-                    cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
-                }
+        if let session = srcSession {
+            let matched = await session.page.cookies(for: url)
+            if !matched.isEmpty {
+                cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
             }
         }
 
@@ -1434,19 +1292,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         Set(UserConfigStore.shared.mergedDangerousExtensions)
     }
 
-    /// RFC 6265 domain-match：只返回匹配目标 URL 的 cookie（杜绝跨站 cookie 泄露）。
-    /// 规则：host 精确匹配或子域匹配；secure cookie 仅 https 发送。
-    private static func matchingCookies(_ cookies: [HTTPCookie], for url: URL) -> [HTTPCookie] {
-        guard let host = url.host?.lowercased() else { return [] }
-        let isHTTPS = url.scheme == "https"
-        return cookies.filter { c in
-            if c.isSecure && !isHTTPS { return false }
-            let d = c.domain.lowercased()
-            let domain = d.hasPrefix(".") ? String(d.dropFirst()) : d
-            return host == domain || host.hasSuffix("." + domain)
-        }
-    }
-
     /// 文件名 sanitize：只保留路径最后一段（防 ../ 路径穿越），去控制字符。
     nonisolated private static func sanitizeFileName(_ raw: String) -> String {
         let last = (raw as NSString).lastPathComponent
@@ -1611,8 +1456,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     static let userTabWriteTools: Set<String> = [
         "agent_browser_click", "agent_browser_click_text", "agent_browser_fill",
         "agent_browser_type", "agent_browser_select", "agent_browser_check",
-        "agent_browser_uncheck", "agent_browser_press", "agent_browser_cgclick",
-        "agent_browser_drag", "agent_browser_go_back", "agent_browser_go_forward",
+        "agent_browser_uncheck", "agent_browser_press",
+        "agent_browser_go_back", "agent_browser_go_forward",
         "agent_browser_close_tab",
     ]
 
@@ -2492,28 +2337,24 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 更新新 tab 最后访问时间。
     private func switchActiveTab(to id: String?) {
         if let prev = activeTabId, prev != id, let prevSession = tabs[prev] {
-            // CEF 标签没有 JS 通道：暂停/保活都由 CEF 自己管（B6 再接媒体保活）
-            if let prevWebView = prevSession.webView {
-                if prevSession.isAgentTab {
-                    // agent 标签不保活：直接暂停（原有节能逻辑）
-                    prevWebView.pauseAllMediaPlayback()
-                } else {
-                    saveScrollPosition(prevSession)
-                    // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
-                    rightSidebar?.keptAliveTabIds.insert(prev)
-                    prevWebView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
-                        let hasMedia = error == nil && (result as? Bool) == true
-                        if hasMedia {
-                            LogBuffer.shared.info("[Browser] keep-alive tab \(prev) 有媒体播放，后台续播")
-                        } else {
-                            // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
-                            DispatchQueue.main.async {
-                                guard let self, self.activeTabId != prev else { return }
-                                self.rightSidebar?.keptAliveTabIds.remove(prev)
-                                prevWebView.pauseAllMediaPlayback()
-                            }
-                        }
+            if prevSession.isAgentTab {
+                // agent 标签不保活：直接暂停（原有节能逻辑）
+                pauseMedia(prevSession)
+            } else {
+                saveScrollPosition(prevSession)
+                // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
+                rightSidebar?.keptAliveTabIds.insert(prev)
+                Task { @MainActor [weak self] in
+                    guard let hasMedia = await Self.probeMedia(prevSession, tabId: prev) else { return }
+                    guard let self else { return }
+                    if hasMedia {
+                        LogBuffer.shared.info("[Browser] keep-alive tab \(prev) 有媒体播放，后台续播")
+                        return
                     }
+                    // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
+                    guard self.activeTabId != prev else { return }
+                    self.rightSidebar?.keptAliveTabIds.remove(prev)
+                    self.pauseMedia(prevSession)
                 }
             }
         }
@@ -2529,16 +2370,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 摘除层级前保存滚动位置与 marker（marker 在 reload 后消失，用于防止把恢复值打到新页面上）。
     private func saveScrollPosition(_ session: TabSession) {
-        // CEF 标签没有 JS 通道：滚动位置靠 CEF 自己维持（切 tab 会摘视图，真机核对表现）
-        guard let webView = session.webView else { return }
-        webView.evaluateJavaScript(Self.scrollStateScript) { result, error in
-            if let error {
-                print("[BrowserDiag] saveScroll JS error url=\(session.page.url?.absoluteString ?? "nil") err=\(error.localizedDescription)")
+        Task { @MainActor in
+            let text: String
+            do {
+                text = (try await session.page.evaluateJS(Self.scrollStateScript)) as? String ?? ""
+            } catch {
+                LogBuffer.shared.diag("[Browser] saveScroll JS 失败 url=\(session.page.url?.absoluteString ?? "nil")：\(error.localizedDescription)")
                 return
             }
-            guard let s = result as? String,
-                  let data = s.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let data = text.data(using: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let y = obj["y"] as? Double, y > 0,
                   let m = obj["m"] as? Double else {
                 session.savedScrollY = nil
@@ -2558,23 +2399,23 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak session] in
             guard let self, let session else { return }
-            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker,
-                  let webView = session.webView else { return }
+            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else { return }
             let script = """
             (function(){if(window.__xhDiag!==\(Int(m)))return'reloaded';
             if(window.innerHeight<50||document.documentElement.scrollHeight<100)return'wait';
             window.scrollTo(0,\(Int(y)));return'ok:'+window.scrollY;})()
             """
-            webView.evaluateJavaScript(script) { result, error in
-                if error == nil, let s = result as? String {
-                    if s.hasPrefix("ok") {
+            Task { @MainActor in
+                do {
+                    let s = (try await session.page.evaluateJS(script)) as? String
+                    if let s, s.hasPrefix("ok") {
                         // 正常恢复成功，不打日志
                     } else if s == "reloaded" {
-                        print("[BrowserDiag] restore skipped (page reloaded) url=\(session.page.url?.absoluteString ?? "nil")")
+                        LogBuffer.shared.diag("[Browser] restore skipped (page reloaded) url=\(session.page.url?.absoluteString ?? "nil")")
                     } else {
                         self.scheduleScrollRestore(session, attempt: attempt + 1)
                     }
-                } else {
+                } catch {
                     self.scheduleScrollRestore(session, attempt: attempt + 1)
                 }
             }
@@ -2584,6 +2425,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private static let scrollStateScript = """
     (function(){window.__xhDiag=window.__xhDiag||Date.now();
     return JSON.stringify({y:window.scrollY,m:window.__xhDiag});})()
+    """
+
+    /// 暂停页内所有视频/音频（CEF 没有 WK 的原生暂停 API）
+    private static let pauseMediaScript = """
+    (function(){var all=document.querySelectorAll('video,audio');
+    for(var i=0;i<all.length;i++){try{all[i].pause();}catch(e){}}})()
     """
 
     /// 页面内活跃媒体检测脚本：任一未暂停/未结束的 video/audio 即视为有媒体播放。
@@ -3446,11 +3293,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             readyPollTask = nil
         }
 
-        /// CEF 标签上 WK 专属能力的统一失败文案（agent 工具在 B6/B7 才接 CEF）
-        static let cefUnsupported = "该标签由 CEF（Chromium）引擎承载，此能力暂未接入 CEF（见迁移批次 B7/B8）；需要时请用兼容引擎打开该页"
-        /// 真实系统级鼠标注入（CGEvent）按 WK 的视图坐标体系写，CEF 标签上暂不支持
-        static let cefUnsupportedCGEvent = "真实鼠标注入（cg_click / cg_drag）目前只在兼容引擎（WK）标签可用；CEF 标签请改用普通 click / drag 动作"
-
         /// 页面是否已就绪（readyState == complete）
         private func isPageReady() async -> Bool {
             let (ok, _) = await jsBool("document.readyState==='complete'")
@@ -3916,7 +3758,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
       return false;
     };
     // 开放 shadow DOM + 同源 iframe 遍历（3c/3e）：querySelectorAll 不穿透 shadowRoot/iframe，
-    // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口，cgclick 兜底）。
+    // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口：跨域 iframe 不可结构化操作）。
     var __allEls=[];var __walk=function(root){var ns=root.querySelectorAll('*');for(var i=0;i<ns.length;i++){var n=ns[i];__allEls.push(n);if(n.shadowRoot)__walk(n.shadowRoot);if(n.tagName==='IFRAME'||n.tagName==='FRAME'){try{var cd=n.contentDocument;if(cd&&cd!==root)__walk(cd);}catch(x){}}}};__walk(document);
     var push=function(e){
       var r=e.getBoundingClientRect();
@@ -4035,7 +3877,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
           cands.push({el:e,meta:m,band:inBand?1:(r.top>=vh+THRESHOLD?2:0),css:cssHidden(e)});
         };
         // 开放 shadow DOM + 同源 iframe 遍历（3c/3e）：querySelectorAll 不穿透 shadowRoot/iframe，
-        // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口，cgclick 兜底）。
+        // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口：跨域 iframe 不可结构化操作）。
         var __allEls=[];var __walk=function(root){var ns=root.querySelectorAll('*');for(var i=0;i<ns.length;i++){var n=ns[i];__allEls.push(n);if(n.shadowRoot)__walk(n.shadowRoot);if(n.tagName==='IFRAME'||n.tagName==='FRAME'){try{var cd=n.contentDocument;if(cd&&cd!==root)__walk(cd);}catch(x){}}}};__walk(document);
         // 小页面全量扫描（语义候选 + 点击信号候选，含 shadow）；大页面退化语义集（限成本）
         var allCount=__allEls.length;

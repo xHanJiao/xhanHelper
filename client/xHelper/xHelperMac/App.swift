@@ -966,7 +966,7 @@ struct MacSettingsView: View {
     // 「使用本地后端」开关：默认关（dev/prod 一致）。仅在 serverURL 为空时生效。
     @AppStorage(LocalBackendPreference.useLocalKey) private var useLocalBackend = LocalBackendPreference.useLocalDefault
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
-    // D-a 隐藏开关：浏览器内核回退。只在 dev 设置页露出，值 "cef"/"wk"（见 BrowserEngineRouter）
+    // 浏览器内核开关（D-a / 2026-11-13 起对用户露出）：默认 CEF，可一键回兼容 WebKit。
     @AppStorage(BrowserEngineRouter.defaultEngineKey) private var browserEngine = BrowserEngine.cef.rawValue
     // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
     @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
@@ -1457,23 +1457,19 @@ struct MacSettingsView: View {
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
             }
 
-            #if DEBUG
-            if LocalPaths.isDev {
-                Section {
-                    Picker("新标签页内核", selection: $browserEngine) {
-                        Text("Chromium（CEF）").tag(BrowserEngine.cef.rawValue)
-                        Text("兼容（WebKit）").tag(BrowserEngine.compat.rawValue)
-                    }
-                    .pickerStyle(.segmented)
-                    Text("只影响之后新开的标签；已打开的标签保持原内核（D15 引擎粘性）。CEF 起不来会自动降级兼容引擎。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } header: {
-                    Text("浏览器内核（开发）")
+            Section {
+                Picker("新标签页内核", selection: $browserEngine) {
+                    Text("Chromium（CEF）").tag(BrowserEngine.cef.rawValue)
+                    Text("兼容（WebKit）").tag(BrowserEngine.compat.rawValue)
                 }
+                .pickerStyle(.segmented)
+                Text("只影响之后新开的标签；已打开的标签保持原内核（D15 引擎粘性）。视频站（B站/抖音/小红书）始终走兼容引擎；CEF 起不来会自动降级兼容引擎。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("浏览器内核")
             }
-            #endif
 
             Section("帮助") {
                 BrowseRow("快捷键", icon: "keyboard", destination: ShortcutGuideView(), sheetSize: CGSize(width: 560, height: 640))

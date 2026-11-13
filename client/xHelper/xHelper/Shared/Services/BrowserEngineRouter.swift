@@ -38,7 +38,8 @@ enum BrowserEngineRouter {
         #endif
     }
 
-    /// D-a 隐藏开关：`defaults write xhanx.cn.xHelperMac xhan_browser_engine_dev -string compat`
+    /// 设置页「浏览器内核」开关（2026-11-13 起对用户露出；此前是 dev 隐藏开关）。
+    /// 也可以命令行改：`defaults write xhanx.cn.xHelperMac xhan_browser_engine_dev -string compat`
     static var defaultEngineKey: String { "xhan_browser_engine_" + envSuffix }
 
     /// 开关值 → 默认引擎。只有 `compat` 表示"回兼容引擎"，其余（含未设置）都走 CEF。

@@ -42,6 +42,14 @@
   会让页面重复校验/重渲染）。
 - selector 版 `selectJS` 找不到元素时错误里带上选择器文本（原实现只有 ref 版带位置信息）。
 
+## 后续变更（2026-11-13，B7+ 评审）
+
+- `agent_browser_press` 的 WK 真键盘路径补 `CGEventInput.isTrusted()` 闸门：未授权辅助功能时
+  `CGEvent.post` 是静默无效的，原实现仍返回 `{"pressed": true, "real": true}` —— 与本篇同性质，
+  现改为 `requestPermission()` + 可读错误。
+- `agent_browser_download` 的来源页改为 `tabId` → 该 owner 最近标签 → 激活页：以前只用
+  `activeSession`，agent 标签恒后台，导致 UA/Referer/Cookie 取错页（需登录的媒体 403）。
+
 ## 遗留
 
 `click_text` 用模糊文本匹配仍有语义风险（命中多个只按 index 取），文档里已建议优先用 `ref`；`fill` 后 DOM 重建会让 `@eN` 失效，需重新 snapshot —— 都是设计边界，不在这条修复范围内。

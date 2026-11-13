@@ -481,7 +481,9 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **后台 renderer 必须关降频**：`XHCefApp::OnBeforeCommandLineProcessing` 追加 `--disable-background-timer-throttling` / `--disable-renderer-backgrounding` / `--disable-backgrounding-occluded-windows`。agent 标签停在隐藏窗口里，不关这三个就是「标题正确、`readyState` 永远不是 complete、页面空壳」。
 - ~~还留在 WK 侧的：滚动位置保存/恢复、后台媒体保活探测~~ **2026-11-13 已两引擎打通**：`saveScrollPosition` / `scheduleScrollRestore` / `probeMedia` / `pauseMedia` 统一走 `page.evaluateJS`（CEF 没有 `pauseAllMediaPlayback`，用 JS `pause()`）。
 - **仍只在 WK 侧**：媒体嗅探面板（`get_media_sources` 依赖 WK 的请求嗅探）、活动埋点的浏览状态机、`press` 的**真实键盘注入**（CGEvent；CEF 的 `press` 走 JS 合成事件，不触发 Enter 提交表单这类浏览器默认行为 —— 需要时改用点提交按钮）。CEF 标签上静默跳过，不是报错。
-- **CEF 的 `download` 现在带 Cookie**：新增 `BrowserPage.cookies(for:)`（WK 走 `HTTPCookieStore`，CEF 走 `CefCookieManager::VisitUrlCookies`，3s 兜底），下载与原生请求共用同一条 RFC 6265 匹配。
+- **CEF 的 `download` 现在带 Cookie**：新增 `BrowserPage.cookies(for:)`（WK 走 `HTTPCookieStore`，CEF 走 `CefCookieManager::VisitUrlCookies`，3s 兜底），下载与原生请求共用 `BrowserCookieMatching`（domain + path + secure，已进 `BrowserEngineCore` 单测）。
+- **`download` 的来源页要自己解析**（评审 P1）：`tabId` → 该 owner 最近操作的标签 → 当前激活页。agent 标签恒后台，只用 `activeSession` 会拿错引擎的 cookie / 错 Referer（需登录的媒体照样 403）——所以 `download` 的 schema 加了可选 `tabId`，**需登录的媒体必须传**。
+- **`press` 的真实键盘路径补了辅助功能闸门**：未授权时 `CGEvent.post` 是静默无效的，以前仍报 `pressed: true`（`docs/bugs/065` 同类）；现在 `requestPermission()` + 可读错误。CEF 标签本来就走 JS 合成事件（后台可用，但不触发 Enter 提交这类默认行为）。
 
 #### 9.2.13 B9 实现口径（三层媒体检测第 2/3 层）
 
@@ -758,3 +760,4 @@ main                       ← 继续每天发版（WK，现状不变）
 | 2026-11-13 | **删除 `cg_click` / `cg_drag`**（用户从未用过；CEF 上本来不可用）。`CGEventInput` 只保留键盘注入（`press`） | `Shared/Tools/BrowserToolProvider.swift`、`Shared/Services/CGEventInput.swift`、`ToolConfirmPolicy.swift`、`LocalToolRegistry.swift`、`BrowserActivityCenter.swift` |
 | 2026-11-13 | 设置页「浏览器内核」开关对用户露出（原为 dev-only 隐藏开关），合并 `main` 后仍可一键回兼容 WebKit | `xHelperMac/App.swift`、`Shared/Services/BrowserEngineRouter.swift` |
 | 2026-11-13 | CEF 标签补齐：滚动位置保存/恢复、后台媒体保活探测（JS `pause()`）、`download` 从 `CefCookieManager` 取 Cookie | `Shared/Tools/BrowserToolProvider.swift`、`Shared/Services/BrowserPage.swift`、`xHelperMac/CEF/CefBridge.{h,mm}` |
+| 2026-11-13 | 评审补丁（`docs/code-review/browser-chromium-migration/2026-11-13-b7plus.md`）：`download` 加 `tabId` 并自行解析来源页；滚动保存/恢复的竞态与错误分支收紧；媒体探测连续失败 3 次兜底；CEF 取 cookie 的"空结果/超时"留痕；`press` 补权限闸门；`BrowserCookieMatching` 加 path 匹配并进单测；设置页补「清除站点内核偏好」 | 同上 + `Shared/Services/BrowserEngineRouter.swift`、`xHelperMac/App.swift`、`Tests/BrowserEngineCoreTests/BrowserCookieMatchingTests.swift` |

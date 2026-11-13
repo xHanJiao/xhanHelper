@@ -100,6 +100,11 @@ enum EnginePreferenceStore {
         return BrowserEngine(rawValue: raw)
     }
 
+    /// 清掉全部站点偏好（设置页「清除站点内核偏好」）：之后按域名规则 + 默认引擎走。
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
     static func setEngine(_ engine: BrowserEngine?, for host: String?) {
         guard let k = hostKey(host) else { return }
         var all = (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
@@ -149,4 +154,23 @@ enum EngineHintGate {
 
     /// 测试/调试用：清掉全部计数
     static func reset() { UserDefaults.standard.removeObject(forKey: key) }
+}
+
+enum BrowserCookieMatching {
+    static func matching(_ cookies: [HTTPCookie], for url: URL) -> [HTTPCookie] {
+        guard let host = url.host?.lowercased() else { return [] }
+        let isHTTPS = url.scheme == "https"
+        let requestPath = url.path.isEmpty ? "/" : url.path
+        return cookies.filter { c in
+            if c.isSecure && !isHTTPS { return false }
+            let d = c.domain.lowercased()
+            let domain = d.hasPrefix(".") ? String(d.dropFirst()) : d
+            guard host == domain || host.hasSuffix("." + domain) else { return false }
+            // RFC 6265 §5.1.4：cookie-path 是请求路径的前缀（"/" 恒匹配；其余要求边界是 "/"）
+            let p = c.path.isEmpty ? "/" : c.path
+            if p == "/" { return true }
+            guard requestPath.hasPrefix(p) else { return false }
+            return requestPath.count == p.count || p.hasSuffix("/") || requestPath[requestPath.index(requestPath.startIndex, offsetBy: p.count)] == "/"
+        }
+    }
 }

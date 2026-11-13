@@ -714,13 +714,16 @@ class XHCefCookieCollector : public CefCookieVisitor {
       : completion_(completion) {}
 
   bool Visit(const CefCookie &cookie, int count, int total, bool &deleteCookie) override {
-    NSMutableDictionary *item = [NSMutableDictionary dictionary];
-    item[@"name"] = CefStringToNSString(CefString(&cookie.name));
-    item[@"value"] = CefStringToNSString(CefString(&cookie.value));
-    item[@"domain"] = CefStringToNSString(CefString(&cookie.domain));
-    item[@"path"] = CefStringToNSString(CefString(&cookie.path));
-    item[@"secure"] = @(cookie.secure);
-    [items_ addObject:item];
+    // CEF 回调线程不保证有 autorelease pool：每次 Visit 自己包一层消息
+    @autoreleasepool {
+      NSMutableDictionary *item = [NSMutableDictionary dictionary];
+      item[@"name"] = CefStringToNSString(CefString(&cookie.name));
+      item[@"value"] = CefStringToNSString(CefString(&cookie.value));
+      item[@"domain"] = CefStringToNSString(CefString(&cookie.domain));
+      item[@"path"] = CefStringToNSString(CefString(&cookie.path));
+      item[@"secure"] = @(cookie.secure);
+      [items_ addObject:item];
+    }
     return true;
   }
 
@@ -1110,6 +1113,7 @@ static NSWindow *XHCefParkingWindow(void) {
 - (void)cookiesForURLString:(NSString *)urlString
                  completion:(void (^)(NSArray<NSDictionary<NSString *, id> *> *))completion {
   if (!_browser || urlString.length == 0) {
+    NSLog(@"[cef] 取 cookie 跳过（browser 未就绪 / 空 URL）：%@", urlString);
     completion(@[]);
     return;
   }
@@ -1134,6 +1138,8 @@ static NSWindow *XHCefParkingWindow(void) {
   // 兜底：profile 还没初始化完时 visitor 可能迟迟不析构，别让下载卡住
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
                  dispatch_get_main_queue(), ^{
+                   if (finished) return;
+                   NSLog(@"[cef] 取 cookie 超时（3s），下载将不带 Cookie：%@", urlString);
                    finish(@[]);
                  });
 }

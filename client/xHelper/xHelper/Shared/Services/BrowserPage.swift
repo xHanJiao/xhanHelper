@@ -65,21 +65,6 @@ protocol BrowserPage: AnyObject {
     var mediaIssueReason: String? { get }
 }
 
-/// cookie 的 RFC 6265 域匹配：只发匹配目标域名的 cookie，杜绝跨站泄露。
-/// 两个引擎共用（WK 的 store 给全量、CEF 的 manager 已按 URL 过滤，这里统一再收敛一次）。
-enum BrowserCookieMatching {
-    static func matching(_ cookies: [HTTPCookie], for url: URL) -> [HTTPCookie] {
-        guard let host = url.host?.lowercased() else { return [] }
-        let isHTTPS = url.scheme == "https"
-        return cookies.filter { c in
-            if c.isSecure && !isHTTPS { return false }
-            let d = c.domain.lowercased()
-            let domain = d.hasPrefix(".") ? String(d.dropFirst()) : d
-            return host == domain || host.hasSuffix("." + domain)
-        }
-    }
-}
-
 /// 页面状态的一对多广播（面板要刷新地址栏，TabSession 要更新标题/host，两边都得收）。
 @MainActor
 final class BrowserPageState {
@@ -363,8 +348,13 @@ final class CefPage: NSObject, BrowserPage {
             // CEF 偶尔给空 path；HTTPCookie 不接受空 path（会返回 nil）
             let path = item["path"] as? String
             props[.path] = (path?.isEmpty == false) ? path! : "/"
-            if (item["secure"] as? Bool) == true { props[.secure] = "TRUE" }
-            return HTTPCookie(properties: props)
+            // NSNumber → Bool 的宽松桥接不可靠；Secure 判错的方向是"把 Secure cookie 发到 http"（安全侧）
+            if (item["secure"] as? NSNumber)?.boolValue == true { props[.secure] = "TRUE" }
+            guard let cookie = HTTPCookie(properties: props) else {
+                LogBuffer.shared.diag("[Browser] CEF cookie 转 HTTPCookie 失败 domain=\(props[.domain] as? String ?? "nil") name=\(name)")
+                return nil
+            }
+            return cookie
         }
         return BrowserCookieMatching.matching(cookies, for: url)
     }

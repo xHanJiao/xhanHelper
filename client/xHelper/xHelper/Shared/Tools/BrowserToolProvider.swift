@@ -187,11 +187,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
 
-    /// 探测页内是否有媒体在播；nil = 探测失败（调用方保持现状，别误摘保活）
+    /// 探测页内是否有媒体在播；nil = 本次探测失败（调用方保持现状，别误摘保活）。
+    /// 连续失败 3 次就当"没媒体"收尾：坏页 / 已崩的渲染进程不能永久占着保活位（还会 30s 刷一条日志）。
     private static func probeMedia(_ session: TabSession, tabId: String) async -> Bool? {
         do {
-            return (try await session.page.evaluateJS(mediaCheckScript)) as? Bool ?? false
+            let hasMedia = (try await session.page.evaluateJS(mediaCheckScript)) as? Bool ?? false
+            session.mediaProbeFailures = 0
+            return hasMedia
         } catch {
+            session.mediaProbeFailures += 1
+            if session.mediaProbeFailures >= 3 {
+                session.mediaProbeFailures = 0
+                LogBuffer.shared.info("[Browser] mediaCheck 连续失败，按无媒体处理（\(tabId)）：\(error.localizedDescription)")
+                return false
+            }
             LogBuffer.shared.diag("[Browser] mediaCheck JS 失败（\(tabId)）：\(error.localizedDescription)")
             return nil
         }
@@ -266,7 +275,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL。agent 调用必须显式 tabId", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("填充值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "text": strProp("输入文本"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键。agent 调用必须显式 tabId；真实按键（Enter 等）仅对屏幕可见标签生效", inputSchema: objProps(["key": strProp("按键名称"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键。agent 调用必须显式 tabId。兼容（WK）标签走真实键盘事件：仅对屏幕可见标签生效，Enter 等能触发浏览器默认行为；Chromium（CEF）标签走 JS 合成事件：后台可用，但不触发默认行为（提交表单请点按钮）", inputSchema: objProps(["key": strProp("按键名称"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_select",           description: "选择下拉选项。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e6"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("选项值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_check",            description: "勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_uncheck",          description: "取消勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
@@ -276,7 +285,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页。agent 调用必须显式 tabId",      inputSchema: objProps(["tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）。agent 调用必须显式 tabId", inputSchema: objProps(["tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_get_media_sources", description: "获取页面中的视频/图片资源列表（分页，实时抓取）。页面为动态内容（广告自动播放、懒加载）会导致资源随时变化，下载失败或列表疑似过期时重新调用本函数获取最新列表。videos 的 playing 字段标识当前播放中的视频（自动播放的广告可能稍后消失，要下载需趁早）。agent 调用必须显式 tabId", inputSchema: objProps(["page": numProp("页码，从 1 开始，默认 1"), "limit": numProp("每页数量，默认 15（视频和图片共用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_download",          description: "下载指定 URL 到本地（~/Downloads/xhanHelper/）。使用真实浏览器请求特征（UA/Referer/Cookie），每次都会弹确认条，等用户允许后才下载。仅允许媒体文件（视频/图片/音频），危险类型（可执行/压缩/脚本）会被拒绝。下载前建议先 get_media_sources 确认地址；失败（404/403）时资源可能已失效，请重新 get_media_sources 获取最新地址。调用时尽量传 filename（带扩展名），让用户确认条能看到文件名和类型", inputSchema: objProps(["url": strProp("要下载的资源 URL（http/https）"), "filename": strProp("可选：自定义文件名（含扩展名），默认从响应或 URL 推断")]), isReadOnly: false), // 写盘工具 → 非只读
+            LocalToolSchema(name: "agent_browser_download",          description: "下载指定 URL 到本地（~/Downloads/xhanHelper/）。使用真实浏览器请求特征（UA/Referer/Cookie），每次都会弹确认条，等用户允许后才下载。来源页按 tabId → 本任务最近操作的标签 → 当前激活页顺序取：**需登录/防盗链的媒体务必传 tabId**，否则 Cookie/Referer 可能来自别的页（403 的常见原因）。仅允许媒体文件（视频/图片/音频），危险类型（可执行/压缩/脚本）会被拒绝。下载前建议先 get_media_sources 确认地址；失败（404/403）时资源可能已失效，请重新 get_media_sources 获取最新地址。调用时尽量传 filename（带扩展名），让用户确认条能看到文件名和类型", inputSchema: objProps(["url": strProp("要下载的资源 URL（http/https）"), "filename": strProp("可选：自定义文件名（含扩展名），默认从响应或 URL 推断"), "tabId": strProp("（可选）来源标签页ID，从 list_tabs 获取：用该页的 UA/Referer/Cookie（需登录的媒体必传）")]), isReadOnly: false), // 写盘工具 → 非只读
         ]
         return schemas
     }
@@ -315,9 +324,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         case "agent_browser_list_tabs":
             return handleListTabs()
         case "agent_browser_download":
-            // 下载不操作任何标签页（用 URLSession + 来源页 Cookie）：不能进下面的 tabId 闸门，
-            // 它的签名里没有 tabId，否则就是"必须传 tabId / 但没这个参数"的死循环。
-            return await handleDownload(arguments: arguments)
+            // 下载不操作任何标签页（用 URLSession + 来源页 Cookie）：不能进下面的 tabId 闸门。
+            // 来源页必须自己解析（见 handleDownload）：agent 标签恒后台，只用 activeSession 会拿错 Cookie。
+            return await handleDownload(arguments: arguments, owner: context.owner)
         case "agent_browser_switch_tab":
             return handleSwitchTab(arguments, owner: context.owner)
         default:
@@ -443,6 +452,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     // 触发浏览器默认行为；iOS 无 CGEvent 注入，回退到 JS 合成键盘事件
                     #if os(macOS)
                     if let webView = session.webView, let code = CGEventInput.keyCode(for: key) {
+                        // 未授权时 CGEvent.post 静默无效：不能照旧报 pressed=true（docs/bugs/065 同类）
+                        guard CGEventInput.isTrusted() else {
+                            CGEventInput.requestPermission()
+                            return .init(serverResult: nil, serverError: "真实按键需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）；也可改用 click 点提交按钮", clientAction: nil)
+                        }
                         #if DEBUG
                         print("[B-Press] key=\(key) vk=\(code)")
                         #endif
@@ -992,7 +1006,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// download：拟人化下载（真实浏览器 UA/Referer/Cookie + 随机延迟）到 ~/Downloads/xhanHelper/。
     /// L3 确认由 LocalToolRegistry riskLevel 层处理（handleClientToolCall），此处只负责执行。
     /// 安全（逐条保留）：scheme 白名单 / 危险扩展名黑名单 / cookie 域匹配 / sanitize / 魔数媒体校验。
-    private func handleDownload(arguments: [String: Any]) async -> LocalToolResult {
+    private func handleDownload(arguments: [String: Any], owner: String?) async -> LocalToolResult {
         guard let urlStr = arguments["url"] as? String,
               let url = URL(string: urlStr),
               url.scheme == "http" || url.scheme == "https",
@@ -1010,7 +1024,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
             return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）：仅允许媒体文件", clientAction: nil)
         }
-        return await runDownload(url: url, preferredName: customName, delay: true, enforceMedia: true)
+        // 来源页：显式 tabId > 该 owner 最近操作的 agent 标签 > 当前激活页。
+        // 不能只用 activeSession：agent 标签恒后台，UA/Referer/Cookie 会取错页（需登录的媒体直接 403）。
+        let srcSession = owner.flatMap { sessionForAgent(arguments, owner: $0) } ?? activeSession
+        return await runDownload(url: url, preferredName: customName, delay: true,
+                                 enforceMedia: true, session: srcSession)
     }
 
     /// 历史页重试：用记录的 URL 重新走同一条下载链（delay=false 无拟人延迟；enforceMedia 按原记录）。
@@ -1614,8 +1632,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabCounter += 1
         let isAgent = owner != nil
         // B7 起 agent 标签也走 resolveEngine：CEF 有了 JS 求值通道（渲染进程代跑 + JSON 回包），
-        // 快照/读正文/点击这些工具不再依赖 WKWebView。仍走 WK 的只剩真实鼠标注入（cg_click/cg_drag）
-        // 与截图类能力，调用时给明确失败。
+        // 快照/读正文/点击这些工具不再依赖 WKWebView。
         let session = TabSession(engine: BrowserEngineRouter.resolveEngine(
             url: url, override: engineArg, cefAvailable: Self.cefAvailable))
         session.isAgentTab = isAgent
@@ -2378,11 +2395,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 LogBuffer.shared.diag("[Browser] saveScroll JS 失败 url=\(session.page.url?.absoluteString ?? "nil")：\(error.localizedDescription)")
                 return
             }
-            guard let data = text.data(using: .utf8),
-                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let y = obj["y"] as? Double, y > 0,
-                  let m = obj["m"] as? Double else {
-                session.savedScrollY = nil
+            guard let data = text.data(using: .utf8) else { return }
+            guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                // 解析失败保留上一次的位置（别把好值抹掉），只留痕
+                LogBuffer.shared.diag("[Browser] saveScroll 回包不是 JSON url=\(session.page.url?.absoluteString ?? "nil")")
+                return
+            }
+            guard let y = obj["y"] as? Double, let m = obj["m"] as? Double else {
+                LogBuffer.shared.diag("[Browser] saveScroll 回包缺字段 url=\(session.page.url?.absoluteString ?? "nil")")
+                return
+            }
+            guard y > 0 else {
+                session.savedScrollY = nil   // 本来就没滚动：清掉旧值，切回来不用恢复
                 return
             }
             session.savedScrollY = y
@@ -2394,12 +2418,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 故每 120ms 轮询一次，等视口/内容高度恢复正常再 scrollTo；最多 15 次。
     private func scheduleScrollRestore(_ session: TabSession, attempt: Int = 0) {
         guard attempt < 15 else {
-            print("[BrowserDiag] restore gave up (layout never ready) url=\(session.page.url?.absoluteString ?? "nil")")
+            LogBuffer.shared.diag("[Browser] restore gave up (layout never ready) url=\(session.page.url?.absoluteString ?? "nil")")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak session] in
             guard let self, let session else { return }
-            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else { return }
+            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else {
+                // 保存是异步的（CEF 是渲染进程往返）：A→B→A 快速切换时先等下一轮
+                if session.savedScrollY == nil, attempt < 5 {
+                    self.scheduleScrollRestore(session, attempt: attempt + 1)
+                }
+                return
+            }
             let script = """
             (function(){if(window.__xhDiag!==\(Int(m)))return'reloaded';
             if(window.innerHeight<50||document.documentElement.scrollHeight<100)return'wait';
@@ -2427,7 +2457,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     return JSON.stringify({y:window.scrollY,m:window.__xhDiag});})()
     """
 
-    /// 暂停页内所有视频/音频（CEF 没有 WK 的原生暂停 API）
+    /// 暂停页内所有视频/音频（CEF 没有 WK 的原生暂停 API）。
+    /// 边界：只覆盖主文档里的 `video,audio` —— shadow DOM / 跨域 iframe 内的媒体暂停不到（WK 是全覆盖）。
     private static let pauseMediaScript = """
     (function(){var all=document.querySelectorAll('video,audio');
     for(var i=0;i<all.length;i++){try{all[i].pause();}catch(e){}}})()
@@ -2819,8 +2850,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let engine: BrowserEngine
         let page: BrowserPage
-        /// 过渡口（见 `BrowserPage.wkWebView`）：CEF 标签为 nil，WK 专属能力（JS/下载/查找/快照）
-        /// 的调用方必须显式失败。CEF 侧接入见 B6/B7。
+        /// 过渡口（见 `BrowserPage.wkWebView`）：CEF 标签为 nil，只剩 WK 专属能力
+        /// （媒体嗅探 / 真实按键 / `pauseAllMediaPlayback`）的调用方需要它，必须显式处理 nil。
         var webView: WKWebView? { page.wkWebView }
         var loadContinuation: CheckedContinuation<String?, Never>?
         var loadTimeout: Task<Void, Never>?
@@ -2836,6 +2867,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 再恢复，窗口期内内容高度塌缩、scrollTop 被内核钳制归零（虚拟列表站点必丢）
         var savedScrollY: Double?
         var savedScrollMarker: Double?
+        /// 媒体探测连续失败次数（坏页兜底：连续 3 次按"无媒体"收尾）
+        var mediaProbeFailures = 0
         /// 最近一次 snapshot 时各 @eN 元素的特征签名（ref 校验基准；导航时清空）
         var lastSnapshotItems: [[String: Any]]?
         /// 页面标题变化回调（tab 标题跟随）

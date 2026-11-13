@@ -1463,10 +1463,14 @@ struct MacSettingsView: View {
                     Text("兼容（WebKit）").tag(BrowserEngine.compat.rawValue)
                 }
                 .pickerStyle(.segmented)
-                Text("只影响之后新开的标签；已打开的标签保持原内核（D15 引擎粘性）。视频站（B站/抖音/小红书）始终走兼容引擎；CEF 起不来会自动降级兼容引擎。")
+                Text("只影响之后新开的标签；已打开的标签保持原内核（引擎粘性）。视频站（B站/抖音/小红书）始终走兼容引擎；CEF 起不来会自动降级兼容引擎。单个站点在地址栏点过「换内核」的，以那次选择为准 —— 用下面的按钮清掉。")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Button("清除站点内核偏好") {
+                    EnginePreferenceStore.reset()
+                }
+                .font(.caption)
             } header: {
                 Text("浏览器内核")
             }

@@ -27,13 +27,6 @@ struct HomeEntryCard: View {
         let action: () -> Void
     }
 
-    /// 单行档的细节行：标题在左（单行 tail 截断），时间/金额在右（不参与压缩）。
-    struct DetailLine: Identifiable {
-        let id: String
-        let title: String
-        let detail: String?
-    }
-
     let asset: String
     let title: String
     /// 会变的那一行（本月 ¥1,284 / 128 条 / 2 个标签 …）
@@ -46,8 +39,6 @@ struct HomeEntryCard: View {
     /// 卡宽：窄卡的插画带要跟着缩（`homeBandWidth`），不然文字区没地方
     let width: CGFloat
     let height: CGFloat
-    /// 单行档的细节行（至多 2 行）
-    let details: [DetailLine]
     /// 信息档的三条可点行（空 = 该档不渲染信息区，文字区占满）
     let infoRows: [InfoRow]
     /// 非信息档：整卡点击；信息档：文字区点击
@@ -65,7 +56,6 @@ struct HomeEntryCard: View {
         layout: HomeCardLayout,
         width: CGFloat,
         height: CGFloat,
-        details: [DetailLine] = [],
         infoRows: [InfoRow] = [],
         action: @escaping () -> Void
     ) {
@@ -77,7 +67,6 @@ struct HomeEntryCard: View {
         self.layout = layout
         self.width = width
         self.height = height
-        self.details = details
         self.infoRows = infoRows
         self.action = action
     }
@@ -85,9 +74,10 @@ struct HomeEntryCard: View {
     var body: some View {
         Group {
             switch layout {
-            case .iconOnly: iconTile
-            case .info:     infoCard
-            case .singleLine, .stacked: textCard
+            case .iconOnly:         iconTile
+            case .info:             infoCard
+            case .compactInfo:      compactCard
+            case .stacked:          textCard
             }
         }
         .onHover { hovered = $0 }
@@ -124,7 +114,8 @@ struct HomeEntryCard: View {
                         HomeInfoRowView(row: row)
                     }
                 }
-                .frame(width: 244)
+                // 行区宽度随卡宽走（560 → 244，≥636 → 320）：宽卡别让行区白占着、文字区空着
+                .frame(width: SidebarHomeFormat.homeInfoRowsWidth(cardWidth: width))
                 .padding(.horizontal, 10)
             }
 
@@ -147,15 +138,66 @@ struct HomeEntryCard: View {
         .modifier(HomeCardChrome(hovered: hovered))
     }
 
+    /// 紧凑信息档（卡宽 340–560）：头部一行 `标题 · 主数字`，下面 3 条可点行（与信息档同行数）。
+    /// 跟信息档的差别只是**行不单占一列**——卡窄到三列并排时文字区只剩 ~100pt，
+    /// 把标题压到行上方，行就能吃满剩余宽度（比信息档的 244 还宽）。
+    private var compactCard: some View {
+        HStack(spacing: 0) {
+            // 插画带跟信息档一样封顶 116：比 0.42 的默认口径窄，省下的宽度全给行
+            // 这一档此前（单行/三行）是整卡按钮，插画带不做成可点会被当成"卡片坏了"
+            Button(action: action) {
+                band(width: min(116, SidebarHomeFormat.homeBandWidth(cardWidth: width, cardHeight: height)))
+            }
+            .buttonStyle(.plain)
+            .help(title)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Button(action: action) {
+                    HStack(spacing: 10) {
+                        titleText.layoutPriority(2)
+                        primaryText.layoutPriority(1)
+                        Spacer(minLength: 6)
+                        if showsSecondary { secondaryText }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(title)
+
+                ForEach(infoRows.prefix(3)) { row in
+                    HomeInfoRowView(row: row)
+                }
+
+                // 只有 1 条行的卡（如浏览器只开着一个标签）不居中：头部和第一条行跟邻居
+                // 对齐，空位留在卡底，否则同一行卡片的信息区会错位（用户 2026-11-13）。
+                // 这块空位也能点进面板，别让 1 行卡的下半张卡是死的。
+                Spacer(minLength: 0)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: action)
+            }
+            .padding(.horizontal, 14)
+            // 164 里放「头部 ~17 + 3×28 + 4 个 6pt 间距」= 125，加上下各 14 = 153，余 11 留给卡底 Spacer
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Button(action: action) {
+                chevron
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(height: height)
+        .modifier(HomeCardChrome(hovered: hovered))
+    }
+
     private var textCard: some View {
         Button(action: action) {
             HStack(spacing: 0) {
                 band(width: SidebarHomeFormat.homeBandWidth(cardWidth: width, cardHeight: height))
-                Group {
-                    if layout == .singleLine { singleLineStack } else { textStack }
-                }
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                textStack
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 chevron
             }
             .frame(height: height)
@@ -219,15 +261,15 @@ struct HomeEntryCard: View {
         }
     }
 
-    /// 细节行 / 信息行已经给出同样的时间或补充信息时，卡头第三行就是重复说两遍（还会并排
+    /// 信息行已经给出同样的时间或补充信息时，卡头第三行就是重复说两遍（还会并排
     /// 出现两套时间口径：卡头「下一条 11月15日」对行内「23 天前」）。
     ///
-    /// 只有信息档 / 单行档会把行画出来，所以只在这两档且真有行时藏；三行档的第三行本来
-    /// 就是副文案（`details` 是按数据恒传的，不能拿它判断"有没有行"）。
+    /// 只有信息档 / 紧凑信息档会把行画出来，所以只在这两档且真有行时藏；三行档的第三行本来
+    /// 就是副文案，照旧按卡宽决定。
     private var showsSecondary: Bool {
         switch layout {
-        case .info, .singleLine:
-            return details.isEmpty && infoRows.isEmpty
+        case .info, .compactInfo:
+            return infoRows.isEmpty
         case .stacked:
             // 窄卡只留「标题 / 主数字」两行：第三行在 200 出头的卡里会被截成「上次停在 Dee…」
             return width >= SidebarHomeFormat.homeSecondaryMinCardWidth
@@ -241,37 +283,6 @@ struct HomeEntryCard: View {
             titleText
             primaryText
             if showsSecondary { secondaryText }
-        }
-    }
-
-    /// 单行档：`标题 · 主数字 ⟶ 副文案`，下面两行细节（132 高固定放两行）。
-    private var singleLineStack: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 10) {
-                titleText.layoutPriority(2)
-                primaryText.layoutPriority(1)
-                Spacer(minLength: 12)
-                if showsSecondary { secondaryText }
-            }
-            ForEach(Array(details.prefix(height >= 120 ? 2 : 1))) { line in
-                HStack(spacing: 8) {
-                    Text(line.title)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.85))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        // 限宽而非限字数：长备忘标题最多占 200pt（≈18 字），剩下留白给右侧时间
-                        .frame(maxWidth: 200, alignment: .leading)
-                    Spacer(minLength: 6)
-                    if let detail = line.detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.system(size: 10.5))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .layoutPriority(1)
-                    }
-                }
-            }
         }
     }
 
@@ -330,7 +341,9 @@ private struct HomeInfoRowView: View {
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.primary.opacity(0.88))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    // 留头（用户 2026-11-13）：标题多是「对象 + 补充」，头几个字才区分得开；
+                    // 截中间会同时丢头和尾，读起来像乱码。
+                    .truncationMode(.tail)
                 Spacer(minLength: 6)
                 if let detail = row.detail, !detail.isEmpty {
                     Text(detail)

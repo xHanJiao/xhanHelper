@@ -170,24 +170,17 @@ enum SidebarHomeFormat {
     /// 首页内容块最大宽（= 654 × 2 + 12 间距）。超过它只加两侧留白，卡片不再拉长。
     static let homeContentMaxWidth: CGFloat = 1320
 
-    /// 首页纵向除卡片外的固定开销（问候行 ~47 + 卡片上间距 16 + 行间 2×12 + 上下 padding 36）。
-    /// 近似值，只用来判断「三行卡放不放得下」，差几个点不影响结论。
-    static let homeChromeHeight: CGFloat = 123
-
-    /// 按内容宽 + 可用高算列数与档位。纯函数，见 `Tests/SidebarHomeCoreTests`。
+    /// 按内容宽算列数与档位。纯函数，见 `Tests/SidebarHomeCoreTests`。
     ///
-    /// **永远两列**（用户 2026-11-12 拍板）：内容块窄了就靠档位降级（三行 → 单行 → 图标卡），
+    /// **永远两列**（用户 2026-11-12 拍板）：内容块窄了就靠档位降级（信息 → 紧凑信息 → 三行 → 图标卡），
     /// 不再退回单列——单列时一行只有一张卡，看着像列表而不是入口宫格。
     ///
-    /// `availableHeight` 传视图实际可用高（不传 = 不考虑高度，老调用点行为不变）：
-    /// 三行 164 的信息档放不下时降到 132 的单行档；连 132 都放不下就**允许整页滚动**，
-    /// 不再继续压——卡高压到 100 出头文字和插画都会糊。
-    static func homeMetrics(contentWidth: CGFloat, availableHeight: CGFloat = .infinity) -> HomeCardMetrics {
+    /// 卡高**不跟可用高走**（2026-11-13 用户拍板 A）：信息档与紧凑信息档恒 164 / 3 行，
+    /// 窗口矮就整页滚动。此前"放不下降成 132 / 2 行"会让同一台机器上信息区忽多忽少。
+    static func homeMetrics(contentWidth: CGFloat) -> HomeCardMetrics {
         let width = max(0, contentWidth)
         // 极端测量态（宽 < 12）也别算出负边长
         let cardWidth = max(0, (width - 12) / 2)
-        // 每张卡最多能有高；窗口极矮时允许为负，后面 clamp 掉
-        let maxCardHeight = availableHeight.isFinite ? (availableHeight - homeChromeHeight) / 3 : .infinity
 
         // 卡宽放不下文字才退成纯图标卡：200 以下缩完插画带文字区只剩 ~40pt，
         // 「本月 ¥2,963」会被截成「本月 ¥…」，不如干净给插画（用户 2026-11-12 拍板）。
@@ -196,19 +189,27 @@ enum SidebarHomeFormat {
         // （再矮就整页滚，别把插画压成一条扁带）。
         if cardWidth < 200 {
             return HomeCardMetrics(layout: .iconOnly, columns: 2, cardWidth: cardWidth,
-                                   cardHeight: max(110, min(cardWidth, 170, maxCardHeight)))
+                                   cardHeight: max(110, min(cardWidth, 170)))
         }
 
-        // 只有信息档比别的档高（164 vs 132），所以高度不够时降这一档就够；132 是底线。
-        let base = tier(cardWidth: cardWidth)
-        let layout = base == .info && maxCardHeight < 164 ? .singleLine : base
+        // 信息档与紧凑信息档同为 164 / 3 行，只有排布不同（三列 vs 头部 + 行）
+        let layout = tier(cardWidth: cardWidth)
+        let informative = layout == .info || layout == .compactInfo
         return HomeCardMetrics(layout: layout, columns: 2, cardWidth: cardWidth,
-                               cardHeight: layout == .info ? 164 : 132)
+                               cardHeight: informative ? 164 : 132)
     }
 
     /// 三行档里副文案（第三行）的最低卡宽。窄于此只留「标题 / 主数字」两行——
     /// 200 出头的卡里第三行只会被截成「上次停在 Dee…」，不如不显示。
     static let homeSecondaryMinCardWidth: CGFloat = 300
+
+    /// 信息档行区宽度：卡窄时 244（文字区至少留 129pt，主数字才不截），
+    /// 宽卡把富余给行区，最多 320（再多标题与细节之间就是一条大留白）。
+    static func homeInfoRowsWidth(cardWidth: CGFloat) -> CGFloat {
+        // 插画带 116 + 行左右内距 20 + 文字左右内距 28 + 箭头 23
+        let reserved: CGFloat = 187
+        return max(0, min(320, cardWidth - reserved - 129))
+    }
 
     /// 插画带宽度：跟着卡宽缩（0.42，最多 = 卡高）。
     /// 卡宽 440 以上恒为卡高（原来的口径）；300 的卡带 126，200 的卡带 84，把横向空间让给文字。
@@ -216,9 +217,12 @@ enum SidebarHomeFormat {
         max(0, min(cardHeight, cardWidth * 0.42))
     }
 
+    /// 紧凑信息档的卡宽下限：卡再窄，行里标题只剩 ~6 个字（信息区就成噪声了），退回三行文字档。
+    static let homeCompactMinCardWidth: CGFloat = 340
+
     private static func tier(cardWidth: CGFloat) -> HomeCardLayout {
         if cardWidth >= 560 { return .info }
-        if cardWidth >= 440 { return .singleLine }
+        if cardWidth >= homeCompactMinCardWidth { return .compactInfo }
         return .stacked
     }
 
@@ -252,10 +256,11 @@ enum SidebarHomeFormat {
     }
 }
 
-/// 入口卡四档：信息（插画 + 3 条可点行 + 文字）/ 单行 + 细节 / 三行文字 / 纯图标。
+/// 入口卡四档：信息（插画 + 3 条可点行 + 文字）/ 紧凑信息（头部一行 + 3 条可点行）/
+/// 三行文字 / 纯图标。两个信息档同高 164、同行数 3，只有排布不同。
 enum HomeCardLayout: Equatable {
     case info
-    case singleLine
+    case compactInfo
     case stacked
     case iconOnly
 }

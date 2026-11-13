@@ -200,9 +200,8 @@ struct BrowsePanelView: View {
     private var home: some View {
         GeometryReader { geo in
             let contentWidth = max(0, min(geo.size.width - 52, SidebarHomeFormat.homeContentMaxWidth))
-            // 高度也参与档位：窗口矮时信息档降成单行档，尽量一屏放下（放不下就滚）
-            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth,
-                                                        availableHeight: geo.size.height)
+            // 卡高不跟可用高走（2026-11-13 拍板 A）：恒 164 / 3 行，窗口矮就整页滚
+            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     greeting
@@ -231,68 +230,15 @@ struct BrowsePanelView: View {
         // 用 TimelineView 而不是 Timer —— 视图被摘除时自动停，不用管取消。
         // 不能用 `.periodic(from: Date(), by:)`：body 每次重算都换起点，tick 会被一直往后推。
         TimelineView(.everyMinute) { context in
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: context.date)))
-                        .font(.system(size: 19, weight: .semibold))
-                    Spacer()
-                    Text(Self.todayText(context.date))
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-
-                Button {
-                    manager.browsePanelSelection = .reminders
-                } label: {
-                    todayLine
-                        .font(.system(size: 12.5))
-                        .foregroundColor(.secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("查看备忘")
+            HomeGreetingView(
+                now: context.date,
+                pendingReminders: homeVM.stats.pendingReminders,
+                events: homeVM.stats.events,
+                monthSpend: homeVM.stats.monthSpend
+            ) {
+                manager.browsePanelSelection = .reminders
             }
         }
-    }
-
-    /// 今日行：备忘 / 事件 / 本月支出。任一路取不到就显示 `—`（不隐藏，免得布局跳动）。
-    /// 整行可点进备忘面板——否则「上面有数字、下面没入口」会显得断头。
-    /// 用 HStack 而不是 `Text + Text`（macOS 26 已废弃 `+`）。
-    private var todayLine: some View {
-        HStack(spacing: 7) {
-            todayItem("备忘", homeVM.stats.pendingReminders.map(String.init))
-            separatorDot
-            todayItem("事件", homeVM.stats.events.map(String.init))
-            separatorDot
-            todayItem("本月支出", homeVM.stats.monthSpend.map(SidebarHomeFormat.money))
-        }
-        .font(.system(size: 12.5))
-        .foregroundColor(.secondary)
-        .lineLimit(1)
-        .minimumScaleFactor(0.9)
-    }
-
-    private func todayItem(_ label: String, _ value: String?) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-            Text(value ?? "—")
-                .fontWeight(.semibold)
-                .foregroundColor(Color("assistantText"))
-                .monospacedDigit()
-        }
-    }
-
-    private var separatorDot: some View {
-        Text("·")
-            .foregroundColor(Color.primary.opacity(0.35))
-    }
-
-    private static func todayText(_ now: Date) -> String {
-        let cal = Calendar.current
-        let comps = cal.dateComponents([.month, .day, .weekday], from: now)
-        let names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
-        let index = max(0, min(6, (comps.weekday ?? 1) - 1))
-        return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"
     }
 
     /// 打开着的网页标签：排除收藏夹 / 历史 / 配置 / 本页资源与灵阅产物 tab。
@@ -314,7 +260,9 @@ struct BrowsePanelView: View {
                 HomeEntryCard.InfoRow(
                     id: "tab:" + tab.id,
                     title: tab.title,
-                    detail: tab.host,
+                    // 不显示 host（用户 2026-11-13）：favicon 已经表达站点，右侧留给「多久没看」
+                    // 这类真信息；标签行没有可比的时间字段，就不填空话。
+                    detail: nil,
                     icon: tab.host.map { HomeEntryCard.InfoIcon.favicon(host: $0) }
                         ?? .monogram(SidebarHomeFormat.monogram(tab.title))
                 ) {
@@ -333,7 +281,6 @@ struct BrowsePanelView: View {
             layout: metrics.layout,
             width: metrics.cardWidth,
             height: metrics.cardHeight,
-            details: detailLines(rows),
             infoRows: rows
         ) {
             BrowserToolProvider.shared.openBlankTab()
@@ -416,7 +363,6 @@ struct BrowsePanelView: View {
             layout: metrics.layout,
             width: metrics.cardWidth,
             height: metrics.cardHeight,
-            details: detailLines(rows),
             infoRows: rows
         ) {
             manager.browsePanelSelection = panel
@@ -484,13 +430,6 @@ struct BrowsePanelView: View {
         case .memories, .images, .agents, .dashboard:
             // 已从首页移出（走设置），这里只为穷尽 switch
             return []
-        }
-    }
-
-    /// 单行档的细节行与信息行同源（标题 / 右侧细节），不维护第二套文案。
-    private func detailLines(_ rows: [HomeEntryCard.InfoRow]) -> [HomeEntryCard.DetailLine] {
-        rows.prefix(2).map {
-            HomeEntryCard.DetailLine(id: $0.id, title: $0.title, detail: $0.detail)
         }
     }
 

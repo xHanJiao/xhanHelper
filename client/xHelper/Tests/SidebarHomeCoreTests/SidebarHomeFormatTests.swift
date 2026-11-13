@@ -135,10 +135,11 @@ final class SidebarHomeFormatTests: XCTestCase {
 
     func testHomeMetricsCardWidthTiers() {
         // 内容宽 = 2 × 卡宽 + 12
-        for (cardWidth, layout, height) in [(340.0, HomeCardLayout.stacked, 132.0),
-                                            (439.0, .stacked, 132.0),
-                                            (440.0, .singleLine, 132.0),
-                                            (559.0, .singleLine, 132.0),
+        for (cardWidth, layout, height) in [(202.0, HomeCardLayout.stacked, 132.0),
+                                            (339.0, .stacked, 132.0),
+                                            (340.0, .compactInfo, 164.0),
+                                            (440.0, .compactInfo, 164.0),
+                                            (559.0, .compactInfo, 164.0),
                                             (560.0, .info, 164.0),
                                             (654.0, .info, 164.0)] as [(CGFloat, HomeCardLayout, CGFloat)] {
             let m = SidebarHomeFormat.homeMetrics(contentWidth: cardWidth * 2 + 12)
@@ -148,10 +149,10 @@ final class SidebarHomeFormatTests: XCTestCase {
     }
 
     func testHomeMetricsTwoColumnTiers() {
-        let singleLine = SidebarHomeFormat.homeMetrics(contentWidth: 900)   // 卡 444
-        XCTAssertEqual(singleLine.columns, 2)
-        XCTAssertEqual(singleLine.layout, .singleLine)
-        XCTAssertEqual(singleLine.cardHeight, 132)
+        let compact = SidebarHomeFormat.homeMetrics(contentWidth: 900)      // 卡 444
+        XCTAssertEqual(compact.columns, 2)
+        XCTAssertEqual(compact.layout, .compactInfo)
+        XCTAssertEqual(compact.cardHeight, 164)
 
         let info = SidebarHomeFormat.homeMetrics(contentWidth: 1132)        // 卡 560
         XCTAssertEqual(info.columns, 2)
@@ -178,42 +179,9 @@ final class SidebarHomeFormatTests: XCTestCase {
         XCTAssertEqual(texty.cardWidth, 202)
     }
 
-    func testHomeMetricsDropsInfoTierWhenWindowIsShort() {
-        // 1132 内容宽 → 卡 560，本来是信息档 164
-        let tall = SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 800)
-        XCTAssertEqual(tall.layout, .info)
-        XCTAssertEqual(tall.cardHeight, 164)
-
-        // 降级边界：(H − 123) / 3 < 164 ⇔ H < 615，写死边界值防常量漂移
-        let edge = SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 615)
-        XCTAssertEqual(edge.layout, .info)                // 615 时 (615−123)/3 正好 164，不算"小于"
-        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 614).layout, .singleLine)
-        let short = SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 600)
-        XCTAssertEqual(short.layout, .singleLine)
-        XCTAssertEqual(short.cardHeight, 132)
-
-        // 再矮也不继续压：132 是底线，整页滚动兜底
-        let tiny = SidebarHomeFormat.homeMetrics(contentWidth: 1132, availableHeight: 300)
-        XCTAssertEqual(tiny.layout, .singleLine)
-        XCTAssertEqual(tiny.cardHeight, 132)
-
-        // 本来就是单行/三行档的，高度不影响档位
-        let already = SidebarHomeFormat.homeMetrics(contentWidth: 900, availableHeight: 300)
-        XCTAssertEqual(already.layout, .singleLine)
-        XCTAssertEqual(already.cardHeight, 132)
-    }
-
-    func testHomeMetricsIconTierShrinksWithHeight() {
-        // 卡 139（图标档）本来高 = 宽 139；可用高 500 → (500 − 123) / 3 = 125.67（写死字面量，
-        // 不拿 homeChromeHeight 自己算，否则常量写错测试照样绿）
-        let m = SidebarHomeFormat.homeMetrics(contentWidth: 290, availableHeight: 500)
-        XCTAssertEqual(m.layout, .iconOnly)
-        XCTAssertEqual(m.cardHeight, 125.67, accuracy: 0.01)
-        XCTAssertEqual(m.cardWidth, 139)
-
-        // 窗口极矮：高度有下限 110，不让插画压成扁带、也不归零消失
-        let tiny = SidebarHomeFormat.homeMetrics(contentWidth: 290, availableHeight: 100)
-        XCTAssertEqual(tiny.cardHeight, 110)
+    func testHomeMetricsIconTierHeightFloor() {
+        // 极窄测量态（卡宽 < 110）高度仍保底 110：不把插画压成扁带
+        XCTAssertEqual(SidebarHomeFormat.homeMetrics(contentWidth: 100).cardHeight, 110)
     }
 
     func testHomeBandWidthShrinksWithCard() {
@@ -263,6 +231,16 @@ final class SidebarHomeFormatTests: XCTestCase {
         // 未知分类交给首字色块兜底，不瞎映射
         XCTAssertNil(SidebarHomeFormat.billIcon(category1: ""))
         XCTAssertNil(SidebarHomeFormat.billIcon(category1: "其他"))
+    }
+
+    func testHomeInfoRowsWidth() {
+        // 信息档行区：卡窄保文字区（244），宽卡放给行区（封顶 320）
+        XCTAssertEqual(SidebarHomeFormat.homeInfoRowsWidth(cardWidth: 560), 244, accuracy: 0.001)
+        XCTAssertEqual(SidebarHomeFormat.homeInfoRowsWidth(cardWidth: 600), 284, accuracy: 0.001)
+        XCTAssertEqual(SidebarHomeFormat.homeInfoRowsWidth(cardWidth: 636), 320, accuracy: 0.001)
+        XCTAssertEqual(SidebarHomeFormat.homeInfoRowsWidth(cardWidth: 654), 320, accuracy: 0.001)
+        // 极端黑洞（测量态卡宽 0）别算出负数
+        XCTAssertEqual(SidebarHomeFormat.homeInfoRowsWidth(cardWidth: 0), 0)
     }
 
     func testMonogram() {

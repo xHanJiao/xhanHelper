@@ -485,12 +485,14 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 白名单（第 1 层）只覆盖已知视频站；**非白名单站点**（微博 / Twitter / 各种 embedding）的 H.264 视频在主引擎上会**静默播不了**（黑屏/无声，不抛错）。B9 补后两层：
 
 - **探针注入**：`xhdisguise::MediaProbeJavaScript()` 在渲染进程 `OnContextCreated` 里紧跟伪装脚本同步 Eval（document-start、页面脚本之前）：
-  - 第 2 层：`<video>` 触发 `loadstart` 时判能力（`MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"')` 或 `canPlayType`），不支持就报 `no-h264`；
+  - 第 2 层：`<video>` 触发 `loadstart` 时判能力（`MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"')` 或 `canPlayType`），不支持就报 `no-h264`。**只对看着像 H.264 的源报**（`.mp4/.m4v/.mov`，含 `<source>` 子元素）——否则 VP9/WebM 页面明明能播也会被劝去兼容引擎；`blob:` / 无 src / MSE 判不出来的不报，交给第 3 层；
   - 第 3 层：监听媒体元素的 `error`，`error.code === 4`（`MEDIA_ERR_SRC_NOT_SUPPORTED`）→ 能力不符报 `no-h264`，否则报 `media-src-unsupported`。
   - **判断不了就当能播**（嗅探异常时 `supported = true`）：宁可漏报，也不要天天误报。
 - **回报通道**：页内 `console.error("XHMEDIA:<reason>")` → 浏览器进程 `CefDisplayHandler::OnConsoleMessage` 抓前缀（与回归探针的 `XHPROBE:` 同一条通道，不新增协议）→ `CefPage.mediaIssueReason` → `stateObservers.fire()`。
 - **UI**：`BrowserTabView` 复用白名单那条提示条（`engineNoticeBar`），文案按原因区分（缺 H.264 / 编码不支持），动作仍是「用兼容模式打开」并写偏好表；频率闸复用 `EngineHintGate`（同 host 24h 2 次），同一 tab/view 只弹一次。
-- **自检**：探针 JS 抽出来用 node 跑桩对象 7/7（无 H.264 × loadstart / error4、有 H.264 × error4（编码不支持）、普通 error 不报、img 的 error 不报、audio 也覆盖）。
+- **自检**：探针 JS 抽出来用 node 跑桩对象 11/11（无 H.264 × mp4 loadstart 报、webm/blob/无 src 不报、`<source>` 里是 mp4 也报、无 H.264 × error4、有 H.264 × error4（编码不支持）、普通 error 不报、img 的 error 不报、audio 覆盖）。
+
+> 2026-11-13 代码评审补丁（见 `docs/code-review/browser-chromium-migration/2026-11-13.md`）：第 2 层加了上面那条 H.264 源过滤；提示条按 host 收起（换站不再残留）；`CefPage` 换 host 时清 `mediaIssueReason`。
 
 #### 9.2.14 B9b 实现口径（`window.opener` 真弹窗）
 

@@ -33,6 +33,15 @@
 
 三段守卫 JS 用 node 跑桩对象自检 17/17：链接拒绝 check、checkbox 双向切换、radio 拒绝 uncheck、select 非 select / 值不存在 / 按 value 命中 / 按文本命中、fill 各类型分级。
 
+## 后续变更（2026-11-13，代码评审补丁）
+
+- 交互相应结果改走 `jsJSONResult`（`(value, jsError)`）+ `interpretRefResult(_:jsError:successKey:)`：
+  「JS 求值超时 / 页面还没准备好 / 渲染进程不可用」不再被糊成「元素交互失败：JS 异常」，
+  与原来「只做动作、失败没原因」是同一类问题（传输层错误同样不能吞）。
+- `checkToggleJS` 只在状态真的变了才派发 `change`（原实现在「本来就已是目标状态」时也派发，
+  会让页面重复校验/重渲染）。
+- selector 版 `selectJS` 找不到元素时错误里带上选择器文本（原实现只有 ref 版带位置信息）。
+
 ## 遗留
 
 `click_text` 用模糊文本匹配仍有语义风险（命中多个只按 index 取），文档里已建议优先用 `ref`；`fill` 后 DOM 重建会让 `@eN` 失效，需重新 snapshot —— 都是设计边界，不在这条修复范围内。

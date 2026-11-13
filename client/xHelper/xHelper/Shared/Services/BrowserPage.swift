@@ -218,8 +218,12 @@ final class CefPage: NSObject, BrowserPage {
         }
         browserView.urlDidChange = { [weak self] urlString in
             MainActor.assumeIsolated {
-                self?.currentURL = URL(string: urlString)
-                self?.stateObservers.fire()
+                guard let self else { return }
+                let next = URL(string: urlString)
+                // 换站/换页后旧的"视频播不了"结论不再适用（提示条按 host 收，这里清结论）
+                if next?.host != self.currentURL?.host { self.mediaIssueReason = nil }
+                self.currentURL = next
+                self.stateObservers.fire()
             }
         }
         browserView.stateDidChange = { [weak self] in

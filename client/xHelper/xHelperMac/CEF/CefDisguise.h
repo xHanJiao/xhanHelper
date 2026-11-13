@@ -210,11 +210,20 @@ inline std::string MediaProbeJavaScript() {
     if (code !== 4) return;
     report(canH264() ? 'media-src-unsupported' : 'no-h264');
   }, true);
-  // 第 2 层：一开始加载就能力不符（有些站不抛 error，直接黑屏）
+  // 第 2 层：一开始加载就能力不符（有些站不抛 error，直接黑屏）。
+  // 只对**看着像 H.264** 的源报（.mp4/.m4v/.mov），否则 VP9/WebM 页面明明能播也会被劝去兼容引擎。
+  // 判不出来的（blob: / 无 src / MSE）不报 —— 真坏会落到第 3 层的 error.code 4。
+  function looksLikeH264(el) {
+    var src = el.currentSrc || el.src || '';
+    if (!src) {
+      try { var s = el.querySelector && el.querySelector('source[src]'); src = s ? s.src : ''; } catch (e) {}
+    }
+    return /\.(mp4|m4v|mov)([?#]|$)/i.test(src);
+  }
   document.addEventListener('loadstart', function (ev) {
     var t = ev && ev.target;
     if (!t || t.tagName !== 'VIDEO') return;
-    if (!canH264()) report('no-h264');
+    if (!canH264() && looksLikeH264(t)) report('no-h264');
   }, true);
 })();)JS";
 }

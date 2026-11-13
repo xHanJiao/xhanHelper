@@ -502,12 +502,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
             case .fill:
                 let js = refFillJS(handle, session, arguments["value"] as? String ?? "")
-                return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
+                let (value, jsErr) = await session.jsJSONResult(js)
+                return interpretRefResult(value, jsError: jsErr, successKey: successKey)
             case .type:
                 return await typeText(session: session, arguments: arguments, successKey: successKey)
             case .select:
                 let js = refSelectJS(handle, session, arguments["value"] as? String ?? "")
-                return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
+                let (value, jsErr) = await session.jsJSONResult(js)
+                return interpretRefResult(value, jsError: jsErr, successKey: successKey)
             }
         }
         let sel = arguments["selector"] as? String ?? ""
@@ -528,12 +530,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
         case .fill:
             let js = fillJS(sel, arguments["value"] as? String ?? "")
-            return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
+            let (value, jsErr) = await session.jsJSONResult(js)
+            return interpretRefResult(value, jsError: jsErr, successKey: successKey)
         case .type:
             return await typeText(session: session, arguments: arguments, successKey: successKey)
         case .select:
             let js = selectJS(sel, arguments["value"] as? String ?? "")
-            return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
+            let (value, jsErr) = await session.jsJSONResult(js)
+            return interpretRefResult(value, jsError: jsErr, successKey: successKey)
         }
     }
 
@@ -579,11 +583,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func interactChecked(session: TabSession, arguments: [String: Any], checked: Bool) async -> LocalToolResult {
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            return await interpretRefResult(await session.jsJSON(refCheckJS(handle, session, checked)), successKey: checked ? "checked" : "unchecked")
+            let (value, jsErr) = await session.jsJSONResult(refCheckJS(handle, session, checked))
+            return interpretRefResult(value, jsError: jsErr, successKey: checked ? "checked" : "unchecked")
         }
         let sel = arguments["selector"] as? String ?? ""
         let js = checkJS(sel, checked)
-        return await interpretRefResult(await session.jsJSON(js), successKey: checked ? "checked" : "unchecked")
+        let (value, jsErr) = await session.jsJSONResult(js)
+        return interpretRefResult(value, jsError: jsErr, successKey: checked ? "checked" : "unchecked")
     }
 
     /// 真实系统级点击（CGEvent 兜底）：权限检查 → 定位元素中心 → 坐标转换 → 前置窗口 → 注入
@@ -742,14 +748,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 解析 ref 交互 JS 的 {"ok": bool, "err": string?} 结果
-    private func interpretRefResult(_ result: Any?, successKey: String) -> LocalToolResult {
+    private func interpretRefResult(_ result: Any?, jsError: String? = nil, successKey: String) -> LocalToolResult {
         if let dict = result as? [String: Any], let ok = dict["ok"] as? Bool {
             if ok {
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
             }
             return .init(serverResult: nil, serverError: dict["err"] as? String ?? "元素交互失败", clientAction: nil)
         }
-        return .init(serverResult: nil, serverError: "元素交互失败：JS 异常", clientAction: nil)
+        // 没拿到 JSON：JS 层错误（超时 / 页面未就绪）比"元素交互失败"更接近真相
+        return .init(serverResult: nil, serverError: jsError ?? "元素交互失败：JS 异常", clientAction: nil)
     }
 
     // MARK: - Snapshot
@@ -2372,29 +2379,44 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 把 session 挂进右侧栏的 tab 条（openURL 与 CEF 弹窗共用）
-    private func presentTab(tabId: String, session: TabSession, title: String) {
+    private func presentTab(tabId: String, session: TabSession, title: String,
+                            isAgentTab: Bool = false, agentOwner: String? = nil) {
         rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
                               content: AnyView(BrowserTabView(page: session.page,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
-                                                              })), engine: session.engine)
+                                                              })), isAgentTab: isAgentTab, agentOwner: agentOwner,
+                              engine: session.engine)
+    }
+
+    /// 按页面反查 session（弹窗回调 / 页面自关窗只拿得到页面）
+    private func sessionOwning(page: BrowserPage) -> TabSession? {
+        tabs.first(where: { $0.value.page === page })?.value
     }
 
     #if os(macOS)
     /// `window.open` / `target=_blank` 的真弹窗（D20）：CEF 已经建好了 popup browser
     /// （`window.opener` 是真的，`window.open()` 不再返回 null），这里只要把宿主视图装进新 tab。
     /// 必须同步完成 —— 视图在 CEF 创建浏览器的窗口期里得有人持有。
-    private func adoptCefPopupPage(_ view: XHCefBrowserView, urlString: String) {
+    private func adoptCefPopupPage(_ view: XHCefBrowserView, urlString: String, opener: TabSession?) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let page = CefPage(popupView: view, url: URL(string: urlString))
         let session = TabSession(page: page)
+        // 归属跟 opener（与 WK 弹窗同一口径）：agent 的弹窗不许变成"用户标签"，
+        // 否则它不计入 agent 配额、close_all 收不掉、agent 自己也写不进去（要用户授权）
+        session.isAgentTab = opener?.isAgentTab ?? false
+        session.owner = opener?.owner
         tabs[tabId] = session
-        switchActiveTab(to: tabId)
+        // agent 弹窗进工作区，不切走用户视图；用户弹窗才激活
+        if !session.isAgentTab {
+            switchActiveTab(to: tabId)
+        }
         refreshBrowserGroup()
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
-        presentTab(tabId: tabId, session: session, title: page.url?.host ?? "新标签页")
+        presentTab(tabId: tabId, session: session, title: page.url?.host ?? "新标签页",
+                   isAgentTab: session.isAgentTab, agentOwner: session.owner)
     }
     #endif
 
@@ -3231,9 +3253,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 // 这里把它的宿主视图装成新 tab；页面自己 window.close() 时收掉 tab。
                 #if os(macOS)
                 if let cefPage = page as? CefPage {
-                    cefPage.onPopupPageRequested = { popupView, urlString in
+                    cefPage.onPopupPageRequested = { [weak cefPage] popupView, urlString in
                         LogBuffer.shared.diag("[Browser] cef popup → popup tab: \(urlString.prefix(160))")
-                        BrowserToolProvider.shared.adoptCefPopupPage(popupView, urlString: urlString)
+                        let provider = BrowserToolProvider.shared
+                        let opener = cefPage.flatMap { provider.sessionOwning(page: $0) }
+                        provider.adoptCefPopupPage(popupView, urlString: urlString, opener: opener)
                     }
                     cefPage.onPageClosedExternally = { [weak cefPage] in
                         guard let cefPage else { return }
@@ -3497,6 +3521,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let (text, _) = await jsResult(js)
             guard let t = text, let data = t.data(using: .utf8) else { return nil }
             return try? JSONSerialization.jsonObject(with: data)
+        }
+
+        /// 同 jsJSON，但把 JS 层错误一起交出来：「超时 / 页面还没准备好 / 渲染进程不可用」
+        /// 跟「元素交互失败」是两件事，别都糊成一句 JS 异常（docs/bugs/065 同类问题）。
+        func jsJSONResult(_ js: String) async -> (value: Any?, jsError: String?) {
+            let (text, err) = await jsResult(js)
+            guard let t = text, let data = t.data(using: .utf8) else { return (nil, err) }
+            guard let value = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) else {
+                return (nil, err ?? "JS 回包不是合法 JSON")
+            }
+            return (value, nil)
         }
 
         /// 当前页面可见文本的内容哈希（JS 内计算，只回传 hash 字符串）
@@ -4367,8 +4402,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
       if(!checked&&ty==='radio')
         return {ok:false,err:'单选框只能选中、不能取消（radio 没有 unchecked 状态）'};
       var before=_isChecked(e);
-      if(before!==checked){e.focus();e.click();}
-      e.dispatchEvent(new Event('change',{bubbles:true}));
+      if(before!==checked){
+        e.focus();e.click();
+        e.dispatchEvent(new Event('change',{bubbles:true}));
+      }
       var after=_isChecked(e);
       if(after!==checked)return {ok:false,err:'切换失败（目标状态 '+checked+'，实际 '+after+'），该控件可能被页面脚本接管'};
       return {ok:true,was:before,now:after};
@@ -4542,8 +4579,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func selectJS(_ sel: String, _ val: String) -> String {
         "(function(){\(Self.selectAssignJS)" +
         "var e=document.querySelector('\(esc(sel))');" +
+        "if(!e)return JSON.stringify({ok:false,err:'未找到元素: \(esc(sel))'});" +
         "return JSON.stringify(_selAssign(e,'\(esc(val))'));})()"
     }
+
     private func checkJS(_ sel: String, _ checked: Bool) -> String {
         "(function(){\(Self.checkToggleJS)" +
         "var e=document.querySelector('\(esc(sel))');" +

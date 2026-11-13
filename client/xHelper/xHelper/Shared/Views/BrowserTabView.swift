@@ -21,6 +21,8 @@ struct BrowserTabView: View {
     @State private var videoHintSeen: Set<String> = []
     /// 媒体检测第 2/3 层的提示文案（页面自己报了"播不了"），nil = 不显示
     @State private var mediaHintNote: String?
+    /// 弹这条提示时所在的 host：换站/换页就收起，别把 A 站的结论带到 B 站
+    @State private var mediaHintHost: String?
     @State private var suggestions: [URLSuggestion] = []
     @State private var selectedSuggestion = -1
     @State private var showSuggestions = false
@@ -279,6 +281,7 @@ struct BrowserTabView: View {
                 onClose: {
                     videoHintHost = nil
                     mediaHintNote = nil
+                    mediaHintHost = nil
                 }
             )
         } else if page.engine == .compat, BrowserToolProvider.shared.isCefUnavailable {
@@ -653,6 +656,11 @@ struct BrowserTabView: View {
     /// 页面自己报了视频播不了（主引擎缺 H.264 / 源格式不支持）→ 同一条提示条，文案说清原因。
     /// 与白名单提示共用频率闸：同一 host 24h 最多 2 次，用户选过引擎就不再烦。
     private func updateMediaHint(for url: URL?) {
+        // 换站了：上一条"这个站播不了"的结论不再适用（页面自己的 mediaIssueReason 也已被重置）
+        if let shown = mediaHintHost, shown != url?.host {
+            mediaHintNote = nil
+            mediaHintHost = nil
+        }
         guard mediaHintNote == nil,
               page.engine == .cef,
               let reason = page.mediaIssueReason,
@@ -664,6 +672,7 @@ struct BrowserTabView: View {
         else { return }
         videoHintSeen.insert(host)
         EngineHintGate.record(host: host)
+        mediaHintHost = host
         mediaHintNote = reason == "no-h264"
             ? "此页视频需要 H.264 解码，主引擎不含（会黑屏/无声）"
             : "此页视频的编码主引擎不支持（会黑屏/无声）"

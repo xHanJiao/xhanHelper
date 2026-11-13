@@ -800,13 +800,7 @@ static NSWindow *XHCefParkingWindow(void) {
   // 未就绪不置标记，等下次进窗口再试；已要求关闭就不再造（省一个白造的 renderer）
   if (_browserRequested || _closeRequested || !XHCefRuntime.isReady) return;
   // 后台标签没有窗口：先停进隐藏窗口，否则 CEF 建不出渲染宿主（页面永远不 commit）
-  if (!self.window) {
-    NSView *parking = XHCefParkingWindow().contentView;
-    if (parking) {
-      self.frame = parking.bounds;
-      [parking addSubview:self];
-    }
-  }
+  [self parkInHiddenWindowIfNeeded];
   _browserRequested = YES;
 
   _client = new XHCefClient(self);
@@ -823,6 +817,15 @@ static NSWindow *XHCefParkingWindow(void) {
     _browserRequested = NO;
     _client = nullptr;
   }
+}
+
+/// 没有窗口时先停进进程内共享的隐藏窗口（只换父窗口，CEF 的子视图跟着走）
+- (void)parkInHiddenWindowIfNeeded {
+  if (self.window) return;
+  NSView *parking = XHCefParkingWindow().contentView;
+  if (!parking) return;
+  self.frame = parking.bounds;
+  [parking addSubview:self];
 }
 
 - (void)layout {
@@ -885,15 +888,15 @@ static NSWindow *XHCefParkingWindow(void) {
   args->SetString(1, script.UTF8String);
   frame->SendProcessMessage(PID_RENDERER, message);
 
-  // 超时兜底：渲染进程崩了 / 页面在导航时回包可能永远不来，agent 工具不能挂死
-  __weak XHCefBrowserView *weakSelf = self;
+  // 超时兜底：渲染进程崩了 / 页面在导航时回包可能永远不来，agent 工具不能挂死。
+  // 强持有回包字典（**不持 self**）：视图先 dealloc 而 OnBeforeClose 还没到时，字典里的
+  // continuation 也必须失败掉，否则一次 await evaluateJS 永远不返回、整轮对话卡死。
+  NSMutableDictionary<NSNumber *, id> *pendingMap = _evalCompletions;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)),
                  dispatch_get_main_queue(), ^{
-                   XHCefBrowserView *strongSelf = weakSelf;
-                   if (!strongSelf) return;
-                   id pending = strongSelf->_evalCompletions[@(requestId)];
+                   id pending = pendingMap[@(requestId)];
                    if (!pending) return;
-                   [strongSelf->_evalCompletions removeObjectForKey:@(requestId)];
+                   [pendingMap removeObjectForKey:@(requestId)];
                    ((void (^)(id, NSString *))pending)(nil, @"JS 执行超时（渲染进程无响应）");
                  });
 }
@@ -1019,6 +1022,9 @@ static NSWindow *XHCefParkingWindow(void) {
   }
   // 弹窗：CEF 先把渲染视图挂在停车位里，这里搬到自己的视图树（cefclient 的 ShowPopup 同款）
   if (_popupHostView) {
+    // 弹窗 tab 是同步建的，SwiftUI 这时还没把本视图挂进窗口 —— 先自己停进停车位，
+    // 否则渲染视图落在一个没有窗口的父视图里（就是 B7 的"页面永不 commit"）。
+    [self parkInHiddenWindowIfNeeded];
     NSArray<NSView *> *renderViews = _popupHostView.subviews.copy;
     for (NSView *subview in renderViews) {
       [subview removeFromSuperview];
@@ -1054,6 +1060,15 @@ static NSWindow *XHCefParkingWindow(void) {
 
 - (void)dealloc {
   [_popupHostView removeFromSuperview];   // 弹窗浏览器没建起来就走了：别在停车位里留个空视图
+  // 视图先走、OnBeforeClose 还没到：把还等着的 JS 求值失败掉（异步 resume，别在析构栈里跑 Swift）
+  NSDictionary<NSNumber *, id> *pending = [_evalCompletions copy];
+  if (pending.count > 0) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      for (id block in pending.allValues) {
+        ((void (^)(id, NSString *))block)(nil, @"页面已关闭");
+      }
+    });
+  }
   [self closeBrowser];
 }
 

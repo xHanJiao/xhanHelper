@@ -182,6 +182,43 @@ inline std::string JavaScript() {
 })();)JS";
 }
 
+/// 媒体检测第 2/3 层（三层检测里的后两层，第 1 层是域名白名单）：
+/// 主引擎（CEF 标准构建）不含 H.264/AAC，非白名单站点的视频会**静默播不了**（黑屏/无声音，不报错）。
+/// 这里在 document-start 注入一个探针：能力判断（`isTypeSupported`）+ `<video>` 的 error 事件，
+/// 一旦发现播不了就 `console.error("XHMEDIA:…")` —— 浏览器进程的 OnConsoleMessage 接住，转成 UI 提示。
+///
+/// 只报"确定坏"，判断不了就当好的（宁可不提示，也不要天天误报）。
+inline std::string MediaProbeJavaScript() {
+  return R"JS((function () {
+  function report(reason) { try { console.error("XHMEDIA:" + reason); } catch (e) {} }
+  var supported = null;
+  function canH264() {
+    if (supported !== null) return supported;
+    try {
+      var mime = 'video/mp4; codecs="avc1.42E01E"';
+      var byMS = !!(window.MediaSource && window.MediaSource.isTypeSupported && window.MediaSource.isTypeSupported(mime));
+      var byCanPlay = document.createElement('video').canPlayType(mime) !== '';
+      supported = byMS || byCanPlay;
+    } catch (e) { supported = true; }   // 判断不了就当能播，不误报
+    return supported;
+  }
+  // 第 3 层：明确的解码/源不支持（MEDIA_ERR_SRC_NOT_SUPPORTED = 4）
+  document.addEventListener('error', function (ev) {
+    var t = ev && ev.target;
+    if (!t || (t.tagName !== 'VIDEO' && t.tagName !== 'AUDIO')) return;
+    var code = t.error && t.error.code;
+    if (code !== 4) return;
+    report(canH264() ? 'media-src-unsupported' : 'no-h264');
+  }, true);
+  // 第 2 层：一开始加载就能力不符（有些站不抛 error，直接黑屏）
+  document.addEventListener('loadstart', function (ev) {
+    var t = ev && ev.target;
+    if (!t || t.tagName !== 'VIDEO') return;
+    if (!canH264()) report('no-h264');
+  }, true);
+})();)JS";
+}
+
 /// 渲染进程的注入钩子。Helper 进程在 `CefExecuteProcess` 里拿到本类（见 CEF/helper_main.mm），
 /// 每个 frame（含 iframe —— 谷歌登录判定跑在 iframe 里）在上下文创建时注一次。
 class XHCefRenderProcessHandler : public CefRenderProcessHandler {
@@ -245,6 +282,18 @@ class XHCefRenderProcessHandler : public CefRenderProcessHandler {
     if (!ok) {
       NSString *reason = error ? CefStringToNSStringNoThrow(error->GetMessage()) : @"unknown";
       NSLog(@"[cef] 伪装注入失败（语法/编译错）：%@", reason);
+    }
+
+    // 媒体探针（三层检测第 2/3 层）：失败不致命，只影响"视频静默坏"的提示能力
+    if (context->Enter()) {
+      CefRefPtr<CefV8Value> mediaResult;
+      CefRefPtr<CefV8Exception> mediaError;
+      const bool mediaOK = context->Eval(MediaProbeJavaScript(), frame->GetURL(), 0, mediaResult, mediaError);
+      context->Exit();
+      if (!mediaOK) {
+        NSString *reason = mediaError ? CefStringToNSStringNoThrow(mediaError->GetMessage()) : @"unknown";
+        NSLog(@"[cef] 媒体探针注入失败：%@", reason);
+      }
     }
   }
 

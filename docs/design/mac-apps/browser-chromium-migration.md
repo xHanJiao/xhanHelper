@@ -445,7 +445,7 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **提示条（D16）**：CEF tab 落到白名单域 → 页面顶部 28pt 细条「此站的视频需要兼容模式」+「用兼容模式打开」（开新 compatible tab，原 tab 停在原地）；离开该域自动收起；同一 tab 会话内同域只弹一次；同 host 24h 最多 2 次（`EngineHintGate`，按 eTLD+1 计数）；偏好表里已有该 host 的选择 → 不弹。
 - **地址栏换引擎图标**：主引擎页显示 safari 图标（换兼容打开）、兼容页显示 globe 图标（换主引擎打开）。这是 §9.2.4 的兜底出口——检测永远有漏网，任何页都得能一键换内核。点一次同时写进偏好表（D15 第 4 条「别再问同一站」）。
 - **降级横幅**：`CefInitialize` 失败过（`cefInitFailed`）→ 兼容 tab 顶部常驻「主引擎未启动，当前为兼容模式」；地址栏的"换主引擎"按钮同时置灰，不给"点了必然降级回来"的按钮（原来只有一次 Toast）。
-- **三层检测的现状**：第 1 层（域名白名单）已生效；第 2/3 层（`MediaSource.isTypeSupported` document-start 探针、`MEDIA_ERR_SRC_NOT_SUPPORTED` 兜底）**依赖 CEF 的 JS 结果通道，B7 一起做**——现在 CEF 侧只有 `console.log("XHPROBE:…")` 这条测试通道，为检测再拉一条生产通道不值当。期间靠地址栏图标手动兜底。
+- **三层检测的现状**：第 1 层（域名白名单）已生效；第 2/3 层见 §9.2.13（B9 已实现，走 `XHMEDIA:` 回报，不做第二条协议通道）。
 
 #### 9.2.11 B6 实现口径（浏览器功能补齐，分批）
 
@@ -478,6 +478,18 @@ struct EnginePreference {                                 // 按 eTLD+1 记忆
 - **agent 标签回到 `resolveEngine`**（含 `open` 的 `engine` 参数，D19）：不再固定兼容引擎。仍只在 WK 标签可用的：`cg_click` / `cg_drag`（真实鼠标注入按 WK 视图坐标写，CEF 上给明确失败 `cefUnsupportedCGEvent`）。
 - **后台 renderer 必须关降频**：`XHCefApp::OnBeforeCommandLineProcessing` 追加 `--disable-background-timer-throttling` / `--disable-renderer-backgrounding` / `--disable-backgrounding-occluded-windows`。agent 标签停在隐藏窗口里，不关这三个就是「标题正确、`readyState` 永远不是 complete、页面空壳」。
 - **还留在 WK 侧的**（不阻塞读类工具）：滚动位置保存/恢复（CEF 切 tab 由内核维持）、后台媒体保活探测、媒体嗅探面板、活动埋点的浏览状态机。这些在 CEF 标签上是静默跳过，不是报错。
+
+#### 9.2.13 B9 实现口径（三层媒体检测第 2/3 层）
+
+白名单（第 1 层）只覆盖已知视频站；**非白名单站点**（微博 / Twitter / 各种 embedding）的 H.264 视频在主引擎上会**静默播不了**（黑屏/无声，不抛错）。B9 补后两层：
+
+- **探针注入**：`xhdisguise::MediaProbeJavaScript()` 在渲染进程 `OnContextCreated` 里紧跟伪装脚本同步 Eval（document-start、页面脚本之前）：
+  - 第 2 层：`<video>` 触发 `loadstart` 时判能力（`MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"')` 或 `canPlayType`），不支持就报 `no-h264`；
+  - 第 3 层：监听媒体元素的 `error`，`error.code === 4`（`MEDIA_ERR_SRC_NOT_SUPPORTED`）→ 能力不符报 `no-h264`，否则报 `media-src-unsupported`。
+  - **判断不了就当能播**（嗅探异常时 `supported = true`）：宁可漏报，也不要天天误报。
+- **回报通道**：页内 `console.error("XHMEDIA:<reason>")` → 浏览器进程 `CefDisplayHandler::OnConsoleMessage` 抓前缀（与回归探针的 `XHPROBE:` 同一条通道，不新增协议）→ `CefPage.mediaIssueReason` → `stateObservers.fire()`。
+- **UI**：`BrowserTabView` 复用白名单那条提示条（`engineNoticeBar`），文案按原因区分（缺 H.264 / 编码不支持），动作仍是「用兼容模式打开」并写偏好表；频率闸复用 `EngineHintGate`（同 host 24h 2 次），同一 tab/view 只弹一次。
+- **自检**：探针 JS 抽出来用 node 跑桩对象 7/7（无 H.264 × loadstart / error4、有 H.264 × error4（编码不支持）、普通 error 不报、img 的 error 不报、audio 也覆盖）。
 
 ## 十、CEF 版本运维
 
@@ -705,5 +717,6 @@ main                       ← 继续每天发版（WK，现状不变）
 | B6a | 2026-11-12 | 待提交 | **通过**（⌘F 查找、⌘±/⌘0 缩放已验；⌘G/⌘Shift+G 保留标准语义「查找下一个/上一个」，只在查找栏打开时有意义，不算缺陷）。交付：`BrowserPage` 增加 zoom/find、`CefFindHandler`、`CefJSDialogHandler`；口径见 §9.2.11。**未验**：页面 alert/confirm/prompt 的真机表现（无本地 http 测试页，B6b 一起验）；其余功能面在 B6b |
 | B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」+「检查元素」→ DevTools）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
 | B7 | 2026-11-12 | 待提交 | 待真机构建 + agent 实操（对 CEF 标签跑 snapshot / read / click / fill）。交付：CEF JS 求值通道（`xh_eval` / `xh_eval_result`，10s 超时 + 关页失败）、`BrowserPage.evaluateJS` 统一 WK/CEF、agent 标签改回 `resolveEngine` + `open` 的 `engine` 参数（D19）；口径见 §9.2.12 |
+| B9a | 2026-11-13 | 待提交 | 待真机构建 + 人眼（非白名单站的视频：微博/Twitter 等应弹提示条）。交付：媒体检测第 2/3 层（`MediaProbeJavaScript` document-start 探针 + `XHMEDIA:` 回报 + 提示条复用）；口径见 §9.2.13。自检：探针 JS 7/7 |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。

@@ -524,14 +524,27 @@ class XHCefClient : public CefClient,
                         const CefString &source,
                         int line) override {
     const std::string text = message.ToString();
-    const std::string prefix = "XHPROBE:";
-    if (text.rfind(prefix, 0) != 0) return false;
-    NSString *payload = [NSString stringWithUTF8String:text.substr(prefix.size()).c_str()] ?: @"";
-    XHCefBrowserView *view = view_;
-    RunOnMain(^{
-      if (view.probeReported) view.probeReported(payload);
-    });
-    return true;  // 已消费，别再往控制台刷一坨 JSON
+    // 页内 JS 的回报通道（console 是现成的、跨进程可用的一条，不必再建第二条）
+    static const std::string probePrefix = "XHPROBE:";
+    static const std::string mediaPrefix = "XHMEDIA:";
+    if (text.rfind(probePrefix, 0) == 0) {
+      NSString *payload = [NSString stringWithUTF8String:text.substr(probePrefix.size()).c_str()] ?: @"";
+      XHCefBrowserView *view = view_;
+      RunOnMain(^{
+        if (view.probeReported) view.probeReported(payload);
+      });
+      return true;   // 已消费，别再往控制台刷一坨 JSON
+    }
+    if (text.rfind(mediaPrefix, 0) == 0) {
+      // 媒体检测第 2/3 层：页面里的视频播不了（缺 H.264 / 源不支持）→ 让 UI 提示换兼容引擎
+      NSString *reason = [NSString stringWithUTF8String:text.substr(mediaPrefix.size()).c_str()] ?: @"";
+      XHCefBrowserView *view = view_;
+      RunOnMain(^{
+        if (view.mediaIssueReported) view.mediaIssueReported(reason);
+      });
+      return true;
+    }
+    return false;
   }
 
  private:

@@ -19,6 +19,8 @@ struct BrowserTabView: View {
     @State private var videoHintHost: String?
     /// 本 tab 会话里已经提示/关掉过的 host（同一页别再弹第二遍）
     @State private var videoHintSeen: Set<String> = []
+    /// 媒体检测第 2/3 层的提示文案（页面自己报了"播不了"），nil = 不显示
+    @State private var mediaHintNote: String?
     @State private var suggestions: [URLSuggestion] = []
     @State private var selectedSuggestion = -1
     @State private var showSuggestions = false
@@ -264,17 +266,20 @@ struct BrowserTabView: View {
     /// 提示频率由 `EngineHintGate` 控（同站 24h 最多 2 次）；用户已经在偏好表里选过的站不再提示。
     @ViewBuilder
     private var engineNoticeBar: some View {
-        if videoHintHost != nil {
+        if videoHintHost != nil || mediaHintNote != nil {
             noticeBar(
                 icon: "play.slash",
-                text: "此站的视频需要兼容模式（主引擎不含 H.264）",
+                text: mediaHintNote ?? "此站的视频需要兼容模式（主引擎不含 H.264）",
                 actionTitle: "用兼容模式打开",
                 action: {
                     guard let url = page.url else { return }
                     EnginePreferenceStore.setEngine(.compat, for: url.host)
                     BrowserToolProvider.shared.openURL(url, engine: .compat)
                 },
-                onClose: { videoHintHost = nil }
+                onClose: {
+                    videoHintHost = nil
+                    mediaHintNote = nil
+                }
             )
         } else if page.engine == .compat, BrowserToolProvider.shared.isCefUnavailable {
             noticeBar(
@@ -642,6 +647,26 @@ struct BrowserTabView: View {
         // CEF 没有 estimatedProgress，进度条自然不显示（条件要求 progress > 0）
         progress = page.wkWebView?.estimatedProgress ?? 0
         updateVideoHint(for: u)
+        updateMediaHint(for: u)
+    }
+
+    /// 页面自己报了视频播不了（主引擎缺 H.264 / 源格式不支持）→ 同一条提示条，文案说清原因。
+    /// 与白名单提示共用频率闸：同一 host 24h 最多 2 次，用户选过引擎就不再烦。
+    private func updateMediaHint(for url: URL?) {
+        guard mediaHintNote == nil,
+              page.engine == .cef,
+              let reason = page.mediaIssueReason,
+              (url?.scheme == "http" || url?.scheme == "https"),
+              let host = url?.host,
+              !videoHintSeen.contains(host),
+              EnginePreferenceStore.engine(for: host) == nil,
+              EngineHintGate.canShow(host: host)
+        else { return }
+        videoHintSeen.insert(host)
+        EngineHintGate.record(host: host)
+        mediaHintNote = reason == "no-h264"
+            ? "此页视频需要 H.264 解码，主引擎不含（会黑屏/无声）"
+            : "此页视频的编码主引擎不支持（会黑屏/无声）"
     }
 
     /// 视频站落到主引擎上 → 挂提示条（不自动切，D16）。离开那个域就收起。

@@ -55,6 +55,10 @@ protocol BrowserPage: AnyObject {
     /// 执行 JS 并取结果（agent 工具的快照/读正文/点击都靠它）。
     /// 返回 JSON 可序列化的对象；`undefined`/`null` 给 `NSNull`。CEF 侧经渲染进程回包。
     func evaluateJS(_ script: String) async throws -> Any
+
+    /// 本页视频"播不了"的迹象（`no-h264` / `media-src-unsupported`），nil = 正常。
+    /// 只有主引擎（CEF）会报：标准构建不含 H.264，非白名单站点会静默黑屏。
+    var mediaIssueReason: String? { get }
 }
 
 /// 页面状态的一对多广播（面板要刷新地址栏，TabSession 要更新标题/host，两边都得收）。
@@ -149,6 +153,9 @@ final class WKPage: NSObject, BrowserPage {
         try await webView.evaluateJavaScript(script)
     }
 
+    /// 兼容引擎自带完整解码器，不存在"静默播不了"
+    var mediaIssueReason: String? { nil }
+
     deinit {
         observations.forEach { $0.invalidate() }
     }
@@ -177,6 +184,8 @@ final class CefPage: NSObject, BrowserPage {
                              _ fullPath: String, _ url: String) -> Void)?
     /// 右键「用百度搜索选中文字」
     var onContextSearch: ((String) -> Void)?
+    /// 媒体检测第 2/3 层 →
+    private(set) var mediaIssueReason: String?
     let stateObservers = BrowserPageState()
 
     /// `url == nil` 表示从空白页起（新标签页随后用 loadHTMLString 填）。
@@ -233,6 +242,13 @@ final class CefPage: NSObject, BrowserPage {
         }
         browserView.contextSearchRequested = { [weak self] text in
             MainActor.assumeIsolated { self?.onContextSearch?(text) }
+        }
+        browserView.mediaIssueReported = { [weak self] reason in
+            MainActor.assumeIsolated {
+                guard let self, self.mediaIssueReason != reason else { return }
+                self.mediaIssueReason = reason
+                self.stateObservers.fire()
+            }
         }
     }
 

@@ -53,6 +53,9 @@ NS_ASSUME_NONNULL_BEGIN
                                                           NSString *url);
 /// 右键菜单里的「用百度搜索选中文字」：宿主开新 tab
 @property (nonatomic, copy, nullable) void (^contextSearchRequested)(NSString *selectedText);
+/// 媒体检测第 2/3 层回报（页内 JS 的 `console.error("XHMEDIA:<原因>")`）：
+/// `no-h264` = 内核不支持 H.264 / `media-src-unsupported` = 源格式不支持。宿主据此提示换兼容引擎。
+@property (nonatomic, copy, nullable) void (^mediaIssueReported)(NSString *reason);
 
 @property (nonatomic, readonly) BOOL isLoading;
 @property (nonatomic, readonly) BOOL canGoBack;

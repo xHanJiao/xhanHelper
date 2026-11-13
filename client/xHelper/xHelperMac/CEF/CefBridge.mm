@@ -174,6 +174,7 @@ class XHCefApp : public CefApp {
            callback:(CefRefPtr<CefRunContextMenuCallback>)callback;
 /// 渲染进程返回的 JS 结果（`xh_eval_result`）
 - (void)cefEvalResult:(int32_t)requestId json:(NSString *)json error:(NSString *)error;
+- (void)cefBrowserShouldClose;
 - (void)cefBrowserDidClose;
 - (void)cefLoadingStateChanged:(BOOL)isLoading
                      canGoBack:(BOOL)canGoBack
@@ -475,6 +476,20 @@ class XHCefClient : public CefClient,
     return false;
   }
 
+  // 关标签 / 页面 `window.close()` 都会走到这里（在 OnBeforeClose 之前）。
+  // **必须返回 true**：返回 false（CEF 默认）会对 browser 视图所在的「顶层窗口」发 performClose:，
+  // 而我们是用 SetAsChild 把 browser 挂在 app 自己的主窗口里 —— 关一个 tab 就把整个主窗口关掉
+  // （进程还活着、dock 里还在，看起来就是"程序前台没了"）。后台 tab 停在隐藏 parking window 里时
+  // 同理，那条 performClose 会把 parking window 关掉，之后的后台 tab 建不出渲染宿主（白屏）。
+  // 返回 true = "窗口的事我自己处理"：自己拆视图 / 页面自关时通知宿主收 tab（cefBrowserShouldClose）。
+  bool DoClose(CefRefPtr<CefBrowser> browser) override {
+    XHCefBrowserView *view = view_;
+    RunOnMain(^{
+      [view cefBrowserShouldClose];
+    });
+    return true;
+  }
+
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
     XHCefBrowserView *view = view_;
     RunOnMain(^{
@@ -754,8 +769,11 @@ static NSWindow *XHCefParkingWindow(void) {
                                            backing:NSBackingStoreBuffered
                                              defer:NO];
     window.releasedWhenClosed = NO;
-    window.alphaValue = 0;   // 永不 orderFront，只当父窗口用
+    window.alphaValue = 0;   // 全透明：即使 orderFront 也看不见，只当父窗口用
   });
+  // 曾经被 performClose: 关掉过（DoClose 没接管前，关后台 tab 会打到这个隐藏窗）：
+  // 关掉的窗口仍能 addSubview，但已脱离窗口层级，CEF 会建不出渲染宿主（白屏）。
+  if (!window.isVisible) [window orderFront:nil];
   return window;
 }
 
@@ -766,6 +784,7 @@ static NSWindow *XHCefParkingWindow(void) {
   NSString *_pendingURL;      // browser 还没 OnAfterCreated 时来的导航，等 created 再补
   BOOL _browserRequested;
   BOOL _closeRequested;       // 创建窗口期内就被要求关闭（tab 秒关），created 后立刻回收
+  BOOL _cefDoCloseSeen;       // CEF 已经调过 DoClose（页面自关）：别重复 CloseBrowser
   BOOL _isLoading;
   BOOL _canGoBack;
   BOOL _canGoForward;
@@ -1044,6 +1063,10 @@ static NSWindow *XHCefParkingWindow(void) {
 - (void)closeBrowser {
   _closeRequested = YES;
   if (!_browser) return;   // 还在创建中：OnAfterCreated 里看到标记会立刻关（见 cefBrowserCreated）
+  // 页面自关（window.close()）已经进过 DoClose：再 CloseBrowser 一次没意义，
+  // 现在只需要等宿主关掉 tab、视图释放，CEF 那边自己销毁浏览器（见 cefBrowserShouldClose）。
+  // CEF 156 没有 IsClosing()，只能自己记（cef_browser.h 只有 IsValid）。
+  if (_cefDoCloseSeen) return;
   // force_close=true：否则 renderer 进程会赖着（240MB/页的先例）
   _browser->GetHost()->CloseBrowser(true);
 }
@@ -1075,6 +1098,20 @@ static NSWindow *XHCefParkingWindow(void) {
   if (_pendingURL) {
     browser->GetMainFrame()->LoadURL(_pendingURL.UTF8String);
     _pendingURL = nil;
+  }
+}
+
+- (void)cefBrowserShouldClose {
+  _cefDoCloseSeen = YES;
+  // 我们自己发起的关闭（⌘W / 关 tab / agent close → tearDownWebView → CloseBrowser）：
+  // 宿主马上会拆视图，视图释放后 CEF 自己销毁浏览器 —— 这里不要重复通知宿主。
+  if (_closeRequested) return;
+  // 页面自己 window.close()（弹窗登录完自关那种）：通知宿主收掉这个 tab。
+  // 不复用 cefBrowserDidClose 的通知 —— 那条要等浏览器真销毁，而浏览器要等视图被拆才销毁。
+  _closeRequested = YES;
+  if (self.pageClosedExternally) {
+    void (^notify)(void) = self.pageClosedExternally;
+    dispatch_async(dispatch_get_main_queue(), notify);   // 别在 DoClose 栈里关 tab
   }
 }
 

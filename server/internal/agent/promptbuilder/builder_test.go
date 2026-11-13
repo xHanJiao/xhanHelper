@@ -403,9 +403,15 @@ func TestVoiceModeToggle(t *testing.T) {
 	if !strings.Contains(voice.Prompt, "## 语音回答") || !strings.Contains(voice.Prompt, "会被直接朗读") {
 		t.Error("语音轮应注入语音回答章节")
 	}
-	for _, want := range []string{"1–3 句", "最多 60 个汉字", "调用了工具只回结论一句", "以本段为准"} {
+	for _, want := range []string{"确认、闲聊、记账、提醒 → 1–3 句", "最多 200 个汉字", "每件各回一句", "语音识别", "以本段为准"} {
 		if !strings.Contains(voice.Prompt, want) {
 			t.Errorf("语音约束缺 %q", want)
+		}
+	}
+	// 回退防线：这两个是 2026-11-11 收紧到「1–3 句 / 60 字」的根因，不能加回来
+	for _, bad := range []string{"宁可少说", "60 个汉字"} {
+		if strings.Contains(voice.Prompt, bad) {
+			t.Errorf("语音约束不应包含 %q", bad)
 		}
 	}
 	// 语音章节必须是 prompt 最后一段（位置越靠后遵循度越高）

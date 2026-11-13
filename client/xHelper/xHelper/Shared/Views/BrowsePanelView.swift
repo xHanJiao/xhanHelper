@@ -120,7 +120,7 @@ struct BrowsePanelView: View {
     /// 监控看板 WebView 共享状态（header 刷新按钮 + WebView 共用）
     @StateObject private var dashboardWebModel = XHWebViewModel()
 
-    /// 「上次停在 X」取自浏览器历史
+    /// 浏览器卡的信息行：未打开浏览器时取历史最新三条
     @ObservedObject private var historyStore = HistoryStore.shared
 
     /// 缓存击穿戳：每次打开面板/点刷新自增，URL 带 ?t= 强制回源拉新 index.html。
@@ -295,31 +295,40 @@ struct BrowsePanelView: View {
         return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"
     }
 
+    /// 打开着的网页标签：排除收藏夹 / 历史 / 配置 / 本页资源与灵阅产物 tab。
+    /// 「N 个标签」和信息行都只算这些，不然收藏夹开着也会被数成一个标签。
+    private var webTabs: [RightSidebarTab] {
+        manager.tabs.filter {
+            !RightSidebarManager.specialTabIDs.contains($0.id) && !RightSidebarManager.isArtifactTab($0.id)
+        }
+    }
+
     private func browserCard(metrics: HomeCardMetrics) -> some View {
-        let count = manager.tabs.count
-        #if os(macOS)
-        let last = historyStore.entries.first?.title
-        let secondary = last.map { "上次停在 \($0)" }
-        #else
-        let secondary: String? = nil
-        #endif
-        let rows = manager.tabs.prefix(3).map { tab in
-            HomeEntryCard.InfoRow(
-                id: "tab:" + tab.id,
-                title: tab.title,
-                detail: tab.host,
-                icon: tab.host.map { HomeEntryCard.InfoIcon.favicon(host: $0) }
-                    ?? .monogram(SidebarHomeFormat.monogram(tab.title))
-            ) {
-                manager.activeTabId = tab.id
-                BrowserToolProvider.shared.selectTab(tab.id)
+        let count = webTabs.count
+        // 有标签就列标签（点行切过去）；没打开浏览器就列历史最新三条（点行在新标签里打开）。
+        let rows: [HomeEntryCard.InfoRow]
+        if webTabs.isEmpty {
+            rows = historyRows
+        } else {
+            rows = webTabs.prefix(3).map { tab in
+                HomeEntryCard.InfoRow(
+                    id: "tab:" + tab.id,
+                    title: tab.title,
+                    detail: tab.host,
+                    icon: tab.host.map { HomeEntryCard.InfoIcon.favicon(host: $0) }
+                        ?? .monogram(SidebarHomeFormat.monogram(tab.title))
+                ) {
+                    manager.activeTabId = tab.id
+                    BrowserToolProvider.shared.selectTab(tab.id)
+                }
             }
         }
         return HomeEntryCard(
             asset: "sidebar_browser",
             title: "浏览器",
             primary: count == 0 ? "未打开" : "\(count) 个标签",
-            secondary: secondary,
+            // 「上次停在 X」已删除：有历史时信息行已经给出，全新环境历史为空时它也没内容可说。
+            secondary: nil,
             tint: Color("accentSecondary"),
             layout: metrics.layout,
             width: metrics.cardWidth,
@@ -329,6 +338,37 @@ struct BrowsePanelView: View {
         ) {
             BrowserToolProvider.shared.openBlankTab()
         }
+    }
+
+    /// 未打开浏览器时的信息行：历史最新三条，点行即新开标签。
+    /// 右侧用相对时间而不是 host——favicon 已经在表达站点，「多久没看」才是新信息。
+    /// shortcut: 想改成显示 host 就换 detail 这一行，其余不用动。
+    private var historyRows: [HomeEntryCard.InfoRow] {
+        #if os(macOS)
+        historyStore.entries.prefix(3).map { entry in
+            HomeEntryCard.InfoRow(
+                id: "history:" + entry.id.uuidString,
+                title: entry.title,
+                detail: SidebarHomeFormat.relativeTime(entry.visitedAt),
+                icon: entry.host.isEmpty
+                    ? .monogram(SidebarHomeFormat.monogram(entry.title))
+                    : .favicon(host: entry.host)
+            ) {
+                // history.json 是本地文件，旧数据/手改数据可能带非法 URL —— 不能点了没反应。
+                guard let url = URL(string: entry.url),
+                      let scheme = url.scheme?.lowercased(),
+                      scheme == "http" || scheme == "https"
+                else {
+                    LogBuffer.shared.warning("sidebar home: 无效历史 URL：\(entry.url.prefix(120))")
+                    ToastCenter.shared.show("链接无效，无法打开")
+                    return
+                }
+                BrowserToolProvider.shared.openURL(url)
+            }
+        }
+        #else
+        []
+        #endif
     }
 
     private func entryCard(_ panel: BrowsePanel, metrics: HomeCardMetrics) -> some View {

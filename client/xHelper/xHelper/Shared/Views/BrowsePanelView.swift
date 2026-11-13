@@ -200,9 +200,8 @@ struct BrowsePanelView: View {
     private var home: some View {
         GeometryReader { geo in
             let contentWidth = max(0, min(geo.size.width - 52, SidebarHomeFormat.homeContentMaxWidth))
-            // 高度也参与档位：窗口矮时信息档降成单行档，尽量一屏放下（放不下就滚）
-            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth,
-                                                        availableHeight: geo.size.height)
+            // 卡高不跟可用高走（2026-11-13 拍板 A）：恒 164 / 3 行，窗口矮就整页滚
+            let metrics = SidebarHomeFormat.homeMetrics(contentWidth: contentWidth)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     greeting
@@ -314,7 +313,9 @@ struct BrowsePanelView: View {
                 HomeEntryCard.InfoRow(
                     id: "tab:" + tab.id,
                     title: tab.title,
-                    detail: tab.host,
+                    // 不显示 host（用户 2026-11-13）：favicon 已经表达站点，右侧留给「多久没看」
+                    // 这类真信息；标签行没有可比的时间字段，就不填空话。
+                    detail: nil,
                     icon: tab.host.map { HomeEntryCard.InfoIcon.favicon(host: $0) }
                         ?? .monogram(SidebarHomeFormat.monogram(tab.title))
                 ) {
@@ -333,7 +334,6 @@ struct BrowsePanelView: View {
             layout: metrics.layout,
             width: metrics.cardWidth,
             height: metrics.cardHeight,
-            details: detailLines(rows),
             infoRows: rows
         ) {
             BrowserToolProvider.shared.openBlankTab()
@@ -416,7 +416,6 @@ struct BrowsePanelView: View {
             layout: metrics.layout,
             width: metrics.cardWidth,
             height: metrics.cardHeight,
-            details: detailLines(rows),
             infoRows: rows
         ) {
             manager.browsePanelSelection = panel
@@ -484,13 +483,6 @@ struct BrowsePanelView: View {
         case .memories, .images, .agents, .dashboard:
             // 已从首页移出（走设置），这里只为穷尽 switch
             return []
-        }
-    }
-
-    /// 单行档的细节行与信息行同源（标题 / 右侧细节），不维护第二套文案。
-    private func detailLines(_ rows: [HomeEntryCard.InfoRow]) -> [HomeEntryCard.DetailLine] {
-        rows.prefix(2).map {
-            HomeEntryCard.DetailLine(id: $0.id, title: $0.title, detail: $0.detail)
         }
     }
 

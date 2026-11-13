@@ -739,7 +739,14 @@ main                       ← 继续每天发版（WK，现状不变）
 | B6a | 2026-11-12 | 待提交 | **通过**（⌘F 查找、⌘±/⌘0 缩放已验；⌘G/⌘Shift+G 保留标准语义「查找下一个/上一个」，只在查找栏打开时有意义，不算缺陷）。交付：`BrowserPage` 增加 zoom/find、`CefFindHandler`、`CefJSDialogHandler`；口径见 §9.2.11。**未验**：页面 alert/confirm/prompt 的真机表现（无本地 http 测试页，B6b 一起验）；其余功能面在 B6b |
 | B6b | 2026-11-12 | 待提交 | 待真机构建 + 人眼（点链接下载、右键菜单、`<input type=file>`、页面 alert/confirm）。交付：CEF 下载落盘 + 进度（`downloadHandler`）+ `DownloadHistoryStore` 外部驱动取消、自绘 `NSMenu` 的右键菜单（含「用百度搜索」+「检查元素」→ DevTools）、file input 走 CEF 默认；口径见 §9.2.11。剩余（favicon/权限/埋点/保活/墙检测）等 B7 的 JS 通道 |
 | B7 | 2026-11-12 | 待提交 | 待真机构建 + agent 实操（对 CEF 标签跑 snapshot / read / click / fill）。交付：CEF JS 求值通道（`xh_eval` / `xh_eval_result`，10s 超时 + 关页失败）、`BrowserPage.evaluateJS` 统一 WK/CEF、agent 标签改回 `resolveEngine` + `open` 的 `engine` 参数（D19）；口径见 §9.2.12 |
-| B9a | 2026-11-13 | 待提交 | 待真机构建 + 人眼（非白名单站的视频：微博/Twitter 等应弹提示条）。交付：媒体检测第 2/3 层（`MediaProbeJavaScript` document-start 探针 + `XHMEDIA:` 回报 + 提示条复用）；口径见 §9.2.13。自检：探针 JS 7/7 |
-| B9b | 2026-11-13 | 待提交 | 待真机构建 + 人眼（`window.open` 弹窗里 `window.opener` 非 null、`opener.postMessage` 能到、`window.close()` 能关掉 tab）。交付：CEF 真 popup browser 嵌进 tab（D20 / §9.2.14）；页面自关窗收 tab；12s 兜底。自检：clang++ / swiftc typecheck |
+| B9a | 2026-11-13 | `6dc29ca4` | 微博已验（真机弹出了提示条）。交付：媒体检测第 2/3 层（`MediaProbeJavaScript` document-start 探针 + `XHMEDIA:` 回报 + 提示条复用）；口径见 §9.2.13。评审后补：第 2 层只对像 H.264 的源报、提示条按 host 收起；自检 11/11 |
+| B9b | 2026-11-13 | `80960128` + `551d7fae` | 待真机构建 + 人眼（`window.open` 弹窗里 `window.opener` 非 null、`opener.postMessage` 能到、`window.close()` 能关掉 tab）。交付：CEF 真 popup browser 嵌进 tab（D20 / §9.2.14）；页面自关窗收 tab；12s 兜底。review MINOR（P1×1 / P2×6 / P3×5，除「CEF 下载取 Cookie」外已修，见 `docs/code-review/browser-chromium-migration/2026-11-13.md`） |
 
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。
+
+## 十五、后续变更
+
+| 日期 | 决定 / 变更 | 影响文件 |
+|---|---|---|
+| 2026-11-13 | **D20**：CEF 的 `window.open` / `target=_blank` 不再拦成兄弟 tab，改成让 CEF 自己建 popup browser 再嵌进我们的 tab（真 `window.opener`）；页面 `window.close()` 自动收 tab。用户拍板「B9 一起解决」 | `xHelperMac/CEF/CefBridge.{h,mm}`、`Shared/Services/BrowserPage.swift`、`Shared/Tools/BrowserToolProvider.swift`、本文档 §9.2.14 / §13.1 |
+| 2026-11-13 | 三层媒体检测第 2 层收窄为「只对像 H.264 的源报」，避免 WebM/VP9 页面误报 | `xHelperMac/CEF/CefDisguise.h`、`Shared/Views/BrowserTabView.swift`、本文档 §9.2.13 |

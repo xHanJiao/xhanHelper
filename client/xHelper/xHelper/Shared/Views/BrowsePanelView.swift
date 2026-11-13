@@ -230,68 +230,15 @@ struct BrowsePanelView: View {
         // 用 TimelineView 而不是 Timer —— 视图被摘除时自动停，不用管取消。
         // 不能用 `.periodic(from: Date(), by:)`：body 每次重算都换起点，tick 会被一直往后推。
         TimelineView(.everyMinute) { context in
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(SidebarHomeFormat.greeting(hour: Calendar.current.component(.hour, from: context.date)))
-                        .font(.system(size: 19, weight: .semibold))
-                    Spacer()
-                    Text(Self.todayText(context.date))
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-
-                Button {
-                    manager.browsePanelSelection = .reminders
-                } label: {
-                    todayLine
-                        .font(.system(size: 12.5))
-                        .foregroundColor(.secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("查看备忘")
+            HomeGreetingView(
+                now: context.date,
+                pendingReminders: homeVM.stats.pendingReminders,
+                events: homeVM.stats.events,
+                monthSpend: homeVM.stats.monthSpend
+            ) {
+                manager.browsePanelSelection = .reminders
             }
         }
-    }
-
-    /// 今日行：备忘 / 事件 / 本月支出。任一路取不到就显示 `—`（不隐藏，免得布局跳动）。
-    /// 整行可点进备忘面板——否则「上面有数字、下面没入口」会显得断头。
-    /// 用 HStack 而不是 `Text + Text`（macOS 26 已废弃 `+`）。
-    private var todayLine: some View {
-        HStack(spacing: 7) {
-            todayItem("备忘", homeVM.stats.pendingReminders.map(String.init))
-            separatorDot
-            todayItem("事件", homeVM.stats.events.map(String.init))
-            separatorDot
-            todayItem("本月支出", homeVM.stats.monthSpend.map(SidebarHomeFormat.money))
-        }
-        .font(.system(size: 12.5))
-        .foregroundColor(.secondary)
-        .lineLimit(1)
-        .minimumScaleFactor(0.9)
-    }
-
-    private func todayItem(_ label: String, _ value: String?) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-            Text(value ?? "—")
-                .fontWeight(.semibold)
-                .foregroundColor(Color("assistantText"))
-                .monospacedDigit()
-        }
-    }
-
-    private var separatorDot: some View {
-        Text("·")
-            .foregroundColor(Color.primary.opacity(0.35))
-    }
-
-    private static func todayText(_ now: Date) -> String {
-        let cal = Calendar.current
-        let comps = cal.dateComponents([.month, .day, .weekday], from: now)
-        let names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
-        let index = max(0, min(6, (comps.weekday ?? 1) - 1))
-        return "\(comps.month ?? 1)月\(comps.day ?? 1)日 \(names[index])"
     }
 
     /// 打开着的网页标签：排除收藏夹 / 历史 / 配置 / 本页资源与灵阅产物 tab。

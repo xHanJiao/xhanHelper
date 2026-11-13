@@ -121,6 +121,100 @@ struct Sheet: View {
     }
 }
 
+
+// MARK: - 问候区对比：同一张图里问候区 + 第一排卡，用来看「头部大小 vs 卡」的关系
+
+struct GreetingSheet: View {
+    let title: String
+    let subtitle: String
+    let cardWidth: CGFloat
+    let titleSize: CGFloat
+    let statsSize: CGFloat
+    let spacing: CGFloat
+
+    private let gap: CGFloat = 12
+    private let pagePadding: CGFloat = 26
+
+    private var contentWidth: CGFloat { cardWidth * 2 + gap }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color("assistantText"))
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(Color("assistantText").opacity(0.55))
+            }
+
+            // 跟 home 同构：垂直 18 + 问候区 + 上间距 16 + 两列卡
+            VStack(alignment: .leading, spacing: 0) {
+                HomeGreetingView(now: Date(timeIntervalSince1970: 1_763_000_000),
+                                 pendingReminders: 14, events: 26, monthSpend: 3619,
+                                 titleSize: titleSize, statsSize: statsSize, spacing: spacing)
+                    .padding(.horizontal, 4)
+                LazyVGrid(columns: [GridItem(.fixed(cardWidth), spacing: gap),
+                                    GridItem(.fixed(cardWidth), spacing: gap)],
+                          spacing: gap) {
+                    ForEach(Array(specs.prefix(2).enumerated()), id: \.offset) { _, spec in
+                        spec.view(layout: .info, width: cardWidth, height: 164)
+                    }
+                }
+                .padding(.top, 16)
+            }
+            .padding(.vertical, 18)
+        }
+        .padding(pagePadding)
+        .frame(width: contentWidth + pagePadding * 2, alignment: .leading)
+        .background(Color("chatBackground"))
+        .environment(\.colorScheme, .light)
+    }
+}
+
+struct GreetingShot {
+    let name: String
+    let title: String
+    let subtitle: String
+    let titleSize: CGFloat
+    let statsSize: CGFloat
+    let spacing: CGFloat
+}
+
+private func renderGreeting(_ shot: GreetingShot, to dir: URL) -> Bool {
+    let sheet = GreetingSheet(title: shot.title, subtitle: shot.subtitle, cardWidth: 654,
+                              titleSize: shot.titleSize, statsSize: shot.statsSize,
+                              spacing: shot.spacing)
+    let host = NSHostingView(rootView: sheet)
+    host.appearance = NSAppearance(named: .aqua)
+    let size = host.fittingSize
+    host.frame = NSRect(origin: .zero, size: size)
+    host.layoutSubtreeIfNeeded()
+
+    let scale: CGFloat = 2
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    ) else {
+        FileHandle.standardError.write(Data("建位图失败：\(shot.name)\n".utf8))
+        return false
+    }
+    rep.size = size
+    host.cacheDisplay(in: host.bounds, to: rep)
+
+    guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+    do {
+        try png.write(to: dir.appendingPathComponent("\(shot.name).png"))
+        print("✓ \(dir.appendingPathComponent("\(shot.name).png").path)")
+        return true
+    } catch {
+        FileHandle.standardError.write(Data("写盘失败 \(shot.name): \(error)\n".utf8))
+        return false
+    }
+}
+
 // MARK: - 出图
 
 struct Shot {
@@ -198,9 +292,21 @@ let shots: [Shot] = [
          width: 654, height: 164, layout: .info),
 ]
 
+let greetingShots: [GreetingShot] = [
+    GreetingShot(name: "问候-01-旧", title: "问候区 19 / 12.5 / 间距 6（旧）", subtitle: "卡宽 654，下同",
+                 titleSize: 19, statsSize: 12.5, spacing: 6),
+    GreetingShot(name: "问候-02-轻微", title: "问候区 21 / 13 / 间距 7", subtitle: "只抬一点",
+                 titleSize: 21, statsSize: 13, spacing: 7),
+    GreetingShot(name: "问候-03-选中", title: "问候区 23 / 13 / 间距 8（已采用）", subtitle: "头部成为视觉锚点",
+                 titleSize: 23, statsSize: 13, spacing: 8),
+    GreetingShot(name: "问候-04-大", title: "问候区 25 / 13.5 / 间距 9", subtitle: "再大就可能压住卡",
+                 titleSize: 25, statsSize: 13.5, spacing: 9),
+]
+
 let ok = MainActor.assumeIsolated { () -> Bool in
     var ok = true
     for shot in shots where !render(shot, to: outDir) { ok = false }
+    for shot in greetingShots where !renderGreeting(shot, to: outDir) { ok = false }
     return ok
 }
 print("截图目录: \(outDir.path)")

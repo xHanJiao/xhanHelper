@@ -41,6 +41,7 @@ echo "编译 snapshot-homecards.swift ..."
 cp "$HERE/snapshot-homecards.swift" "$TMP/main.swift"
 xcrun swiftc -O -o "$BIN" "$TMP/main.swift" \
   "$SHARED/Views/HomeEntryCard.swift" \
+  "$SHARED/Views/HomeGreetingView.swift" \
   "$SHARED/Views/SidebarHomeFormat.swift" \
   -framework SwiftUI -framework AppKit
 

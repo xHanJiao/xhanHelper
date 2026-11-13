@@ -533,10 +533,12 @@ B4 把 `window.open` / `target=_blank` 拦成**兄弟 tab**，代价是弹窗页
 
 | 闸门 | 触发 | 行为 | 耗时 |
 |---|---|---|---|
-| **A 构建期** | Xcode Run Script（macOS target，编译前） | 落后就 `warning:`（黄标），**构建照常成功** | 缓存命中 ~50ms |
+| **A 构建期** | Xcode Run Script「Check CEF」（macOS target，排在 **Bundle CEF 之后**） | 落后就 `warning:`（黄标），**构建照常成功** | 缓存命中 ~50ms |
 | **B 发版期** | `scripts/check-cef-version.sh --strict`（发版前手动跑） | 超阈值红字 + 非 0 退出 | ~1s |
 
 不默认硬失败的理由：每天发版，网络抖动或 CEF 发版当天没升，不该卡住构建。
+
+**为什么排在 Bundle CEF 之后**：A 档的第一件事是读"这次构建真正装进 app 的 framework 版本"（`$TARGET_BUILD_DIR/$WRAPPER_NAME/Contents/Frameworks/...`），排在 Install 之前那个文件还是上一版或不存在。代价是它只影响"构建末尾多看一眼"，不影响任何产物。
 
 **A 档查什么**
 
@@ -562,7 +564,7 @@ PINNED_AT=$(cat "$SRCROOT/CEF_VERSION_AT")  # 2026-11-12
 **两个附加检查（更值钱）**
 
 1. **伪装与内核版本一致性**：B3 起 UA / brands / `sec-ch-ua` 全部从 `cef_version.h` 拼（见第三章），**编译期就不可能对不上**，这条检查从"grep UA 常量"降级为"不用做"。真正会漂的是 GREASE 陪跑品牌（手写常量）——它只能靠 `cef-regression.sh` 的探针发现，所以第 2 条比第 1 条更值钱。
-2. **升级未回归**：`scripts/cef-regression.sh` 成功后写 stamp（`{"version":"156.0.7"}`）；构建时 `shipped != stamp` → `warning: 156.0.7 是升级后首次构建，先跑 scripts/cef-regression.sh`。
+2. **升级未回归**：`scripts/cef-regression.sh` 全绿后写戳 `~/Library/Caches/xhanHelper-cef/regression-stamp.json`（`{"version":"<app 里 framework 的 CFBundleShortVersionString>","pinned":"<CEF_VERSION>","at":"<日期>"}`，可用 `XH_CEF_REGRESSION_STAMP` 改位置）；`check-cef-version.sh` 比对 `shipped != stamp.version` → `warning: … 是升级后首次构建，先跑 scripts/cef-regression.sh`（`--strict` 下算失败）。戳没写 = 从未跑过回归，同样提示。
 
 ### 10.3 工程细节（已核实）
 
@@ -578,7 +580,34 @@ client/xHelper/CEF_VERSION            # 156.0.7+g47dbc1d
 client/xHelper/CEF_VERSION_AT         # 2026-11-12
 client/xHelper/scripts/check-cef-version.sh   # Xcode Run Script 与发版前 --strict 共用
 client/xHelper/scripts/cef-regression.sh      # 自动：UA/sec-ch-ua/userAgentData/window.chrome（探针）；人工清单：谷歌假邮箱、百度三站
-client/xHelper/scripts/update-cef.sh          # 下载/替换/签名一条龙（P4，可选）
+client/xHelper/scripts/update-cef.sh          # 升级一条龙：解析版本 → 回写两个版本文件 → fetch-cef.sh（下载/编 wrapper/编 Helper/切 current）
+```
+
+四条都已在仓库里（B10 交付）。`update-cef.sh` **不碰 .app**：framework 由 ⌘B 的 Bundle CEF 按版本号增量重装；手动往正在跑的 app 里塞新 framework 只会让它下次启动崩。
+
+```bash
+client/xHelper/scripts/update-cef.sh                  # 升到最新 stable
+client/xHelper/scripts/update-cef.sh 159.0.3          # 指定版本（+hash+chromium- 自动补全；离线时写全整串可跳过联网）
+```
+
+### 10.5 体积与安装核对（B10 实测，2026-11-13）
+
+| 项 | 实测 | 判据 |
+|---|---|---|
+| `.app` 总大小（Debug） | **435 MB** | 主要是 framework 的 325 MB；D14 只出 arm64，不再翻倍 |
+| `Chromium Embedded Framework.framework` | **325 MB** | 含 3 个 dylib（`libcef_sandbox` / `libvk_swiftshader` / `libvulkan`） |
+| `Contents/Frameworks/` 内容 | framework + **5 个 Helper.app** | 主 / Alerts / GPU / Plugin / Renderer，缺一个就起不来 |
+| `codesign --verify --strict` | **valid on disk / satisfies its Designated Requirement** | 由里到外（dylib → framework → Helper）都签过 |
+| 签名身份 | `Apple Development: … (H966W53XG4)` | 与 app 本体一致；手动跑脚本时退回 ad-hoc（D13 不公证） |
+
+复核命令（发版前顺手跑，只读）：
+
+```bash
+APP=<DerivedData>/Build/Products/Debug/xhanHelper.app
+du -sh "$APP" "$APP/Contents/Frameworks/Chromium Embedded Framework.framework"
+ls "$APP/Contents/Frameworks"                       # 期望 1 framework + 5 Helper.app
+codesign --verify --strict --verbose=2 "$APP"       # 期望 valid on disk
+client/xHelper/scripts/check-cef-version.sh --strict "$APP"
 ```
 
 ## 十一、开发流程（worktree / 双引擎 / dev 隔离）
@@ -748,6 +777,8 @@ main                       ← 继续每天发版（WK，现状不变）
 | B7+ | 2026-11-13 | `bb0dba72` + `d2cd09b7` | 待真机构建（CEF：切 tab 回来滚动位置还在、B站/WK 后台继续播、需登录的媒体下载不再 403）。交付：删 `cg_click` / `cg_drag`（含 `CGEventInput` 的鼠标注入，只留键盘）；滚动位置保存/恢复、后台媒体保活探测、`download` 的 Cookie 三处两引擎打通；设置页「浏览器内核」开关转正（不再 dev-only）；D18 修订为「兼容 tab 读写都开放」。自检：clang++ / swiftc typecheck / `swift test` 436 条 |
 | B9b | 2026-11-13 | `80960128` + `551d7fae` | 待真机构建 + 人眼（`window.open` 弹窗里 `window.opener` 非 null、`opener.postMessage` 能到、`window.close()` 能关掉 tab）。交付：CEF 真 popup browser 嵌进 tab（D20 / §9.2.14）；页面自关窗收 tab；12s 兜底。review MINOR（P1×1 / P2×6 / P3×5，除「CEF 下载取 Cookie」外已修，见 `docs/code-review/browser-chromium-migration/2026-11-13.md`） |
 
+| B10 | 2026-11-13 | 待提交 | 脚本侧完成：`check-cef-version.sh`（A/B 两档 + framework/pin 一致性 + 回归戳）、pbxproj 新增「Check CEF」phase（排 Bundle CEF 之后）、`cef-regression.sh` 通过后写戳、`update-cef.sh`（解析版本 → 回写版本文件 → `fetch-cef.sh`）；体积/安装核对见 §10.5（435 MB / 5 Helper / codesign 通过）。**未做**：第十二章逐条真机验收（等一次 ⌘B）、`pre-cef` tag、并 main |
+
 每批完成后在本节追加一行：`B<N> · 完成日期 · commit · review 结论（通过 / 遗留 N 项）`。
 
 ## 十五、后续变更
@@ -757,6 +788,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | 2026-11-13 | **D20**：CEF 的 `window.open` / `target=_blank` 不再拦成兄弟 tab，改成让 CEF 自己建 popup browser 再嵌进我们的 tab（真 `window.opener`）；页面 `window.close()` 自动收 tab。用户拍板「B9 一起解决」 | `xHelperMac/CEF/CefBridge.{h,mm}`、`Shared/Services/BrowserPage.swift`、`Shared/Tools/BrowserToolProvider.swift`、本文档 §9.2.14 / §13.1 |
 | 2026-11-13 | 三层媒体检测第 2 层收窄为「只对像 H.264 的源报」，避免 WebM/VP9 页面误报 | `xHelperMac/CEF/CefDisguise.h`、`Shared/Views/BrowserTabView.swift`、本文档 §9.2.13 |
 | 2026-11-13 | **D18 修订**：兼容 tab 从「只读开放、写操作禁」改为「读写都开放」（用户拍板：视频站也需要 agent 点按钮；用户标签写入仍走既有授权闸门）。改文档不改代码 | 本文档 D18 / §9.1 / §9.2.5 / 第十二章 |
+| 2026-11-13 | **B10 运维收口**：新增 `check-cef-version.sh`（构建期 warning / `--strict` 发版闸门，读 app 里 framework 版本 + pin + 回归戳）、`update-cef.sh`（升级一条龙，不碰 .app）、`cef-regression.sh` 通过写戳；pbxproj 加「Check CEF」phase（**B0 之后第一次回碰 pbxproj，只加不改**）；§10.5 记录体积/安装实测 | `client/xHelper/scripts/{check-cef-version,update-cef,cef-regression}.sh`、`xHelper.xcodeproj/project.pbxproj`、本文档 §10.2 / §10.4 / §10.5 |
 | 2026-11-13 | **删除 `cg_click` / `cg_drag`**（用户从未用过；CEF 上本来不可用）。`CGEventInput` 只保留键盘注入（`press`） | `Shared/Tools/BrowserToolProvider.swift`、`Shared/Services/CGEventInput.swift`、`ToolConfirmPolicy.swift`、`LocalToolRegistry.swift`、`BrowserActivityCenter.swift` |
 | 2026-11-13 | 设置页「浏览器内核」开关对用户露出（原为 dev-only 隐藏开关），合并 `main` 后仍可一键回兼容 WebKit | `xHelperMac/App.swift`、`Shared/Services/BrowserEngineRouter.swift` |
 | 2026-11-13 | CEF 标签补齐：滚动位置保存/恢复、后台媒体保活探测（JS `pause()`）、`download` 从 `CefCookieManager` 取 Cookie | `Shared/Tools/BrowserToolProvider.swift`、`Shared/Services/BrowserPage.swift`、`xHelperMac/CEF/CefBridge.{h,mm}` |

@@ -33,7 +33,7 @@ if pgrep -f "$APP/Contents/MacOS/xhanHelper" >/dev/null; then
 fi
 
 if ! curl -sS -o /dev/null -m 8 -I "$PROBE_URL"; then
-  echo "回显地址不可达：$PROBE_URL（用 XH_CEF_PROBE_URL=... 换一个 echo 服务）" >&2
+  echo "回显地址不可达：${PROBE_URL}（用 XH_CEF_PROBE_URL=... 换一个 echo 服务）" >&2
   exit 2
 fi
 
@@ -53,7 +53,7 @@ if [ ! -s "$REPORT" ]; then
   exit 1
 fi
 
-python3 - "$REPORT" "$(cat CEF_VERSION)" <<'PY'
+if python3 - "$REPORT" "$(cat CEF_VERSION)" <<'PY'
 import json, sys
 
 report_path, cef_version = sys.argv[1], sys.argv[2]
@@ -129,3 +129,22 @@ if fails:
     sys.exit(1)
 print("\n四层伪装自洽。还差人眼两项：谷歌登录假邮箱、百度三站无验证码。")
 PY
+then :; else
+  echo "回归未过，不写戳（check-cef-version.sh 会继续提示先跑回归）" >&2
+  exit 1
+fi
+
+# 通过才写戳：check-cef-version.sh 用它判断"装进 app 的这个版本已做过伪装回归"。
+# 版本取 app 里 framework 的实际版本（权威来源），读不到就退回 pin —— 但要说清，别假装验过。
+STAMP="${XH_CEF_REGRESSION_STAMP:-${CEF_CACHE_DIR:-$HOME/Library/Caches/xhanHelper-cef}/regression-stamp.json}"
+SHIPPED="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
+  "$APP/Contents/Frameworks/Chromium Embedded Framework.framework/Versions/Current/Resources/Info.plist" \
+  2>/dev/null || true)"
+if [ -z "$SHIPPED" ]; then
+  SHIPPED="$(cut -d+ -f1 "$(cat CEF_VERSION)")"
+  echo "note：读不到 app 里 framework 的版本，戳里记 pin 的 $SHIPPED" >&2
+fi
+mkdir -p "$(dirname "$STAMP")"
+printf '{"version":"%s","pinned":"%s","at":"%s"}\n' \
+  "$SHIPPED" "$(cat CEF_VERSION)" "$(date +%Y-%m-%d)" > "$STAMP"
+echo "戳已写：${STAMP}（${SHIPPED}）"

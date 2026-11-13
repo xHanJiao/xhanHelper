@@ -138,6 +138,7 @@
 				BB0A7E962FA41490007BD7D6 /* Resources */,
 				BB5C0DE1A2B3C4D5E6F70001 /* Bundle Backend */,
 				CEF0A1B2C3D4E5F600000002 /* Bundle CEF */,
+				CEF0A1B2C3D4E5F600000003 /* Check CEF */,
 			);
 			buildRules = (
 			);
@@ -277,6 +278,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/scripts/fetch-cef.sh\" --install \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\n";
+		};
+		CEF0A1B2C3D4E5F600000003 /* Check CEF */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check CEF";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/check-cef-version.sh\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

@@ -8,6 +8,10 @@ import UniformTypeIdentifiers
 /// 右侧栏浏览面板类型
 enum BrowsePanel: String, Identifiable, CaseIterable {
     case bills = "账单"
+    #if os(macOS)
+    /// 本地 EPUB 书架（解包走系统 `unzip`，仅 macOS）
+    case books = "书架"
+    #endif
     case reminders = "备忘"
     case memories = "记忆"
     case artifacts = "灵阅"
@@ -22,6 +26,9 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     var icon: String {
         switch self {
         case .bills:     return "yensign.circle"
+        #if os(macOS)
+        case .books:     return "books.vertical"
+        #endif
         case .reminders: return "checklist"
         case .memories:  return "brain.head.profile"
         case .artifacts: return "doc.richtext"
@@ -36,6 +43,9 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     var help: String {
         switch self {
         case .bills:     return "查看账单记录与统计"
+        #if os(macOS)
+        case .books:     return "本地 EPUB 书架：导入与阅读"
+        #endif
         case .reminders: return "待办提醒（只读，按到期时间排序）"
         case .memories:  return "长期记忆与语义搜索"
         case .artifacts: return "浏览对话中生成的页面、报告与对比图"
@@ -51,7 +61,14 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     /// 记忆 / 图片 / 智能体 / 监控看板已移出首页，改从设置「内容与工具」进入；
     /// 枚举 case 必须保留——文档深链、顶栏 ⌘1/⌘2/⌘3 都直接选中它们。
     /// 见 docs/design/right-sidebar-home/design.md §7。
-    static let homePanels: [BrowsePanel] = [.bills, .reminders, .artifacts, .documents, .events]
+    /// 书架换掉了备忘卡（E10）：备忘仍可经问候行整行点击与设置入口进入。
+    static let homePanels: [BrowsePanel] = {
+        #if os(macOS)
+        return [.bills, .books, .artifacts, .documents, .events]
+        #else
+        return [.bills, .reminders, .artifacts, .documents, .events]
+        #endif
+    }()
 }
 
 /// 回收站批量操作（页头按钮 → 二次确认）
@@ -114,6 +131,10 @@ struct BrowsePanelView: View {
     /// 挂在 `RightSidebarView`（与其它 VM 同处）而非首页自己：开浏览器 tab 时首页会被摘除，
     /// 挂在自己身上会让缓存随之销毁，每次回来都重新打六个接口。
     @ObservedObject var homeVM: SidebarHomeViewModel
+    #if os(macOS)
+    /// 本地 EPUB 书架（`Books/` 目录；不经服务端）
+    @ObservedObject private var bookVM = BookViewModel.shared
+    #endif
     let baseURL: String
     let token: String
 
@@ -222,7 +243,13 @@ struct BrowsePanelView: View {
                 .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
             }
         }
-        .task { await homeVM.refresh(baseURL: baseURL, token: token) }
+        .task {
+            await homeVM.refresh(baseURL: baseURL, token: token)
+            #if os(macOS)
+            // 书架卡要「N 本 / 最近在读」，本地扫描一次（毫秒级）
+            await bookVM.load()
+            #endif
+        }
     }
 
     private var greeting: some View {
@@ -326,6 +353,14 @@ struct BrowsePanelView: View {
                 return ("sidebar_bills",
                         s.monthSpend.map { "本月 " + SidebarHomeFormat.money($0) } ?? "—",
                         s.monthBillCount.map { "\($0) 笔" })
+            #if os(macOS)
+            case .books:
+                // 最近在读：只认有进度的书（排序会用 importedAt 兜底，未读的新书不能算「在读」）
+                let reading = bookVM.books.first { $0.progress != nil }
+                return ("sidebar_books",
+                        bookVM.books.isEmpty ? "—" : "\(bookVM.books.count) 本",
+                        reading.map { "最近在读《\($0.title)》" } ?? "暂无在读")
+            #endif
             case .reminders:
                 let overdue = homeVM.reminders.filter { SidebarHomeFormat.isOverdue($0.deadline) }.count
                 let next = homeVM.reminders.first { !SidebarHomeFormat.isOverdue($0.deadline) }
@@ -374,6 +409,35 @@ struct BrowsePanelView: View {
     private func infoRows(for panel: BrowsePanel) -> [HomeEntryCard.InfoRow] {
         let openPanel: () -> Void = { manager.browsePanelSelection = panel }
         switch panel {
+        #if os(macOS)
+        case .books:
+            // 最近三本：书名 + 章号（未读则「未读」）。点行直接进那本书，
+            // 只切到书架面板会让人多点一次（卡片文字区仍走 openPanel）
+            return bookVM.books.prefix(3).map { book in
+                let detail: String
+                if let progress = book.progress,
+                   book.effectiveSections.count > book.chapterCount,
+                   let section = book.section(at: progress.sectionIndex ?? 0),
+                   !section.title.trimmingCharacters(in: .whitespaces).isEmpty {
+                    // 切过节的书：节标题比「第 2/2 章」有用得多
+                    detail = section.title
+                } else if let progress = book.progress, book.hasChapterNavigation {
+                    detail = "第 \(progress.chapterIndex + 1)/\(book.chapterCount) 章"
+                } else {
+                    detail = book.progress == nil ? "未读" : "已读 \(Int((book.progressFraction * 100).rounded()))%"
+                }
+                return HomeEntryCard.InfoRow(
+                    id: "book:" + book.id,
+                    title: book.title,
+                    detail: detail,
+                    icon: .monogram(SidebarHomeFormat.monogram(book.title)),
+                    action: {
+                        manager.browsePanelSelection = .books
+                        bookVM.openBook = book
+                    }
+                )
+            }
+        #endif
         case .bills:
             return homeVM.recentBills.prefix(3).map { bill in
                 HomeEntryCard.InfoRow(
@@ -436,6 +500,9 @@ struct BrowsePanelView: View {
     private func tint(for panel: BrowsePanel) -> Color {
         switch panel {
         case .bills:     return Color("assistantText")
+        #if os(macOS)
+        case .books:     return Color("appAccent")
+        #endif
         case .reminders: return Color("appAccent")
         case .memories:  return Color("appAccent")
         case .artifacts: return Color("appAccent")
@@ -450,6 +517,9 @@ struct BrowsePanelView: View {
             if let panel = manager.browsePanelSelection {
                 if panel == .dashboard {
                     // 监控看板自带 XHPanel header（含刷新按钮）
+                    panelContent(panel)
+                } else if isBookReader {
+                    // 阅读页自带常驻 chrome（返回书架 / 章号 / 目录 / Aa）
                     panelContent(panel)
                 } else {
                     // 灵阅多选跨端一致，判断放在平台分支之外（文档/图片的多选是 macOS-only）
@@ -482,6 +552,14 @@ struct BrowsePanelView: View {
                 billSearchOpen = false
                 artifactSearchOpen = false
             }
+            // 阅读页只活在书架面板里：切走就关掉（进度已由 onDisappear 存过，回来从进度恢复）
+            #if os(macOS)
+            if newValue != .books {
+                bookVM.openBook = nil
+                // 阅读页退出时进度已写盘；书架列表还是打开前那份，重扫一次让卡片跟着更新
+                Task { await bookVM.load() }
+            }
+            #endif
             // 离开文档面板即退出多选（选择工具条只在文档列表前台时有效）
             documentVM.exitDocumentSelection()
             imageVM.exitSelection()
@@ -679,6 +757,15 @@ struct BrowsePanelView: View {
     }
     #endif
 
+    /// 书阅读页在承前面板时自带整条 chrome，所以不叠 panelHeader。
+    private var isBookReader: Bool {
+        #if os(macOS)
+        return manager.browsePanelSelection == .books && bookVM.openBook != nil
+        #else
+        return false
+        #endif
+    }
+
     /// 页头返回按钮的 help：文档详情态回列表，其余回网格
     private var backHelp: String {
         #if os(macOS)
@@ -875,6 +962,27 @@ struct BrowsePanelView: View {
                 .accessibilityLabel("多选管理")
                 .disabled(artifactVM.items.isEmpty)
             }
+
+            #if os(macOS)
+            // 书架：导入入口（拖拽走 BookshelfView 的 onDrop，同一条管线）
+            if panel == .books {
+                if bookVM.isImporting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help("正在导入…")
+                } else {
+                    Button {
+                        bookVM.presentImportPanel()
+                    } label: {
+                        Image(systemName: "tray.and.arrow.down")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("导入 EPUB")
+                }
+            }
+            #endif
 
             Button {
                 Task { await refresh(panel) }
@@ -1198,6 +1306,9 @@ struct BrowsePanelView: View {
     private func isLoading(_ panel: BrowsePanel) -> Bool {
         switch panel {
         case .bills:     return billVM.isLoading
+        #if os(macOS)
+        case .books:     return bookVM.isLoading
+        #endif
         case .reminders: return homeVM.isLoading
         case .memories:  return memoryVM.isLoading
         case .artifacts: return artifactVM.isLoading
@@ -1223,6 +1334,9 @@ struct BrowsePanelView: View {
     private func reload(_ panel: BrowsePanel) async {
         switch panel {
         case .bills:     await billVM.load()
+        #if os(macOS)
+        case .books:     await bookVM.load()
+        #endif
         case .reminders: await homeVM.refresh(baseURL: baseURL, token: token, force: true)
         case .memories:  await memoryVM.load()
         case .artifacts: await artifactVM.load()
@@ -1239,6 +1353,20 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:
             BillPage(viewModel: billVM, baseURL: baseURL, token: token)
+        #if os(macOS)
+        case .books:
+            if let book = bookVM.openBook {
+                // 阅读页自带常驻 chrome（返回书架 / 章号 / 目录 / Aa），所以整页不套 panelHeader
+                BookReaderView(book: book) {
+                    bookVM.openBook = nil
+                    // 回来后书架要显示新进度（meta.json 已被阅读页改写）
+                    Task { await bookVM.load() }
+                }
+                .id(book.id)
+            } else {
+                BookshelfView(viewModel: bookVM)
+            }
+        #endif
         case .reminders:
             // 只读列表，数据与首页卡同源；直接从设置/顶栏进来时先补一次（60s 内命中缓存不重复请求）。
             ReminderPageView(

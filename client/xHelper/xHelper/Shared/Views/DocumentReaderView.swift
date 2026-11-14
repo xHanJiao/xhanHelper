@@ -589,7 +589,26 @@ private struct ReaderWebView: NSViewRepresentable {
 /// 但 CSS 换成阅读版 —— 不加 A4 的 `595pt` / `12pt` 打印尺寸，改自适应列宽
 /// （`clamp(728px, 68vw, 1100px)`：窄栏维持 728，宽窗按 68% 视口长到 1100 封顶）+ 可调字号，
 /// 并且不铺任何底色（外层是卡片 material）。
-private enum ReaderHTML {
+enum ReaderHTML {
+
+    /// 书阅读器的初始排版（`buildBook` 注入，之后由 `reader.setTypo` 改）
+    struct BookTypography: Equatable {
+        var fontSize: CGFloat = 17
+        var lineHeight: Double = 1.78
+        /// 段间距（em）
+        var paragraphGap: Double = 0.55
+        /// 正文列宽/栏宽
+        var measure: CGFloat = 728
+        var fontFamily: String = #"-apple-system, "PingFang SC", "Helvetica Neue", sans-serif"#
+        /// `scroll` / `paged`
+        var readingMode: String = "scroll"
+
+        var json: String {
+            "{fs:\(String(format: "%.2f", fontSize)),line:\(lineHeight),para:\(paragraphGap),"
+            + "measure:\(String(format: "%.1f", measure)),font:\(MarkdownWebUtils.jsString(fontFamily)),"
+            + "mode:\(MarkdownWebUtils.jsString(readingMode))}"
+        }
+    }
 
     /// mermaid 渲染结果缓存：key = 主题 + 源码。
     /// 换篇会重建 WebView 并重跑 `build`（外层 `.id(doc.id)`），没缓存就每次从零烤
@@ -634,18 +653,38 @@ private enum ReaderHTML {
 
         let tags = parseTagTexts(document.tags)
         let tagsHTML = tags.map { "<span>\(MarkdownWebUtils.escapeHTML($0))</span>" }.joined()
+        let headerHTML = """
+        <div class="doc-title">\(MarkdownWebUtils.escapeHTML(document.title))</div>
+        <div class="doc-tags">\(tagsHTML)</div>
+        <hr class="doc-rule">
+        """
 
         // 每次加载换一个 CSP nonce：只放行本模板的两段脚本，正文里注入的 <script>/内联事件一律不执行。
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
 
         return template
             .replacingOccurrences(of: "__NONCE__", with: nonce)
+            .replacingOccurrences(of: "__MODE__", with: "doc")
+            .replacingOccurrences(of: "__HEADER_HTML__", with: headerHTML)
+            .replacingOccurrences(of: "__BOOK_JSON__", with: "null")
             .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", fontSize))
             .replacingOccurrences(of: "__MARKED_JS__", with: markedJS)
-            .replacingOccurrences(of: "__TITLE_HTML__", with: MarkdownWebUtils.escapeHTML(document.title))
-            .replacingOccurrences(of: "__TAGS_HTML__", with: tagsHTML)
             .replacingOccurrences(of: "__MD_JSON__", with: MarkdownWebUtils.jsString(mdParts.joined(separator: "\n\n")))
             .replacingOccurrences(of: "__IMAGES_JSON__", with: imagesJSON)
+    }
+
+    /// 书阅读器的 HTML：同一份模板，书模式不渲染 markdown（正文由 `setChapter` 灌进来）。
+    static func buildBook(typography: BookTypography) -> String {
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        return template
+            .replacingOccurrences(of: "__NONCE__", with: nonce)
+            .replacingOccurrences(of: "__MODE__", with: "book")
+            .replacingOccurrences(of: "__HEADER_HTML__", with: "")
+            .replacingOccurrences(of: "__BOOK_JSON__", with: typography.json)
+            .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", typography.fontSize))
+            .replacingOccurrences(of: "__MARKED_JS__", with: "")
+            .replacingOccurrences(of: "__MD_JSON__", with: "null")
+            .replacingOccurrences(of: "__IMAGES_JSON__", with: "[]")
     }
 
     /// mermaid 占位 token（纯字母数字，规避 GFM 强调/链接误判），与 PDF 导出同款。
@@ -697,7 +736,7 @@ private enum ReaderHTML {
 
 /// 文档正文里点图放大：mermaid 是 data URI（直接解），配图是绝对 http URL（拉一次）。
 /// 加载好复用 `AttachmentPreviewView`，与聊天图放大同款。
-private struct DocumentImageLightbox: View {
+struct DocumentImageLightbox: View {
     let src: String
     @State private var image: NSImage?
     @State private var failed = false
@@ -1039,13 +1078,65 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .ctxmenu button svg { width: calc(var(--fs) * 0.7); height: calc(var(--fs) * 0.7); opacity: .8; }
 .ctxmenu button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .ctxmenu hr { border: 0; border-top: 1px solid var(--border-soft); margin: 4px 6px; }
+
+/* ============ 书阅读器（BOOK 模式） ============
+   正文是原书 XHTML，排版由这里接管（书自带的 <style>/<link> 在 JS 里剥掉）：
+   字号/行距/段距/列宽/字体全部走 CSS 变量，改一个变量就整篇重排。
+   doc 模式不受影响（这些规则都挂在 html.book 下）。 */
+html.book { --measure: 728px; --line: 1.78; --para: 0.55em; }
+html.book .page { max-width: none; padding: 0; }
+html.book #content {
+  /* 列宽是「正文列」宽度：左右各留 28px 呼吸位，面板窄于列宽时跟着缩 */
+  max-width: calc(var(--measure) + 56px); margin: 0 auto; padding: 26px 28px 64px;
+  font-family: var(--book-font, -apple-system, "PingFang SC", "Helvetica Neue", sans-serif);
+  line-height: var(--line);
+}
+html.book #content p { margin: var(--para) 0; }
+html.book #content h1 { font-size: calc(var(--fs) * 1.45); }
+html.book #content h2 { font-size: calc(var(--fs) * 1.24); border-bottom: 0; padding-bottom: 0; }
+html.book #content h3 { font-size: calc(var(--fs) * 1.1); }
+html.book #content h4, html.book #content h5, html.book #content h6 { font-size: var(--fs); }
+html.book #content img { display: block; margin: 18px auto; }
+html.book #content a { color: inherit; border-bottom: 0; text-decoration: none; }
+html.book #content .chapter-next {
+  margin: 40px auto 0; padding: 10px 0; max-width: 260px;
+  text-align: center; font-size: calc(var(--fs) * 0.82); color: var(--accent);
+  border: 1px solid var(--border); border-radius: 9px; cursor: pointer;
+  user-select: none;
+}
+html.book #content .chapter-next:hover { background: var(--accent-soft); }
+
+/* 翻页模式：`#content` 自己就是 pager（多栏 + 横向滚动）。
+   一栏 = 一屏 = `--measure`：几何与滚动模式完全一致，换模式版面不跳。 */
+html.paged, html.paged body { overflow: hidden; height: 100%; }
+html.paged .page {
+  /* 与 `html.book #content` 同款：外框 = 列宽 + 左右各 28px 呼吸位，窄了就跟着缩。
+     内边距放在这里而不是 `#content` 上：后者是横向滚动容器，左右 padding 只作用于
+     首尾栏，中间每页仍然贴边。 */
+  height: 100%; padding: 0 28px;
+  max-width: min(calc(var(--measure, 728px) + 56px), 100%);
+  margin: 0 auto;
+}
+html.paged #content {
+  /* `column-width` 给一个远大于容器的值 → 栏数恒为 1、栏宽 = 容器宽；
+     正文继续向右排成多栏，容器自己横向滚动（一页 = 一列）。 */
+  width: 100%; max-width: 100%;
+  height: calc(100% - 8px); margin: 4px 0 0; padding: 0;
+  column-width: 100000px; column-gap: 64px; column-fill: auto;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+}
+html.paged #content::-webkit-scrollbar { display: none; }
+/* 竖长图不约束会被分栏切成横跨整条滚动区的长条，且超出栏高的部分被静默裁掉 */
+html.paged #content img { max-width: 100%; max-height: 100%; object-fit: contain; }
+html.paged #content pre, html.paged #content table, html.paged #content figure,
+html.paged #content blockquote { break-inside: avoid; }
+html.paged #content h1, html.paged #content h2, html.paged #content h3 { break-after: avoid; }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="doc-title">__TITLE_HTML__</div>
-  <div class="doc-tags">__TAGS_HTML__</div>
-  <hr class="doc-rule">
+  __HEADER_HTML__
   <div id="content"></div>
 </div>
 
@@ -1101,6 +1192,8 @@ __MARKED_JS__
 <script nonce="__NONCE__">
 var reader = (function () {
   var content = document.getElementById('content');
+  var MODE = '__MODE__';        /* 'doc' | 'book' */
+  var BOOK = MODE === 'book';
   var findRanges = [];
   var findIdx = -1;
 
@@ -1134,7 +1227,8 @@ var reader = (function () {
        批注 relocate 必然失败。图片本来就不参与 flat，跳过占位保持一致。 */
     var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
       acceptNode: function (n) {
-        return n.parentNode && n.parentNode.closest && n.parentNode.closest('.blocked-img')
+        return n.parentNode && n.parentNode.closest
+          && n.parentNode.closest('.blocked-img, .chapter-next')
           ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
       }
     });
@@ -1524,6 +1618,7 @@ var reader = (function () {
   var anchorHoldUntil = 0;
   window.addEventListener('resize', function () {
     anchorHoldUntil = Date.now() + 400;
+    if (BOOK) { restorePosition(lastOff); return; }
     restoreAnchor();
   });
 
@@ -1531,7 +1626,16 @@ var reader = (function () {
      一滚就把工具条/菜单收起来（菜单挂靠在选区坐标上，正文一移就错位），并发 scroll 让 Swift 重取连线位置。
      顺手记一次阅读锚点：这是「读者现在看哪」的唯一取样点（重排不由我们触发）。 */
   window.addEventListener('scroll', function () {
-    if (Date.now() > anchorHoldUntil) captureAnchor();
+    if (Date.now() > anchorHoldUntil) {
+      if (BOOK) {
+        /* 拍平整章不便宜，滚动期间按 200ms 采样：既更新 lastOff，也把位置发给 Swift
+           （顶栏/底栏的「当前目录条目」靠它跟着滚，保存仍由 Swift 侧节流） */
+        var now = Date.now();
+        if (now - lastPosAt > 200) { lastPosAt = now; post({ type: 'position', offset: position() }); }
+      } else {
+        captureAnchor();
+      }
+    }
     hideAll();
     post({ type: 'scroll' });
   }, true);
@@ -1611,8 +1715,9 @@ var reader = (function () {
       neText.value = '';
     }
     updateSaveLabel();
-    /* 编辑态不给「让 AI 回答」：批注已存在，AI 入口在右侧卡片上（note 非空、0 回复时显示「让 AI 回复」） */
-    neAsk.style.display = id ? 'none' : '';
+    /* 编辑态不给「让 AI 回答」：批注已存在，AI 入口在右侧卡片上（note 非空、0 回复时显示「让 AI 回复」）。
+       书模式一律没有（本地批注没有回复线程）。 */
+    neAsk.style.display = (id || BOOK) ? 'none' : '';
 
     editor.classList.add('open');
     var anchor = anchorRect(id);
@@ -1689,6 +1794,19 @@ var reader = (function () {
     }
     var sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;   /* 正在选词 */
+
+    /* 翻页模式点击分区：左 28% 上一栏 / 右 28% 下一栏 / 中间不拦截（design §5.7）。
+       链接、划线、气泡、章末按钮各有自己的行为，不让位。 */
+    if (BOOK && paged()) {
+      var box = content.getBoundingClientRect();
+      var onWidget = e.target.closest ? e.target.closest('a, mark.hl, .ann-bubble, .chapter-next') : null;
+      if (!onWidget) {
+        var x = e.clientX - box.left;
+        if (x < box.width * 0.28) { turnPage(-1); return; }
+        if (x > box.width * 0.72) { turnPage(1); return; }
+      }
+    }
+
     var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
     if (!t) { hideCtx(); return; }
     var id = t.dataset.id || t.dataset.for;
@@ -1729,6 +1847,16 @@ var reader = (function () {
     if (findIdx < 0 || findIdx >= findRanges.length) return;
     var rect = findRanges[findIdx].getBoundingClientRect();
     /* 顶部留一点余量，别让命中项贴着上边缘。Range 没有 scrollIntoView，只能自己算 */
+    if (paged()) {
+      /* 翻页模式：命中在别的栏里 → 把那一栏横向滚进视口（design §5.7） */
+      var box = content.getBoundingClientRect();
+      if (rect.left < box.left - 1 || rect.right > box.right + 1) {
+        settlePage();
+        content.scrollLeft += (rect.left - box.left) - 40;
+        snapPage();
+      }
+      return;
+    }
     window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - 120), behavior: 'smooth' });
   }
 
@@ -1793,6 +1921,8 @@ var reader = (function () {
   }
 
   function setFontSize(px) {
+    /* 书模式按「字符偏移」回位（字号一变整章重排，像素锚点没有意义） */
+    if (BOOK) { setTypo({ fs: px }); return; }
     /* 字号一变整篇重排，与栏宽变化是同一个坑：像素级滚动位置保不住「在看哪句」。 */
     captureAnchor();
     document.documentElement.style.setProperty('--fs', px + 'px');
@@ -1870,7 +2000,453 @@ var reader = (function () {
     });
   }
 
-  render(__MD_JSON__, __IMAGES_JSON__);
+  /* ============ 书阅读器（BOOK）============
+     正文由 Swift 逐章灌进来（`setChapter`），进度口径是「视口左上角那个字的拍平偏移」
+     （design §5.5）。划线与 doc 模式共用同一套 locate / wrapSpan / 浮层，只是数据来自本地
+     `annotations.json`（Swift 每次增删改后全量重推）。 */
+  var lastOff = 0;
+  var lastPosAt = 0;
+
+  function paged() { return document.documentElement.classList.contains('paged'); }
+
+  /* 一页的横向步长 = 实际栏宽 + 栏间距（与 CSS 的 column-gap 一致）。
+     栏宽 = 容器内容盒宽（`#content` 自己不设左右 padding），跟着「页宽」设置走。 */
+  function pageSpan() {
+    var w = content.clientWidth;
+    if (!isFinite(w) || w <= 0) w = 728;
+    return w + 64;
+  }
+
+  /* 能滚到的最右。`scrollWidth - clientWidth` 是取整后的差，而且书里比栏还宽的图/表
+     会把 `scrollWidth` 撑大 —— 算出来的值可能比真实末页多出几像素，所以下面判断
+     「到头了没有」不能用它做等值比较。 */
+  function pageMax() {
+    return Math.max(0, content.scrollWidth - content.clientWidth);
+  }
+
+  /* 翻页动画（ease-out）：rAF 补间而不是 `scrollTo({behavior:'smooth'})` ——
+     WebKit 的平滑滚动时长/缓动不可控，也拿不到「目标页」，吸附与探针都没法判断。 */
+  var pageAnim = 0, pageTarget = 0;
+
+  function stopPageAnim() {
+    if (pageAnim) cancelAnimationFrame(pageAnim);
+    pageAnim = 0;
+  }
+
+  /* 停掉在跑的动画并落在目标页：后面要按「当前页」算位置的路径先调它，
+     否则起点是半路像素，吸附会算出错误的页号。 */
+  function settlePage() {
+    if (!pageAnim) return;
+    stopPageAnim();
+    content.scrollLeft = pageTarget;
+  }
+
+  function animatePage(x) {
+    stopPageAnim();
+    pageTarget = x;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      content.scrollLeft = x;
+      return;
+    }
+    var from = content.scrollLeft, t0 = 0;
+    var dur = 220;
+    function step(now) {
+      if (!t0) t0 = now;
+      var k = Math.min(1, (now - t0) / dur);
+      content.scrollLeft = from + (x - from) * (1 - Math.pow(1 - k, 3));
+      if (k < 1) pageAnim = requestAnimationFrame(step);
+      else { pageAnim = 0; content.scrollLeft = x; }
+    }
+    pageAnim = requestAnimationFrame(step);
+  }
+
+  function scrollToStart() {
+    stopPageAnim();
+    if (paged()) content.scrollLeft = 0;
+    else window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  /* 翻页模式的位置只能是整页：所有改过 `scrollLeft` 的路径都收口到这里，
+     否则会停在两栏中间（左右各截一半）。最后一页不足一屏时贴在内容尾部。
+     动画途中调用 = 「落到目标页」（不是弹回原页）。 */
+  function snapPage() {
+    if (!paged()) return;
+    settlePage();
+    var span = pageSpan();
+    var max = pageMax();
+    content.scrollLeft = Math.max(0, Math.min(max, Math.round(content.scrollLeft / span) * span));
+  }
+
+  /* 视口左上角那个字的偏移。翻页模式下就是「当前栏第一行」那个字。
+     `box.top` 在纵向滚动模式下可能是负的（正文列比视口高），必须夹到视口内，
+     否则 `caretRangeFromPoint` 拿到布局外的点，永远回 0。 */
+  /* 「读到哪」的取样点与 restorePosition 的落点必须是同一个像素偏移，
+     否则每次改字号/换模式都会往前后滚半行（实测差 42 个字）。 */
+  var READ_PAD_TOP = 24, READ_PAD_LEFT = 8;
+
+  function position() {
+    var box = content.getBoundingClientRect();
+    var x = box.left + READ_PAD_LEFT;
+    var y = Math.max(box.top, 0) + READ_PAD_TOP;
+    var caret = document.caretRangeFromPoint(x, y);
+    if (!caret || !content.contains(caret.startContainer)) return lastOff;
+    var off = flatOffset(flatten(), caret.startContainer, caret.startOffset);
+    if (off >= 0) lastOff = off;
+    return lastOff;
+  }
+
+  /* 按字符偏移把同一句放回视口顶部。找不到（章节刚换 / 偏移越界）就回到开头。 */
+  function restorePosition(off) {
+    if (!off || off <= 0) { scrollToStart(); return; }
+    var flat = flatten();
+    if (!flat.nodes.length) { scrollToStart(); return; }
+    var start = Math.min(Math.max(0, off), Math.max(0, flat.text.length - 1));
+    var range = rangeAt(flat, start, start + 1);
+    if (!range) { scrollToStart(); return; }
+    var rect = range.getBoundingClientRect();
+    if (paged()) {
+      var box = content.getBoundingClientRect();
+      settlePage();
+      content.scrollLeft += (rect.left - box.left) - READ_PAD_LEFT;
+      snapPage();
+    } else {
+      window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - READ_PAD_TOP), behavior: 'auto' });
+    }
+    lastOff = off;
+  }
+
+  /* 书里的相对路径（图片、SVG <image>）按「章节所在目录」转成绝对 file://：
+     WebView 的 baseURL 固定是 content/ 根，章节可能在 OEBPS/Text/ 里。 */
+  function rewriteResources(dirURL) {
+    if (!dirURL) return;
+    function abs(v) {
+      v = String(v || '').trim();
+      if (!v || /^(data:|blob:|https?:|file:|#)/i.test(v)) return v;
+      try { return new URL(v, dirURL).href; } catch (e) { return v; }
+    }
+    [].forEach.call(content.querySelectorAll('img, image'), function (el) {
+      var raw = el.getAttribute('src') || el.getAttribute('xlink:href') || el.getAttribute('href');
+      if (!raw) return;
+      var full = abs(raw);
+      el.setAttribute('src', full);
+      if (el.tagName.toLowerCase() === 'image') {
+        el.setAttribute('xlink:href', full);
+        el.removeAttribute('href');
+      }
+    });
+    /* 跨章链接 / 外链：本阅读器不做书内导航，去掉 href 保留文字，别点一下就白页 */
+    [].forEach.call(content.querySelectorAll('a[href]'), function (a) {
+      if ((a.getAttribute('href') || '').charAt(0) === '#') return;
+      a.removeAttribute('href');
+    });
+  }
+
+  /* 取锚点元素：EPUB 的目录锚点既可能是 id，也可能是 <a name="…"> */
+  function anchorElement(frag) {
+    if (!frag) return null;
+    var byID = document.getElementById(frag);
+    if (byID) return byID;
+    try { return content.querySelector('[name="' + String(frag).replace(/["\\]/g, '') + '"]'); }
+    catch (e) { return null; }
+  }
+
+  function setChapter(html, dirURL, hasNext, hasPrev) {
+    advancing = false;   /* 新正文到了：换节锁放掉 */
+    try {
+      applyChapter(html, dirURL, hasNext, hasPrev);
+      post({ type: 'chapterReady' });
+    } catch (e) {
+      /* 任何异常都必须回一条，Swift 侧才不会一直显示「加载中」 */
+      post({ type: 'chapterReady', error: String((e && e.message) || e) });
+    }
+  }
+
+  /* 换节状态：有没有上一节 / 下一节（章末按钮与「到底再翻」都靠它）；
+     `advancing` = 已经举手换节、Swift 还在送新正文 —— 那段窗口期 DOM 还是旧节，
+     再翻一下不能再发一次（否则一次拖动连跳两节）。 */
+  var chapterHasNext = false, chapterHasPrev = false, advancing = false;
+
+  function applyChapter(html, dirURL, hasNext, hasPrev) {
+    chapterHasNext = !!hasNext;
+    chapterHasPrev = !!hasPrev;
+    unwrapAll();
+    pendingRange = null;
+    annotations = [];          /* Swift 随即推本章的列表 */
+    /* 换正文前把浮层收掉：选区工具条挂在旧正文的坐标上，批注浮层里没保存的草稿也会变成废引用 */
+    hideAll();
+    editor.classList.remove('open');
+    editingId = null;
+    findRanges = [];
+    findIdx = -1;
+    paint();
+    content.innerHTML = String(html || '');
+    /* 书自带样式表会覆盖我们的排版（字号/行距/页宽全失效）；harden 负责删 <link> */
+    [].forEach.call(content.querySelectorAll('style'), function (n) {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+    rewriteResources(dirURL);
+    harden(content);
+    /* 出版社的 inline style（字号/颜色/position/display）会盖掉我们的排版，
+       深色模式下还可能变成白底黑字或整段隐形 —— 一律剥掉（design §5.2） */
+    [].forEach.call(content.querySelectorAll('[style]'), function (el) {
+      el.removeAttribute('style');
+    });
+    content.normalize();
+    if (hasNext) {
+      var next = document.createElement('div');
+      next.className = 'chapter-next ui';
+      next.textContent = '继续 ›';   /* 节级：下一节，本章最后一节之后是下一章第一节 */
+      next.addEventListener('click', function (e) {
+        e.preventDefault();
+        post({ type: 'nextSection' });
+      });
+      content.appendChild(next);
+    }
+    scrollToStart();
+    lastOff = 0;
+    navDiag('chapter', { nx: hasNext ? 1 : 0, pv: hasPrev ? 1 : 0,
+                        md: paged() ? 'paged' : 'scroll', len: content.textContent.length });
+  }
+
+  /* 锚点 → 拍平偏移表。Swift 用它算「当前读到目录里的哪一条」，滚动时也跟着变。 */
+  function collectAnchors(idsJSON) {
+    var ids = [];
+    try { ids = JSON.parse(idsJSON) || []; } catch (e) { ids = []; }
+    var flat = flatten();
+    var out = [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = String(ids[i]);
+      var el = anchorElement(id);
+      if (!el) continue;
+      var off = -1;
+      for (var j = 0; j < flat.nodes.length; j++) {
+        var node = flat.nodes[j].node;
+        if (el.contains(node)) { off = flat.nodes[j].start; break; }
+        /* 空锚点（`<a id="s1"/>`）自身没有文本：取它之后的第一个文本节点 */
+        if (el.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
+          off = flat.nodes[j].start;
+          break;
+        }
+      }
+      if (off >= 0) out.push({ id: id, offset: off });
+    }
+    return JSON.stringify(out);
+  }
+
+  /* 跳到章内锚点（目录点击 / 跨章跳转都走这里） */
+  function scrollToAnchor(frag) {
+    var el = anchorElement(frag);
+    if (!el) { scrollToStart(); post({ type: 'position', offset: 0 }); return false; }
+    var rect = el.getBoundingClientRect();
+    if (paged()) {
+      var box = content.getBoundingClientRect();
+      settlePage();
+      content.scrollLeft += (rect.left - box.left);
+      snapPage();
+    } else {
+      window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - READ_PAD_TOP), behavior: 'auto' });
+    }
+    post({ type: 'position', offset: position() });
+    return true;
+  }
+
+  function applyVars(opts) {
+    if (!opts) return;
+    var root = document.documentElement.style;
+    if (typeof opts.fs === 'number') root.setProperty('--fs', opts.fs + 'px');
+    if (typeof opts.line === 'number') root.setProperty('--line', String(opts.line));
+    if (typeof opts.para === 'number') root.setProperty('--para', opts.para + 'em');
+    if (typeof opts.measure === 'number') root.setProperty('--measure', opts.measure + 'px');
+    if (typeof opts.font === 'string' && opts.font) root.setProperty('--book-font', opts.font);
+  }
+
+  /* 排版改动（字号/行距/段距/页宽/字体）：记位置 → 改 → 回位 */
+  function setTypo(opts) {
+    var off = position();
+    applyVars(opts);
+    void content.offsetHeight;
+    restorePosition(off);
+    post({ type: 'position', offset: off });
+  }
+
+  /* 上下滚动 ⇄ 左右翻页。两套滚动容器互不相干，换完按字符偏移找回同一句。 */
+  function setReadingMode(mode) {
+    var wantPaged = mode === 'paged';
+    if (wantPaged === paged()) { restorePosition(lastOff); return; }
+    var off = position();
+    stopPageAnim();
+    document.documentElement.classList.toggle('paged', wantPaged);
+    content.scrollLeft = 0;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    void content.offsetHeight;
+    restorePosition(off);
+    post({ type: 'position', offset: off });
+  }
+
+  function turnPage(delta) {
+    if (!paged()) return false;
+    var span = pageSpan();
+    var max = pageMax();
+    /* 动画途中再翻要从「目标页」起算，否则会叠在半路上（可连翻两页） */
+    var base = pageAnim ? pageTarget : content.scrollLeft;
+    var x = Math.max(0, Math.min(max, (Math.round(base / span) + delta) * span));
+    /* 已经在头/尾还继续翻 = 换节（不用再点「继续」）。
+       判据是「这一下能不能真的挪动接近一整页」，不是「x 是否一字不差等于 max」：
+       末页位置常比算出来的 max 差几像素（取整、溢出内容撑大 scrollWidth），
+       用等值比较会永远以为「还能挪一点点」，于是反复挪 0.7px、永不换节。 */
+    var moved = delta > 0 ? x - base : base - x;
+    if (moved < span * 0.5) return advanceSection(delta);
+    animatePage(x);
+    return true;
+  }
+
+  /* 到边界再往前 = 换节。翻页模式由 `turnPage` 夹住那一刻调；滚动模式由
+     「已经到底/到顶再多滚一段（或再按方向键）」调。 */
+  function advanceSection(delta) {
+    var has = delta > 0 ? chapterHasNext : chapterHasPrev;
+    /* 诊断：为什么没换节（锁 / 没有相邻节）——真机导航不灵时看这一条 */
+    if (advancing || !has) {
+      navDiag('advance-skip', { d: delta, lock: advancing ? 1 : 0,
+                               nx: chapterHasNext ? 1 : 0, pv: chapterHasPrev ? 1 : 0,
+                               md: paged() ? 'paged' : 'scroll' });
+      return false;
+    }
+    advancing = true;
+    navDiag('advance', { d: delta, md: paged() ? 'paged' : 'scroll',
+                        at: Math.round(paged() ? content.scrollLeft : window.scrollY),
+                        max: Math.round(pageMax()), span: Math.round(pageSpan()) });
+    post({ type: delta > 0 ? 'nextSection' : 'prevSection' });
+    return true;
+  }
+
+  /* 导航诊断：真机上「按键/滚轮换节不灵」全靠这几条定位。
+     完全没有 `key` 日志 = 事件根本没进到页面（焦点不在正文）；
+     有日志但没换节 = 看 `advance-skip` 的 lock/nx/pv。落盘在 Swift 侧（DEBUG 才有）。 */
+  function navDiag(kind, extra) {
+    var msg = { type: 'diag', kind: kind };
+    if (extra) { for (var k in extra) { msg[k] = extra[k]; } }
+    post(msg);
+  }
+
+  /* 首屏：书模式的初始排版（之后全部走 setTypo / setReadingMode） */
+  function applyBookTypography(opts) {
+    /* 书排版的所有规则都挂在 `html.book` 下 —— 这个类不加，字号/行距/页宽整组失效 */
+    document.documentElement.classList.add('book');
+    if (!opts) return;
+    applyVars(opts);
+    document.documentElement.classList.toggle('paged', opts.mode === 'paged');
+  }
+
+  /* 触控板/滚轮：翻页模式一页一次；滚动模式滚到尽头再多滚一段就换节。
+     翻页模式按「新手势」判（150ms 内算同一次，350ms 冷却挡惯性），否则一次滑动连翻好几页。 */
+  var lastWheelAt = 0, wheelLockAt = 0;
+  /* 滚动模式：在顶部/底部继续推的累计量。不能按「新手势」判 —— 触控板惯性是连续事件
+     （间隔 ~16ms），永远凑不出 150ms 空隙，读者推到手指发酸也换不了节（真机踩过）。 */
+  var edgeAcc = 0, edgeAt = 0;
+  document.addEventListener('wheel', function (e) {
+    if (!BOOK) return;
+    var now = Date.now();
+    if (!paged()) {
+      /* 不挡原生滚动，只在「已经到底 / 到顶」之后累计够一段才换节 */
+      var dy = e.deltaY;
+      if (Math.abs(dy) < 2) return;
+      var doc = document.documentElement;
+      var atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 4;
+      var atTop = window.scrollY <= 0;
+      if (!(dy > 0 ? atBottom : atTop)) { edgeAcc = 0; edgeAt = 0; return; }
+      if (now - edgeAt > 400) edgeAcc = 0;    /* 停手超过 400ms：重新累计 */
+      edgeAt = now;
+      edgeAcc += Math.abs(dy);
+      if (edgeAcc < 120 || now - wheelLockAt < 600) return;
+      edgeAcc = 0;
+      wheelLockAt = now;
+      advanceSection(dy > 0 ? 1 : -1);
+      return;
+    }
+    e.preventDefault();
+    var d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (Math.abs(d) < 4) return;
+    var sameGesture = now - lastWheelAt < 150;
+    lastWheelAt = now;
+    if (sameGesture || now - wheelLockAt < 350) return;
+    wheelLockAt = now;
+    turnPage(d > 0 ? 1 : -1);
+  }, { passive: false });
+
+  /* 键盘（design §9.5）：←/→/↑/↓ 两种模式都接；空格/PageUp/PageDown 在滚动模式翻一屏。
+     ⌘/⌃ 组合一律放过（⌘F 等由 SwiftUI 接管），⌥⌘+方向 = 跳上一节/下一节开头。
+     正在选字、按住 Shift 扩选时不抢键。 */
+  document.addEventListener('keydown', function (e) {
+    if (!BOOK) return;
+    var arrow = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+             || e.key === 'ArrowUp' || e.key === 'ArrowDown';
+    var forward = arrow && (e.key === 'ArrowRight' || e.key === 'ArrowDown');
+
+    /* 诊断：按键到底有没有进到页面里。**没有这条日志 = 焦点不在正文**（WKWebView 不是
+       第一响应者，键被上层吃掉），这不是模板能修的，得让阅读区先拿到焦点。 */
+    if (arrow || e.key === ' ' || e.key === 'PageDown' || e.key === 'PageUp') {
+      navDiag('key', { k: e.key === ' ' ? 'Space' : e.key,
+                      cmd: e.metaKey ? 1 : 0, alt: e.altKey ? 1 : 0, shift: e.shiftKey ? 1 : 0,
+                      md: paged() ? 'paged' : 'scroll' });
+    }
+
+    /* ⌥⌘+方向：跳节（不是翻页）。在正文里接，不指望 SwiftUI 的快捷键路由 ——
+       焦点在 WKWebView 里时那条路不一定收得到。Swift 侧有 250ms 去重。 */
+    if (arrow && (e.metaKey || e.ctrlKey) && e.altKey) {
+      e.preventDefault();
+      post({ type: 'sectionJump', delta: forward ? 1 : -1 });
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+
+    if (arrow) {
+      if (e.shiftKey) return;                 /* Shift+方向 = 扩选，别翻页 */
+      if (paged()) { e.preventDefault(); turnPage(forward ? 1 : -1); return; }
+      /* 滚动模式：已经到顶/到底再按 = 换节；否则 ↑/↓ 交给原生逐行滚动 */
+      var doc = document.documentElement;
+      var atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 4;
+      var atTop = window.scrollY <= 0;
+      if (forward ? atBottom : atTop) {
+        e.preventDefault();
+        advanceSection(forward ? 1 : -1);
+        return;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') return;
+      /* ←/→ 在滚动模式没有原生含义：当一屏（与空格同义） */
+      e.preventDefault();
+      window.scrollBy({ top: (forward ? 1 : -1) * window.innerHeight * 0.85, behavior: 'smooth' });
+      return;
+    }
+    if (e.key === ' ' || e.key === 'PageDown' || e.key === 'PageUp') {
+      if (paged()) return;
+      e.preventDefault();
+      var fwd = !(e.key === 'PageUp' || e.shiftKey);
+      /* 已经到底 / 到顶：这一下当换节（与滚轮、翻页同一语义） */
+      var d = document.documentElement;
+      if (fwd && window.innerHeight + window.scrollY >= d.scrollHeight - 4) {
+        advanceSection(1);
+        return;
+      }
+      if (!fwd && window.scrollY <= 0) {
+        advanceSection(-1);
+        return;
+      }
+      window.scrollBy({ top: (fwd ? 1 : -1) * window.innerHeight * 0.85, behavior: 'smooth' });
+    }
+  });
+
+  if (BOOK) {
+    /* 书没有「让 AI 回答」（本地书、没有服务端回复线程） */
+    neAsk.style.display = 'none';
+  }
+
+  if (BOOK) {
+    applyBookTypography(__BOOK_JSON__);
+  } else {
+    render(__MD_JSON__, __IMAGES_JSON__);
+  }
   post({ type: 'ready' });
 
   return {
@@ -1883,7 +2459,18 @@ var reader = (function () {
     restoreScrollY: restoreScrollY,
     setAnnotations: setAnnotations,
     scrollToAnnotation: scrollToAnnotation,
-    annotationRect: annotationRect
+    annotationRect: annotationRect,
+    /* 书模式 */
+    setChapter: setChapter,
+    scrollToAnchor: scrollToAnchor,
+    collectAnchors: collectAnchors,
+    position: position,
+    restorePosition: restorePosition,
+    setTypo: setTypo,
+    setReadingMode: setReadingMode,
+    turnPage: turnPage,
+    /* 动画途中调用 = 直接落到目标页；探针也靠它拿到确定位置 */
+    snapPage: snapPage
   };
 })();
 </script>

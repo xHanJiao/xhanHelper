@@ -57,6 +57,12 @@ enum LocalPaths {
         appSupportDir.appendingPathComponent(dataRootName, isDirectory: true)
     }
 
+    /// 本机 EPUB 书架（`Books/<id>/{meta.json,source.epub,cover.jpg,content/,annotations.json}`）。
+    /// 书和批注全在本机，不进服务端（见 `docs/design/epub-reader/design.md`）。
+    static var booksDir: URL {
+        dataRoot.appendingPathComponent("Books", isDirectory: true)
+    }
+
     /// 两个环境的数据根（护栏用，顺序同 `allDataRootNames`）。
     static var allDataRoots: [URL] {
         allDataRootNames.map { appSupportDir.appendingPathComponent($0, isDirectory: true) }

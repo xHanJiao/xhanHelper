@@ -37,6 +37,8 @@ final class VoiceHotKeyController {
     private var chordDownAt: Date?
     /// 本轮已作废（按下的瞬间旁边还有别的键/鼠标动作 → 不是想说话）
     private var cancelled = false
+    /// 第几次按下（`begin()` 自增）：异步结果回来时用来判断是不是已经被下一次按下接管
+    private var pressGen = 0
     private var pollTimer: Timer?
 
     /// 只跑一次性采集的服务；连续档（语音条开着）仍然交给视图那套
@@ -100,6 +102,8 @@ final class VoiceHotKeyController {
             if chordDownAt == nil {
                 chordDownAt = now
                 cancelled = false
+                // 新一轮按下从这一帧就算开始了：上一轮还在飞的慢失败不能落到这一轮头上
+                pressGen += 1
             } else if !cancelled, !armed,
                       now.timeIntervalSince(chordDownAt ?? now) >= armDelay {
                 // 开录前只要旁边还有别的键/鼠标动作，就当这次不是想说话
@@ -140,6 +144,9 @@ final class VoiceHotKeyController {
     // MARK: - 一轮的开合
 
     private func begin() {
+        // 本轮按下的序号：异步失败回来时用它判断「这一轮是不是已经被下一次按下接管」
+        pressGen += 1
+        let gen = pressGen
         // 正在念上一轮回复：先停，否则录进去的是 TTS
         AppShortcutBridge.shared.stopVoicePlayback?()
 
@@ -157,6 +164,8 @@ final class VoiceHotKeyController {
             LogBuffer.shared.warning("[hotkey] 没有后端凭据（窗口没开过？），这次忽略")
             NSSound.beep()
             armed = false
+            // 本次按下已作废：不清 `cancelled` 就会每 33ms 重进这里，beep 连成一片（docs/bugs/067）
+            cancelled = true
             return
         }
         NSSound(named: "Tink")?.play()
@@ -168,7 +177,12 @@ final class VoiceHotKeyController {
             guard let self else { return }
             let result = await self.ptt.hotKeyPress(baseURL: creds.baseURL, token: creds.token)
             if result == .failed {
+                // 慢失败可能落在下一次按下已经开始之后（权限弹窗/建连期间松手再按）：
+                // 那是上一轮的事，别把新一轮的 cancelled 置真，否则这次按下直到松手都没反应
+                guard self.pressGen == gen else { return }
                 NSSound.beep()
+                // 一次失败只响一声，别让 tick 在按住期间反复重试
+                self.cancelled = true
                 self.route = nil
                 self.armed = false
                 self.followTurn = false

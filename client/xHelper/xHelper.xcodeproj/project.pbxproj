@@ -548,7 +548,7 @@
 					"$(inherited)",
 					"-lcef_dll_wrapper",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = xhanx.cn.xHelperMac;
+				PRODUCT_BUNDLE_IDENTIFIER = xhanx.cn.xHelperMac.dev;
 				PRODUCT_NAME = xhanHelper;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;

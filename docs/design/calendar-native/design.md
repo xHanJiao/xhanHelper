@@ -92,7 +92,7 @@ reminder 工具(Go) → Reminder(pending) → SSE reminders_changed
 - 事件备注末尾写 `[xhanhelper:<reminder_id>]`：映射丢失（换机/清偏好）时按标记在截止时间附近认领旧事件，不在日历里重建第二份；这也是将来上 iOS 客户端时做「双响去重」的依据
 - 权限/日历不可用做**会话级负缓存**：denied 之后不再请求、不再逐条试，只打一条日志
 - **截断保护**：`total != pending.count`（超过一页 50 条）时跳过「按页 diff 删除」这一轮，防误删日历事件
-- 开关：`@AppStorage` key `reminder_sync_to_calendar`，默认开；设置页给状态展示 + 「请求权限」按钮，权限状态随 App 激活刷新
+- 开关：`@AppStorage` key `reminder_sync_to_calendar`，默认开（**Debug 构建默认关**，见后续变更 2026-11-14）；设置页给状态展示 + 「请求权限」按钮，权限状态随 App 激活刷新
 
 ### 取舍：日历闹钟替代本地通知（方案 A，用户已拍板）
 
@@ -186,3 +186,13 @@ reminder 工具(Go) → Reminder(pending) → SSE reminders_changed
 - **测试时区无关**：`testConfirmationSummary` 断言改用 `CalendarCore.displayDate`，`TZ=UTC` 下同样通过
 
 
+
+### 2026-11-14 · Debug 构建默认关掉镜像
+
+dev/prod 曾共用同一份 app 身份（同 bundle id `xhanx.cn.xHelperMac`），两个 build 的提醒都会写进**同一个真实日历**，
+同一个待办可能在日历里出现两条。现在 Debug 构建改用独立 bundle id `xhanx.cn.xHelperMac.dev`
+（见 `docs/bugs/067`），并让开关在 Debug 下默认关：
+
+- `ReminderCalendarMirror.defaultEnabled = !LocalPaths.isDev`，`isEnabled` 与设置页 `@AppStorage` 共用这一处真值。
+- 关着时走既有分支：不新建、不删已成事件、不为维护映射去要授权，提醒回落系统通知。
+- 影响文件：`Services/ReminderCalendarMirror.swift`、`xHelperMac/App.swift`。

@@ -20,6 +20,9 @@ final class ReminderCalendarMirror {
     /// 设置页开关（`@AppStorage` 同一 key）
     static var enabledKey: String { LocalPaths.scoped("reminder_sync_to_calendar") }
 
+    /// 没存过值时的默认：Debug 构建跑的是 dev 沙盒库，默认关掉，别往真实日历里写和生产重复的事件
+    static var defaultEnabled: Bool { !LocalPaths.isDev }
+
     /// 镜像结果：还要排本地通知的提醒 + 已经写进日历的提醒 id（后者要把可能残留的本地通知撤掉）。
     struct Outcome {
         let toNotify: [Reminder]
@@ -38,7 +41,7 @@ final class ReminderCalendarMirror {
     private var permanentFailure: String?
 
     var isEnabled: Bool {
-        (UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool) ?? true
+        (UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool) ?? Self.defaultEnabled
     }
 
     /// 已写入日历的提醒条数（设置页「清理」入口展示用）

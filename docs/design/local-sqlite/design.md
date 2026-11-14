@@ -103,7 +103,7 @@ flowchart TD
 - 后端跑在你 Mac 上，数据存本地 SQLite。
 - 客户端连 `127.0.0.1`（本机）。
 - **Go 要顺带托管前端**（这次目标新增的能力）。
-- **本地也分 prod / dev 两套**（见第八节）：同一 app 身份、按构建分（`Debug` → dev / `Release` → prod），不同数据根 / 端口 / 日志，可同时开着；dev 是**空库**，与 prod 无数据路径。
+- **本地也分 prod / dev 两套**（见第八节）：同一份 app、按构建分（`Debug` → dev / `Release` → prod），bundle id 也分家（`xhanx.cn.xHelperMac.dev` / `xhanx.cn.xHelperMac`），不同数据根 / 端口 / 日志，可同时开着；dev 是**空库**，与 prod 无数据路径。
 
 两种形态**共用同一份 Go 代码**，靠配置和环境变量切换。云端部署能力保留（iOS 客户端将来仍需要它）。
 
@@ -343,10 +343,10 @@ flowchart TD
 - **为什么不拆进程**：SQLite 单写者，HTTP 进程与 worker 进程同写一个 `.db` 会锁竞争甚至损坏。单进程内 `CronRunner` 已能满足「关窗后继续」。
 - **改哪里**：`xHelperMac/App.swift` 的 `windowShouldClose` / `applicationShouldTerminate`。
 
-### 10. dev / prod 双环境隔离（第 4 期定稿：同一 app，按构建分环境）
+### 10. dev / prod 双环境隔离（第 4 期定稿：同一 app，按构建分环境；2026-11-14 起 Debug 改用独立 bundle id，见 §8.1 注）
 
 - **为什么**：开发时能随手折腾数据，但**绝不允许 dev 碰 prod 数据**。
-- **同一 app 身份，按构建配置分**：`Debug` → dev、`Release` → prod；数据根 / 端口 / 日志 / `APP_ENV` / conf 随之不同（见第八节表格）。不建第二套 bundle id / scheme / `.xcconfig`。
+- **同一 app 身份，按构建配置分**：`Debug` → dev、`Release` → prod；数据根 / 端口 / 日志 / `APP_ENV` / conf 随之不同（见第八节表格）。不建第二套 scheme / `.xcconfig`。**（2026-11-14 修订：`Debug` 改用独立 bundle id `xhanx.cn.xHelperMac.dev`，见 §8.1 注）**
 - **dev 是空库**：自动建 `me`，数据自己长 —— **不做 prod→dev 的 zip 导出/导入**（原意想定已砍，用户 2026-09-24 拍）。
 - **三层拦截**（第八节 8.2）：物理隔离（两个 conf + `LocalPaths`）→ 启动交叉断言（`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀，不符致命）→ 请求层 env 校验（`Bearer <env>:<random>` 前缀不符 → 403）。
 - **改哪里**：`conf/config.local.dev.yaml`（新）+ `config.local.yaml` 加 `local_env`；Go `config.ServerConfig.LocalEnv` + `appinit` 断言 + `middleware.LocalAuth.Env`；Swift `LocalPaths`（新）+ 8 处数据根硬编码 + `LocalKeychain.Account` token 项 + `LocalAuthService` token 生成 + `LocalBackendDiagnostics.childEnvironment` + 3 处 18923 白名单；`scripts/bundle-backend.sh` 按 `$CONFIGURATION` 选 conf；`Makefile` 加 `make local-dev`。
@@ -459,7 +459,7 @@ flowchart LR
 
 **已拍决定（2026-09-24，开工前）**
 
-1. **同一 app 身份**：不建第二套 bundle id / scheme / xcconfig —— Swift 侧用现成的 `#if DEBUG`，Go 配置在 Run Script 里按 `$CONFIGURATION` 选。
+1. **同一 app 身份**：不建第二套 bundle id / scheme / xcconfig —— Swift 侧用现成的 `#if DEBUG`，Go 配置在 Run Script 里按 `$CONFIGURATION` 选。**（2026-11-14 撤销「同一 bundle id」这一半：Debug 改用 `xhanx.cn.xHelperMac.dev`，`#if DEBUG` 分环境不变）**
 2. **`APP_ENV` 命名**：`local` = prod（现有 `config.local.yaml` 不动）、`local.dev` = dev（新增 `config.local.dev.yaml`）→ 迁移工具、`make local`、既有文档零改动。
 3. **dev 数据**：空库起步 + 自动建 `me`；**不做导出/导入 zip**（UI-8a/8b 砍掉）、不从线上 / prod 拷数据，磁盘增量≈0。
 4. **密钥与 token 都分家**：LLM / Embedding 密钥、`model` / `base_url` 覆盖项均按环境分家（钥匙串 account `llm_api_key_dev` / `_prod`、`embedding_api_key_dev` / `_prod`；UserDefaults key 加 `_dev` / `_prod` 后缀）——在 dev 里换供应商 / key / 模型不动到 prod；本地 token 同样分家（`local_token_dev` / `local_token_prod`）。旧版共享项保留为一次性迁移源。
@@ -480,7 +480,7 @@ flowchart LR
 - **Go**：`config.ServerConfig` 加 `local_env`（含 `applyOverrides` 非空覆盖）；`appinit` 启动断言；`middleware.LocalAuth` 加 `Env`，本地模式先校验前缀；`appinit/router_test.go` 跟随。
 - **Swift**：新增 `LocalPaths`（根 / 日志根 / 端口 / env 名，`#if DEBUG` 决定）；改 8 处硬编码数据根（`FaviconStore` / `UserConfigStore` / `HistoryStore` / `BookmarkStore` / `DownloadHistoryStore` / `LocalToolResultStore` / `ToolOutputStore` / `LocalBackendManager` 日志根）；`LocalKeychain.Account` 加 per-env token 项；`LocalAuthService` 生成带前缀 token + 用对应 account；`LocalBackendManager.port`；`LocalBackendDiagnostics.childEnvironment` 的 `APP_ENV`；3 处写死 `18923` 的白名单改用动态端口（`XHWebView` / `BrowsePanelView` / `MessageDebugPanelView`）；`LocalBackendCoreTests` 断言。
 - **打包 / 工具**：`scripts/bundle-backend.sh` 按 `$CONFIGURATION` 拷 `config.yaml` + 对应 local conf；`server/Makefile` 新增 `make local-dev`（`APP_ENV=local.dev`）。
-- **撤掉**：UI-8a / UI-8b（导出 / 导入 zip）、prod→dev 数据复制、`.xcconfig`、第二套 bundle id / scheme。
+- **撤掉**：UI-8a / UI-8b（导出 / 导入 zip）、prod→dev 数据复制、`.xcconfig`、第二套 scheme。（2026-11-14 补：Debug 的 bundle id 已独立，见 §8.1 注）
 
 **验收**
 
@@ -550,11 +550,14 @@ flowchart LR
 
 ### 8.1 两条环境怎么分
 
-**同一个 app 身份**（bundle id 保持 `xhanx.cn.xHelperMac`），靠**构建配置**分环境：**`Debug` → dev，`Release` → prod**。不建第二套 bundle id / scheme / `.xcconfig`：Swift 侧用现成的 `#if DEBUG`，Go 侧 conf 在 `bundle-backend.sh` 里按 `$CONFIGURATION` 选。
+**同一个 app**（同一份代码、同一份 scheme），靠**构建配置**分环境：**`Debug` → dev，`Release` → prod**。不建第二套 scheme / `.xcconfig`：Swift 侧用现成的 `#if DEBUG`，Go 侧 conf 在 `bundle-backend.sh` 里按 `$CONFIGURATION` 选。
+
+**bundle id 自 2026-11-14 起分家**（`Debug` = `xhanx.cn.xHelperMac.dev`，`Release` = `xhanx.cn.xHelperMac`）：此前两者同 id，`UserDefaults` 域 / `WKWebsiteDataStore`（cookie、localStorage、缓存）/ TCC 授权全共享，dev 一次清 token 就能把 prod 的登录一起清掉 —— 见 `docs/bugs/067`。数据根 / 端口 / 日志 / `APP_ENV` 仍走 `LocalPaths`（`#if DEBUG`），与 bundle id 无关。
 
 | | prod（真身） | dev（沙盒） |
 |---|---|---|
 | 构建 | **Release** | **Debug** |
+| bundle id | `xhanx.cn.xHelperMac` | `xhanx.cn.xHelperMac.dev` |
 | 数据根 | `~/Library/Application Support/xhanHelper/` | `~/Library/Application Support/xhanHelper-dev/` |
 | 日志 | `~/Library/Logs/xhanHelper/` | `~/Library/Logs/xhanHelper-dev/` |
 | 端口 | `18923` | `18924` |
@@ -566,7 +569,7 @@ flowchart LR
 | 本地 token | 钥匙串 `local_token_prod` | 钥匙串 `local_token_dev` |
 
 - **数据根 / 端口写死在各自的 conf 里**（不是运行时开关）→ **即使配置写错也指不到对方**；Swift 侧的数据根一律走 `LocalPaths`（`#if DEBUG` 决定），**禁止再写字面量 `"xhanHelper"`**。
-- **可同时开着**：端口 / 数据根 / 日志分开，两个 app 并行互不干扰（同 bundle id 不影响）。
+- **可同时开着**：端口 / 数据根 / 日志 / bundle id 都分开，两个 app 并行互不干扰。
 
 ### 8.2 「dev 碰不到 prod」靠三层，不靠自觉
 
@@ -594,7 +597,8 @@ flowchart LR
 - **prod → dev 只读单向导入**（2026-09-30 解禁）：dev 可从文件选任意备份包（含 prod 归档），解包进 **dev 自己的数据根**并留安全副本；不触碰 prod 数据根。入口见 UI-8b。
 - **dev 永远不能删 prod**：`LocalBackup.delete` / `deleteSafety` 按 env 硬拦（非本环境直接抛错，UI 也不显示「删除」按钮）；跨 env 前缀互不包含由 `LocalBackupIsolationTests` 钉住。
 - **云端 → 本地 prod** 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
-- 同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用（`model` / `base_url` 覆盖项**已按环境加后缀分家**，不在此列）。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。
+- ~~同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用（`model` / `base_url` 覆盖项**已按环境加后缀分家**，不在此列）。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。~~
+  **已撤销（2026-11-14）**：`Debug` 改用独立 bundle id `xhanx.cn.xHelperMac.dev`，上面这些「共享」不再成立；那次共享还让 dev 清 token / 覆盖 token 直接影响到 prod，见 `docs/bugs/067`。
 
 ---
 
@@ -630,7 +634,7 @@ flowchart LR
 | **可选项被空串冲掉** | `${VAR}` 对未设置变量展开成空串，会冲掉 base_url / model 默认值 | 可选项走「非空覆盖」而非占位符（改动点 2） |
 | **秒开期检索不全** | warmup 挪后台后，最初几秒记忆/语义检索可能缺内存向量 | 已接受；`/api/health` 暴露 `starting/ready`，需确认检索侧能优雅降级 |
 | ~~**Keychain 共享**~~ | ~~两个 build 共享密钥需 `keychain-access-groups`~~ | **已消解**：传统钥匙串不按 app 分区，同机同用户两个 build 天然共享（第三轮 review）；该 entitlement 需付费账号，不做 |
-| **双 build 维护** | 两份 scheme / config / entitlements 要同步 | **已简化**：同一 bundle id / 同一份代码，只按 `$(CONFIGURATION)` 选 conf（不再有两套 scheme） |
+| **双 build 维护** | 两份 scheme / config / entitlements 要同步 | **已简化**：同一份代码，只按 `$(CONFIGURATION)` 选 conf（不再有两套 scheme）；2026-11-14 起 Debug 另用 bundle id `xhanx.cn.xHelperMac.dev`（见 §8.1 注） |
 | **第 4 期前没有沙盒（Debug = 真身）** | 现在只有一个数据根：Xcode 跑 Debug 构建就是本地 prod —— 聊天、改数据**直接写真实库**，没有副本可退；想试「删表 / 重跑向量 / 换 embedding 模型」这类操作只能拿真身做 | 兜底：源库（本地 MySQL 副本）是静态的，`go run ./cmd/mysql2sqlite` **18 秒**可重建，且每次迁移前旧库改名备份；根治 = 第 4 期（Debug → `xhanHelper-dev` 沙盒，第八节） |
 | **dev 经逃生口连 prod 后端** | dev 的「服务地址」若填 `127.0.0.1:18923`，UI 能连上 prod 后端写 prod 数据（非沙盒下同用户理论上也仍可读 prod 文件） | 路径硬编码 + 启动交叉断言 + **请求层 env 校验（token 前缀不符 → 403）**（第八节 8.2） |
 | **Swift 侧数据根散落** | `"xhanHelper"` 字面量散在 8 个文件里，漏改一处就 favicons / history 串味（**不易察觉**） | 统一走 `LocalPaths`；改完 grep 全仓字面量 + 真机对拍两个根 |
@@ -706,7 +710,7 @@ sequenceDiagram
 | 8 | 启动态 | 主窗口内联指示（非独立 splash） |
 | 9 | dev 视觉标识 | Dock 图标 `dev` 角标 + 顶栏 `DEV` 徽标 + 显示名 `xhanHelper dev`（第 4 期；原「窗口最上缘全宽细条」因像 bug 被换掉，见第八节） |
 | 10 | dev 数据来源 | **空库自造**（自动建 `me`）为主。**dev 可选从文件导入备份**（含 prod 归档，2026-09-30 解禁）：解包进 dev 自己的数据根 + 安全副本，单向、不触碰 prod 数据；**仍无 dev→prod 导出** |
-| 11 | dev / prod 怎么分 | **同一 app 身份**，按构建配置：`Debug` → dev（18924 + `xhanHelper-dev` + `local_env: dev`）、`Release` → prod（18923 + `xhanHelper` + `local_env: prod`）；不建第二套 bundle id / scheme / `.xcconfig`（第 4 期定稿） |
+| 11 | dev / prod 怎么分 | **同一 app 身份**，按构建配置：`Debug` → dev（18924 + `xhanHelper-dev` + `local_env: dev`）、`Release` → prod（18923 + `xhanHelper` + `local_env: prod`）；不建第二套 scheme / `.xcconfig`（第 4 期定稿）。**2026-11-14 修订：`Debug` 改用独立 bundle id `xhanx.cn.xHelperMac.dev`**——同一身份导致 UserDefaults / Keychain / WebKit 数据全共享、dev 能改掉 prod 的登录态，见后续变更 |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |
 | 13 | 本地身份 | 单用户、**隐形**：以「库里的用户」为锚点（唯一则认领、空库建 `me`、多则报错要求剪枝）；不钉 UUID / 用户名（可分发） |
 | 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存传统钥匙串 + **app 层指纹门**（item 级生物 ACL 需付费 entitlement，第三轮 review 修订） |
@@ -720,3 +724,4 @@ sequenceDiagram
 ## 后续变更
 
 - 2026-11-05：`AutoMigrate` 失败策略统一为**所有环境 `log.Fatalf`**（不再只本地致命、云端只记日志继续）。schema 与代码不一致时拒绝启动，避免运行时才炸或写坏数据。影响文件：`server/internal/app/init_db.go`。
+- 2026-11-14：**`Debug` 构建改用独立 bundle id `xhanx.cn.xHelperMac.dev`**（Release 仍是 `xhanx.cn.xHelperMac`），推翻第 4 期「同一 app 身份」的决定。起因：同身份让两个 build 共用 UserDefaults 域、`WKWebsiteDataStore`（cookie/localStorage/缓存）、TCC 授权，dev 侧一次 `verifyToken` 失败清登录就能把 prod 的 token 一起删掉（见 `docs/bugs/067`）。改在 `project.pbxproj` 的 macOS Debug 配置一行；`LocalPaths.scoped` 那套 key 后缀保留（无害，iOS 仍同身份）。代价一次性：dev 重新登录、重给麦克风/通知权限、调试域里的永久文件授权目录与内置浏览器登录态要重建（密钥项本来按环境分项，跨 build 读取最多弹一次钥匙串授权）、Xcode 自动签名需注册新 App ID。影响文件：`client/xHelper/xHelper.xcodeproj/project.pbxproj`、`Services/BrowserEngineRouter.swift`、`Services/LocalAuthService.swift`、`xHelperMac/LocalSettingsViews.swift`（调试域名的 `defaults write` 说明改指 `.dev`）。

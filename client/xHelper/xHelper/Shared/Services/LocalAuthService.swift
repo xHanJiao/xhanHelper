@@ -33,7 +33,7 @@ final class LocalAuthService {
 
     /// 真实生效：非 DEBUG + 开着 + 硬件可用。
     /// DEBUG 默认跳过（设计：开发不弹指纹），但可用
-    /// `defaults write xhanx.cn.xHelperMac xhan_touch_id_debug -bool YES` 临时打开以便验证 UI-10。
+    /// `defaults write xhanx.cn.xHelperMac.dev xhan_touch_id_debug -bool YES` 临时打开以便验证 UI-10。
     var isActive: Bool {
         #if DEBUG
         return UserDefaults.standard.bool(forKey: "xhan_touch_id_debug") && isEnabled && biometricsAvailable

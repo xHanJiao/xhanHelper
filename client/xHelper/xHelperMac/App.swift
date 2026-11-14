@@ -968,8 +968,8 @@ struct MacSettingsView: View {
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
     // 浏览器内核开关（D-a / 2026-11-13 起对用户露出）：默认 CEF，可一键回兼容 WebKit。
     @AppStorage(BrowserEngineRouter.defaultEngineKey) private var browserEngine = BrowserEngine.cef.rawValue
-    // 提醒是否写成日历事件（默认开；写不进自动回退系统通知）
-    @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = true
+    // 提醒是否写成日历事件（默认开；Debug 构建默认关，见 ReminderCalendarMirror.defaultEnabled）
+    @AppStorage(ReminderCalendarMirror.enabledKey) private var reminderSyncToCalendar = ReminderCalendarMirror.defaultEnabled
     @State private var calendarStatus = ""
     @State private var calendarAuthorized = false
     @State private var mirroredEventCount = 0

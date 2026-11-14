@@ -231,6 +231,12 @@ class DeviceManager: ObservableObject {
 
     private func verifyToken() async {
         await performTokenRefresh()
+        // 续期自己吃到 401 时已经把会话清干净了（见 performTokenRefresh 的 401 分支）：
+        // 再往下必是一个 401 请求，会重复打一次「失败」并把状态说错（明明已登出，日志却写「保留登录」）
+        guard token != nil else {
+            isVerifying = false
+            return
+        }
         #if os(macOS)
         // 令牌有效后探测云端埋点能力，决定是否启动搬运（探测失败=不采）。
         await refreshActivityCapability()
@@ -239,10 +245,17 @@ class DeviceManager: ObservableObject {
             try await getDefaultConversationInfo()
             LogBuffer.shared.info("verifyToken: ok")
             startTokenRefresh()
-        } catch {
-            LogBuffer.shared.error("verifyToken failed: \(error)")
+        } catch let error as NSError where error.code == 401 {
+            LogBuffer.shared.error("verifyToken rejected (401), logging out")
             onSessionExpiring?()
+            sessionExpired = true
             clearAuthState()
+        } catch {
+            // 连不上 / 超时 / 5xx ≠ 会话失效：保留登录，只报错。否则后端没起一次就把 token 删了，
+            // 下次启动直接是未登录，双 ⌘ 语音、活动埋点这些常驻能力全跟着失效（docs/bugs/067）
+            LogBuffer.shared.error("verifyToken failed (保留登录): \(error)")
+            // 会话还在，3600s 续期定时器必须照常起（do 分支只在成功时才走到）
+            startTokenRefresh()
         }
         isVerifying = false
     }
@@ -415,7 +428,9 @@ class DeviceManager: ObservableObject {
         guard statusCode == 200 else {
             let body = String(data: respData, encoding: .utf8) ?? ""
             LogBuffer.shared.error("getDefaultConversationInfo failed: status=\(statusCode), body=\(body.prefix(200))")
-            throw URLError(.badServerResponse)
+            // 带上状态码：401 才是「会话失效」，其余（0 = 没连上、5xx）不能当成掉登录
+            throw NSError(domain: "xhanHelper.http", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: body.prefix(200).description])
         }
         
         let conversation = try saveDefaultConversationInfo(respData)

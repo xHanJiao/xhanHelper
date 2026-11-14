@@ -383,7 +383,7 @@ struct LocalConnectionTestStatus: View {
 struct LocalTouchIDDebugHint: View {
     var body: some View {
         #if DEBUG
-        Text("Debug 构建默认跳过指纹（设计如此）；验证时用 `defaults write xhanx.cn.xHelperMac xhan_touch_id_debug -bool YES` 临时打开。")
+        Text("Debug 构建默认跳过指纹（设计如此）；验证时用 `defaults write xhanx.cn.xHelperMac.dev xhan_touch_id_debug -bool YES` 临时打开。")
             .font(.caption)
             .foregroundColor(.secondary)
             .fixedSize(horizontal: false, vertical: true)

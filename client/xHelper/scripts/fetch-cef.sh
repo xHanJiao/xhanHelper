@@ -127,6 +127,9 @@ make_helpers() {
     app="$HELPERS_DIR/$name.app"
     mkdir -p "$app/Contents/MacOS"
     cp "$STUB" "$app/Contents/MacOS/$name"
+    # shortcut: helper bundle id 固定 xhanx.cn.xHelperMac.helper*（helpers 造在共享 $CACHE/helpers，
+    #           按 config 派生要给每个配置各备一份）；Debug 父 app 的 id 已改 .dev。
+    #           CEF 按路径拉 helper、不校验父 id 前缀，若真机发现内核起不来再按 $CONFIGURATION 派生。
     sed -e "s|\${EXECUTABLE_NAME}|$name|g" \
         -e "s|\${PRODUCT_NAME}|$name|g" \
         -e "s|\${BUNDLE_ID_SUFFIX}|$id_suffix|g" \

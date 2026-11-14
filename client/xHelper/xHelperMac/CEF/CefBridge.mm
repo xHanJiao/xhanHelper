@@ -760,16 +760,21 @@ class XHCefCookieCollector : public CefCookieVisitor {
 
 /// 后台标签（agent 工作区）不会进任何窗口，但 CEF 的 `CreateBrowser` 要父视图落在一个窗口里才有渲染宿主。
 /// 给它们一个进程内共享的隐藏窗口当"停车位"：视图真正挂进侧栏时只是换父窗口，CEF 的子视图跟着走。
+///
+/// **必须留在屏幕内，且越小越好**：调度中心按「本空间所有窗口的包围盒」布局，窗口只要在屏
+/// 就参与计算。曾经摆在 (-20000,-20000)、1280×800 —— 按 F3 把整个调度中心撑成一片空白
+/// （所有 app 的窗口都被缩到看不见，退出 app 才恢复，见 `docs/bugs/067`）。
 static NSWindow *XHCefParkingWindow(void) {
   static NSWindow *window = nil;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    window = [[NSWindow alloc] initWithContentRect:NSMakeRect(-20000, -20000, 1280, 800)
+    window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1, 1)
                                          styleMask:NSWindowStyleMaskBorderless
                                            backing:NSBackingStoreBuffered
                                              defer:NO];
     window.releasedWhenClosed = NO;
-    window.alphaValue = 0;   // 全透明：即使 orderFront 也看不见，只当父窗口用
+    window.alphaValue = 0;         // 全透明：即使 orderFront 也看不见，只当父窗口用
+    window.ignoresMouseEvents = YES;  // 透明不等于不挡鼠标，1pt 的角也别吃点击
   });
   // 曾经被 performClose: 关掉过（DoClose 没接管前，关后台 tab 会打到这个隐藏窗）：
   // 关掉的窗口仍能 addSubview，但已脱离窗口层级，CEF 会建不出渲染宿主（白屏）。
@@ -882,7 +887,9 @@ static NSWindow *XHCefParkingWindow(void) {
   if (self.window) return;
   NSView *parking = XHCefParkingWindow().contentView;
   if (!parking) return;
-  self.frame = parking.bounds;
+  // 视口按停车尺寸给，别跟着停车窗的 1×1 走（那会把后台 tab 的页面压成 1×1，
+  // 挂回侧栏再整页重排）。视图比停车窗大只会被裁剪，不影响 CEF 渲染。
+  self.frame = NSMakeRect(0, 0, 1280, 800);
   [parking addSubview:self];
 }
 

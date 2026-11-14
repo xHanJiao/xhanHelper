@@ -128,7 +128,7 @@ struct BookReaderView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!controller.canGoPreviousSection)
-                .help("上一节（⌥⌘←）")
+                .help("上一节（⌥⌘← / ⌥⌘↑）")
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
 
                 Button { controller.nextSection() } label: {
@@ -136,30 +136,47 @@ struct BookReaderView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!controller.canGoNextSection)
-                .help("下一节（⌥⌘→）")
+                .help("下一节（⌥⌘→ / ⌥⌘↓）")
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
 
-                chromeButton("list.bullet", help: "目录", active: controller.tocOpen) {
+                chromeButton("sidebar.leading",
+                             help: controller.tocOpen ? "收起目录" : "展开目录",
+                             active: controller.tocOpen) {
                     withAnimation { controller.tocOpen.toggle() }
                 }
             }
 
-            chromeButton("magnifyingglass", help: "本章查找（⌘F）", active: showFind) {
+            chromeButton("magnifyingglass", help: "在本节查找（⌘F）", active: showFind) {
                 toggleFind()
             }
             .keyboardShortcut("f", modifiers: .command)
 
-            chromeButton("list.bullet.rectangle", help: "划线与批注（⌘⇧A）", active: controller.annotOpen) {
+            chromeButton("list.bullet.rectangle",
+                         help: controller.annotOpen ? "收起划线与批注（⌘⇧A）" : "展开划线与批注（⌘⇧A）",
+                         active: controller.annotOpen) {
                 withAnimation { controller.annotOpen.toggle() }
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])
 
-            chromeButton("gearshape", help: "阅读设置", active: showSettings) {
+            chromeButton("gearshape", help: "阅读设置（字号、行距）", active: showSettings) {
                 showSettings.toggle()
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background {
+            // SwiftUI 一个 view 只能挂一个快捷键：⌥⌘↑/↓ 与 ⌥⌘←/→ 等价，另两个走隐形按钮
+            Group {
+                Button("") { controller.previousSection() }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                    .disabled(!controller.canGoPreviousSection)
+                Button("") { controller.nextSection() }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                    .disabled(!controller.canGoNextSection)
+            }
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
     }
 
     /// 当前读到哪：目录条目 → 节标题 → 章标题 → 章号
@@ -190,7 +207,7 @@ struct BookReaderView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
-            TextField("在本章查找", text: $findQuery)
+            TextField("在本节查找", text: $findQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($findFieldFocused)
@@ -440,11 +457,6 @@ struct BookReaderView: View {
                 .controlSize(.small)
                 .frame(width: 110)
             }
-
-            Text("背景跟随 app 主题；划线一期单色（多色二期）")
-                .font(.system(size: 10.5))
-                .foregroundColor(.secondary)
-                .padding(.top, 2)
         }
         .padding(12)
         .frame(width: 308)

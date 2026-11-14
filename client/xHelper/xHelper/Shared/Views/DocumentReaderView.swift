@@ -2204,6 +2204,8 @@ var reader = (function () {
     }
     scrollToStart();
     lastOff = 0;
+    navDiag('chapter', { nx: hasNext ? 1 : 0, pv: hasPrev ? 1 : 0,
+                        md: paged() ? 'paged' : 'scroll', len: content.textContent.length });
   }
 
   /* 锚点 → 拍平偏移表。Swift 用它算「当前读到目录里的哪一条」，滚动时也跟着变。 */
@@ -2301,11 +2303,29 @@ var reader = (function () {
   /* 到边界再往前 = 换节。翻页模式由 `turnPage` 夹住那一刻调；滚动模式由
      「已经到底/到顶再多滚一段（或再按方向键）」调。 */
   function advanceSection(delta) {
-    if (advancing) return false;
-    if (delta > 0 ? !chapterHasNext : !chapterHasPrev) return false;
+    var has = delta > 0 ? chapterHasNext : chapterHasPrev;
+    /* 诊断：为什么没换节（锁 / 没有相邻节）——真机导航不灵时看这一条 */
+    if (advancing || !has) {
+      navDiag('advance-skip', { d: delta, lock: advancing ? 1 : 0,
+                               nx: chapterHasNext ? 1 : 0, pv: chapterHasPrev ? 1 : 0,
+                               md: paged() ? 'paged' : 'scroll' });
+      return false;
+    }
     advancing = true;
+    navDiag('advance', { d: delta, md: paged() ? 'paged' : 'scroll',
+                        at: Math.round(paged() ? content.scrollLeft : window.scrollY),
+                        max: Math.round(pageMax()), span: Math.round(pageSpan()) });
     post({ type: delta > 0 ? 'nextSection' : 'prevSection' });
     return true;
+  }
+
+  /* 导航诊断：真机上「按键/滚轮换节不灵」全靠这几条定位。
+     完全没有 `key` 日志 = 事件根本没进到页面（焦点不在正文）；
+     有日志但没换节 = 看 `advance-skip` 的 lock/nx/pv。落盘在 Swift 侧（DEBUG 才有）。 */
+  function navDiag(kind, extra) {
+    var msg = { type: 'diag', kind: kind };
+    if (extra) { for (var k in extra) { msg[k] = extra[k]; } }
+    post(msg);
   }
 
   /* 首屏：书模式的初始排版（之后全部走 setTypo / setReadingMode） */
@@ -2317,29 +2337,30 @@ var reader = (function () {
     document.documentElement.classList.toggle('paged', opts.mode === 'paged');
   }
 
-  /* 触控板/滚轮：翻页模式一页一次；滚动模式滚到尽头再多滚一下就换节。
-     同一手势的连续事件（含惯性）只算一次，间隔够久才算新手势 —— 否则一次
-     滑动会连翻好几页（滚动模式下会一路跳节）。 */
+  /* 触控板/滚轮：翻页模式一页一次；滚动模式滚到尽头再多滚一段就换节。
+     翻页模式按「新手势」判（150ms 内算同一次，350ms 冷却挡惯性），否则一次滑动连翻好几页。 */
   var lastWheelAt = 0, wheelLockAt = 0;
+  /* 滚动模式：在顶部/底部继续推的累计量。不能按「新手势」判 —— 触控板惯性是连续事件
+     （间隔 ~16ms），永远凑不出 150ms 空隙，读者推到手指发酸也换不了节（真机踩过）。 */
+  var edgeAcc = 0, edgeAt = 0;
   document.addEventListener('wheel', function (e) {
     if (!BOOK) return;
     var now = Date.now();
     if (!paged()) {
-      /* 不挡原生滚动，只在「已经到底 / 到顶」时把这一下当成换节手势。
-         惯性事件间隔 ~16ms，永远不会被当成新手势；停下来再滚才算。 */
+      /* 不挡原生滚动，只在「已经到底 / 到顶」之后累计够一段才换节 */
       var dy = e.deltaY;
-      if (Math.abs(dy) < 4) return;
-      var fresh = now - lastWheelAt >= 150 && now - wheelLockAt >= 350;
-      lastWheelAt = now;
-      if (!fresh) return;
+      if (Math.abs(dy) < 2) return;
       var doc = document.documentElement;
-      if (dy > 0 && window.innerHeight + window.scrollY >= doc.scrollHeight - 4) {
-        wheelLockAt = now;
-        advanceSection(1);
-      } else if (dy < 0 && window.scrollY <= 0) {
-        wheelLockAt = now;
-        advanceSection(-1);
-      }
+      var atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 4;
+      var atTop = window.scrollY <= 0;
+      if (!(dy > 0 ? atBottom : atTop)) { edgeAcc = 0; edgeAt = 0; return; }
+      if (now - edgeAt > 400) edgeAcc = 0;    /* 停手超过 400ms：重新累计 */
+      edgeAt = now;
+      edgeAcc += Math.abs(dy);
+      if (edgeAcc < 120 || now - wheelLockAt < 600) return;
+      edgeAcc = 0;
+      wheelLockAt = now;
+      advanceSection(dy > 0 ? 1 : -1);
       return;
     }
     e.preventDefault();
@@ -2360,6 +2381,14 @@ var reader = (function () {
     var arrow = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
              || e.key === 'ArrowUp' || e.key === 'ArrowDown';
     var forward = arrow && (e.key === 'ArrowRight' || e.key === 'ArrowDown');
+
+    /* 诊断：按键到底有没有进到页面里。**没有这条日志 = 焦点不在正文**（WKWebView 不是
+       第一响应者，键被上层吃掉），这不是模板能修的，得让阅读区先拿到焦点。 */
+    if (arrow || e.key === ' ' || e.key === 'PageDown' || e.key === 'PageUp') {
+      navDiag('key', { k: e.key === ' ' ? 'Space' : e.key,
+                      cmd: e.metaKey ? 1 : 0, alt: e.altKey ? 1 : 0, shift: e.shiftKey ? 1 : 0,
+                      md: paged() ? 'paged' : 'scroll' });
+    }
 
     /* ⌥⌘+方向：跳节（不是翻页）。在正文里接，不指望 SwiftUI 的快捷键路由 ——
        焦点在 WKWebView 里时那条路不一定收得到。Swift 侧有 250ms 去重。 */

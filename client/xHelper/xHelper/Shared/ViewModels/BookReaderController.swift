@@ -248,6 +248,8 @@ final class BookReaderController: ObservableObject {
         isReady = true
         loadAnnotations()
         loadSection(sectionIndex, offset: pendingOffset, anchor: nil)
+        let focused = webView.map { $0.window?.firstResponder === $0 } ?? false
+        LogBuffer.shared.info("书阅读器：页面就绪，正文是否第一响应者=\(focused ? "是" : "否（键盘进不来）")")
         // WebView 重建会让 ready 再来一次：先收旧区间，否则旧的 started 永远配不上 ended
         if let old = readTrace {
             ActivityClient.emit(old.ended(outcome: "ok", chapter: chapterIndex,
@@ -800,6 +802,18 @@ final class BookReaderController: ObservableObject {
 
         case "sectionJump":
             jumpSection(message["delta"] as? Int ?? 1)
+
+        case "diag":
+            // 导航诊断：真机上「按键/滚轮换节不灵」时看这条。
+            // 没有 kind=key 的日志 = 事件没进到页面（焦点不在正文）；
+            // 有 key 但跟着 advance-skip = 锁或没有相邻节。
+            let kind = message["kind"] as? String ?? "?"
+            let rest = message
+                .filter { $0.key != "type" && $0.key != "kind" }
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: " ")
+            LogBuffer.shared.info("书阅读器·导航 \(kind) \(rest)")
 
         case "findResult":
             matchCount = message["count"] as? Int ?? 0

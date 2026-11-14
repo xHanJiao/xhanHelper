@@ -532,6 +532,15 @@ private struct BookReaderWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         // 章节与排版都走 JS，不重建 WebView（重建会丢选区与滚动位置）
+        //
+        // 首次进层级时把正文设为第一响应者：键盘事件只有 WebView 有焦点才进得来。
+        // 只用滚轮、不点正文的读者否则一直按不到键（真机踩过 —— 症状是「鼠标能滚、
+        // 按键毫无反应」，日志里连 `导航 key` 都没有）。
+        if !context.coordinator.didFocus, let window = webView.window {
+            context.coordinator.didFocus = true
+            window.makeFirstResponder(webView)
+            LogBuffer.shared.info("书阅读器：正文设为第一响应者，键盘可用")
+        }
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -541,6 +550,8 @@ private struct BookReaderWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let controller: BookReaderController
+        /// 首次进层级抢过一次焦点就够了：之后用户点查找框/目录时不能把焦点抢回来
+        var didFocus = false
 
         init(controller: BookReaderController) {
             self.controller = controller

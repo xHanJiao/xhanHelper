@@ -748,3 +748,16 @@ JS 现有的 `create` / `update` / `delete` 消息原样用。`BookReaderControl
 > 探针**复现不出**真机那个几何：离屏页面里 `scrollWidth - clientWidth` 与真实末页差 0px（整数宽、小数宽、加超宽子元素都试过），所以 `10/10b` 在旧代码下也是绿的。这类几何问题只能靠「判据本身不依赖精确像素」来兜，不能靠探针复现。
 
 影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（`pageMax` / `turnPage` 判据 / keydown 四个方向键 + ⌥⌘）、`ViewModels/BookReaderController.swift`（`jumpSection` 去重 + `sectionJump` 消息）、`Views/Books/BookReaderView.swift`（按钮与快捷键改走 `jumpSection`）、`client/xHelper/scripts/book-reader-probe.sh`。
+### 2026-11-14 · 批 15：滚动模式的键盘焦点 + 到底换节改成累计量 + 导航诊断日志
+
+真机反馈：① 上下滚动模式里**鼠标滚轮能滚、键盘完全没反应**；② 到底部时「有时能换节、有时不能」；③ 左右翻页模式没问题。
+
+| 处理 | 说明 |
+|---|---|
+| 键盘进不来 | 键盘事件只有 WKWebView 是**第一响应者**时才进得了页面。只用滚轮、不点正文的读者从来没把焦点给过正文 —— 症状就是「鼠标能滚、按键毫无反应」，日志里连 `导航 key` 都没有。`BookReaderWebView.updateNSView` 首次进层级时 `makeFirstResponder(webView)` 一次（`Coordinator.didFocus` 保证不跟查找框抢焦点） |
+| 到底换节不可靠 | 原来按「新手势」判（150ms 内算同一次）。触控板惯性是连续事件、间隔 ~16ms，**永远凑不出 150ms 空隙** —— 读者一直推也轮不到一次。改成**在顶部/底部继续推的累计量**：累计 ≥120 且距上次换节 ≥600ms 才触发；停手 400ms 重新累计。鼠标一格（~40–100px）两三下就到，触控板惯性尾巴直接触发 |
+| 诊断日志 | 模板发 `{type:'diag'}`，Swift 记 `书阅读器·导航 <kind> ...`（`LogBuffer.info`，DEBUG 才有）。`key`（每个方向键/空格，带 cmd/alt/shift/mode）、`chapter`（每节 nx/pv/mode/字数）、`advance`（换节成功，带位置/max/span）、`advance-skip`（没换：lock/nx/pv）。判断法：**没有 `key` 日志 = 事件没进页面（焦点问题）**；有 `key` 但跟 `advance-skip` = 锁或没有相邻节。日志在「设置 → 诊断日志」里看 |
+
+踩坑：诊断函数一开始叫 `report()`，而模板里 `report()` 已经是「发 findResult」的那个函数 —— **同名函数声明后置覆盖**，`find()` 静默不再回报命中数。改名 `navDiag()`。详见 `docs/bugs/067-reader-template-report-shadowing.md`；自查脚本要**两个都跑**（`check-reader-html.sh` 抓到的，`book-reader-probe.sh` 看不出来）。
+
+影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（`navDiag` / wheel 累计量 / keydown 诊断）、`Views/Books/BookReaderView.swift`（抢焦点）、`ViewModels/BookReaderController.swift`（`diag` 消息、`handleReady` 记第一响应者）。

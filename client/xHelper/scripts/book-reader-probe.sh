@@ -1,5 +1,5 @@
 #!/bin/bash
-# 书阅读器（BOOK 模式）模板自查：真 WKWebView 里跑九条断言（两种宽度各跑一遍），不截图。
+# 书阅读器（BOOK 模式）模板自查：真 WKWebView 里跑十五条断言（两种宽度各跑一遍），不截图。
 #
 # 验的是设计文档 `docs/design/epub-reader/design.md` §5.5 / §5.7 / §六 在 WebKit 的真实行为：
 #   1 章节注入：正文出现、块结构正确
@@ -11,6 +11,10 @@
 #   7 翻页模式下划线仍画得出（跨栏那段也得画）
 #   8 页宽设得比可用宽度大时，栏宽跟着缩、仍能翻页（右栏面板常比 728 窄）
 #   9 目录锚点：collectAnchors 给出偏移、scrollToAnchor 落在同一句
+#  10 到底再翻 = 自动换节（前后都认），换节途中不重复举手
+#  10b 小数栏宽（640.5）、10c 末页差 3px 也算到头
+#  11 滚动模式到底再滚一下才换节，一次拖动只换一次
+#  12 方向键：两种模式 × 四个键 + ⌥⌘ 都认
 #
 # 页面用**真实模板**（reader-template.py --book 现抠），排版/划线样式与线上同一份。
 #
@@ -58,6 +62,26 @@ hook = r"""<script nonce="testnonce">
   }
 
   window.__bookProbe = function () {
+    /* 模板的 post() 先找 `window.webkit.messageHandlers.reader`（没有原生 handler 时
+       `window.webkit` 不存在，post 静默丢弃）。探针把它换成收集器，才能验「到底再翻
+       有没有举手换节」——这一步必须在任何会 post 的动作之前做。 */
+    window.__posts = [];
+    window.webkit = { messageHandlers: { reader: { postMessage: function (m) {
+      (window.__posts = window.__posts || []).push(m);
+    } } } };
+    function posts(type) {
+      return window.__posts.filter(function (p) { return p && p.type === type; }).length;
+    }
+    function wait(ms) { var t = Date.now(); while (Date.now() - t < ms) { /* 手势判定靠时间间隔 */ } }
+    function wheel(dy) {
+      document.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true }));
+    }
+    function press(key, mods) {
+      var init = { key: key, bubbles: true, cancelable: true };
+      if (mods) { for (var k in mods) { init[k] = mods[k]; } }
+      document.dispatchEvent(new KeyboardEvent('keydown', init));
+    }
+
     reader.setChapter(chapterHTML, 'file:///tmp/', true);
 
     /* ---------- 1 章节注入 ---------- */
@@ -189,6 +213,151 @@ hook = r"""<script nonce="testnonce">
         '锚点偏移 p10=' + (a10 ? a10.offset : '-') + ' p20=' + (a20 ? a20.offset : '-') +
         ' / 跳转后取样 ' + after + '（差 ' + (a20 ? after - a20.offset : '-') + '）');
 
+    /* ---------- 10 到底再翻 = 自动换节（前后都认，小数栏宽也要认） ---------- */
+    /* 走真机那条路：从第一页一页一页翻到末页，再翻一下必须换节。
+       栏宽带小数时 `scrollWidth - clientWidth`（都取整）和真实末页差零点几像素，
+       「x === before」这种一字不差的判断会永远不成立 —— 这里直接把 640.5 摆出来测。 */
+    function advanceChecks(name, measure) {
+      reader.setTypo({ measure: measure });
+      reader.setChapter(chapterHTML, 'file:///tmp/', true, true);
+      reader.setReadingMode('paged');
+      void content.offsetHeight;
+      content.scrollLeft = 0;
+      reader.snapPage();
+      var pages = 0;
+      while (pages < 100) {
+        window.__posts = [];
+        reader.turnPage(1);
+        if (posts('nextSection') === 1) break;
+        reader.snapPage();
+        void content.offsetHeight;
+        pages++;
+      }
+      var reachedEnd = posts('nextSection') === 1;
+      var endPos = content.scrollLeft, sw = content.scrollWidth, cw = content.clientWidth;
+      var maxCalc = Math.max(0, sw - cw);
+      /* 换节途中（新正文还没到）再翻：不能再举手，否则一次连滚会连跳两节 */
+      window.__posts = [];
+      reader.turnPage(1);
+      var locked = posts('nextSection') === 0;
+      /* 反向：第一页再往前翻 → 上一节末页（新 setChapter 把锁放掉） */
+      reader.setChapter(chapterHTML, 'file:///tmp/', true, true);
+      reader.setReadingMode('paged');
+      void content.offsetHeight;
+      content.scrollLeft = 0;
+      reader.snapPage();
+      window.__posts = [];
+      var back = reader.turnPage(-1);
+      var reachedStart = posts('prevSection') === 1;
+      /* 反向的落点：超大偏移必须夹到最后一个字 → 停在**末页**（不是首屏） */
+      reader.restorePosition(999999);
+      void content.offsetHeight;
+      var endX = Math.max(0, content.scrollWidth - content.clientWidth);
+      var landedEnd = Math.abs(content.scrollLeft - endX) < 2;
+      var w = content.getBoundingClientRect().width;
+      add(name, reachedEnd && locked && back && reachedStart && landedEnd,
+          '栏宽 ' + (Math.round(w * 10) / 10) + ' / 翻 ' + pages + ' 页到末页（末页 ' +
+          Math.round(endPos) + '，算出来的 max ' + maxCalc + '，差 ' + Math.round(maxCalc - endPos) + 'px）' +
+          ' / 末页再翻=' + (reachedEnd ? '换节' : '没换!!') +
+          ' / 换节途中不重复=' + locked +
+          ' / 第一页往前=' + (reachedStart ? '换节' : '没换!!') +
+          ' / 上一节落末页=' + (landedEnd ? Math.round(content.scrollLeft) : '否!!'));
+    }
+    advanceChecks('10 到底再翻 = 换节', 728);
+    advanceChecks('10b 小数栏宽（640.5）也换节', 640.5);
+    /* 真机上「→ 在末页死活不换节」的形态：位置离算出来的末页差几像素。
+       这条钉的是判据 ——「这一下挪不动接近一整页」就算到头，不是「一字不差等于 max」。 */
+    (function nudgeChecks() {
+      reader.setTypo({ measure: 728 });
+      reader.setChapter(chapterHTML, 'file:///tmp/', true, true);
+      reader.setReadingMode('paged');
+      void content.offsetHeight;
+      var maxNudge = Math.max(0, content.scrollWidth - content.clientWidth);
+      content.scrollLeft = Math.max(0, maxNudge - 3);
+      window.__posts = [];
+      reader.turnPage(1);
+      var ok = posts('nextSection') === 1;
+      add('10c 末页差 3px 也算到头', ok,
+          '位置 ' + content.scrollLeft + '（末页 ' + maxNudge + '）再翻 → ' +
+          (ok ? '换节' : '只挪 3px，不换!!'));
+    })();
+    reader.setTypo({ measure: 728 });
+
+    /* ---------- 11 滚动模式：到底再滚一下才换节，一次拖动只换一次 ---------- */
+    reader.setChapter(chapterHTML, 'file:///tmp/', true, false);
+    reader.setReadingMode('scroll');
+    void content.offsetHeight;
+    window.scrollTo(0, 0);
+    void document.documentElement.offsetHeight;
+    window.__posts = [];
+    wheel(120); wheel(120); wheel(120); wheel(120); wheel(120);   /* 没到底：一下都不换 */
+    var midPosts = posts('nextSection');
+    wait(200);                                                    /* 停手 → 下一串算新手势 */
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    void document.documentElement.offsetHeight;
+    window.__posts = [];
+    wheel(120); wheel(120); wheel(120); wheel(120); wheel(120);   /* 到底连滚 5 下：只换一次 */
+    var bottomPosts = posts('nextSection');
+    wait(400);                                                    /* 冷却过了，但换节锁还在 */
+    wheel(120);
+    var lockedPosts = posts('nextSection');
+    add('11 滚动模式到底再滚 = 换节',
+        midPosts === 0 && bottomPosts === 1 && lockedPosts === 1,
+        '没到底不换=' + (midPosts === 0) + ' / 到底连滚 5 下换 ' + bottomPosts + ' 次' +
+        ' / 换节途中累计 ' + lockedPosts + ' 次');
+
+    /* ---------- 12 方向键：两种模式 × 四个键 + ⌥⌘ ---------- */
+    function toPagedEnd() {
+      reader.setTypo({ measure: 728 });
+      reader.setChapter(chapterHTML, 'file:///tmp/', true, true);
+      reader.setReadingMode('paged');
+      void content.offsetHeight;
+      content.scrollLeft = content.scrollWidth;   /* 顶到真实末页 */
+      reader.snapPage();
+    }
+    function toPagedStart() {
+      reader.setChapter(chapterHTML, 'file:///tmp/', true, true);
+      reader.setReadingMode('paged');
+      void content.offsetHeight;
+      content.scrollLeft = 0;
+      reader.snapPage();
+    }
+    function toScrollBottom() {
+      reader.setChapter(chapterHTML, 'file:///tmp/', true, true);
+      reader.setReadingMode('scroll');
+      void content.offsetHeight;
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      void document.documentElement.offsetHeight;
+    }
+    var keyFails = [];
+    function checkKey(label, setup, key, mods, expect) {
+      setup();
+      var sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+      window.__posts = [];
+      press(key, mods);
+      var got = window.__posts.filter(function (p) {
+        return p && (p.type === 'nextSection' || p.type === 'prevSection' || p.type === 'sectionJump');
+      });
+      var ok = got.length === 1 && got[0].type === expect;
+      if (!ok) {
+        keyFails.push(label + '→' + (got.length
+          ? got.map(function (p) { return p.type + (p.delta ? '(' + p.delta + ')' : ''); }).join('+')
+          : '没反应'));
+      }
+      return ok;
+    }
+    checkKey('→ 末页', toPagedEnd, 'ArrowRight', null, 'nextSection');
+    checkKey('↓ 末页', toPagedEnd, 'ArrowDown', null, 'nextSection');
+    checkKey('← 首页', toPagedStart, 'ArrowLeft', null, 'prevSection');
+    checkKey('↑ 首页', toPagedStart, 'ArrowUp', null, 'prevSection');
+    checkKey('滚动 ↓ 到底', toScrollBottom, 'ArrowDown', null, 'nextSection');
+    checkKey('滚动 → 到底', toScrollBottom, 'ArrowRight', null, 'nextSection');
+    checkKey('⌥⌘→', toPagedStart, 'ArrowRight', { metaKey: true, altKey: true }, 'sectionJump');
+    checkKey('⌥⌘←', toPagedEnd, 'ArrowLeft', { metaKey: true, altKey: true }, 'sectionJump');
+    add('12 方向键（两种模式 × 四个键 + ⌥⌘）', keyFails.length === 0,
+        keyFails.length ? '不通过：' + keyFails.join(' / ') : '八个组合全对');
+
     return JSON.stringify({ rows: rows });
   };
 })();
@@ -205,7 +374,7 @@ if [ ! -x "$BIN" ] || [ "$HERE/paged-reader-probe.swift" -nt "$BIN" ]; then
 fi
 
 echo "页面：$HTML"
-echo "—— 书阅读器九条断言 ——"
+echo "—— 书阅读器十五条断言 ——"
 PROBE_FN=__bookProbe "$BIN" "$HTML"
 echo "—— 窄面板（360pt，模拟右栏）——"
 PROBE_FN=__bookProbe PROBE_WIDTH=360 "$BIN" "$HTML"

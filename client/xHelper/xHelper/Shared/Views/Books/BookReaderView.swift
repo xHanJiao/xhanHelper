@@ -123,7 +123,7 @@ struct BookReaderView: View {
 
             if controller.hasChapterNavigation {
 
-                Button { controller.previousSection() } label: {
+                Button { controller.jumpSection(-1) } label: {
                     Image(systemName: "chevron.left").font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
@@ -131,7 +131,7 @@ struct BookReaderView: View {
                 .help("上一节（⌥⌘← / ⌥⌘↑）")
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
 
-                Button { controller.nextSection() } label: {
+                Button { controller.jumpSection(1) } label: {
                     Image(systemName: "chevron.right").font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
@@ -167,10 +167,10 @@ struct BookReaderView: View {
         .background {
             // SwiftUI 一个 view 只能挂一个快捷键：⌥⌘↑/↓ 与 ⌥⌘←/→ 等价，另两个走隐形按钮
             Group {
-                Button("") { controller.previousSection() }
+                Button("") { controller.jumpSection(-1) }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                     .disabled(!controller.canGoPreviousSection)
-                Button("") { controller.nextSection() }
+                Button("") { controller.jumpSection(1) }
                     .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                     .disabled(!controller.canGoNextSection)
             }
@@ -272,9 +272,13 @@ struct BookReaderView: View {
             if controller.isLoadingChapter {
                 ProgressView()
                     .controlSize(.small)
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 自动换节时内容一换就到了，转圈只该在「真的慢」时出现：
+        // 250ms 内加载完就根本不显示（否则每节闪一下比手动点还烦）。
+        .animation(.easeIn(duration: 0.12).delay(0.25), value: controller.isLoadingChapter)
     }
 
     // MARK: - 目录

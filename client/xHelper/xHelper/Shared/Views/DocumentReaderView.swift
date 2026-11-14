@@ -2017,6 +2017,13 @@ var reader = (function () {
     return w + 64;
   }
 
+  /* 能滚到的最右。`scrollWidth - clientWidth` 是取整后的差，而且书里比栏还宽的图/表
+     会把 `scrollWidth` 撑大 —— 算出来的值可能比真实末页多出几像素，所以下面判断
+     「到头了没有」不能用它做等值比较。 */
+  function pageMax() {
+    return Math.max(0, content.scrollWidth - content.clientWidth);
+  }
+
   /* 翻页动画（ease-out）：rAF 补间而不是 `scrollTo({behavior:'smooth'})` ——
      WebKit 的平滑滚动时长/缓动不可控，也拿不到「目标页」，吸附与探针都没法判断。 */
   var pageAnim = 0, pageTarget = 0;
@@ -2066,7 +2073,7 @@ var reader = (function () {
     if (!paged()) return;
     settlePage();
     var span = pageSpan();
-    var max = Math.max(0, content.scrollWidth - content.clientWidth);
+    var max = pageMax();
     content.scrollLeft = Math.max(0, Math.min(max, Math.round(content.scrollLeft / span) * span));
   }
 
@@ -2143,9 +2150,10 @@ var reader = (function () {
     catch (e) { return null; }
   }
 
-  function setChapter(html, dirURL, hasNext) {
+  function setChapter(html, dirURL, hasNext, hasPrev) {
+    advancing = false;   /* 新正文到了：换节锁放掉 */
     try {
-      applyChapter(html, dirURL, hasNext);
+      applyChapter(html, dirURL, hasNext, hasPrev);
       post({ type: 'chapterReady' });
     } catch (e) {
       /* 任何异常都必须回一条，Swift 侧才不会一直显示「加载中」 */
@@ -2153,7 +2161,14 @@ var reader = (function () {
     }
   }
 
-  function applyChapter(html, dirURL, hasNext) {
+  /* 换节状态：有没有上一节 / 下一节（章末按钮与「到底再翻」都靠它）；
+     `advancing` = 已经举手换节、Swift 还在送新正文 —— 那段窗口期 DOM 还是旧节，
+     再翻一下不能再发一次（否则一次拖动连跳两节）。 */
+  var chapterHasNext = false, chapterHasPrev = false, advancing = false;
+
+  function applyChapter(html, dirURL, hasNext, hasPrev) {
+    chapterHasNext = !!hasNext;
+    chapterHasPrev = !!hasPrev;
     unwrapAll();
     pendingRange = null;
     annotations = [];          /* Swift 随即推本章的列表 */
@@ -2269,14 +2284,27 @@ var reader = (function () {
   function turnPage(delta) {
     if (!paged()) return false;
     var span = pageSpan();
-    var max = Math.max(0, content.scrollWidth - content.clientWidth);
-    var before = content.scrollLeft;
-    /* 按页号算而不是累加像素：起点若在半页，也先归到最近整页再翻。
-       动画途中再翻要从「目标页」起算，否则会叠在半路上（可连翻两页）。 */
-    var page = Math.round((pageAnim ? pageTarget : before) / span) + delta;
-    var x = Math.max(0, Math.min(max, page * span));
-    if (x === before) return false;
+    var max = pageMax();
+    /* 动画途中再翻要从「目标页」起算，否则会叠在半路上（可连翻两页） */
+    var base = pageAnim ? pageTarget : content.scrollLeft;
+    var x = Math.max(0, Math.min(max, (Math.round(base / span) + delta) * span));
+    /* 已经在头/尾还继续翻 = 换节（不用再点「继续」）。
+       判据是「这一下能不能真的挪动接近一整页」，不是「x 是否一字不差等于 max」：
+       末页位置常比算出来的 max 差几像素（取整、溢出内容撑大 scrollWidth），
+       用等值比较会永远以为「还能挪一点点」，于是反复挪 0.7px、永不换节。 */
+    var moved = delta > 0 ? x - base : base - x;
+    if (moved < span * 0.5) return advanceSection(delta);
     animatePage(x);
+    return true;
+  }
+
+  /* 到边界再往前 = 换节。翻页模式由 `turnPage` 夹住那一刻调；滚动模式由
+     「已经到底/到顶再多滚一段（或再按方向键）」调。 */
+  function advanceSection(delta) {
+    if (advancing) return false;
+    if (delta > 0 ? !chapterHasNext : !chapterHasPrev) return false;
+    advancing = true;
+    post({ type: delta > 0 ? 'nextSection' : 'prevSection' });
     return true;
   }
 
@@ -2289,16 +2317,34 @@ var reader = (function () {
     document.documentElement.classList.toggle('paged', opts.mode === 'paged');
   }
 
-  /* 触控板/滚轮：一页一次（翻页模式专用，非 passive 才能挡掉原生滚动）。
+  /* 触控板/滚轮：翻页模式一页一次；滚动模式滚到尽头再多滚一下就换节。
      同一手势的连续事件（含惯性）只算一次，间隔够久才算新手势 —— 否则一次
-     滑动会连翻好几页。 */
+     滑动会连翻好几页（滚动模式下会一路跳节）。 */
   var lastWheelAt = 0, wheelLockAt = 0;
   document.addEventListener('wheel', function (e) {
-    if (!BOOK || !paged()) return;
+    if (!BOOK) return;
+    var now = Date.now();
+    if (!paged()) {
+      /* 不挡原生滚动，只在「已经到底 / 到顶」时把这一下当成换节手势。
+         惯性事件间隔 ~16ms，永远不会被当成新手势；停下来再滚才算。 */
+      var dy = e.deltaY;
+      if (Math.abs(dy) < 4) return;
+      var fresh = now - lastWheelAt >= 150 && now - wheelLockAt >= 350;
+      lastWheelAt = now;
+      if (!fresh) return;
+      var doc = document.documentElement;
+      if (dy > 0 && window.innerHeight + window.scrollY >= doc.scrollHeight - 4) {
+        wheelLockAt = now;
+        advanceSection(1);
+      } else if (dy < 0 && window.scrollY <= 0) {
+        wheelLockAt = now;
+        advanceSection(-1);
+      }
+      return;
+    }
     e.preventDefault();
     var d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
     if (Math.abs(d) < 4) return;
-    var now = Date.now();
     var sameGesture = now - lastWheelAt < 150;
     lastWheelAt = now;
     if (sameGesture || now - wheelLockAt < 350) return;
@@ -2306,23 +2352,59 @@ var reader = (function () {
     turnPage(d > 0 ? 1 : -1);
   }, { passive: false });
 
-  /* 键盘（design §9.5）：翻页模式 ←/→ 翻栏；滚动模式空格/PageUp/PageDown 翻一屏。
-     ⌘/⌥ 组合一律放过（⌘F、⌥⌘←/→ 由 SwiftUI 侧接管）；正在选字时不抢键。 */
+  /* 键盘（design §9.5）：←/→/↑/↓ 两种模式都接；空格/PageUp/PageDown 在滚动模式翻一屏。
+     ⌘/⌃ 组合一律放过（⌘F 等由 SwiftUI 接管），⌥⌘+方向 = 跳上一节/下一节开头。
+     正在选字、按住 Shift 扩选时不抢键。 */
   document.addEventListener('keydown', function (e) {
-    if (!BOOK || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!BOOK) return;
+    var arrow = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+             || e.key === 'ArrowUp' || e.key === 'ArrowDown';
+    var forward = arrow && (e.key === 'ArrowRight' || e.key === 'ArrowDown');
+
+    /* ⌥⌘+方向：跳节（不是翻页）。在正文里接，不指望 SwiftUI 的快捷键路由 ——
+       焦点在 WKWebView 里时那条路不一定收得到。Swift 侧有 250ms 去重。 */
+    if (arrow && (e.metaKey || e.ctrlKey) && e.altKey) {
+      e.preventDefault();
+      post({ type: 'sectionJump', delta: forward ? 1 : -1 });
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     var sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      if (!paged()) return;
+
+    if (arrow) {
+      if (e.shiftKey) return;                 /* Shift+方向 = 扩选，别翻页 */
+      if (paged()) { e.preventDefault(); turnPage(forward ? 1 : -1); return; }
+      /* 滚动模式：已经到顶/到底再按 = 换节；否则 ↑/↓ 交给原生逐行滚动 */
+      var doc = document.documentElement;
+      var atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 4;
+      var atTop = window.scrollY <= 0;
+      if (forward ? atBottom : atTop) {
+        e.preventDefault();
+        advanceSection(forward ? 1 : -1);
+        return;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') return;
+      /* ←/→ 在滚动模式没有原生含义：当一屏（与空格同义） */
       e.preventDefault();
-      turnPage(e.key === 'ArrowRight' ? 1 : -1);
+      window.scrollBy({ top: (forward ? 1 : -1) * window.innerHeight * 0.85, behavior: 'smooth' });
       return;
     }
     if (e.key === ' ' || e.key === 'PageDown' || e.key === 'PageUp') {
       if (paged()) return;
       e.preventDefault();
-      var forward = !(e.key === 'PageUp' || e.shiftKey);
-      window.scrollBy({ top: (forward ? 1 : -1) * window.innerHeight * 0.85, behavior: 'smooth' });
+      var fwd = !(e.key === 'PageUp' || e.shiftKey);
+      /* 已经到底 / 到顶：这一下当换节（与滚轮、翻页同一语义） */
+      var d = document.documentElement;
+      if (fwd && window.innerHeight + window.scrollY >= d.scrollHeight - 4) {
+        advanceSection(1);
+        return;
+      }
+      if (!fwd && window.scrollY <= 0) {
+        advanceSection(-1);
+        return;
+      }
+      window.scrollBy({ top: (fwd ? 1 : -1) * window.innerHeight * 0.85, behavior: 'smooth' });
     }
   });
 

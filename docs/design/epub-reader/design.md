@@ -209,7 +209,7 @@ book 模式的启动流程（新函数 `renderBook(payload)`，doc 模式仍走 
 | `restorePosition(offset)` | 把该字符带到页首：滚动模式滚 `window`，翻页模式滚到对应栏 |
 | `setTypo(opts)` | 字号 / 行距 / 段距 / 页宽 / 字体（CSS 变量，不重载） |
 | `setReadingMode(mode)` | `scroll` / `paged`；切换后按当前 offset 恢复位置 |
-| `turnPage(delta)` | 翻页模式翻一栏；滚动模式 no-op（Swift 用空格滚一屏） |
+| `turnPage(delta)` | 翻页模式翻一栏；滚动模式 no-op（Swift 用空格滚一屏）。**已经在头/尾再翻 = 换节**（见 §5.7） |
 
 Swift 侧新增消息：`bookLink`（切章）、`openExternal`（系统浏览器）、`tapZone`（`left` / `center` / `right`，翻页模式用；带 `hasSelection` / `onInteractive` 标记，避免抢走选字和点链接）。进度不新增消息：沿用现有 `scroll`，由 Swift 节流后调 `position()`。
 
@@ -217,7 +217,7 @@ Swift 侧新增消息：`bookLink`（切章）、`openExternal`（系统浏览�
 
 模板顶部 `doc-title` 显示**章节标题**，`doc-tags` 显示「书名 · 作者 · 第 N/M 章」。正文里如果章节 XHTML 没有以 `h1` 开头，就补一个 `<h1 class="book-chapter-title">`，避免正文无标题。
 
-章末追加一条「下一章 ›」（纯 HTML，`data-book-chapter`），读完直接点，不用回目录。无章节的书（E20）不追加这一条，`doc-tags` 里也不出现章号。
+章末追加一条「继续 ›」（纯 HTML，`data-book-chapter`），读完直接点，不用回目录。**不是必须点**：到边界再翻/再滚一下就自动进下一节（§5.7），按钮留作备用入口。无章节的书（E20）不追加这一条，`doc-tags` 里也不出现章号。
 
 ### 5.4 样式
 
@@ -291,6 +291,7 @@ CSS 变量全部落在 `html` 上（`:root`），默认值等于现状，所以�
 | `restoreScrollY` | 由 `restorePosition` 取代 |
 | 滚轮 / 触控板 | 一次手势翻一页（非 passive 挡掉原生滚动；150ms 内视为同一手势，350ms 冷却挡惯性）；纵向、横向手势都翻页 |
 | 点击分区 | 左 28% 上一页 / 右 28% 下一页，中间不拦截（JS 判断无选区、非链接/划线才翻） |
+| 节边界 | 已经是末页再翻 → 自动进下一节；第一页再往前翻 → 回**上一节的末页**。判据是「这一下能不能真的挪动接近一整页」，不是「位置是否一字不差等于算出来的 max」—— 末页位置常差几像素（`scrollWidth/clientWidth` 取整、引擎夹取），用等值比较会永远以为还能挪一点点，反复挪 0.7px 而永不换节。滚动模式同理：到底/到顶再多滚一下或再按方向键。换节途中（新正文未到）不再举手，一次拖动只换一次 |
 | 图片 / 代码块 | `break-inside: avoid`；图片按上面的 `max-height` 收进一栏 |
 
 **探针（2026-11-14 实测：八条全过，翻页进一期）**
@@ -433,10 +434,11 @@ JS 现有的 `create` / `update` / `delete` 消息原样用。`BookReaderControl
 
 | 键 | 动作 |
 |---|---|
-| ⌘F | 本章查找（现有） |
-| ← / → | 翻页（左右翻页模式）；滚动模式不占用 |
-| ↑ / ↓、空格 | 滚动 / 翻一屏（滚动模式） |
-| ⌥⌘← / ⌥⌘→ | 上一章 / 下一章 |
+| ⌘F | 本节查找（现有） |
+| ← / → / ↑ / ↓ | 左右翻页：翻一栏（四键都认）；上下滚动：`↑/↓` 逐行、`←/→` 翻一屏 |
+| 到边界再按方向键 | 进下一节 / 回上一节末页 |
+| 空格 / PageDown / PageUp | 滚动模式翻一屏；在底部/顶部同样触发换节 |
+| ⌥⌘← / ⌥⌘→ / ⌥⌘↑ / ⌥⌘↓ | 上一节 / 下一节**开头**（跳转，不是接着读）；正文里由模板 JS 接，SwiftUI 那套只负责焦点不在正文时 |
 | ⌘⇧A | 批注面板开关 |
 | Esc | 关浮层 / 关查找 |
 
@@ -703,3 +705,46 @@ JS 现有的 `create` / `update` / `delete` 消息原样用。`BookReaderControl
 
 影响文件同上，另加 `client/xHelper/scripts/book-reader-probe.sh`（`turnPage` 断言中间插 `snapPage()`）。
 
+### 2026-11-14 · 批 13：到底自动换节（不用再点「继续」）
+
+真机反馈：每一节读完还要手动点「继续」，很难受。根因不是切节慢 —— 按在跑的那本书实测，一整章 316KB 切成 174 节，**一节≈1.8KB**，读盘 + 抠 body + 切片是毫秒级；难受的是「到边界那一刻没人接话」。
+
+| 处理 | 说明 |
+|---|---|
+| 翻页模式 | `turnPage` 被夹在头/尾（`x === before`）且该方向有相邻节 → `advanceSection(delta)` 发 `nextSection` / `prevSection`。它是键盘、滚轮、点击分区三个入口的唯一漏斗，一处改动三条路径全自动 |
+| 滚动模式 | 只在**已经到底/到顶**时把「再多滚一下」当换节手势（`advanceSection`）；复用 150ms 新手势 + 350ms 冷却，惯性事件间隔 ~16ms 永远不会被误判。空格 / PageDown 在底部同理，不再空滚 |
+| 反向 | 第一页再往前翻 → 上一节的**末页**（`previousSectionFromEnd()`：offset 给上一节源码区间长度，JS 夹到最后一个字后 `snapPage()` 收到末页），不是首行 |
+| 防重复 | JS 侧 `advancing` 锁：举手换节后到新正文到达（`setChapter`）之前不再发，否则一次连滚会连跳两节 |
+| 转圈降噪 | `isLoadingChapter` 的 ProgressView 加 0.25s 延迟，快加载根本不出现（自动换节后每节闪一下比手动点更烦） |
+| 不做预加载 | 按上面实测数据省不到东西。真要做：`chapterReady` 后后台 `sectionHTML(index + 1)` 存 controller，命中就跳过读盘，约 25 行 —— 等真机量出停顿再加 |
+| 「继续 ›」 | 保留，退化为备用入口（滚动模式里它是唯一的可见提示） |
+
+探针：`book-reader-probe.sh` 加两条 —— `10 到底再翻 = 换节`（末页再翻发 `nextSection`、换节途中不重复、第一页再往前发 `prevSection`）、`11 滚动模式到底再滚 = 换节`（没到底不换、到底连滚 5 下只换 1 次、换节途中累计仍 1 次），两种宽度都 12/12 通过。探针把 `window.webkit.messageHandlers.reader` 换成收集器来观察 `post`（没有原生 handler 时 `window.webkit` 不存在，`post` 本来静默丢弃）。
+
+影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（`advanceSection` / `turnPage` / wheel / keydown / `setChapter` 增 `hasPrev`）、`ViewModels/BookReaderController.swift`（`previousSectionFromEnd`、`prevSection` 消息、`hasPrev` 透传）、`Views/Books/BookReaderView.swift`（转圈延迟）、`client/xHelper/scripts/book-reader-probe.sh`。
+### 2026-11-14 · 批 14：修「末页 → 不换节」+ 四个方向键全接
+
+真机反馈：**左边能换节、右边不能**（翻页模式末页按 `→` 没反应），`↑/↓` 在任何模式下都不换节。
+
+根因（`turnPage`）：判断「到头了」用的是 `x === before` —— `x` 由 `scrollWidth - clientWidth`（两个都取整）算出来，末页的真实 `scrollLeft` 常差几像素（取整误差、引擎夹取）。于是 `3168 !== 3165` 成立，它以为还能往右挪 3px，`animatePage` 演 3px 之后再按一下又是同样 3px，永远进不了「到头」分支。往回翻的起点是 `0`，`0` 没有误差，所以 `←` 一直是好的 —— 这就是那个不对称。
+
+改法：**判据换成「这一下能不能挪动接近一整页」（`moved < span/2`）**。翻不动一整页 = 到边界 = 换节。这一条对取整误差、引擎夹取、内容撑大 `scrollWidth` 全都成立，不再赌任何一个像素是否相等。
+
+顺带补齐方向键（原来只有 `←/→` 在翻页模式接了，`↑/↓` 和滚动模式的 `←/→` 都是死的）：
+
+| 键 | 左右翻页 | 上下滚动 |
+|---|---|---|
+| `←` `↑` | 上一栏 | `←` 上一屏、`↑` 原生逐行 |
+| `→` `↓` | 下一栏 | `→` 下一屏、`↓` 原生逐行 |
+| 到边界再按 | 换节 | 换节 |
+
+其它两条：
+
+- **`⌥⌘+方向键` 改在模板 JS 里认**：焦点在正文（WKWebView）时 SwiftUI 的 `keyboardShortcut` 不保证收得到，这条路径以前就是靠运气。JS 发 `sectionJump{delta}`，Swift 侧 `jumpSection()` 有 250ms 去重 —— 同一次按键即使两路都响也只跳一节。SwiftUI 那对快捷键保留，负责焦点在目录/查找框里的情况。
+- `Shift+方向键` 直接放过（扩选，不翻页）。
+
+探针（`book-reader-probe.sh`，两种宽度各 15 条）：`10 到底再翻`、`10b 小数栏宽 640.5`、`10c 末页差 3px 也算到头`（这条在旧判据下必挂，是真正的回归用例）、`12 方向键（两种模式 × 四个键 + ⌥⌘）`八个组合。
+
+> 探针**复现不出**真机那个几何：离屏页面里 `scrollWidth - clientWidth` 与真实末页差 0px（整数宽、小数宽、加超宽子元素都试过），所以 `10/10b` 在旧代码下也是绿的。这类几何问题只能靠「判据本身不依赖精确像素」来兜，不能靠探针复现。
+
+影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（`pageMax` / `turnPage` 判据 / keydown 四个方向键 + ⌥⌘）、`ViewModels/BookReaderController.swift`（`jumpSection` 去重 + `sectionJump` 消息）、`Views/Books/BookReaderView.swift`（按钮与快捷键改走 `jumpSection`）、`client/xHelper/scripts/book-reader-probe.sh`。

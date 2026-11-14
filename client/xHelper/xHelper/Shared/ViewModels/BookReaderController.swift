@@ -327,6 +327,24 @@ final class BookReaderController: ObservableObject {
     func nextSection() { goToSection(sectionIndex + 1) }
     func previousSection() { goToSection(sectionIndex - 1) }
 
+    /// ⌥⌘+方向：跳上一节/下一节**开头**（与手势的「上一节末页」不是一个语义）。
+    /// 正文里的 JS 和 SwiftUI 快捷键都会响同一次按键，250ms 内只认一次，否则一跳两节。
+    private var lastSectionJumpAt: Date?
+    func jumpSection(_ delta: Int) {
+        let now = Date()
+        if let last = lastSectionJumpAt, now.timeIntervalSince(last) < 0.25 { return }
+        lastSectionJumpAt = now
+        if delta > 0 { nextSection() } else { previousSection() }
+    }
+
+    /// 翻页到头再往前翻：回上一节的**末页**（不是首行，那样等于白翻一半）。
+    /// 偏移给上一节的源码区间长度，JS 会把它夹到最后一个字，`snapPage()` 收到末页。
+    func previousSectionFromEnd() {
+        let target = sectionIndex - 1
+        guard target >= 0, let section = book.section(at: target) else { return }
+        goToSection(target, offset: max(0, section.end - section.start))
+    }
+
     /// 换节：**读盘成功后才改 `sectionIndex`**。
     /// 先改再异步换正文会开一个窗口 —— 那期间 DOM 还是旧节，而 `pauseReading`/节流保存
     /// 会拿旧节的 offset 记到新节头上（进度污染）。
@@ -358,6 +376,7 @@ final class BookReaderController: ObservableObject {
                 pendingAnchor = anchor
                 let hasNext = index + 1 < sections.count
                 sendChapter(prepared.html, dir: prepared.dir, hasNext: hasNext,
+                            hasPrev: index > 0,
                             token: token, previousSection: previous)
             } catch {
                 guard token == chapterLoadToken else { return }
@@ -373,11 +392,11 @@ final class BookReaderController: ObservableObject {
     /// **不用 `evaluateJavaScript` 拼字符串字面量**：整章可达几百 KB～数 MB，正文里任何一个
     /// 让字面量解析失败的东西（怪异控制符、超长脚本）都会让整次调用失联，症状是「正文空白」。
     /// `callAsyncJavaScript` 由 WebKit 自己序列化参数，不经过 JS 解析器。
-    private func sendChapter(_ html: String, dir: String, hasNext: Bool,
+    private func sendChapter(_ html: String, dir: String, hasNext: Bool, hasPrev: Bool,
                              token: UUID, previousSection previous: Int) {
         guard let webView else { return }
-        let payload: [String: Any] = ["html": html, "dir": dir, "hasNext": hasNext]
-        webView.callAsyncJavaScript("reader.setChapter(html, dir, hasNext);",
+        let payload: [String: Any] = ["html": html, "dir": dir, "hasNext": hasNext, "hasPrev": hasPrev]
+        webView.callAsyncJavaScript("reader.setChapter(html, dir, hasNext, hasPrev);",
                                     arguments: payload, in: nil, in: .page) { [weak self] result in
             Task { @MainActor in
                 guard let self, token == self.chapterLoadToken else { return }
@@ -775,6 +794,12 @@ final class BookReaderController: ObservableObject {
 
         case "nextSection":
             nextSection()
+
+        case "prevSection":
+            previousSectionFromEnd()
+
+        case "sectionJump":
+            jumpSection(message["delta"] as? Int ?? 1)
 
         case "findResult":
             matchCount = message["count"] as? Int ?? 0

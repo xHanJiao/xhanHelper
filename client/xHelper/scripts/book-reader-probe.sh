@@ -137,9 +137,11 @@ hook = r"""<script nonce="testnonce">
     var pages = content.scrollWidth / span;
     var sl0 = content.scrollLeft;
     var turned = reader.turnPage(1);
+    reader.snapPage();   /* 翻页有动画，位置在 220ms 后才落定；吸附 = 直接落到目标页 */
     void content.offsetHeight;
     var sl1 = content.scrollLeft;
     reader.turnPage(-1);
+    reader.snapPage();
     void content.offsetHeight;
     var sl2 = content.scrollLeft;
     add('6 翻页模式', pages >= 2 && turned && Math.abs((sl1 - sl0) - span) <= 2 && Math.abs(sl2 - sl0) <= 2,
@@ -167,6 +169,7 @@ hook = r"""<script nonce="testnonce">
     var pages2 = content.scrollWidth / span2;
     content.scrollLeft = 0;
     var turned2 = reader.turnPage(1);
+    reader.snapPage();
     void content.offsetHeight;
     add('8 页宽超过可用宽度', w2 <= window.innerWidth + 2 && pages2 >= 2 && turned2,
         '栏宽 ' + Math.round(w2) + ' ≤ 视口 ' + window.innerWidth + ' / ≈' + pages2.toFixed(2) +

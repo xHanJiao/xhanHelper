@@ -1107,14 +1107,22 @@ html.book #content .chapter-next {
 html.book #content .chapter-next:hover { background: var(--accent-soft); }
 
 /* 翻页模式：`#content` 自己就是 pager（多栏 + 横向滚动）。
-   宽度必须等于栏宽，否则列会被拉伸、页宽设置失效（探针实测，见 design §5.7）。 */
+   一栏 = 一屏 = `--measure`：几何与滚动模式完全一致，换模式版面不跳。 */
 html.paged, html.paged body { overflow: hidden; height: 100%; }
-html.paged .page { height: 100%; padding: 0; }
+html.paged .page {
+  /* 与 `html.book #content` 同款：外框 = 列宽 + 左右各 28px 呼吸位，窄了就跟着缩。
+     内边距放在这里而不是 `#content` 上：后者是横向滚动容器，左右 padding 只作用于
+     首尾栏，中间每页仍然贴边。 */
+  height: 100%; padding: 0 28px;
+  max-width: min(calc(var(--measure, 728px) + 56px), 100%);
+  margin: 0 auto;
+}
 html.paged #content {
-  /* 栏宽不能超过可用宽度（右栏面板常比 728 窄）：超出会把整页横向顶出去 */
-  width: min(var(--measure), 100%); max-width: 100%;
-  height: calc(100% - 8px); margin: 4px auto 0; padding: 0;
-  column-width: var(--measure); column-gap: 64px; column-fill: auto;
+  /* `column-width` 给一个远大于容器的值 → 栏数恒为 1、栏宽 = 容器宽；
+     正文继续向右排成多栏，容器自己横向滚动（一页 = 一列）。 */
+  width: 100%; max-width: 100%;
+  height: calc(100% - 8px); margin: 4px 0 0; padding: 0;
+  column-width: 100000px; column-gap: 64px; column-fill: auto;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none;
 }
@@ -1843,7 +1851,9 @@ var reader = (function () {
       /* 翻页模式：命中在别的栏里 → 把那一栏横向滚进视口（design §5.7） */
       var box = content.getBoundingClientRect();
       if (rect.left < box.left - 1 || rect.right > box.right + 1) {
+        settlePage();
         content.scrollLeft += (rect.left - box.left) - 40;
+        snapPage();
       }
       return;
     }
@@ -2000,16 +2010,64 @@ var reader = (function () {
   function paged() { return document.documentElement.classList.contains('paged'); }
 
   /* 一页的横向步长 = 实际栏宽 + 栏间距（与 CSS 的 column-gap 一致）。
-     不能用 `--measure`：面板比设定页宽窄时，栏宽已经被 `min()` 压到可用宽度。 */
+     栏宽 = 容器内容盒宽（`#content` 自己不设左右 padding），跟着「页宽」设置走。 */
   function pageSpan() {
     var w = content.clientWidth;
     if (!isFinite(w) || w <= 0) w = 728;
     return w + 64;
   }
 
+  /* 翻页动画（ease-out）：rAF 补间而不是 `scrollTo({behavior:'smooth'})` ——
+     WebKit 的平滑滚动时长/缓动不可控，也拿不到「目标页」，吸附与探针都没法判断。 */
+  var pageAnim = 0, pageTarget = 0;
+
+  function stopPageAnim() {
+    if (pageAnim) cancelAnimationFrame(pageAnim);
+    pageAnim = 0;
+  }
+
+  /* 停掉在跑的动画并落在目标页：后面要按「当前页」算位置的路径先调它，
+     否则起点是半路像素，吸附会算出错误的页号。 */
+  function settlePage() {
+    if (!pageAnim) return;
+    stopPageAnim();
+    content.scrollLeft = pageTarget;
+  }
+
+  function animatePage(x) {
+    stopPageAnim();
+    pageTarget = x;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      content.scrollLeft = x;
+      return;
+    }
+    var from = content.scrollLeft, t0 = 0;
+    var dur = 220;
+    function step(now) {
+      if (!t0) t0 = now;
+      var k = Math.min(1, (now - t0) / dur);
+      content.scrollLeft = from + (x - from) * (1 - Math.pow(1 - k, 3));
+      if (k < 1) pageAnim = requestAnimationFrame(step);
+      else { pageAnim = 0; content.scrollLeft = x; }
+    }
+    pageAnim = requestAnimationFrame(step);
+  }
+
   function scrollToStart() {
+    stopPageAnim();
     if (paged()) content.scrollLeft = 0;
     else window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  /* 翻页模式的位置只能是整页：所有改过 `scrollLeft` 的路径都收口到这里，
+     否则会停在两栏中间（左右各截一半）。最后一页不足一屏时贴在内容尾部。
+     动画途中调用 = 「落到目标页」（不是弹回原页）。 */
+  function snapPage() {
+    if (!paged()) return;
+    settlePage();
+    var span = pageSpan();
+    var max = Math.max(0, content.scrollWidth - content.clientWidth);
+    content.scrollLeft = Math.max(0, Math.min(max, Math.round(content.scrollLeft / span) * span));
   }
 
   /* 视口左上角那个字的偏移。翻页模式下就是「当前栏第一行」那个字。
@@ -2041,7 +2099,9 @@ var reader = (function () {
     var rect = range.getBoundingClientRect();
     if (paged()) {
       var box = content.getBoundingClientRect();
+      settlePage();
       content.scrollLeft += (rect.left - box.left) - READ_PAD_LEFT;
+      snapPage();
     } else {
       window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - READ_PAD_TOP), behavior: 'auto' });
     }
@@ -2163,7 +2223,9 @@ var reader = (function () {
     var rect = el.getBoundingClientRect();
     if (paged()) {
       var box = content.getBoundingClientRect();
+      settlePage();
       content.scrollLeft += (rect.left - box.left);
+      snapPage();
     } else {
       window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - READ_PAD_TOP), behavior: 'auto' });
     }
@@ -2195,6 +2257,7 @@ var reader = (function () {
     var wantPaged = mode === 'paged';
     if (wantPaged === paged()) { restorePosition(lastOff); return; }
     var off = position();
+    stopPageAnim();
     document.documentElement.classList.toggle('paged', wantPaged);
     content.scrollLeft = 0;
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -2205,10 +2268,16 @@ var reader = (function () {
 
   function turnPage(delta) {
     if (!paged()) return false;
+    var span = pageSpan();
     var max = Math.max(0, content.scrollWidth - content.clientWidth);
     var before = content.scrollLeft;
-    content.scrollLeft = Math.max(0, Math.min(max, before + delta * pageSpan()));
-    return content.scrollLeft !== before;
+    /* 按页号算而不是累加像素：起点若在半页，也先归到最近整页再翻。
+       动画途中再翻要从「目标页」起算，否则会叠在半路上（可连翻两页）。 */
+    var page = Math.round((pageAnim ? pageTarget : before) / span) + delta;
+    var x = Math.max(0, Math.min(max, page * span));
+    if (x === before) return false;
+    animatePage(x);
+    return true;
   }
 
   /* 首屏：书模式的初始排版（之后全部走 setTypo / setReadingMode） */
@@ -2220,12 +2289,21 @@ var reader = (function () {
     document.documentElement.classList.toggle('paged', opts.mode === 'paged');
   }
 
-  /* 触控板/滚轮：纵向滚 → 横向翻栏（翻页模式专用，非 passive 才能挡掉竖向滚动） */
+  /* 触控板/滚轮：一页一次（翻页模式专用，非 passive 才能挡掉原生滚动）。
+     同一手势的连续事件（含惯性）只算一次，间隔够久才算新手势 —— 否则一次
+     滑动会连翻好几页。 */
+  var lastWheelAt = 0, wheelLockAt = 0;
   document.addEventListener('wheel', function (e) {
     if (!BOOK || !paged()) return;
-    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;   /* 横向手势交给原生 */
     e.preventDefault();
-    content.scrollLeft += e.deltaY;
+    var d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (Math.abs(d) < 4) return;
+    var now = Date.now();
+    var sameGesture = now - lastWheelAt < 150;
+    lastWheelAt = now;
+    if (sameGesture || now - wheelLockAt < 350) return;
+    wheelLockAt = now;
+    turnPage(d > 0 ? 1 : -1);
   }, { passive: false });
 
   /* 键盘（design §9.5）：翻页模式 ←/→ 翻栏；滚动模式空格/PageUp/PageDown 翻一屏。
@@ -2279,7 +2357,9 @@ var reader = (function () {
     restorePosition: restorePosition,
     setTypo: setTypo,
     setReadingMode: setReadingMode,
-    turnPage: turnPage
+    turnPage: turnPage,
+    /* 动画途中调用 = 直接落到目标页；探针也靠它拿到确定位置 */
+    snapPage: snapPage
   };
 })();
 </script>

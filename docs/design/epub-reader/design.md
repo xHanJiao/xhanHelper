@@ -241,7 +241,7 @@ CSS 变量全部落在 `html` 上（`:root`），默认值等于现状，所以�
 | `--fs` | 20.06px（`FontSizeManager` 驱动） | 70%–150%，步进 5%（复用现有字号逻辑，`⌘+/−` 同步） |
 | `--lh` | 1.78 | 紧凑 1.55 / 标准 1.78 / 宽松 2.0 |
 | `--para` | 11px | 紧凑 6 / 标准 11 / 宽松 18（px，按 `--fs` 定死即可） |
-| `--measure` | 728px | 窄 640 / 标准 728 / 宽 860（滚动模式是正文列宽；翻页模式是栏宽） |
+| `--measure` | 728px | 窄 640 / 标准 728 / 宽 860（**正文列宽**：上下滚动是居中列的宽；左右翻页一栏 = 这一列，两种模式版面一致，见 §5.7） |
 | `--ff` | 系统栈 | 系统（`-apple-system, PingFang SC…`）/ 衬线（`Songti SC, STSong, serif`） |
 
 - 设置模型 `BookReadingSettings`（`ObservableObject` + `UserDefaults`，全局一份）：`mode`、`lineHeight`、`paragraphGap`、`measure`、`fontFamily`；字号仍归 `FontSizeManager`。
@@ -254,11 +254,18 @@ CSS 变量全部落在 `html` 上（`:root`），默认值等于现状，所以�
 
 ```
 .page(滚动模式)        → window 纵向滚动（现状）
-.page(翻页模式)        → #content {
-                          width: var(--measure);   /* 必须等于栏宽：宽了列会被拉伸，页宽设置就失效 */
-                          height: <可视高>;         /* 顶/底 chrome 之外的高度，JS 量出来 */
+.page(翻页模式)        → .page {                     /* 外框 = 列宽 + 左右各 28px 呼吸位 */
+                          height: 100%;
+                          padding: 0 28px;
+                          max-width: min(calc(var(--measure, 728px) + 56px), 100%);
                           margin: 0 auto;
-                          column-width: var(--measure);
+                        }
+                        #content {
+                          width: 100%;            /* 内容盒 = 一栏 = 页宽 */
+                          height: <可视高>;         /* 顶/底 chrome 之外的高度 */
+                          margin: 4px 0 0;
+                          column-width: 100000px; /* 超大值 → 栏数恒为 1、栏宽 = 容器内容盒宽，
+                                                     正文继续向右排成多栏 */
                           column-gap: 64px;
                           column-fill: auto;
                           overflow-x: auto;        /* #content 自己就是 pager，不另包一层 */
@@ -267,7 +274,11 @@ CSS 变量全部落在 `html` 上（`:root`），默认值等于现状，所以�
                         #content img { max-width: 100%; max-height: 100%; object-fit: contain; }
 ```
 
-- 一页的滚动步长 = `--measure + 64`；第 N 栏的 `scrollLeft` = `(N-1) × (measure + 64)`。
+- **两种模式列宽必须一致**：`.page` 与 `html.book #content` 用同一套几何（`measure + 56`，居中，28px 呼吸位），切模式版面不跳。内边距放 `.page` 而不是 `#content`：后者是横向滚动容器，左右 padding 只作用于首尾栏，中间每页仍贴边。
+- 一页的滚动步长 = 容器内容盒宽 + 64；第 N 栏的 `scrollLeft` = `(N-1) × (栏宽 + 64)`。
+- **位置只能是整页**：`turnPage` 按页号算（`round(scrollLeft / 步长) ± 1`），不算像素累加；`restorePosition` / `scrollToAnchor` / 查找命中之后统一走 `snapPage()` 吸附到页边界，否则会停在两栏中间（左右各截一半）。动画途中调 `snapPage()` = 直接落到目标页。
+- **翻页有补间动画**（rAF，220ms，ease-out，`prefers-reduced-motion` 时直接跳）。不用 `scrollTo({behavior:'smooth'})`：WebKit 的平滑滚动时长/缓动不可控，也拿不到「目标页」，吸附与探针都没法判断。
+- 滚轮/触控板**一次手势翻一页**（`wheel` 里挡掉原生滚动；同一手势的连续事件按 150ms 内视为同一次，另有 350ms 冷却挡惯性）。
 - 图片不约束会被分栏切成横跨整条滚动区的一条（实测 2312×631），必须 `max-height: 100% + object-fit: contain`，否则图被静默裁掉。
 - 不做的：仿真书页卷曲、双页对开、缩放。
 
@@ -275,26 +286,28 @@ CSS 变量全部落在 `html` 上（`:root`），默认值等于现状，所以�
 
 | 函数 | 翻页模式 |
 |---|---|
-| `scrollToCurrent`（查找） | 命中 `rect.left` 在视口外 → `content.scrollLeft += rect.left - 页边距` |
-| `captureAnchor` / `restoreAnchor` / `setFontSize` | 不用像素锚点，改用 `position()` → 重排 → `restorePosition()` |
+| `scrollToCurrent`（查找） | 命中 `rect.left` 在视口外 → `content.scrollLeft += rect.left - 页边距`，再 `snapPage()` 吸附到页边界 |
+| `captureAnchor` / `restoreAnchor` / `setFontSize` | 不用像素锚点，改用 `position()` → 重排 → `restorePosition()`（末尾同样吸附） |
 | `restoreScrollY` | 由 `restorePosition` 取代 |
-| 滚轮 | 纵向 `wheel` 映射成 `scrollLeft`（非 passive 监听）；触控板横向横扫原生支持 |
-| 点击分区 | 左 28% / 右 28% 翻栏，中间不拦截（JS 判断无选区、非链接/划线才 post `tapZone`） |
+| 滚轮 / 触控板 | 一次手势翻一页（非 passive 挡掉原生滚动；150ms 内视为同一手势，350ms 冷却挡惯性）；纵向、横向手势都翻页 |
+| 点击分区 | 左 28% 上一页 / 右 28% 下一页，中间不拦截（JS 判断无选区、非链接/划线才翻） |
 | 图片 / 代码块 | `break-inside: avoid`；图片按上面的 `max-height` 收进一栏 |
 
-**探针（2026-11-14 实测：六条全过，翻页进一期）**
+**探针（2026-11-14 实测：八条全过，翻页进一期）**
 
-- 脚本：`client/xHelper/scripts/paged-reader-probe.sh`（页面用 `reader-template.py` 从 Swift 源码现抠，样式/划线 JS 与线上同一份）+ `paged-reader-probe.swift`（离屏真 WKWebView）。
+- 脚本：`client/xHelper/scripts/paged-reader-probe.sh`（页面用 `reader-template.py` 从 Swift 源码现抠，样式/划线 JS 与线上同一份；**不内联覆盖栏宽**，测的就是模板 CSS）+ `paged-reader-probe.swift`（离屏真 WKWebView）。
 - 结果（`./scripts/paged-reader-probe.sh` 直接可复跑）：
 
   | 断言 | 实测 |
   |---|---|
-  | 1 多栏生成 | `scrollWidth 3104 / clientWidth 728`，≈3.9 页（列高 631） |
+  | 0 一屏一栏 | `clientWidth 728（期望 728）`；翻页前后各取样 20 个字符偏移，第 1 页 ≤594 / 第 2 页 ≥704，**不重叠** |
+  | 1 多栏生成 | `scrollWidth 3104 / clientWidth 728`，≈3.9 页（列高 671） |
   | 2 跨栏划线 | 正文文本不变；`mark` 文本 == quote；矩形横跨 792px（> 栏宽 728） |
   | 3 跨栏选区 | 120 字选中；折叠空白后与 quote 一致；矩形横跨 792px |
   | 4 查找滚到命中栏 | 命中初始在视口外 → `scrollLeft 2376` → 落在视口内 |
-  | 5 字号变化回同一句 | 20→26px 后按 offset 557 恢复，同一字落在当前栏内（翻页模式只能对齐「栏」，栏内纵向位置由重排决定） |
-  | 6 大图不撑破 | 不约束时被切成分栏长条；`max-height + object-fit: contain` 后 728×623 收进一栏 |
+  | 5 字号变化回同一句 | 20→26px 后按 offset 594 恢复，同一字落在当前栏内（翻页模式只能对齐「栏」，栏内纵向位置由重排决定） |
+  | 6 大图不撑破 | 不约束时被切成分栏长条；`max-height + object-fit: contain` 后 728×663 收进一栏 |
+  | 7 翻页动画 + 停在整页 | 翻完 `scrollLeft` 没瞬间到位（有补间）；`snapPage()` 后落 `0/792/1584` 整页；从半页起点翻也落整页 |
 
 - 结论：**方案成立**，不启用「滚动 + 空格翻屏」回退。真机仍需复验手感（触控板/滚轮/点击分区）。
 
@@ -659,4 +672,34 @@ JS 现有的 `create` / `update` / `delete` 消息原样用。`BookReaderControl
 | 删备注 | Aa 弹层尾部「背景跟随 app 主题；划线一期单色（多色二期）」整行删除 —— 一期/二期是排期术语，且「没有的控件」不需要解释 |
 
 **补（同日）**：`⌥⌘↑` / `⌥⌘↓` 与 `⌥⌘←` / `⌥⌘→` 等价（上一节 / 下一节）。SwiftUI 一个 view 只能挂一个 `keyboardShortcut`，所以后两个键走顶栏里的隐形按钮（`opacity(0)`），首/末节同样置灰；普通 ↑/↓ 仍留给正文滚动。
+
+### 2026-11-14 · 批 12：翻页严格一页 + 一屏一栏
+
+真机反馈：左右翻页会停在两栏中间（左右各截一半）。根因是有四条路径直接改 `scrollLeft`：`turnPage` 按像素累加（起点半页就一直半页）、`wheel` 的 `+= deltaY`（触控板停在任意处）、`restorePosition` / `scrollToAnchor` 按字符位置滚到视口左缘（切节、改字号、跳目录都会走）。
+
+| 处理 | 说明 |
+|---|---|
+| 一屏一栏 | `html.paged #content`：`width: 100%` + `column-width: 100000px`（超大值 → 栏数恒为 1、栏宽 = 容器宽）。翻页模式**不再读 `--measure`**，Aa 里的「页宽」置灰并写明「只影响上下滚动」 |
+| 按页号翻 | `turnPage(delta)` = `round(scrollLeft / 步长) + delta`，不再累加像素 |
+| 吸附 | 新增 `snapPage()`：`restorePosition`、`scrollToAnchor`、查找命中后统一吸附到页边界；末页贴在内容尾部 |
+| 滚轮/触控板 | 一次手势翻一页（150ms 内视为同一手势、350ms 冷却挡惯性），纵向与横向手势都翻页；不再让原生横向滚动停在半页 |
+| 探针 | `paged-reader-probe.sh` 加两条：`0 一屏一栏（模板 CSS）`、`7 翻页停在整页`（含「从半页起点翻」），当前 8/8 通过 |
+
+影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（模板 CSS/JS）、`Views/Books/BookReaderView.swift`（Aa 页宽禁用）、`client/xHelper/scripts/paged-reader-probe.sh`。
+
+### 2026-11-14 · 批 12 补：列宽两模式一致 + 翻页动画
+
+真机反馈两件事：① 切「上下滚动 / 左右翻页」版面全变（滚动是居中 728 列，翻页是满宽），且翻页模式两边贴边；② 翻页「咔嚓」硬切，没有过渡。
+
+上面「一屏一栏」那条被这次取代：翻页模式**重新读 `--measure`**，Aa 里的「页宽」恢复可用。
+
+| 处理 | 说明 |
+|---|---|
+| 几何统一 | `html.paged .page { padding: 0 28px; max-width: min(calc(var(--measure, 728px) + 56px), 100%); margin: 0 auto }`，`#content` 回到 `width: 100%`。与 `html.book #content` 同一套：外框 = 列宽 + 56，居中。窄面板下正文 = 面板宽 - 56，不再贴边 |
+| 内边距放 `.page` | 放 `#content` 上只作用于首尾栏，中间每页仍贴边，且会污染 `pageSpan() = clientWidth + 64` |
+| 翻页动画 | `animatePage()`：rAF 补间 220ms、ease-out；`prefers-reduced-motion: reduce` 直接跳。动画途中再翻从「目标页」起算，不叠半路位置 |
+| 收尾 | `snapPage()` 动画途中调用 = 取消 rAF 并落到目标页；`restorePosition` / `scrollToAnchor` / 查找命中 / `setReadingMode` 先 `settlePage()`，避免 rAF 把刚设好的位置拖回中间 |
+| 探针 | `0 一屏一栏` 改成采样断言：视口撒 24 点取字符偏移，翻页前后两页的偏移**不得重叠**（一屏塞两栏就会重叠）；同时验 `clientWidth == min(728, 视口-56)`。`7 翻页动画 + 停在整页`：先验「翻完位置没瞬间到位」= 真有补间，再 `snapPage()` 验落整页。探针不再内联覆盖栏宽，直接测模板 CSS |
+
+影响文件同上，另加 `client/xHelper/scripts/book-reader-probe.sh`（`turnPage` 断言中间插 `snapPage()`）。
 

@@ -125,7 +125,7 @@ hook = r"""<script nonce="testnonce">
       return lefts.length ? Math.max.apply(null, lefts) - Math.min.apply(null, lefts) : 0;
     }
 
-    /* ---------- 计划中的分栏 CSS（design.md §5.7） ---------- */
+    /* ---------- 模板自带的翻页 CSS（不再内联覆盖，测的就是线上那套几何） ---------- */
     var style = document.createElement('style');
     style.textContent =
       'html.paged, html.paged body { overflow: hidden; height: 100%; }' +
@@ -133,15 +133,51 @@ hook = r"""<script nonce="testnonce">
     document.head.appendChild(style);
 
     html.classList.add('paged');
+    /* 页宽设置（--measure）决定一栏宽度：显式设成 728，避免探针页没有 `html.book`
+       时变量缺失、整条 max-width 失效（那样测出来的就是一栏 = 视口，漏掉限宽那条） */
+    reader.setTypo({ measure: 728 });
+    void content.offsetHeight;
+
+    /* 采样：视口里撒点，取每个点下面的字符偏移。一屏一栏时，第 N 页与第 N+1 页
+       覆盖的偏移必然前后不重叠；若一屏塞得下两栏，翻一页只挪了半屏，两页就会重叠。 */
+    function sampleOffsets() {
+      var b = content.getBoundingClientRect();
+      var flat = flatMap(), out = [];
+      for (var gy = 0; gy < 6; gy++) {
+        for (var gx = 0; gx < 4; gx++) {
+          var r = document.caretRangeFromPoint(
+            b.left + 8 + (b.width - 16) * gx / 3,
+            b.top + 8 + (b.height - 16) * gy / 5);
+          if (!r || !content.contains(r.startContainer)) continue;
+          var off = offsetOf(flat, r.startContainer, r.startOffset);
+          if (off >= 0) out.push(off);
+        }
+      }
+      return out;
+    }
+
+    content.scrollLeft = 0;
+    var page0 = sampleOffsets();
+    var turnOK = reader.turnPage(1);
+    reader.snapPage();
+    var page1 = sampleOffsets();
+    content.scrollLeft = 0;
+    void content.offsetHeight;
+
+    var max0 = page0.length ? Math.max.apply(null, page0) : -1;
+    var min1 = page1.length ? Math.min.apply(null, page1) : -1;
+    var tmplW = content.clientWidth;
+    var expectW = Math.min(728, window.innerWidth - 56);   /* 一栏 = 页宽，窄了就跟着缩 */
+    add('0 一屏一栏（模板 CSS）',
+        page0.length >= 8 && page1.length >= 8 && turnOK && max0 < min1 &&
+        Math.abs(tmplW - expectW) <= 1,
+        'clientWidth=' + tmplW + '（期望 ' + expectW + '）scrollWidth=' + content.scrollWidth +
+        ' / 第1页取样 ' + page0.length + ' 个（偏移 ≤' + max0 + '）' +
+        ' / 第2页 ' + page1.length + ' 个（偏移 ≥' + min1 + '）' +
+        (max0 < min1 ? ' 不重叠' : ' 重叠!! 一屏不止一栏'));
+
     var avail = Math.max(260, window.innerHeight - content.getBoundingClientRect().top - 36);
-    content.style.width = '728px';
     content.style.height = avail + 'px';
-    content.style.margin = '0 auto';
-    content.style.columnWidth = '728px';
-    content.style.columnGap = '64px';
-    content.style.columnFill = 'auto';
-    content.style.overflowX = 'auto';
-    content.style.overflowY = 'hidden';
     content.scrollLeft = 0;
     void content.offsetHeight;
 
@@ -306,6 +342,33 @@ hook = r"""<script nonce="testnonce">
         '（横跨整条滚动区、超出栏高 → 被裁） / max-height:100% → 高 ' + pctH +
         ' / max-height:' + (avail - 8) + 'px + object-fit:contain → ' +
         Math.round(fixed.width) + '×' + Math.round(fixed.height) + ' / 列高 ' + colH);
+
+    /* ---------- 7 翻页：有动画 + 停在整页 ---------- */
+    /* 起点先故意放在半页：turnPage 必须落到整页边界，不能带着半页偏移累加 */
+    var span = pageSpan;
+    var maxL = Math.max(0, content.scrollWidth - content.clientWidth);
+    function onPage() {
+      var x = content.scrollLeft;
+      if (Math.abs(x - maxL) < 1) return true;   /* 最后一页贴在内容尾部 */
+      return Math.abs(x / span - Math.round(x / span)) < 0.001;
+    }
+    content.scrollLeft = 0;
+    reader.snapPage();
+    reader.turnPage(1);
+    var animated = content.scrollLeft < span * 0.5;   /* 没瞬间跳过去 → 真的有补间 */
+    reader.snapPage();                                 /* 动画途中吸附 = 落到目标页 */
+    var nextOK = onPage() && content.scrollLeft === span;
+    content.scrollLeft = span + Math.round(span / 2);
+    reader.turnPage(1);
+    reader.snapPage();
+    var halfOK = onPage();
+    reader.turnPage(-1);
+    reader.snapPage();
+    var backOK = onPage();
+    add('7 翻页动画 + 停在整页', animated && nextOK && halfOK && backOK,
+        '有动画=' + animated + ' / 从 0 → ' + Math.round(content.scrollLeft) + ' 整页=' + nextOK +
+        ' / 从半页翻后整页=' + halfOK + ' / 再退回整页=' + backOK +
+        '（步长 ' + span + '，末页 ' + maxL + '）');
 
     return JSON.stringify({ rows: rows });
   };

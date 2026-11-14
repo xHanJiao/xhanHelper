@@ -418,7 +418,9 @@ final class BookReaderController: ObservableObject {
                 // 取不到就沿用 pendingOffset —— 绝不能把「不知道」当成 0
                 let off = (value as? NSNumber)?.intValue ?? self.pendingOffset
                 self.pendingOffset = max(0, off)
-                self.updateCurrentTOC(offset: self.pendingOffset)
+                // 这里**不**更新 `currentTOCKey`：`goToSection` 的定位回调早于换节，
+                // 会拿旧节的 `sectionIndex` 把刚点中的目录项算回旧条目（高亮闪一下）。
+                // 高亮只由 `position` 消息（滚动 200ms 采样）与 `chapterReady` 负责。
                 done(off)
             }
         }

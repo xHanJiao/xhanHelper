@@ -411,7 +411,8 @@ struct BrowsePanelView: View {
         switch panel {
         #if os(macOS)
         case .books:
-            // 最近三本：书名 + 章号（未读则「未读」）
+            // 最近三本：书名 + 章号（未读则「未读」）。点行直接进那本书，
+            // 只切到书架面板会让人多点一次（卡片文字区仍走 openPanel）
             return bookVM.books.prefix(3).map { book in
                 let detail: String
                 if let progress = book.progress,
@@ -430,7 +431,10 @@ struct BrowsePanelView: View {
                     title: book.title,
                     detail: detail,
                     icon: .monogram(SidebarHomeFormat.monogram(book.title)),
-                    action: openPanel
+                    action: {
+                        manager.browsePanelSelection = .books
+                        bookVM.openBook = book
+                    }
                 )
             }
         #endif

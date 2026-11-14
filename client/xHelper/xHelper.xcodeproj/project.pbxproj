@@ -22,7 +22,7 @@
 
 /* Begin PBXFileReference section */
 		BB0A7E612FA4138E007BD7D6 /* xHelper-test.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "xHelper-test.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		BB0A7E982FA41490007BD7D6 /* xHelperMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = xHelperMac.app; path = xhanHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0A7E982FA41490007BD7D6 /* xhanHelper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = xhanHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -87,7 +87,7 @@
 			isa = PBXGroup;
 			children = (
 				BB0A7E612FA4138E007BD7D6 /* xHelper-test.app */,
-				BB0A7E982FA41490007BD7D6 /* xHelperMac.app */,
+				BB0A7E982FA41490007BD7D6 /* xhanHelper.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -156,7 +156,7 @@
 				BB0587193013517C00D3DF15 /* BeautifulMermaid */,
 			);
 			productName = xHelperMac;
-			productReference = BB0A7E982FA41490007BD7D6 /* xHelperMac.app */;
+			productReference = BB0A7E982FA41490007BD7D6 /* xhanHelper.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -612,6 +612,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "xHelperMac/xHelperMac-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};

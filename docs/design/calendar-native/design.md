@@ -191,7 +191,7 @@ reminder 工具(Go) → Reminder(pending) → SSE reminders_changed
 
 dev/prod 曾共用同一份 app 身份（同 bundle id `xhanx.cn.xHelperMac`），两个 build 的提醒都会写进**同一个真实日历**，
 同一个待办可能在日历里出现两条。现在 Debug 构建改用独立 bundle id `xhanx.cn.xHelperMac.dev`
-（见 `docs/bugs/067`），并让开关在 Debug 下默认关：
+（见 `docs/bugs/068`），并让开关在 Debug 下默认关：
 
 - `ReminderCalendarMirror.defaultEnabled = !LocalPaths.isDev`，`isEnabled` 与设置页 `@AppStorage` 共用这一处真值。
 - 关着时走既有分支：不新建、不删已成事件、不为维护映射去要授权，提醒回落系统通知。

@@ -252,7 +252,7 @@ class DeviceManager: ObservableObject {
             clearAuthState()
         } catch {
             // 连不上 / 超时 / 5xx ≠ 会话失效：保留登录，只报错。否则后端没起一次就把 token 删了，
-            // 下次启动直接是未登录，双 ⌘ 语音、活动埋点这些常驻能力全跟着失效（docs/bugs/067）
+            // 下次启动直接是未登录，双 ⌘ 语音、活动埋点这些常驻能力全跟着失效（docs/bugs/068）
             LogBuffer.shared.error("verifyToken failed (保留登录): \(error)")
             // 会话还在，3600s 续期定时器必须照常起（do 分支只在成功时才走到）
             startTokenRefresh()

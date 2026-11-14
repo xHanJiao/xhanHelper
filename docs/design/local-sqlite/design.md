@@ -552,7 +552,7 @@ flowchart LR
 
 **同一个 app**（同一份代码、同一份 scheme），靠**构建配置**分环境：**`Debug` → dev，`Release` → prod**。不建第二套 scheme / `.xcconfig`：Swift 侧用现成的 `#if DEBUG`，Go 侧 conf 在 `bundle-backend.sh` 里按 `$CONFIGURATION` 选。
 
-**bundle id 自 2026-11-14 起分家**（`Debug` = `xhanx.cn.xHelperMac.dev`，`Release` = `xhanx.cn.xHelperMac`）：此前两者同 id，`UserDefaults` 域 / `WKWebsiteDataStore`（cookie、localStorage、缓存）/ TCC 授权全共享，dev 一次清 token 就能把 prod 的登录一起清掉 —— 见 `docs/bugs/067`。数据根 / 端口 / 日志 / `APP_ENV` 仍走 `LocalPaths`（`#if DEBUG`），与 bundle id 无关。
+**bundle id 自 2026-11-14 起分家**（`Debug` = `xhanx.cn.xHelperMac.dev`，`Release` = `xhanx.cn.xHelperMac`）：此前两者同 id，`UserDefaults` 域 / `WKWebsiteDataStore`（cookie、localStorage、缓存）/ TCC 授权全共享，dev 一次清 token 就能把 prod 的登录一起清掉 —— 见 `docs/bugs/068`。数据根 / 端口 / 日志 / `APP_ENV` 仍走 `LocalPaths`（`#if DEBUG`），与 bundle id 无关。
 
 | | prod（真身） | dev（沙盒） |
 |---|---|---|
@@ -598,7 +598,7 @@ flowchart LR
 - **dev 永远不能删 prod**：`LocalBackup.delete` / `deleteSafety` 按 env 硬拦（非本环境直接抛错，UI 也不显示「删除」按钮）；跨 env 前缀互不包含由 `LocalBackupIsolationTests` 钉住。
 - **云端 → 本地 prod** 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
 - ~~同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用（`model` / `base_url` 覆盖项**已按环境加后缀分家**，不在此列）。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。~~
-  **已撤销（2026-11-14）**：`Debug` 改用独立 bundle id `xhanx.cn.xHelperMac.dev`，上面这些「共享」不再成立；那次共享还让 dev 清 token / 覆盖 token 直接影响到 prod，见 `docs/bugs/067`。
+  **已撤销（2026-11-14）**：`Debug` 改用独立 bundle id `xhanx.cn.xHelperMac.dev`，上面这些「共享」不再成立；那次共享还让 dev 清 token / 覆盖 token 直接影响到 prod，见 `docs/bugs/068`。
 
 ---
 
@@ -724,4 +724,4 @@ sequenceDiagram
 ## 后续变更
 
 - 2026-11-05：`AutoMigrate` 失败策略统一为**所有环境 `log.Fatalf`**（不再只本地致命、云端只记日志继续）。schema 与代码不一致时拒绝启动，避免运行时才炸或写坏数据。影响文件：`server/internal/app/init_db.go`。
-- 2026-11-14：**`Debug` 构建改用独立 bundle id `xhanx.cn.xHelperMac.dev`**（Release 仍是 `xhanx.cn.xHelperMac`），推翻第 4 期「同一 app 身份」的决定。起因：同身份让两个 build 共用 UserDefaults 域、`WKWebsiteDataStore`（cookie/localStorage/缓存）、TCC 授权，dev 侧一次 `verifyToken` 失败清登录就能把 prod 的 token 一起删掉（见 `docs/bugs/067`）。改在 `project.pbxproj` 的 macOS Debug 配置一行；`LocalPaths.scoped` 那套 key 后缀保留（无害，iOS 仍同身份）。代价一次性：dev 重新登录、重给麦克风/通知权限、调试域里的永久文件授权目录与内置浏览器登录态要重建（密钥项本来按环境分项，跨 build 读取最多弹一次钥匙串授权）、Xcode 自动签名需注册新 App ID。影响文件：`client/xHelper/xHelper.xcodeproj/project.pbxproj`、`Services/BrowserEngineRouter.swift`、`Services/LocalAuthService.swift`、`xHelperMac/LocalSettingsViews.swift`（调试域名的 `defaults write` 说明改指 `.dev`）。
+- 2026-11-14：**`Debug` 构建改用独立 bundle id `xhanx.cn.xHelperMac.dev`**（Release 仍是 `xhanx.cn.xHelperMac`），推翻第 4 期「同一 app 身份」的决定。起因：同身份让两个 build 共用 UserDefaults 域、`WKWebsiteDataStore`（cookie/localStorage/缓存）、TCC 授权，dev 侧一次 `verifyToken` 失败清登录就能把 prod 的 token 一起删掉（见 `docs/bugs/068`）。改在 `project.pbxproj` 的 macOS Debug 配置一行；`LocalPaths.scoped` 那套 key 后缀保留（无害，iOS 仍同身份）。代价一次性：dev 重新登录、重给麦克风/通知权限、调试域里的永久文件授权目录与内置浏览器登录态要重建（密钥项本来按环境分项，跨 build 读取最多弹一次钥匙串授权）、Xcode 自动签名需注册新 App ID。影响文件：`client/xHelper/xHelper.xcodeproj/project.pbxproj`、`Services/BrowserEngineRouter.swift`、`Services/LocalAuthService.swift`、`xHelperMac/LocalSettingsViews.swift`（调试域名的 `defaults write` 说明改指 `.dev`）。

@@ -448,7 +448,7 @@
   - 用户反馈「按住双 ⌘ 出浮层，但一直嘟嘟嘟」。`tick()` 的 30Hz 轮询在失败出口没记
     「本次按下已处理」，每 33ms 重进 `begin()` 再 beep；同时 `verifyToken()` 把「连不上服务器」
     当成会话失效删掉 token，让每次按下都必然失败。根因与修法见
-    `docs/bugs/067-hotkey-fail-beep-storm.md`。
+    `docs/bugs/068-hotkey-fail-beep-storm.md`。
   - 现在两个失败出口置 `cancelled = true`（一次按下最多响一声，松手时照旧重置）；
     `verifyToken()` 只在 401 才清会话，网络错误保留登录。
   - 影响文件：`Services/VoiceHotKeyController.swift`、`Services/DeviceManager.swift`。

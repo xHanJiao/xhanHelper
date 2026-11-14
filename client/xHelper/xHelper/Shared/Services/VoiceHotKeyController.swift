@@ -164,7 +164,7 @@ final class VoiceHotKeyController {
             LogBuffer.shared.warning("[hotkey] 没有后端凭据（窗口没开过？），这次忽略")
             NSSound.beep()
             armed = false
-            // 本次按下已作废：不清 `cancelled` 就会每 33ms 重进这里，beep 连成一片（docs/bugs/067）
+            // 本次按下已作废：不清 `cancelled` 就会每 33ms 重进这里，beep 连成一片（docs/bugs/068）
             cancelled = true
             return
         }

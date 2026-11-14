@@ -589,7 +589,26 @@ private struct ReaderWebView: NSViewRepresentable {
 /// 但 CSS 换成阅读版 —— 不加 A4 的 `595pt` / `12pt` 打印尺寸，改自适应列宽
 /// （`clamp(728px, 68vw, 1100px)`：窄栏维持 728，宽窗按 68% 视口长到 1100 封顶）+ 可调字号，
 /// 并且不铺任何底色（外层是卡片 material）。
-private enum ReaderHTML {
+enum ReaderHTML {
+
+    /// 书阅读器的初始排版（`buildBook` 注入，之后由 `reader.setTypo` 改）
+    struct BookTypography: Equatable {
+        var fontSize: CGFloat = 17
+        var lineHeight: Double = 1.78
+        /// 段间距（em）
+        var paragraphGap: Double = 0.55
+        /// 正文列宽/栏宽
+        var measure: CGFloat = 728
+        var fontFamily: String = #"-apple-system, "PingFang SC", "Helvetica Neue", sans-serif"#
+        /// `scroll` / `paged`
+        var readingMode: String = "scroll"
+
+        var json: String {
+            "{fs:\(String(format: "%.2f", fontSize)),line:\(lineHeight),para:\(paragraphGap),"
+            + "measure:\(String(format: "%.1f", measure)),font:\(MarkdownWebUtils.jsString(fontFamily)),"
+            + "mode:\(MarkdownWebUtils.jsString(readingMode))}"
+        }
+    }
 
     /// mermaid 渲染结果缓存：key = 主题 + 源码。
     /// 换篇会重建 WebView 并重跑 `build`（外层 `.id(doc.id)`），没缓存就每次从零烤
@@ -634,18 +653,38 @@ private enum ReaderHTML {
 
         let tags = parseTagTexts(document.tags)
         let tagsHTML = tags.map { "<span>\(MarkdownWebUtils.escapeHTML($0))</span>" }.joined()
+        let headerHTML = """
+        <div class="doc-title">\(MarkdownWebUtils.escapeHTML(document.title))</div>
+        <div class="doc-tags">\(tagsHTML)</div>
+        <hr class="doc-rule">
+        """
 
         // 每次加载换一个 CSP nonce：只放行本模板的两段脚本，正文里注入的 <script>/内联事件一律不执行。
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
 
         return template
             .replacingOccurrences(of: "__NONCE__", with: nonce)
+            .replacingOccurrences(of: "__MODE__", with: "doc")
+            .replacingOccurrences(of: "__HEADER_HTML__", with: headerHTML)
+            .replacingOccurrences(of: "__BOOK_JSON__", with: "null")
             .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", fontSize))
             .replacingOccurrences(of: "__MARKED_JS__", with: markedJS)
-            .replacingOccurrences(of: "__TITLE_HTML__", with: MarkdownWebUtils.escapeHTML(document.title))
-            .replacingOccurrences(of: "__TAGS_HTML__", with: tagsHTML)
             .replacingOccurrences(of: "__MD_JSON__", with: MarkdownWebUtils.jsString(mdParts.joined(separator: "\n\n")))
             .replacingOccurrences(of: "__IMAGES_JSON__", with: imagesJSON)
+    }
+
+    /// 书阅读器的 HTML：同一份模板，书模式不渲染 markdown（正文由 `setChapter` 灌进来）。
+    static func buildBook(typography: BookTypography) -> String {
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        return template
+            .replacingOccurrences(of: "__NONCE__", with: nonce)
+            .replacingOccurrences(of: "__MODE__", with: "book")
+            .replacingOccurrences(of: "__HEADER_HTML__", with: "")
+            .replacingOccurrences(of: "__BOOK_JSON__", with: typography.json)
+            .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", typography.fontSize))
+            .replacingOccurrences(of: "__MARKED_JS__", with: "")
+            .replacingOccurrences(of: "__MD_JSON__", with: "null")
+            .replacingOccurrences(of: "__IMAGES_JSON__", with: "[]")
     }
 
     /// mermaid 占位 token（纯字母数字，规避 GFM 强调/链接误判），与 PDF 导出同款。
@@ -697,7 +736,7 @@ private enum ReaderHTML {
 
 /// 文档正文里点图放大：mermaid 是 data URI（直接解），配图是绝对 http URL（拉一次）。
 /// 加载好复用 `AttachmentPreviewView`，与聊天图放大同款。
-private struct DocumentImageLightbox: View {
+struct DocumentImageLightbox: View {
     let src: String
     @State private var image: NSImage?
     @State private var failed = false
@@ -1039,13 +1078,57 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .ctxmenu button svg { width: calc(var(--fs) * 0.7); height: calc(var(--fs) * 0.7); opacity: .8; }
 .ctxmenu button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .ctxmenu hr { border: 0; border-top: 1px solid var(--border-soft); margin: 4px 6px; }
+
+/* ============ 书阅读器（BOOK 模式） ============
+   正文是原书 XHTML，排版由这里接管（书自带的 <style>/<link> 在 JS 里剥掉）：
+   字号/行距/段距/列宽/字体全部走 CSS 变量，改一个变量就整篇重排。
+   doc 模式不受影响（这些规则都挂在 html.book 下）。 */
+html.book { --measure: 728px; --line: 1.78; --para: 0.55em; }
+html.book .page { max-width: none; padding: 0; }
+html.book #content {
+  /* 列宽是「正文列」宽度：左右各留 28px 呼吸位，面板窄于列宽时跟着缩 */
+  max-width: calc(var(--measure) + 56px); margin: 0 auto; padding: 26px 28px 64px;
+  font-family: var(--book-font, -apple-system, "PingFang SC", "Helvetica Neue", sans-serif);
+  line-height: var(--line);
+}
+html.book #content p { margin: var(--para) 0; }
+html.book #content h1 { font-size: calc(var(--fs) * 1.45); }
+html.book #content h2 { font-size: calc(var(--fs) * 1.24); border-bottom: 0; padding-bottom: 0; }
+html.book #content h3 { font-size: calc(var(--fs) * 1.1); }
+html.book #content h4, html.book #content h5, html.book #content h6 { font-size: var(--fs); }
+html.book #content img { display: block; margin: 18px auto; }
+html.book #content a { color: inherit; border-bottom: 0; text-decoration: none; }
+html.book #content .chapter-next {
+  margin: 40px auto 0; padding: 10px 0; max-width: 260px;
+  text-align: center; font-size: calc(var(--fs) * 0.82); color: var(--accent);
+  border: 1px solid var(--border); border-radius: 9px; cursor: pointer;
+  user-select: none;
+}
+html.book #content .chapter-next:hover { background: var(--accent-soft); }
+
+/* 翻页模式：`#content` 自己就是 pager（多栏 + 横向滚动）。
+   宽度必须等于栏宽，否则列会被拉伸、页宽设置失效（探针实测，见 design §5.7）。 */
+html.paged, html.paged body { overflow: hidden; height: 100%; }
+html.paged .page { height: 100%; padding: 0; }
+html.paged #content {
+  /* 栏宽不能超过可用宽度（右栏面板常比 728 窄）：超出会把整页横向顶出去 */
+  width: min(var(--measure), 100%); max-width: 100%;
+  height: calc(100% - 8px); margin: 4px auto 0; padding: 0;
+  column-width: var(--measure); column-gap: 64px; column-fill: auto;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+}
+html.paged #content::-webkit-scrollbar { display: none; }
+/* 竖长图不约束会被分栏切成横跨整条滚动区的长条，且超出栏高的部分被静默裁掉 */
+html.paged #content img { max-width: 100%; max-height: 100%; object-fit: contain; }
+html.paged #content pre, html.paged #content table, html.paged #content figure,
+html.paged #content blockquote { break-inside: avoid; }
+html.paged #content h1, html.paged #content h2, html.paged #content h3 { break-after: avoid; }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="doc-title">__TITLE_HTML__</div>
-  <div class="doc-tags">__TAGS_HTML__</div>
-  <hr class="doc-rule">
+  __HEADER_HTML__
   <div id="content"></div>
 </div>
 
@@ -1101,6 +1184,8 @@ __MARKED_JS__
 <script nonce="__NONCE__">
 var reader = (function () {
   var content = document.getElementById('content');
+  var MODE = '__MODE__';        /* 'doc' | 'book' */
+  var BOOK = MODE === 'book';
   var findRanges = [];
   var findIdx = -1;
 
@@ -1134,7 +1219,8 @@ var reader = (function () {
        批注 relocate 必然失败。图片本来就不参与 flat，跳过占位保持一致。 */
     var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
       acceptNode: function (n) {
-        return n.parentNode && n.parentNode.closest && n.parentNode.closest('.blocked-img')
+        return n.parentNode && n.parentNode.closest
+          && n.parentNode.closest('.blocked-img, .chapter-next')
           ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
       }
     });
@@ -1524,6 +1610,7 @@ var reader = (function () {
   var anchorHoldUntil = 0;
   window.addEventListener('resize', function () {
     anchorHoldUntil = Date.now() + 400;
+    if (BOOK) { restorePosition(lastOff); return; }
     restoreAnchor();
   });
 
@@ -1531,7 +1618,16 @@ var reader = (function () {
      一滚就把工具条/菜单收起来（菜单挂靠在选区坐标上，正文一移就错位），并发 scroll 让 Swift 重取连线位置。
      顺手记一次阅读锚点：这是「读者现在看哪」的唯一取样点（重排不由我们触发）。 */
   window.addEventListener('scroll', function () {
-    if (Date.now() > anchorHoldUntil) captureAnchor();
+    if (Date.now() > anchorHoldUntil) {
+      if (BOOK) {
+        /* 拍平整章不便宜，滚动期间按 200ms 采样：既更新 lastOff，也把位置发给 Swift
+           （顶栏/底栏的「当前目录条目」靠它跟着滚，保存仍由 Swift 侧节流） */
+        var now = Date.now();
+        if (now - lastPosAt > 200) { lastPosAt = now; post({ type: 'position', offset: position() }); }
+      } else {
+        captureAnchor();
+      }
+    }
     hideAll();
     post({ type: 'scroll' });
   }, true);
@@ -1611,8 +1707,9 @@ var reader = (function () {
       neText.value = '';
     }
     updateSaveLabel();
-    /* 编辑态不给「让 AI 回答」：批注已存在，AI 入口在右侧卡片上（note 非空、0 回复时显示「让 AI 回复」） */
-    neAsk.style.display = id ? 'none' : '';
+    /* 编辑态不给「让 AI 回答」：批注已存在，AI 入口在右侧卡片上（note 非空、0 回复时显示「让 AI 回复」）。
+       书模式一律没有（本地批注没有回复线程）。 */
+    neAsk.style.display = (id || BOOK) ? 'none' : '';
 
     editor.classList.add('open');
     var anchor = anchorRect(id);
@@ -1689,6 +1786,19 @@ var reader = (function () {
     }
     var sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;   /* 正在选词 */
+
+    /* 翻页模式点击分区：左 28% 上一栏 / 右 28% 下一栏 / 中间不拦截（design §5.7）。
+       链接、划线、气泡、章末按钮各有自己的行为，不让位。 */
+    if (BOOK && paged()) {
+      var box = content.getBoundingClientRect();
+      var onWidget = e.target.closest ? e.target.closest('a, mark.hl, .ann-bubble, .chapter-next') : null;
+      if (!onWidget) {
+        var x = e.clientX - box.left;
+        if (x < box.width * 0.28) { turnPage(-1); return; }
+        if (x > box.width * 0.72) { turnPage(1); return; }
+      }
+    }
+
     var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
     if (!t) { hideCtx(); return; }
     var id = t.dataset.id || t.dataset.for;
@@ -1729,6 +1839,14 @@ var reader = (function () {
     if (findIdx < 0 || findIdx >= findRanges.length) return;
     var rect = findRanges[findIdx].getBoundingClientRect();
     /* 顶部留一点余量，别让命中项贴着上边缘。Range 没有 scrollIntoView，只能自己算 */
+    if (paged()) {
+      /* 翻页模式：命中在别的栏里 → 把那一栏横向滚进视口（design §5.7） */
+      var box = content.getBoundingClientRect();
+      if (rect.left < box.left - 1 || rect.right > box.right + 1) {
+        content.scrollLeft += (rect.left - box.left) - 40;
+      }
+      return;
+    }
     window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - 120), behavior: 'smooth' });
   }
 
@@ -1793,6 +1911,8 @@ var reader = (function () {
   }
 
   function setFontSize(px) {
+    /* 书模式按「字符偏移」回位（字号一变整章重排，像素锚点没有意义） */
+    if (BOOK) { setTypo({ fs: px }); return; }
     /* 字号一变整篇重排，与栏宽变化是同一个坑：像素级滚动位置保不住「在看哪句」。 */
     captureAnchor();
     document.documentElement.style.setProperty('--fs', px + 'px');
@@ -1870,7 +1990,274 @@ var reader = (function () {
     });
   }
 
-  render(__MD_JSON__, __IMAGES_JSON__);
+  /* ============ 书阅读器（BOOK）============
+     正文由 Swift 逐章灌进来（`setChapter`），进度口径是「视口左上角那个字的拍平偏移」
+     （design §5.5）。划线与 doc 模式共用同一套 locate / wrapSpan / 浮层，只是数据来自本地
+     `annotations.json`（Swift 每次增删改后全量重推）。 */
+  var lastOff = 0;
+  var lastPosAt = 0;
+
+  function paged() { return document.documentElement.classList.contains('paged'); }
+
+  /* 一页的横向步长 = 实际栏宽 + 栏间距（与 CSS 的 column-gap 一致）。
+     不能用 `--measure`：面板比设定页宽窄时，栏宽已经被 `min()` 压到可用宽度。 */
+  function pageSpan() {
+    var w = content.clientWidth;
+    if (!isFinite(w) || w <= 0) w = 728;
+    return w + 64;
+  }
+
+  function scrollToStart() {
+    if (paged()) content.scrollLeft = 0;
+    else window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  /* 视口左上角那个字的偏移。翻页模式下就是「当前栏第一行」那个字。
+     `box.top` 在纵向滚动模式下可能是负的（正文列比视口高），必须夹到视口内，
+     否则 `caretRangeFromPoint` 拿到布局外的点，永远回 0。 */
+  /* 「读到哪」的取样点与 restorePosition 的落点必须是同一个像素偏移，
+     否则每次改字号/换模式都会往前后滚半行（实测差 42 个字）。 */
+  var READ_PAD_TOP = 24, READ_PAD_LEFT = 8;
+
+  function position() {
+    var box = content.getBoundingClientRect();
+    var x = box.left + READ_PAD_LEFT;
+    var y = Math.max(box.top, 0) + READ_PAD_TOP;
+    var caret = document.caretRangeFromPoint(x, y);
+    if (!caret || !content.contains(caret.startContainer)) return lastOff;
+    var off = flatOffset(flatten(), caret.startContainer, caret.startOffset);
+    if (off >= 0) lastOff = off;
+    return lastOff;
+  }
+
+  /* 按字符偏移把同一句放回视口顶部。找不到（章节刚换 / 偏移越界）就回到开头。 */
+  function restorePosition(off) {
+    if (!off || off <= 0) { scrollToStart(); return; }
+    var flat = flatten();
+    if (!flat.nodes.length) { scrollToStart(); return; }
+    var start = Math.min(Math.max(0, off), Math.max(0, flat.text.length - 1));
+    var range = rangeAt(flat, start, start + 1);
+    if (!range) { scrollToStart(); return; }
+    var rect = range.getBoundingClientRect();
+    if (paged()) {
+      var box = content.getBoundingClientRect();
+      content.scrollLeft += (rect.left - box.left) - READ_PAD_LEFT;
+    } else {
+      window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - READ_PAD_TOP), behavior: 'auto' });
+    }
+    lastOff = off;
+  }
+
+  /* 书里的相对路径（图片、SVG <image>）按「章节所在目录」转成绝对 file://：
+     WebView 的 baseURL 固定是 content/ 根，章节可能在 OEBPS/Text/ 里。 */
+  function rewriteResources(dirURL) {
+    if (!dirURL) return;
+    function abs(v) {
+      v = String(v || '').trim();
+      if (!v || /^(data:|blob:|https?:|file:|#)/i.test(v)) return v;
+      try { return new URL(v, dirURL).href; } catch (e) { return v; }
+    }
+    [].forEach.call(content.querySelectorAll('img, image'), function (el) {
+      var raw = el.getAttribute('src') || el.getAttribute('xlink:href') || el.getAttribute('href');
+      if (!raw) return;
+      var full = abs(raw);
+      el.setAttribute('src', full);
+      if (el.tagName.toLowerCase() === 'image') {
+        el.setAttribute('xlink:href', full);
+        el.removeAttribute('href');
+      }
+    });
+    /* 跨章链接 / 外链：本阅读器不做书内导航，去掉 href 保留文字，别点一下就白页 */
+    [].forEach.call(content.querySelectorAll('a[href]'), function (a) {
+      if ((a.getAttribute('href') || '').charAt(0) === '#') return;
+      a.removeAttribute('href');
+    });
+  }
+
+  /* 取锚点元素：EPUB 的目录锚点既可能是 id，也可能是 <a name="…"> */
+  function anchorElement(frag) {
+    if (!frag) return null;
+    var byID = document.getElementById(frag);
+    if (byID) return byID;
+    try { return content.querySelector('[name="' + String(frag).replace(/["\\]/g, '') + '"]'); }
+    catch (e) { return null; }
+  }
+
+  function setChapter(html, dirURL, hasNext) {
+    try {
+      applyChapter(html, dirURL, hasNext);
+      post({ type: 'chapterReady' });
+    } catch (e) {
+      /* 任何异常都必须回一条，Swift 侧才不会一直显示「加载中」 */
+      post({ type: 'chapterReady', error: String((e && e.message) || e) });
+    }
+  }
+
+  function applyChapter(html, dirURL, hasNext) {
+    unwrapAll();
+    pendingRange = null;
+    annotations = [];          /* Swift 随即推本章的列表 */
+    /* 换正文前把浮层收掉：选区工具条挂在旧正文的坐标上，批注浮层里没保存的草稿也会变成废引用 */
+    hideAll();
+    editor.classList.remove('open');
+    editingId = null;
+    findRanges = [];
+    findIdx = -1;
+    paint();
+    content.innerHTML = String(html || '');
+    /* 书自带样式表会覆盖我们的排版（字号/行距/页宽全失效）；harden 负责删 <link> */
+    [].forEach.call(content.querySelectorAll('style'), function (n) {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+    rewriteResources(dirURL);
+    harden(content);
+    /* 出版社的 inline style（字号/颜色/position/display）会盖掉我们的排版，
+       深色模式下还可能变成白底黑字或整段隐形 —— 一律剥掉（design §5.2） */
+    [].forEach.call(content.querySelectorAll('[style]'), function (el) {
+      el.removeAttribute('style');
+    });
+    content.normalize();
+    if (hasNext) {
+      var next = document.createElement('div');
+      next.className = 'chapter-next ui';
+      next.textContent = '继续 ›';   /* 节级：下一节，本章最后一节之后是下一章第一节 */
+      next.addEventListener('click', function (e) {
+        e.preventDefault();
+        post({ type: 'nextSection' });
+      });
+      content.appendChild(next);
+    }
+    scrollToStart();
+    lastOff = 0;
+  }
+
+  /* 锚点 → 拍平偏移表。Swift 用它算「当前读到目录里的哪一条」，滚动时也跟着变。 */
+  function collectAnchors(idsJSON) {
+    var ids = [];
+    try { ids = JSON.parse(idsJSON) || []; } catch (e) { ids = []; }
+    var flat = flatten();
+    var out = [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = String(ids[i]);
+      var el = anchorElement(id);
+      if (!el) continue;
+      var off = -1;
+      for (var j = 0; j < flat.nodes.length; j++) {
+        var node = flat.nodes[j].node;
+        if (el.contains(node)) { off = flat.nodes[j].start; break; }
+        /* 空锚点（`<a id="s1"/>`）自身没有文本：取它之后的第一个文本节点 */
+        if (el.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
+          off = flat.nodes[j].start;
+          break;
+        }
+      }
+      if (off >= 0) out.push({ id: id, offset: off });
+    }
+    return JSON.stringify(out);
+  }
+
+  /* 跳到章内锚点（目录点击 / 跨章跳转都走这里） */
+  function scrollToAnchor(frag) {
+    var el = anchorElement(frag);
+    if (!el) { scrollToStart(); post({ type: 'position', offset: 0 }); return false; }
+    var rect = el.getBoundingClientRect();
+    if (paged()) {
+      var box = content.getBoundingClientRect();
+      content.scrollLeft += (rect.left - box.left);
+    } else {
+      window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - READ_PAD_TOP), behavior: 'auto' });
+    }
+    post({ type: 'position', offset: position() });
+    return true;
+  }
+
+  function applyVars(opts) {
+    if (!opts) return;
+    var root = document.documentElement.style;
+    if (typeof opts.fs === 'number') root.setProperty('--fs', opts.fs + 'px');
+    if (typeof opts.line === 'number') root.setProperty('--line', String(opts.line));
+    if (typeof opts.para === 'number') root.setProperty('--para', opts.para + 'em');
+    if (typeof opts.measure === 'number') root.setProperty('--measure', opts.measure + 'px');
+    if (typeof opts.font === 'string' && opts.font) root.setProperty('--book-font', opts.font);
+  }
+
+  /* 排版改动（字号/行距/段距/页宽/字体）：记位置 → 改 → 回位 */
+  function setTypo(opts) {
+    var off = position();
+    applyVars(opts);
+    void content.offsetHeight;
+    restorePosition(off);
+    post({ type: 'position', offset: off });
+  }
+
+  /* 上下滚动 ⇄ 左右翻页。两套滚动容器互不相干，换完按字符偏移找回同一句。 */
+  function setReadingMode(mode) {
+    var wantPaged = mode === 'paged';
+    if (wantPaged === paged()) { restorePosition(lastOff); return; }
+    var off = position();
+    document.documentElement.classList.toggle('paged', wantPaged);
+    content.scrollLeft = 0;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    void content.offsetHeight;
+    restorePosition(off);
+    post({ type: 'position', offset: off });
+  }
+
+  function turnPage(delta) {
+    if (!paged()) return false;
+    var max = Math.max(0, content.scrollWidth - content.clientWidth);
+    var before = content.scrollLeft;
+    content.scrollLeft = Math.max(0, Math.min(max, before + delta * pageSpan()));
+    return content.scrollLeft !== before;
+  }
+
+  /* 首屏：书模式的初始排版（之后全部走 setTypo / setReadingMode） */
+  function applyBookTypography(opts) {
+    /* 书排版的所有规则都挂在 `html.book` 下 —— 这个类不加，字号/行距/页宽整组失效 */
+    document.documentElement.classList.add('book');
+    if (!opts) return;
+    applyVars(opts);
+    document.documentElement.classList.toggle('paged', opts.mode === 'paged');
+  }
+
+  /* 触控板/滚轮：纵向滚 → 横向翻栏（翻页模式专用，非 passive 才能挡掉竖向滚动） */
+  document.addEventListener('wheel', function (e) {
+    if (!BOOK || !paged()) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;   /* 横向手势交给原生 */
+    e.preventDefault();
+    content.scrollLeft += e.deltaY;
+  }, { passive: false });
+
+  /* 键盘（design §9.5）：翻页模式 ←/→ 翻栏；滚动模式空格/PageUp/PageDown 翻一屏。
+     ⌘/⌥ 组合一律放过（⌘F、⌥⌘←/→ 由 SwiftUI 侧接管）；正在选字时不抢键。 */
+  document.addEventListener('keydown', function (e) {
+    if (!BOOK || e.metaKey || e.ctrlKey || e.altKey) return;
+    var sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (!paged()) return;
+      e.preventDefault();
+      turnPage(e.key === 'ArrowRight' ? 1 : -1);
+      return;
+    }
+    if (e.key === ' ' || e.key === 'PageDown' || e.key === 'PageUp') {
+      if (paged()) return;
+      e.preventDefault();
+      var forward = !(e.key === 'PageUp' || e.shiftKey);
+      window.scrollBy({ top: (forward ? 1 : -1) * window.innerHeight * 0.85, behavior: 'smooth' });
+    }
+  });
+
+  if (BOOK) {
+    /* 书没有「让 AI 回答」（本地书、没有服务端回复线程） */
+    neAsk.style.display = 'none';
+  }
+
+  if (BOOK) {
+    applyBookTypography(__BOOK_JSON__);
+  } else {
+    render(__MD_JSON__, __IMAGES_JSON__);
+  }
   post({ type: 'ready' });
 
   return {
@@ -1883,7 +2270,16 @@ var reader = (function () {
     restoreScrollY: restoreScrollY,
     setAnnotations: setAnnotations,
     scrollToAnnotation: scrollToAnnotation,
-    annotationRect: annotationRect
+    annotationRect: annotationRect,
+    /* 书模式 */
+    setChapter: setChapter,
+    scrollToAnchor: scrollToAnchor,
+    collectAnchors: collectAnchors,
+    position: position,
+    restorePosition: restorePosition,
+    setTypo: setTypo,
+    setReadingMode: setReadingMode,
+    turnPage: turnPage
   };
 })();
 </script>

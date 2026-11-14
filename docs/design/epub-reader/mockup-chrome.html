@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>EPUB 阅读器 · chrome 变体</title>
+<style>
+:root{
+  --fs:20px; --lh:1.78; --para:11px; --measure:728px;
+  --text:#3B2E1F; --accent:#2F7D63; --accent-2:#41C9E2;
+  --bg:#F7EEDD; --bg-deep:#EFE2C8;
+  --surface:#F2F7F3; --tool:#E8E4EF;
+  --muted:rgba(59,46,31,.55);
+  --border:rgba(59,46,31,.12);
+  --card:rgba(255,255,255,.66);
+  --shadow:0 18px 60px rgba(59,46,31,.16);
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+[data-theme="dark"]{
+  --text:#FFFFFF; --accent:#92C8B4;
+  --bg:#1C1C1E; --bg-deep:#141416;
+  --surface:#2C2E2D; --tool:#2E2B36;
+  --muted:rgba(255,255,255,.56);
+  --border:rgba(255,255,255,.14);
+  --card:rgba(44,46,45,.72);
+  --shadow:0 18px 60px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(1200px 600px at 15% 0%, color-mix(in srgb, var(--bg-deep) 85%, transparent), transparent 60%),
+    radial-gradient(900px 520px at 90% 100%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 55%),
+    var(--bg);
+  -webkit-font-smoothing:antialiased;
+  padding:34px 24px 120px;
+}
+.stagewrap{max-width:1180px;margin:0 auto}
+.hintline{font-size:12px;color:var(--muted);margin:0 0 14px 4px}
+
+/* ===== 右栏卡片（840 宽，右侧栏默认宽度） ===== */
+.card{
+  position:relative;width:840px;height:680px;margin:0 auto;
+  background:var(--card);
+  border:0.5px solid var(--border);
+  border-radius:14px;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+  backdrop-filter:blur(18px) saturate(160%);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
+}
+
+/* ===== 顶部 chrome ===== */
+.topbar{
+  position:absolute;left:0;right:0;top:0;height:44px;z-index:20;
+  display:flex;align-items:center;gap:8px;padding:0 12px;
+  background:color-mix(in srgb, var(--card) 82%, transparent);
+  border-bottom:0.5px solid var(--border);
+  backdrop-filter:blur(20px) saturate(160%);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);
+  transition:opacity .22s ease, transform .22s ease;
+}
+.topbar .back{
+  display:flex;align-items:center;gap:3px;font-size:12px;color:var(--muted);
+  border:0;background:none;cursor:pointer;padding:4px 2px;
+}
+.topbar .btitle{font-size:13px;font-weight:600;line-height:1;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar .sep{width:1px;height:14px;background:var(--border)}
+.topbar .chap{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.topbar .grow{flex:1}
+.iconbtn{
+  width:26px;height:26px;border-radius:7px;border:0;background:none;color:var(--muted);
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;
+}
+.iconbtn:hover{background:color-mix(in srgb, var(--text) 8%, transparent);color:var(--text)}
+.iconbtn.on{color:var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.iconbtn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* ===== 正文 ===== */
+.content{
+  position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;
+  padding:74px 24px 96px;
+  scrollbar-width:none;
+}
+.content::-webkit-scrollbar{display:none}
+.page{
+  max-width:var(--measure);margin:0 auto;
+  font-size:var(--fs);line-height:var(--lh);
+}
+.page h1{font-size:calc(var(--fs)*1.42);line-height:1.35;font-weight:650;margin:0 0 6px}
+.page .meta{font-size:calc(var(--fs)*.62);color:var(--muted);margin:0 0 26px}
+.page p{margin:0 0 var(--para)}
+.page p:last-of-type{margin-bottom:0}
+.page .end{
+  margin-top:34px;padding-top:18px;border-top:1px solid var(--border);
+  display:flex;justify-content:flex-end;
+}
+.page .end button{
+  font:inherit;font-size:13px;color:var(--accent);background:none;border:0;cursor:pointer;
+}
+
+/* ===== 底部 chrome ===== */
+.bottombar{
+  position:absolute;left:0;right:0;bottom:0;height:46px;z-index:20;
+  display:flex;align-items:center;gap:10px;padding:0 12px;
+  background:color-mix(in srgb, var(--card) 84%, transparent);
+  border-top:0.5px solid var(--border);
+  backdrop-filter:blur(20px) saturate(160%);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);
+  transition:opacity .22s ease, transform .22s ease;
+}
+.bottombar .chapname{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}
+.track{position:relative;flex:1;height:14px;display:flex;align-items:center;cursor:pointer}
+.track .rail{position:absolute;left:0;right:0;height:3px;border-radius:99px;background:color-mix(in srgb, var(--text) 12%, transparent)}
+.track .fill{position:absolute;left:0;height:3px;border-radius:99px;background:color-mix(in srgb, var(--accent) 72%, transparent);width:42%}
+.track .thumb{position:absolute;left:42%;width:9px;height:9px;margin-left:-4.5px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent)}
+.track .tip{
+  position:absolute;bottom:22px;left:50%;transform:translateX(-50%);
+  background:var(--tool);color:var(--text);border:0.5px solid var(--border);
+  font-size:10.5px;padding:3px 7px;border-radius:6px;white-space:nowrap;
+  opacity:0;transition:opacity .15s;pointer-events:none;
+}
+.track:hover .tip{opacity:1}
+.bottombar .pct{font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:32px;text-align:right}
+
+/* 底栏常隐（auto）：底部保留一条 2px 进度线，hover 底部区域唤出 */
+.bottombar.hidden{opacity:0;transform:translateY(8px);pointer-events:none}
+.bottomline{
+  position:absolute;left:0;right:0;bottom:0;height:2px;z-index:19;
+  background:color-mix(in srgb, var(--accent) 62%, transparent);
+  opacity:0;transition:opacity .18s;
+}
+.stage.chrome-auto .bottomline{opacity:.9}
+.bottomhot{position:absolute;left:0;right:0;bottom:0;height:52px;z-index:21;display:none}
+.stage.chrome-auto .bottomhot{display:block}
+.bottomhot:hover ~ .bottombar{opacity:1;transform:none;pointer-events:auto}
+
+/* 沉浸（immersive）：点中间整体显隐 */
+.stage.chrome-immersive.chrome-off .topbar,
+.stage.chrome-immersive.chrome-off .bottombar{opacity:0;transform:translateY(-4px);pointer-events:none}
+.stage.chrome-immersive.chrome-off .bottomline{opacity:.55}
+.floating-back{
+  position:absolute;left:12px;top:12px;z-index:24;
+  width:30px;height:30px;border-radius:50%;border:0.5px solid var(--border);
+  background:color-mix(in srgb, var(--card) 80%, transparent);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  display:none;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;
+}
+.stage.chrome-immersive.chrome-off .floating-back{display:flex}
+
+/* ===== 翻页模式 ===== */
+.stage.paged .content{overflow:hidden;padding-bottom:74px}
+.stage.paged .page{height:100%;overflow:hidden}
+.zone{position:absolute;top:44px;bottom:0;z-index:5;display:none;align-items:center;justify-content:center;cursor:pointer}
+.stage.paged .zone{display:flex}
+.zone.left{left:0;width:28%}
+.zone.right{right:0;width:28%}
+.zone.mid{left:28%;right:28%;cursor:default}
+.zone.left .cv,.zone.right .cv{opacity:0;transition:opacity .18s;font-size:22px;color:var(--muted)}
+.zone.left:hover .cv,.zone.right:hover .cv{opacity:.7}
+.pagebadge{
+  position:absolute;right:16px;bottom:60px;z-index:6;display:none;
+  font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;
+}
+.stage.paged .pagebadge{display:block}
+.stage.chrome-immersive.chrome-off .pagebadge{bottom:16px}
+
+/* ===== Aa 设置弹层 ===== */
+.pop{
+  position:absolute;right:14px;bottom:54px;z-index:40;width:308px;
+  background:color-mix(in srgb, var(--card) 96%, transparent);
+  border:0.5px solid var(--border);border-radius:12px;
+  box-shadow:0 16px 44px rgba(0,0,0,.18);
+  padding:12px 14px;display:none;
+}
+.pop.open{display:block}
+.pop h3{font-size:11px;font-weight:600;color:var(--muted);margin:0 0 10px;letter-spacing:.02em}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0}
+.row .lbl{font-size:12px}
+.seg{display:inline-flex;background:color-mix(in srgb, var(--text) 6%, transparent);border-radius:7px;padding:2px}
+.seg button{
+  border:0;background:none;font:inherit;font-size:11px;color:var(--muted);
+  padding:4px 9px;border-radius:5px;cursor:pointer;white-space:nowrap;
+}
+.seg button.on{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.10)}
+.stepper{display:inline-flex;align-items:center;gap:2px}
+.stepper button{
+  width:24px;height:22px;border:0;border-radius:5px;background:color-mix(in srgb, var(--text) 6%, transparent);
+  color:var(--text);font-size:13px;cursor:pointer;
+}
+.stepper span{font-size:11.5px;min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
+.pop .hint{font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+
+/* ===== 失败卡片（场景 2） ===== */
+.scene{display:none}
+.scene.on{display:block}
+.errors{display:grid;grid-template-columns:repeat(3,244px);gap:16px;justify-content:center;margin:34px auto 0}
+.ecard{background:var(--card);border:0.5px solid var(--border);border-radius:12px;padding:10px;box-shadow:var(--shadow)}
+.ecover{position:relative;aspect-ratio:3/4;border-radius:9px;background:color-mix(in srgb, var(--text) 7%, transparent);border:0.5px solid var(--border);overflow:hidden}
+.ecover .spine{position:absolute;left:0;top:0;bottom:0;width:3px;background:color-mix(in srgb, var(--accent) 35%, transparent)}
+.ecover .t{position:absolute;left:14px;right:12px;top:14px;font-size:13px;font-weight:600;color:color-mix(in srgb, var(--text) 85%, transparent);line-height:1.4}
+.badge{position:absolute;left:8px;bottom:8px;font-size:10px;font-weight:600;padding:3px 7px;border-radius:99px;background:color-mix(in srgb, var(--text) 82%, transparent);color:var(--bg)}
+.etitle{font-size:12.5px;font-weight:600;margin:9px 2px 3px}
+.ereason{font-size:10.5px;color:var(--muted);line-height:1.45;margin:0 2px 8px}
+.eacts{display:flex;gap:10px;margin:0 2px 2px}
+.eacts button{border:0;background:none;padding:0;font:inherit;font-size:11px;color:var(--accent);cursor:pointer}
+
+/* ===== 演示控制条 ===== */
+.ui{
+  position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
+  max-width:min(1180px, calc(100vw - 40px));
+  background:color-mix(in srgb, var(--card) 94%, transparent);
+  border:0.5px solid var(--border);border-radius:12px;padding:9px 12px;
+  box-shadow:0 10px 30px rgba(0,0,0,.12);z-index:100;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+}
+.ui .u-lbl{font-size:11px;color:var(--muted)}
+.ui .seg button{font-size:11px}
+.ui input[type=range]{width:110px;accent-color:var(--accent)}
+.ui .sep{width:1px;height:18px;background:var(--border)}
+</style>
+</head>
+<body>
+<div class="stagewrap">
+  <p class="hintline" id="hint"></p>
+
+  <!-- ================= 场景 1：阅读页 ================= -->
+  <div class="scene on" id="sceneReader">
+    <div class="card">
+      <div class="stage chrome-always" id="stage">
+
+        <!-- 正文 -->
+        <div class="content" id="content">
+          <div class="page" id="pageText">
+            <h1 id="chapterTitle">2.2 收入与消费</h1>
+            <p class="meta" id="chapterMeta">贫穷的本质 · 阿比吉特·班纳吉</p>
+            <p>我们通常把贫穷理解为收入的函数：只要收入足够低，就可以称为穷人。但真正让贫穷持久的，并不是某一时点的收入水平，而是收入在时间上的不可积累性。</p>
+            <p>在印度北部的田野调查里，研究者反复看到同一种循环：一场疾病、一次婚丧、一季歉收，就把一个家庭十年的积蓄抹平。储蓄不是不存在，而是无法跨越这些冲击。</p>
+            <p>这也解释了为什么单纯提高当期收入的政策常常失效。钱进来了，风险还在原地；只要风险还在，家庭就会把新增的收入转化为更耐冲击的资产形式，而不是投入到能带来长期回报的教育或生产工具里。</p>
+            <p>于是我们看到一个反直觉的结论：贫穷不是缺少意志，而是缺少把意志变成资产的通道。</p>
+            <div class="end"><button id="nextChapter">下一章 ›</button></div>
+          </div>
+        </div>
+
+        <!-- 翻页点击区 -->
+        <div class="zone left" id="zoneLeft" title="上一页"><span class="cv">‹</span></div>
+        <div class="zone mid" id="zoneMid" title="轻点中间：显隐工具栏"></div>
+        <div class="zone right" id="zoneRight" title="下一页"><span class="cv">›</span></div>
+
+        <div class="pagebadge" id="pageBadge">第 2 页 / 共 9 页</div>
+
+        <!-- 顶部 chrome -->
+        <div class="topbar" id="topbar">
+          <button class="back">‹ 书架</button>
+          <span class="sep"></span>
+          <span class="btitle" id="bookTitle">贫穷的本质</span>
+          <span class="grow"></span>
+          <span class="chap" id="chapterLabel">第 3/10 章</span>
+          <button class="iconbtn" title="上一章（⌥⌘←）">
+            <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <button class="iconbtn" title="下一章（⌥⌘→）">
+            <svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+          </button>
+          <button class="iconbtn" id="tocBtn" title="目录">
+            <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.5M3 12h.5M3 18h.5"/></svg>
+          </button>
+          <button class="iconbtn" title="本章查找（⌘F）">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+          </button>
+          <button class="iconbtn" title="划线与批注（⌘⇧A）">
+            <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+          </button>
+        </div>
+
+        <button class="floating-back" id="floatingBack" title="返回书架（Esc）">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+
+        <!-- 底部 chrome -->
+        <div class="bottomline" id="bottomLine"></div>
+        <div class="bottomhot"></div>
+        <div class="bottombar" id="bottombar">
+          <span class="chapname" id="bottomChap">2.2 收入与消费</span>
+          <div class="track" id="track">
+            <div class="rail"></div>
+            <div class="fill" id="fill"></div>
+            <div class="thumb" id="thumb"></div>
+            <div class="tip" id="pctTip">第 3/10 章 · 42%</div>
+          </div>
+          <span class="pct" id="pctText"></span>
+          <button class="iconbtn" id="tocBtn2" title="目录">
+            <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.5M3 12h.5M3 18h.5"/></svg>
+          </button>
+          <button class="iconbtn" title="划线与批注">
+            <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+          </button>
+          <button class="iconbtn" id="aaBtn" title="阅读设置">
+            <svg viewBox="0 0 24 24"><path d="M4 19l6-14 6 14M6.6 14h6.8M17 19V9M15 9h4"/></svg>
+          </button>
+        </div>
+
+        <!-- Aa 弹层 -->
+        <div class="pop" id="pop">
+          <h3>阅读设置（全局生效）</h3>
+          <div class="row">
+            <span class="lbl">翻页</span>
+            <div class="seg" id="segMode">
+              <button data-v="scroll" class="on">上下滚动</button>
+              <button data-v="paged">左右翻页</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="lbl">字号</span>
+            <div class="stepper">
+              <button id="fsMinus">−</button><span id="fsValue">100%</span><button id="fsPlus">+</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="lbl">行距</span>
+            <div class="seg" id="segLh">
+              <button data-v="1.55">紧凑</button>
+              <button data-v="1.78" class="on">标准</button>
+              <button data-v="2.0">宽松</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="lbl">段距</span>
+            <div class="seg" id="segPara">
+              <button data-v="6">紧凑</button>
+              <button data-v="11" class="on">标准</button>
+              <button data-v="18">宽松</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="lbl">页宽</span>
+            <div class="seg" id="segMeasure">
+              <button data-v="640">窄</button>
+              <button data-v="728" class="on">标准</button>
+              <button data-v="860">宽</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="lbl">字体</span>
+            <div class="seg" id="segFont">
+              <button data-v="sys" class="on">系统</button>
+              <button data-v="serif">衬线</button>
+            </div>
+          </div>
+          <div class="hint">背景跟随 app 主题（浅 / 深）；划线颜色二期再加。</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 场景 2：导入失败卡片文案 ================= -->
+  <div class="scene" id="sceneErrors">
+    <p class="hintline" style="text-align:center">失败卡片：封面变灰 + 徽章 + 一行原因；完整解释放 tooltip。</p>
+    <div class="errors">
+      <div class="ecard">
+        <div class="ecover"><div class="spine"></div><div class="t">三体</div><div class="badge">DRM 保护</div></div>
+        <div class="etitle">三体</div>
+        <p class="ereason">内容已加密，无法读取</p>
+        <div class="eacts"><button>重试</button><button>移除</button></div>
+      </div>
+      <div class="ecard">
+        <div class="ecover"><div class="spine"></div><div class="t">画册 · 山海经</div><div class="badge">固定版式</div></div>
+        <div class="etitle">山海经图鉴</div>
+        <p class="ereason">暂不支持按页排版的电子书</p>
+        <div class="eacts"><button>移除</button></div>
+      </div>
+      <div class="ecard">
+        <div class="ecover"><div class="spine"></div><div class="t">未知文件</div><div class="badge">文件无效</div></div>
+        <div class="etitle">未知文件</div>
+        <p class="ereason">不是有效的 EPUB，或文件已损坏</p>
+        <div class="eacts"><button>重试</button><button>移除</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 演示控制条 ================= -->
+<div class="ui" id="ui">
+  <span class="u-lbl">场景</span>
+  <div class="seg" id="segScene">
+    <button data-v="reader" class="on">阅读页</button>
+    <button data-v="errors">失败卡片</button>
+  </div>
+  <span class="sep"></span>
+  <span class="u-lbl">主题</span>
+  <div class="seg" id="segTheme">
+    <button data-v="light" class="on">浅</button>
+    <button data-v="dark">深</button>
+  </div>
+  <span class="sep"></span>
+  <span class="u-lbl">chrome</span>
+  <div class="seg" id="segChrome">
+    <button data-v="always" class="on">都常驻</button>
+    <button data-v="auto">只隐底栏</button>
+    <button data-v="immersive">顶底都隐</button>
+  </div>
+  <span class="sep"></span>
+  <span class="u-lbl">章节目录</span>
+  <div class="seg" id="segChapters">
+    <button data-v="yes" class="on">有</button>
+    <button data-v="no">无</button>
+  </div>
+  <span class="sep"></span>
+  <span class="u-lbl">字号</span>
+  <input type="range" id="fsRange" min="70" max="150" step="5" value="100">
+</div>
+
+<script>
+(function(){
+  var params = new URLSearchParams(location.search);
+  var state = {
+    scene: params.get('scene') || 'reader',
+    theme: params.get('theme') || 'light',
+    chrome: params.get('chrome') || 'always',
+    mode: params.get('mode') || 'scroll',
+    chapters: params.get('chapters') || 'yes',
+    panel: params.get('panel') || 'none',
+    fs: Number(params.get('fs') || 100),
+    page: Number(params.get('page') || 1)
+  };
+  if (params.get('ui') === '0') document.getElementById('ui').style.display = 'none';
+
+  var stage = document.getElementById('stage');
+  var pop = document.getElementById('pop');
+  var fill = document.getElementById('fill');
+  var thumb = document.getElementById('thumb');
+  var pctTip = document.getElementById('pctTip');
+  var pctText = document.getElementById('pctText');
+  var pageBadge = document.getElementById('pageBadge');
+  var chapterLabel = document.getElementById('chapterLabel');
+  var bottomChap = document.getElementById('bottomChap');
+  var tocBtn = document.getElementById('tocBtn');
+  var tocBtn2 = document.getElementById('tocBtn2');
+  var content = document.getElementById('content');
+  var pageText = document.getElementById('pageText');
+  var bookTitle = document.getElementById('bookTitle');
+  var chapterTitle = document.getElementById('chapterTitle');
+  var chapterMeta = document.getElementById('chapterMeta');
+
+  var PAGES = [
+    { title:'2.2 收入与消费', text:[
+      '我们通常把贫穷理解为收入的函数：只要收入足够低，就可以称为穷人。但真正让贫穷持久的，并不是某一时点的收入水平，而是收入在时间上的不可积累性。',
+      '在印度北部的田野调查里，研究者反复看到同一种循环：一场疾病、一次婚丧、一季歉收，就把一个家庭十年的积蓄抹平。储蓄不是不存在，而是无法跨越这些冲击。',
+      '这也解释了为什么单纯提高当期收入的政策常常失效。钱进来了，风险还在原地；只要风险还在，家庭就会把新增的收入转化为更耐冲击的资产形式，而不是投入到能带来长期回报的教育或生产工具里。',
+      '于是我们看到一个反直觉的结论：贫穷不是缺少意志，而是缺少把意志变成资产的通道。'
+    ]},
+    { title:'2.3 风险与储蓄', text:[
+      '如果收入是不可承诺的，储蓄就不只是“少花钱”，而是一种对未来的保险。理解这一点，才能理解为什么穷人更愿意把钱放在随时能取出的地方。',
+      '现金、粮食、金银、牲畜，甚至人情往来，都是可以被调用的“存款”。它们的共同点不是收益，而是随时可动用。'
+    ]},
+    { title:'2.4 小额信贷', text:[
+      '小额信贷解决的是现金流，不是资本积累。它让一个家庭在冲击发生时不必卖掉生产工具，但不会自动带来扩大再生产。'
+    ]}
+  ];
+
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function renderPage(){
+    var p = PAGES[(state.page - 1) % PAGES.length];
+    chapterTitle.textContent = p.title;
+    var endBlock = state.chapters === 'yes'
+      ? '<div class="end"><button id="nextChapter">下一章 ›</button></div>'
+      : '';
+    pageText.innerHTML = '<h1>' + esc(p.title) + '</h1>' +
+      '<p class="meta">' + esc(chapterMeta.textContent) + '</p>' +
+      p.text.map(function(t){ return '<p>' + esc(t) + '</p>'; }).join('') +
+      endBlock;
+    pageBadge.textContent = '第 ' + state.page + ' 页 / 共 9 页';
+    var pct = Math.round(40 + state.page);
+    fill.style.width = pct + '%';
+    thumb.style.left = pct + '%';
+    pctTip.textContent = (state.chapters === 'yes' ? '第 3/10 章 · ' : '') + pct + '%';
+    pctText.textContent = state.chapters === 'yes' ? '' : pct + '%';
+    bottomChap.textContent = state.chapters === 'yes' ? p.title : bookTitle.textContent;
+  }
+
+  function applyChapters(){
+    var yes = state.chapters === 'yes';
+    chapterLabel.style.display = yes ? '' : 'none';
+    tocBtn.style.display = yes ? '' : 'none';
+    tocBtn2.style.display = yes ? '' : 'none';
+    bottomChap.style.display = yes ? '' : 'none';
+    renderPage();
+  }
+
+  function applyChrome(){
+    stage.classList.remove('chrome-always','chrome-auto','chrome-immersive');
+    stage.classList.add('chrome-' + state.chrome);
+    stage.classList.remove('chrome-off');
+    if (state.chrome === 'auto') {
+      document.getElementById('bottombar').classList.add('hidden');
+    } else {
+      document.getElementById('bottombar').classList.remove('hidden');
+    }
+    if (params.get('off') === '1' && state.chrome === 'immersive') {
+      stage.classList.add('chrome-off');
+    }
+  }
+
+  function applyMode(){
+    stage.classList.toggle('paged', state.mode === 'paged');
+    document.getElementById('segMode').querySelectorAll('button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.v === state.mode);
+    });
+  }
+
+  function applyTheme(){
+    document.documentElement.dataset.theme = state.theme;
+    document.getElementById('segTheme').querySelectorAll('button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.v === state.theme);
+    });
+  }
+
+  function applyFs(){
+    document.documentElement.style.setProperty('--fs', (20 * state.fs / 100) + 'px');
+    document.getElementById('fsValue').textContent = state.fs + '%';
+    document.getElementById('fsRange').value = String(state.fs);
+  }
+
+  function setScene(){
+    document.getElementById('sceneReader').classList.toggle('on', state.scene === 'reader');
+    document.getElementById('sceneErrors').classList.toggle('on', state.scene === 'errors');
+    document.getElementById('segScene').querySelectorAll('button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.v === state.scene);
+    });
+    document.getElementById('hint').style.display = state.scene === 'reader' ? '' : 'none';
+  }
+
+  function applyPanel(){
+    pop.classList.toggle('open', state.panel === 'settings');
+  }
+
+  function hint(){
+    var map = {
+      always: 'L1：顶部那行 + 底部进度条常驻。',
+      auto: 'L1+：底栏 2 秒无操作淡出，鼠标移到底部（或按 ⌥B）唤回；底边保留 2px 进度线。',
+      immersive: 'L2：点正文中间，顶栏 + 底栏一起淡出；再点中间 / 按 Esc 回来，左上角浮出返回。'
+    };
+    document.getElementById('hint').textContent = map[state.chrome] || '';
+  }
+
+  // —— 交互 ——
+  function bindSeg(id, apply){
+    var el = document.getElementById(id);
+    el.addEventListener('click', function(e){
+      var b = e.target.closest('button');
+      if (!b) return;
+      el.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x === b); });
+      apply(b.dataset.v);
+    });
+  }
+
+  bindSeg('segTheme', function(v){ state.theme = v; applyTheme(); });
+  bindSeg('segScene', function(v){ state.scene = v; setScene(); });
+  bindSeg('segChrome', function(v){ state.chrome = v; applyChrome(); hint(); });
+  bindSeg('segChapters', function(v){ state.chapters = v; applyChapters(); });
+  bindSeg('segMode', function(v){ state.mode = v; applyMode(); });
+  bindSeg('segLh', function(v){ document.querySelector('.page').style.setProperty('--lh', v); document.getElementById('content').style.lineHeight = v; });
+  bindSeg('segPara', function(v){ document.documentElement.style.setProperty('--para', v + 'px'); });
+  bindSeg('segMeasure', function(v){ document.documentElement.style.setProperty('--measure', v + 'px'); });
+  bindSeg('segFont', function(v){ document.documentElement.style.setProperty('--ff', v); applyFontFamily(v); });
+
+  function applyFontFamily(v){
+    var page = document.querySelector('.page');
+    page.style.fontFamily = v === 'serif'
+      ? '"Songti SC", "STSong", "Noto Serif SC", serif'
+      : '-apple-system,"PingFang SC","Helvetica Neue",sans-serif';
+  }
+
+  document.getElementById('fsRange').addEventListener('input', function(e){
+    state.fs = Number(e.target.value); applyFs();
+  });
+  document.getElementById('fsMinus').addEventListener('click', function(){ state.fs = Math.max(70, state.fs - 10); applyFs(); });
+  document.getElementById('fsPlus').addEventListener('click', function(){ state.fs = Math.min(150, state.fs + 10); applyFs(); });
+
+  document.getElementById('aaBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    state.panel = (state.panel === 'settings') ? 'none' : 'settings';
+    applyPanel();
+  });
+  pop.addEventListener('click', function(e){ e.stopPropagation(); });
+  document.addEventListener('click', function(){
+    if (state.panel === 'settings') { state.panel = 'none'; applyPanel(); }
+  });
+
+  function turn(dir){
+    var next = state.page + dir;
+    if (next < 1) next = 1;
+    if (next > 9) next = 9;
+    state.page = next;
+    renderPage();
+  }
+  document.getElementById('zoneLeft').addEventListener('click', function(){ turn(-1); });
+  document.getElementById('zoneRight').addEventListener('click', function(){ turn(1); });
+  document.getElementById('zoneMid').addEventListener('click', function(){
+    if (state.chrome === 'immersive') {
+      stage.classList.toggle('chrome-off');
+    } else if (state.chrome === 'auto') {
+      document.getElementById('bottombar').classList.toggle('hidden');
+    }
+  });
+  document.getElementById('floatingBack').addEventListener('click', function(){ stage.classList.remove('chrome-off'); });
+  document.addEventListener('keydown', function(e){
+    if (state.mode === 'paged' && e.key === 'ArrowRight') turn(1);
+    if (state.mode === 'paged' && e.key === 'ArrowLeft') turn(-1);
+    if (e.key === 'Escape') stage.classList.remove('chrome-off');
+  });
+
+  // 底栏 hover 唤出（auto 模式）用 CSS 兄弟选择器；这里只兜键盘 ⌥B
+  document.addEventListener('keydown', function(e){
+    if (e.altKey && (e.key === 'b' || e.key === 'B')) {
+      document.getElementById('bottombar').classList.toggle('hidden');
+    }
+  });
+
+  // 初始化
+  applyTheme(); applyChrome(); applyMode(); applyChapters(); applyFs(); setScene(); applyPanel(); hint(); applyFontFamily('sys');
+})();
+</script>
+</body>
+</html>

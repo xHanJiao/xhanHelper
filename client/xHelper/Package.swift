@@ -198,5 +198,17 @@ let package = Package(
             dependencies: ["BrowserEngineCore"],
             path: "Tests/BrowserEngineCoreTests"
         ),
+        // EpubCore — EPUB 导入内核：路径归一 + 系统 unzip 封装 + container/OPF/NCX/nav 解析
+        // + `Books/` 的原子读写。纯本地、无网络，用 swift test 覆盖解析边界（DRM/固定版式/越界路径/无章节）。
+        .target(
+            name: "EpubCore",
+            path: "xHelper/Shared",
+            sources: ["Services/Epub"]
+        ),
+        .testTarget(
+            name: "EpubCoreTests",
+            dependencies: ["EpubCore"],
+            path: "Tests/EpubParserTests"
+        ),
     ]
 )

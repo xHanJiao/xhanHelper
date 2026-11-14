@@ -14,6 +14,9 @@ nonisolated enum ActivityEventTypes {
         "client.tool.exec.started", "client.tool.exec.ended", "task.spawned", "task.ended",
         // 浏览（客户端）
         "browser.nav.started", "browser.nav.ended", "browser.page.dwell", "browser.bookmark.added",
+        // 阅读（客户端，本地 EPUB）
+        "book.import.started", "book.import.ended",
+        "book.read.started", "book.read.ended",
         // 用户显式动作（客户端 UI 层）
         "user.action.confirmed", "user.action.dismissed", "user.action.deleted",
         "user.action.saved", "user.action.retried",

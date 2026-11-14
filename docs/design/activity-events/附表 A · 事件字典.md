@@ -66,6 +66,21 @@
 
 统计口径：默认只算 `actor=user` 的停留；助手替你打开的页面当上下文。
 
+## 阅读（客户端，EPUB）
+
+见 `docs/design/epub-reader/design.md`。书只在本机，事件仍走统一的客户端埋点管线（`ActivityClient` → `/api/events/batch`）。
+
+| type | 形态 | 必备字段 | 幂等业务键 | 父 | 说明 |
+|---|---|---|---|---|---|
+| `book.import.started` | 区间起 | bytes, format | —（只靠 event_id） | 根 | 一次导入 = 一对区间；format 固定 `epub` |
+| `book.import.ended` | 区间终 | outcome, error_type, chapters, book_id | — | 同 | 失败（DRM / 固定版式 / 损坏）走 outcome，不新增 type；`chapters` 为解析出的章数 |
+| `book.read.started` | 区间起 | book_id, chapter, progress_pct | — | 根 | 进入阅读页、回到前台且仍在阅读页各开一段 |
+| `book.read.ended` | 区间终 | outcome, chapter, progress_pct | — | 同 | 阅读时长由配对区间算；崩溃时的悬挂区间由闭合规则兜底，客户端不补假结束 |
+
+`progress_pct` 是「第几章 / 总章数」的粗粒度快照（0–100 整数），只作统计，不是断点续读的唯一来源（续读用本机 `meta.json` 的章内偏移）。
+
+统计口径：阅读时长只算 `actor=user` 的区间；`book_id` 目前不进资源层（`attrs` 保留），要按书聚合时再登记资源键。
+
 ## 用户显式动作（客户端 UI 层）
 
 | type | 形态 | 必备字段 | 幂等业务键 | 父 |
@@ -77,6 +92,8 @@
 | `user.action.retried` | 点 | 同上 | — | 根 |
 
 连点两次确认是两次真实动作，都要记，所以这类不给业务键。
+
+`target_kind` 现有取值：`book_annotation`（EPUB 划线/批注的建、改、删，带 `book_id`）。新增取值时在这里补一行，别让读端靠猜。
 
 **这一组才是"功能使用"的统计口径**。下面的系统变更事件不是——写入类动作绝大多数由助手代劳或批处理产生。
 

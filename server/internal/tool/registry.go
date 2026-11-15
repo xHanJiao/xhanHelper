@@ -141,15 +141,6 @@ func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
 }
 
-// GetToolMap 返回所有工具的 map（用于创建 ReactLoop 等场景）
-func (r *Registry) GetToolMap() map[string]Tool {
-	out := make(map[string]Tool, len(r.tools))
-	for k, v := range r.tools {
-		out[k] = v
-	}
-	return out
-}
-
 // Has 判断注册表中是否存在指定名称的工具
 func (r *Registry) Has(name string) bool {
 	_, ok := r.tools[name]
@@ -422,78 +413,6 @@ func (r *Registry) GetLLMToolsFiltered(names []string) []llm.ToolDefinition {
 		})
 	}
 	return defs
-}
-
-// GeneratePromptFor 只为指定工具生成 prompt 文本
-func (r *Registry) GeneratePromptFor(names []string) string {
-	var buf bytes.Buffer
-	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
-	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
-
-	for _, name := range names {
-		if r.hiddenNames[name] {
-			continue
-		}
-		t := r.tools[name]
-		if t == nil {
-			continue
-		}
-		buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
-		buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
-		buf.WriteString("函数:\n")
-		for _, fn := range t.Functions() {
-			buf.WriteString(fmt.Sprintf("  - %s: %s\n", fn.Name, fn.Description))
-			if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
-				required := make(map[string]bool)
-				if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
-					for _, r := range reqs {
-						if s, ok := r.(string); ok {
-							required[s] = true
-						}
-					}
-				}
-				for key, val := range props {
-					prop, ok := val.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					typ, _ := prop["type"].(string)
-					desc, _ := prop["description"].(string)
-					req := ""
-					if required[key] {
-						req = " (必填)"
-					}
-					buf.WriteString(fmt.Sprintf("    - %s (%s%s): %s\n", key, typ, req, desc))
-					if enumVals, ok := prop["enum"].([]interface{}); ok && len(enumVals) > 0 {
-						vals := make([]string, len(enumVals))
-						for i, v := range enumVals {
-							vals[i] = fmt.Sprint(v)
-						}
-						buf.WriteString(fmt.Sprintf("      可选值: %s\n", strings.Join(vals, "/")))
-					}
-				}
-			}
-			buf.WriteString("\n")
-		}
-	}
-
-	buf.WriteString("### 输出格式（必须严格遵守）\n\n")
-	buf.WriteString("每次回复都必须是一个 JSON 对象，格式如下：\n\n")
-	buf.WriteString("{\n")
-	buf.WriteString(`    "reply":"给用户的自然语言回复",` + "\n")
-	buf.WriteString(`    "tool_calls": [` + "\n")
-	buf.WriteString("        {\n")
-	buf.WriteString(`            "tool": "<工具名>",` + "\n")
-	buf.WriteString(`            "function": "<函数名>",` + "\n")
-	buf.WriteString(`            "args": { /* 参数 */ }` + "\n")
-	buf.WriteString("        }\n")
-	buf.WriteString("    ]\n")
-	buf.WriteString("}\n\n")
-	buf.WriteString("不需要调用工具时，tool_calls 为空数组 []。**严禁在 JSON 前后添加任何文字、解释或 markdown 代码块。回复必须以 { 开头、以 } 结尾。**\n")
-	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
-	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
-
-	return buf.String()
 }
 
 // ToolCall — 解析出的工具调用

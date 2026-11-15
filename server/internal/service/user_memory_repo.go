@@ -34,18 +34,6 @@ func (r *UserMemoryRepo) Create(ctx context.Context, m *model.UserMemory) error 
 	return r.db.WithContext(ctx).Create(m).Error
 }
 
-// FindByKey 按 key 查找已有记忆
-func (r *UserMemoryRepo) FindByKey(ctx context.Context, userID, key string) (*model.UserMemory, error) {
-	var m model.UserMemory
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND memory_key = ?", userID, key).
-		First(&m).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &m, err
-}
-
 // ListByUser 分页获取用户记忆，支持关键词/来源/topic 过滤，limit<=0 时默认 50
 func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source, topic string, limit, offset int) ([]model.UserMemory, int64, error) {
 	if limit <= 0 {
@@ -127,18 +115,6 @@ func (r *UserMemoryRepo) GetByIDsAndUser(ctx context.Context, ids []string, user
 	var list []model.UserMemory
 	err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Find(&list).Error
 	return list, err
-}
-
-// FindByPromptHash 按 prompt 哈希查找已有记忆（输入去重）
-func (r *UserMemoryRepo) FindByPromptHash(ctx context.Context, userID, hash string) (*model.UserMemory, error) {
-	var m model.UserMemory
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND prompt_hash = ?", userID, hash).
-		First(&m).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &m, err
 }
 
 // ListAllUsersMemoriesPaginated 分页获取所有用户的记忆（仅用于 warmup 加载向量库），limit<=0 时默认 100
@@ -227,18 +203,6 @@ func (r *UserMemoryRepo) CountByEventIDs(ctx context.Context, userID string, eve
 		counts[row.EventID] = row.Count
 	}
 	return counts, nil
-}
-
-// FindByContentHash 按 content_hash 查找记忆
-func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentHash string) (*model.UserMemory, error) {
-	var m model.UserMemory
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND content_hash = ?", userID, contentHash).
-		First(&m).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &m, err
 }
 
 // Update 覆盖一条记忆的内容（topic / memory_value / facts）。改内容不碰 confirm 计数。
@@ -346,42 +310,6 @@ func (r *UserMemoryRepo) SearchMemoriesByCursor(ctx context.Context, userID stri
 		list = list[:limit]
 	}
 	return list, hasMore, nil
-}
-
-// CountMemories 统计符合条件的记忆总数。支持 keyword+topic+time 全维度。
-func (r *UserMemoryRepo) CountMemories(ctx context.Context, userID string, keywords []string, topic string, after, before *time.Time) (int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.UserMemory{}).Where("user_id = ?", userID)
-
-	if topic != "" {
-		q = q.Where("topic = ?", topic)
-	}
-	if len(keywords) > 0 {
-		var ors []string
-		var args []any
-		for _, kw := range keywords {
-			kw = strings.TrimSpace(kw)
-			if kw == "" {
-				continue
-			}
-			ors = append(ors, "memory_value LIKE ?")
-			args = append(args, "%"+kw+"%")
-		}
-		if len(ors) > 0 {
-			q = q.Where("("+strings.Join(ors, " OR ")+")", args...)
-		}
-	}
-	if after != nil {
-		q = q.Where("created_at > ?", *after)
-	}
-	if before != nil {
-		q = q.Where("created_at < ?", *before)
-	}
-
-	var count int64
-	if err := q.Count(&count).Error; err != nil {
-		return 0, err
-	}
-	return count, nil
 }
 
 // RenameTopic 把一组旧 topic 批量改名为新 topic，返回受影响行数。

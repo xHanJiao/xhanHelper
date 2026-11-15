@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -701,16 +700,6 @@ func (r *Repo) DistinctTopics() ([]string, error) {
 		topics = append(topics, t)
 	}
 	return topics, rows.Err()
-}
-
-// GetQueryContent returns the content of a single query by ID.
-func (r *Repo) GetQueryContent(queryID string) (string, error) {
-	var content string
-	err := r.db.QueryRow(`SELECT content FROM raw_queries WHERE id=?`, queryID).Scan(&content)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(content), nil
 }
 
 // BatchGetCorpusContent 批量获取 corpus 内容，返回 corpusID → content 映射。

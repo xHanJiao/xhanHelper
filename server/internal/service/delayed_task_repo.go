@@ -85,12 +85,6 @@ func (r *DelayedTaskRepo) FindPendingByUserAndType(ctx context.Context, userID, 
 	return list, err
 }
 
-// UpdateProcessAt 更新任务的处理时间
-func (r *DelayedTaskRepo) UpdateProcessAt(ctx context.Context, id string, t time.Time) error {
-	return r.db.WithContext(ctx).Model(&model.DelayedTask{}).Where("id = ?", id).
-		Update("process_at", t).Error
-}
-
 // ScheduleRetry 安排重试：保持 pending 状态，retry_count+1, process_at 推后 delay。
 // 与 MarkFailed 不同：不改变 status，任务会被下一轮 ListDue 再次扫到。
 func (r *DelayedTaskRepo) ScheduleRetry(ctx context.Context, id string, retryCount int, delay time.Duration) error {

@@ -39,23 +39,6 @@ func (r *ConversationRepo) DB() *gorm.DB {
 	return r.db
 }
 
-// ListQuiet 查找静默会话：有未提取的消息且超时无活动
-func (r *ConversationRepo) ListQuiet(ctx context.Context, cutoff time.Time, limit int) ([]model.Conversation, error) {
-	var list []model.Conversation
-	err := r.db.WithContext(ctx).
-		Where("updated_at < ? AND is_deleted = ?", cutoff, false).
-		Where(`last_extracted_msg_id IS NULL
-			OR last_extracted_msg_id != (
-				SELECT id FROM messages
-				WHERE conversation_id = conversations.id
-				ORDER BY created_at DESC LIMIT 1
-			)`).
-		Order("updated_at ASC").
-		Limit(limit).
-		Find(&list).Error
-	return list, err
-}
-
 // Create 创建新会话
 func (r *ConversationRepo) Create(ctx context.Context, c *model.Conversation) error {
 	return r.db.WithContext(ctx).Create(c).Error
@@ -132,13 +115,6 @@ func (r *ConversationRepo) Update(ctx context.Context, c *model.Conversation) er
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", c.ID).Updates(c).Error
 }
 
-// SetAgentID 绑定智能体到会话（竞态保护：仅当目标会话尚未绑定 agent 时才写入）
-func (r *ConversationRepo) SetAgentID(ctx context.Context, convID, agentID string) error {
-	return r.db.WithContext(ctx).Model(&model.Conversation{}).
-		Where("id = ? AND (agent_id IS NULL OR agent_id = '')", convID).
-		Update("agent_id", agentID).Error
-}
-
 // UpdateAgentID 更新或清空会话的 agent_id（支持切换和解绑）
 func (r *ConversationRepo) UpdateAgentID(ctx context.Context, convID string, agentID *string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
@@ -159,12 +135,6 @@ func (r *ConversationRepo) CountActive(ctx context.Context, since time.Duration)
 		Where("updated_at >= ? AND is_deleted = ?", cutoff, false).
 		Count(&count)
 	return int(count)
-}
-
-// UpdateExtra 仅更新会话的 extra 字段，不动 updated_at
-func (r *ConversationRepo) UpdateExtra(ctx context.Context, convID, extra string) error {
-	return r.db.WithContext(ctx).Model(&model.Conversation{}).
-		Where("id = ?", convID).Update("extra", extra).Error
 }
 
 // Touch 更新会话的 updated_at 到当前时间
@@ -344,31 +314,6 @@ func (r *ConversationRepo) SaveExtra(ctx context.Context, convID string, extra *
 		Where("id = ?", convID).Update("extra", extraJSON).Error
 }
 
-// AddUsedTool — 记录使用过的工具
-func (r *ConversationRepo) AddUsedTool(ctx context.Context, convID, toolID string) error {
-	extra, err := r.GetExtra(ctx, convID)
-	if err != nil {
-		return err
-	}
-	if extra == nil {
-		extra = &model.ConversationExtra{}
-	}
-
-	// 去重
-	exists := false
-	for _, id := range extra.UsedToolIDs {
-		if id == toolID {
-			exists = true
-			break
-		}
-	}
-	if !exists {
-		extra.UsedToolIDs = append(extra.UsedToolIDs, toolID)
-		return r.SaveExtra(ctx, convID, extra)
-	}
-	return nil
-}
-
 // UpdateExtraField — 事务内读取最新 extra，调用 fn 修改后写回。
 // 读-改-写在单事务内完成，避免并发写入覆盖其它字段（对齐 mergeMsgExtra 的单字段合并语义）。
 // fn 内只改自己关心的字段，其它字段原样保留。
@@ -398,18 +343,6 @@ func (r *ConversationRepo) UpdateExtraField(ctx context.Context, convID string, 
 		}
 		return tx.Model(&model.Conversation{}).Where("id = ?", convID).Update("extra", string(b)).Error
 	})
-}
-
-// GetUsedToolIDs — 获取使用过的工具 id 列表
-func (r *ConversationRepo) GetUsedToolIDs(ctx context.Context, convID string) ([]string, error) {
-	extra, err := r.GetExtra(ctx, convID)
-	if err != nil {
-		return nil, err
-	}
-	if extra == nil {
-		return []string{}, nil
-	}
-	return extra.UsedToolIDs, nil
 }
 
 // SubConversationRow — 子会话列表行（含消息数）。

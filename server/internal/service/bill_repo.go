@@ -111,15 +111,6 @@ func (r *BillRepo) FindByID(ctx context.Context, id string) (*model.Bill, error)
 	return &b, err
 }
 
-// CountByUser 统计用户正常账单总数
-func (r *BillRepo) CountByUser(ctx context.Context, userID string) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Bill{}).
-		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal).
-		Count(&count).Error
-	return count, err
-}
-
 // ListByUser 分页获取用户正常状态账单，limit<=0 时默认 50
 func (r *BillRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Bill, error) {
 	if limit <= 0 {

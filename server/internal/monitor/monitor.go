@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"encoding/json"
 	"runtime"
 	"sort"
 	"sync"
@@ -526,10 +525,6 @@ func (m *Monitor) registeredSnapshots() map[string]interface{} {
 		s[name] = fn()
 	}
 	return s
-}
-
-func (m *Monitor) SnapshotJSON() ([]byte, error) {
-	return json.Marshal(m.Snapshot())
 }
 
 // ===== helpers =====

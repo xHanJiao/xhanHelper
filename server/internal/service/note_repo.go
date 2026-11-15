@@ -65,11 +65,6 @@ func (r *NoteRepo) SoftDelete(ctx context.Context, id, userID string) error {
 		Update("status", model.NoteStatusCancelled).Error
 }
 
-// HardDelete 硬删除笔记
-func (r *NoteRepo) HardDelete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
-}
-
 // DeleteByIDs 批量硬删除笔记（批量清理场景）。
 func (r *NoteRepo) DeleteByIDs(ctx context.Context, ids []string) (int64, error) {
 	if len(ids) == 0 {

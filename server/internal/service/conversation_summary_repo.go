@@ -66,16 +66,6 @@ func (r *ConversationSummaryRepo) GetByIDs(ctx context.Context, ids []string) ([
 	return summaries, err
 }
 
-// GetByIDsForUser 批量获取指定用户的摘要，带 user_id 纵深防御过滤。
-func (r *ConversationSummaryRepo) GetByIDsForUser(ctx context.Context, ids []string, userID string) ([]model.ConversationSummary, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	var summaries []model.ConversationSummary
-	err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Find(&summaries).Error
-	return summaries, err
-}
-
 // ListAll 分页列出所有活跃摘要（供 EntitySource.Warmup 使用）。since 非零时只返回 created_at >= since。
 func (r *ConversationSummaryRepo) ListAll(ctx context.Context, since time.Time, limit, offset int) ([]model.ConversationSummary, error) {
 	var summaries []model.ConversationSummary

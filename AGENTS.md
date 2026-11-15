@@ -29,9 +29,9 @@ xhanHelper/
 │       ├── config/      # YAML 加载 + APP_ENV 覆盖合并 + ${VAR} 展开 + 校验
 │       ├── model/       # GORM 结构体 + 常量（只放结构体，不写 DB 操作）
 │       ├── service/     # DB Repo 层（每个模型一个 *_repo.go）
-│       ├── controller/  # Gin handler + 路由（router.go 为主，另有 reflection/eval/cost/llm_io/subagent 分组注册器）
+│       ├── controller/  # Gin handler + 路由（router.go 为主，另有 admin_extra/eval/cost/llm_io/subagent 分组注册器）
 │       ├── middleware/   # Bearer 认证 + 请求日志
-│       ├── agent/       # 核心：orchestrator、三套 ReAct 循环、后台 worker、检索源、prompt 构建
+│       ├── agent/       # 核心：orchestrator、两套 ReAct 循环、后台 worker、检索源、prompt 构建
 │       │   ├── pipeline/       # 预处理管线（短输入检测/日期规范化）
 │       │   ├── promptbuilder/  # System Prompt 分层构建
 │       │   ├── ctxflow/        # 上下文检索 + XML 格式化

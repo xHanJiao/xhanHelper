@@ -94,7 +94,7 @@ async function fetchHooks() {
   try { hooks.value = await api.get('/api/admin/hooks') } catch (e) { console.error('[admin] request failed:', e) }
 }
 
-onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
+onMounted(() => { fetchHealth(); fetchHooks(); restartTimer() })
 watch(activeTab, (tab) => {
   if (tab === 'msg-trace' && msgTraces.value.length === 0) fetchMsgTraces()
   if (tab === 'cost' && !costLoaded.value) {
@@ -111,15 +111,6 @@ function formatJSON(raw) {
     return JSON.stringify(JSON.parse(raw), null, 2)
   } catch {
     return raw
-  }
-}
-
-async function copyJSON(raw) {
-  if (!raw) return
-  try {
-    await navigator.clipboard.writeText(raw)
-  } catch {
-    // fallback silently
   }
 }
 
@@ -332,7 +323,7 @@ function costDateRange() {
 async function fetchCostCategories() {
   try {
     const list = await api.get('/api/admin/cost/categories') || []
-    const labelMap = { main_chat: '主聊天', post_chat: '对话后处理', tool: '工具', admin: '管理与评估' }
+    const labelMap = { main_chat: '主聊天', post_chat: '对话后处理', reflection: '反思', tool: '工具', admin: '管理与评估' }
     costCategoryOptions.value = list.map(c => ({ label: labelMap[c] || c, value: c }))
   } catch (e) { console.error('[admin] request failed:', e) }
 }

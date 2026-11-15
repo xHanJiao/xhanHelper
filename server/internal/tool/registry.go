@@ -200,28 +200,6 @@ func (r *Registry) writeFunctionDef(buf *bytes.Buffer, fn FuncSchema) {
 	buf.WriteString("\n")
 }
 
-func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
-	buf.WriteString("\n### 输出格式（必须严格遵守）\n\n")
-	buf.WriteString("你的每次回复都必须是一个完整的 JSON 对象，即使一句简单的「好的」也必须包裹在 JSON 中。\n")
-	buf.WriteString("**严禁以纯文本回复，严禁在 JSON 前后添加任何文字或 markdown 代码块，回复必须以 { 开头、以 } 结尾。**\n\n")
-	buf.WriteString("格式如下：\n\n")
-	buf.WriteString("{\n")
-	buf.WriteString(`    "reply":"给用户的自然语言回复",` + "\n")
-	buf.WriteString(`    "tool_calls": [` + "\n")
-	buf.WriteString("        {\n")
-	buf.WriteString(`            "tool": "<工具名>",` + "\n")
-	buf.WriteString(`            "function": "<函数名>",` + "\n")
-	buf.WriteString(`            "args": { /* 参数 */ }` + "\n")
-	buf.WriteString("        }\n")
-	buf.WriteString("    ]\n")
-	buf.WriteString("}\n\n")
-	buf.WriteString("规则：\n")
-	buf.WriteString("- 不需要调用工具时，tool_calls 为空数组 []。\n")
-	buf.WriteString("- 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"。只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
-	buf.WriteString("- 一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。工具执行结果会追加到对话中，你可以据此继续回复用户。\n")
-	buf.WriteString("- JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。\n")
-}
-
 // GetLLMToolsFiltered 只导出指定名称的工具定义（供 Phase 5/6 按需加载）
 func (r *Registry) GetLLMToolsFiltered(names []string) []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(names))
@@ -319,15 +297,6 @@ func (r *Registry) SearchTools(query string) []ToolInfo {
 // String 返回 "tool.function" 格式的名称
 func (tc ToolCall) String() string {
 	return tc.Tool + "." + tc.Function
-}
-
-// ToolCallNames 批量格式化
-func ToolCallNames(tcs []ToolCall) string {
-	names := make([]string, len(tcs))
-	for i, tc := range tcs {
-		names[i] = tc.String()
-	}
-	return strings.Join(names, ", ")
 }
 
 // ExecuteByName 按名称查找工具并执行指定函数

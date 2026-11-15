@@ -30,6 +30,15 @@ func setupEventRepo(t *testing.T) (*EventRepo, *gorm.DB) {
 	return NewEventRepo(db), db
 }
 
+// setLastMemoryAt 仅供测试构造排序数据：生产代码只经 advanceLastMemoryAt 推进该列。
+func setLastMemoryAt(t *testing.T, repo *EventRepo, userID, id string, at time.Time) {
+	t.Helper()
+	if err := repo.db.Model(&model.Event{}).Where("user_id = ? AND id = ?", userID, id).
+		Update("last_memory_at", at).Error; err != nil {
+		t.Fatalf("set last_memory_at: %v", err)
+	}
+}
+
 func addMemory(t *testing.T, db *gorm.DB, userID, id, hash string) {
 	t.Helper()
 	err := db.Create(&model.UserMemory{
@@ -127,15 +136,9 @@ func TestEventRepo_ListExcludesDeletedAndPaginates(t *testing.T) {
 	}
 	// 让 C 最新、A 最旧
 	now := time.Now()
-	if err := repo.SetLastMemoryAt(ctx, "u1", all[0].ID, now.Add(-2*time.Hour)); err != nil {
-		t.Fatalf("set A: %v", err)
-	}
-	if err := repo.SetLastMemoryAt(ctx, "u1", all[1].ID, now.Add(-time.Hour)); err != nil {
-		t.Fatalf("set B: %v", err)
-	}
-	if err := repo.SetLastMemoryAt(ctx, "u1", all[2].ID, now); err != nil {
-		t.Fatalf("set C: %v", err)
-	}
+	setLastMemoryAt(t, repo, "u1", all[0].ID, now.Add(-2*time.Hour))
+	setLastMemoryAt(t, repo, "u1", all[1].ID, now.Add(-time.Hour))
+	setLastMemoryAt(t, repo, "u1", all[2].ID, now)
 
 	if err := repo.Delete(ctx, "u1", all[1].ID); err != nil {
 		t.Fatalf("delete B: %v", err)
@@ -194,9 +197,7 @@ func TestEventRepo_ListUpdatedSince(t *testing.T) {
 		recent.ID: now,
 		gone.ID:   now,
 	} {
-		if err := repo.SetLastMemoryAt(ctx, "u1", id, at); err != nil {
-			t.Fatalf("set: %v", err)
-		}
+		setLastMemoryAt(t, repo, "u1", id, at)
 	}
 	if err := repo.Delete(ctx, "u1", gone.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -244,13 +245,9 @@ func TestEventRepo_Merge(t *testing.T) {
 		t.Fatalf("assign to: %v", err)
 	}
 	older := time.Now().Add(-48 * time.Hour)
-	if err := repo.SetLastMemoryAt(ctx, "u1", from.ID, older); err != nil {
-		t.Fatalf("set from last: %v", err)
-	}
+	setLastMemoryAt(t, repo, "u1", from.ID, older)
 	newer := time.Now()
-	if err := repo.SetLastMemoryAt(ctx, "u1", to.ID, newer); err != nil {
-		t.Fatalf("set to last: %v", err)
-	}
+	setLastMemoryAt(t, repo, "u1", to.ID, newer)
 
 	if err := repo.Merge(ctx, "u1", from.ID, to.ID); err != nil {
 		t.Fatalf("merge: %v", err)
@@ -479,28 +476,6 @@ func TestEventRepo_UpdateSummary(t *testing.T) {
 	}
 	if err := repo.UpdateSummary(ctx, "u1", e.ID, "x", "y"); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected ErrRecordNotFound, got %v", err)
-	}
-}
-
-func TestEventRepo_SetLastMemoryAtMonotonic(t *testing.T) {
-	repo, _ := setupEventRepo(t)
-	ctx := context.Background()
-
-	e := mustCreate(t, repo, "u1", "A")
-	newer := time.Now()
-	older := newer.Add(-time.Hour)
-	if err := repo.SetLastMemoryAt(ctx, "u1", e.ID, newer); err != nil {
-		t.Fatalf("set newer: %v", err)
-	}
-	if err := repo.SetLastMemoryAt(ctx, "u1", e.ID, older); err != nil {
-		t.Fatalf("set older: %v", err)
-	}
-	got, err := repo.GetByID(ctx, "u1", e.ID)
-	if err != nil || got == nil {
-		t.Fatalf("get: %v %v", got, err)
-	}
-	if got.LastMemoryAt == nil || got.LastMemoryAt.Before(newer.Add(-time.Second)) {
-		t.Fatalf("expected last_memory_at not to regress, got %v", got.LastMemoryAt)
 	}
 }
 

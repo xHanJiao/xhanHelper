@@ -36,63 +36,29 @@ func newOrderTestRegistry() *Registry {
 	return r
 }
 
-func TestGetNativeFCTools_Sorted(t *testing.T) {
+// TestGetLLMToolsFiltered_OrderAndDeterminism 主链路契约：调用方传入已排序的名字
+// （orchestrator 在组装请求前 sort.Strings），注册表必须按入参顺序输出、同输入字节一致，
+// 未知名字静默跳过。这条替代了已删除的 GetLLMTools/GetNativeFCTools 排序测试。
+func TestGetLLMToolsFiltered_OrderAndDeterminism(t *testing.T) {
 	r := newOrderTestRegistry()
-	defs := r.GetNativeFCTools()
-	if len(defs) != 3 {
-		t.Fatalf("expected 3 defs, got %d", len(defs))
+	names := []string{"alpha", "mid", "zeta"}
+	a := r.GetLLMToolsFiltered(names)
+	b := r.GetLLMToolsFiltered(names)
+	if len(a) != 3 {
+		t.Fatalf("expected 3 defs, got %d", len(a))
 	}
-	if defs[0].Name != "alpha" || defs[1].Name != "mid" || defs[2].Name != "zeta" {
-		t.Errorf("GetNativeFCTools 应按名字排序, got %v %v %v", defs[0].Name, defs[1].Name, defs[2].Name)
-	}
-}
-
-func TestGetNativeFCTools_Deterministic(t *testing.T) {
-	r := newOrderTestRegistry()
-	a, _ := json.Marshal(r.GetNativeFCTools())
-	b, _ := json.Marshal(r.GetNativeFCTools())
-	if string(a) != string(b) {
-		t.Error("GetNativeFCTools 两次调用应产生字节一致的输出")
-	}
-}
-
-func TestGetNativeFCTools_RegisterOrderIndependent(t *testing.T) {
-	r1 := newOrderTestRegistry()
-	r2 := NewRegistry()
-	// 反序注册
-	r2.Register(&mockOrderTool{name: "mid", desc: "m 描述", fns: []FuncSchema{{Name: "fn_m", Description: "m 函数"}}})
-	r2.Register(&mockOrderTool{name: "alpha", desc: "a 描述", fns: []FuncSchema{{Name: "fn_a", Description: "a 函数"}}})
-	r2.Register(&mockOrderTool{name: "zeta", desc: "z 描述", fns: []FuncSchema{{Name: "fn_z", Description: "z 函数"}}})
-
-	a, _ := json.Marshal(r1.GetNativeFCTools())
-	b, _ := json.Marshal(r2.GetNativeFCTools())
-	if string(a) != string(b) {
-		t.Error("不同注册顺序应产生相同输出（缓存字节稳定性）")
-	}
-}
-
-func TestGetNativeFCTools_HiddenExcluded(t *testing.T) {
-	r := newOrderTestRegistry()
-	r.HideTool("mid")
-	defs := r.GetNativeFCTools()
-	if len(defs) != 2 {
-		t.Fatalf("hidden 工具应被排除, got %d", len(defs))
-	}
-	for _, d := range defs {
-		if d.Name == "mid" {
-			t.Error("hidden 工具不应出现在 GetNativeFCTools 输出中")
+	for i, want := range names {
+		if a[i].Name != want {
+			t.Fatalf("defs[%d] = %s, want %s（须与入参顺序一致）", i, a[i].Name, want)
 		}
 	}
-}
-
-func TestGetLLMTools_Sorted(t *testing.T) {
-	r := newOrderTestRegistry()
-	defs := r.GetLLMTools()
-	if len(defs) != 3 {
-		t.Fatalf("expected 3 defs, got %d", len(defs))
+	ja, _ := json.Marshal(a)
+	jb, _ := json.Marshal(b)
+	if string(ja) != string(jb) {
+		t.Error("同一入参两次调用应字节一致（前缀缓存前提）")
 	}
-	if defs[0].Name != "alpha" || defs[1].Name != "mid" || defs[2].Name != "zeta" {
-		t.Errorf("GetLLMTools 应按名字排序, got %v %v %v", defs[0].Name, defs[1].Name, defs[2].Name)
+	if got := r.GetLLMToolsFiltered([]string{"alpha", "nope"}); len(got) != 1 || got[0].Name != "alpha" {
+		t.Errorf("未知名字应跳过, got %+v", got)
 	}
 }
 
@@ -112,19 +78,6 @@ func TestGeneratePrompt_Deterministic(t *testing.T) {
 	}
 	if !(ia < im && im < iz) {
 		t.Error("GeneratePrompt 工具段应按名排序")
-	}
-}
-
-func TestToolOverview_Deterministic(t *testing.T) {
-	r := newOrderTestRegistry()
-	a := r.ToolOverview()
-	b := r.ToolOverview()
-	if a != b {
-		t.Error("ToolOverview 两次调用应字节一致")
-	}
-	ia, im, iz := indexOf(a, "alpha"), indexOf(a, "mid"), indexOf(a, "zeta")
-	if !(ia < im && im < iz) {
-		t.Error("ToolOverview 应按名排序")
 	}
 }
 

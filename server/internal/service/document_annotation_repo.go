@@ -94,12 +94,6 @@ func (r *DocumentAnnotationRepo) Delete(ctx context.Context, id, userID string) 
 	return res.RowsAffected, res.Error
 }
 
-// DeleteByDocument 删除文档的全部批注（文档级联删除用）
-func (r *DocumentAnnotationRepo) DeleteByDocument(ctx context.Context, docID, userID string) (int64, error) {
-	res := r.db.WithContext(ctx).Delete(&model.DocumentAnnotation{}, "document_id = ? AND user_id = ?", docID, userID)
-	return res.RowsAffected, res.Error
-}
-
 // RelocateAll 正文变化后重算该文档全部批注的锚点。
 // 返回 (失活状态发生变化的条数, 其中新失活的条数)。
 // 已失活的也重算，正文改回来时能自动恢复。

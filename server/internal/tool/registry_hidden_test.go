@@ -21,24 +21,15 @@ func newHiddenTestRegistry() *Registry {
 	return r
 }
 
-func TestHiddenTool_ExcludedFromMainDefs(t *testing.T) {
+func TestHiddenTool_ExcludedFromVisibleNames(t *testing.T) {
 	r := newHiddenTestRegistry()
-	for _, def := range r.GetNativeFCTools() {
-		if def.Name == "profile" {
-			t.Error("profile 不应出现在 GetNativeFCTools（主循环原生 FC）")
+	for _, name := range r.VisibleToolNames() {
+		if name == "profile" {
+			t.Error("hidden 工具不应出现在 VisibleToolNames（expose_tools 候选集）")
 		}
 	}
-	for _, name := range []string{"GeneratePrompt", "ToolOverview"} {
-		var s string
-		switch name {
-		case "GeneratePrompt":
-			s = r.GeneratePrompt()
-		case "ToolOverview":
-			s = r.ToolOverview()
-		}
-		if strings.Contains(s, "profile") {
-			t.Errorf("%s 不应包含 profile（主循环 prompt-eng）", name)
-		}
+	if strings.Contains(r.GeneratePrompt(), "## 工具: profile") {
+		t.Error("GeneratePrompt 也不应含 hidden 工具（sortedVisibleToolNames 已过滤）")
 	}
 }
 

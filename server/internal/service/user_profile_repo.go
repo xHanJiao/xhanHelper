@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -39,18 +38,6 @@ func (r *UserProfileRepo) GetByUser(ctx context.Context, userID string) ([]model
 		Order("updated_at ASC").
 		Find(&list).Error
 	return list, err
-}
-
-// GetByUserAndField 查询单个画像字段，不存在返回 (nil, nil)。
-func (r *UserProfileRepo) GetByUserAndField(ctx context.Context, userID, field string) (*model.UserProfile, error) {
-	var p model.UserProfile
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND field = ?", userID, field).
-		First(&p).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &p, err
 }
 
 // HasAny 检查用户是否有任何画像行（冷启动判断用）。

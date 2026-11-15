@@ -594,16 +594,6 @@ func (r *MessageRepo) ListRecentUserMessageContents(ctx context.Context, convID 
 	return out, err
 }
 
-// CountRecent 统计用户最近 role=user 的消息数（排除子会话消息）
-func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("user_id = ? AND created_at >= ? AND role = 'user'", userID, since).
-		Where(subConversationExclusion).
-		Count(&count).Error
-	return count, err
-}
-
 // ListUserMessagesBefore 查询指定时间之前会话的 user role 消息，取最近的 limit 条（按时间正序返回）。
 // 内部用 DESC+反转，确保冷启动时取到窗口外最近的消息而非最老的。
 func (r *MessageRepo) ListUserMessagesBefore(ctx context.Context, convID string, before time.Time, limit int) ([]model.Message, error) {

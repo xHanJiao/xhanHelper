@@ -33,17 +33,6 @@ func (r *ReminderRepo) FindByID(ctx context.Context, userID, id string) (*model.
 	return &rem, nil
 }
 
-func (r *ReminderRepo) FindByDeadline(ctx context.Context, userID string, deadline time.Time) (*model.Reminder, error) {
-	var rem model.Reminder
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline = ?", userID, model.ReminderStatusPending, deadline).
-		First(&rem).Error
-	if err != nil {
-		return nil, err
-	}
-	return &rem, nil
-}
-
 func (r *ReminderRepo) List(ctx context.Context, userID, status string, limit, offset int) ([]model.Reminder, int64, error) {
 	var list []model.Reminder
 	var total int64

@@ -95,37 +95,6 @@ type ToolInfo struct {
 	Functions   []ToolFunctionInfo
 }
 
-// SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索。
-// hidden 工具不参与搜索（主循环 LLM 无途径获知）。
-func (r *Registry) SearchTools(query string) []ToolInfo {
-	var results []ToolInfo
-	q := strings.ToLower(query)
-	for name, t := range r.tools {
-		if r.hiddenNames[name] {
-			continue
-		}
-		desc := strings.ToLower(t.Description())
-		if strings.Contains(name, q) || strings.Contains(desc, q) {
-			funcs := t.Functions()
-			funcInfos := make([]ToolFunctionInfo, len(funcs))
-			for i, f := range funcs {
-				funcInfos[i] = ToolFunctionInfo{
-					Name:        f.Name,
-					Description: f.Description,
-					Parameters:  f.Parameters,
-				}
-			}
-			results = append(results, ToolInfo{
-				ID:          name,
-				Name:        name,
-				Description: t.Description(),
-				Functions:   funcInfos,
-			})
-		}
-	}
-	return results
-}
-
 // DynamicToolLoader — 动态工具加载器接口（由 service.ToolRepo 实现）
 type DynamicToolLoader interface {
 	ListActiveTools(ctx context.Context) ([]model.ToolRegistry, error)
@@ -162,30 +131,6 @@ func (r *Registry) sortedVisibleToolNames() []string {
 	return names
 }
 
-// GetNativeFCTools 导出所有非隐藏工具的函数定义（供 LLM 原生 function calling）。
-// 每个函数扁平化为独立的 tool definition，名称格式为 "toolName__funcName"。
-// 输出按工具名排序，保证同集合请求的 tools 数组字节稳定。
-func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {
-	defs := make([]llm.ToolDefinition, 0, len(r.tools))
-	for _, name := range r.sortedVisibleToolNames() {
-		t := r.tools[name]
-		funcs := make([]llm.FuncDef, len(t.Functions()))
-		for i, f := range t.Functions() {
-			funcs[i] = llm.FuncDef{
-				Name:        f.Name,
-				Description: f.Description,
-				Parameters:  f.Parameters,
-			}
-		}
-		defs = append(defs, llm.ToolDefinition{
-			Name:        name,
-			Description: t.Description(),
-			Functions:   funcs,
-		})
-	}
-	return defs
-}
-
 // ReadOnlyToolDefinitions 导出只读函数的工具定义（供 plan 模式 native FC 请求体）。
 // 仅保留 ReadOnlyFuncs() 声明的函数；无只读函数的工具（含 task/expose_tools）整体跳过。
 // 输出按工具名排序，保证字节稳定（前缀缓存友好）。
@@ -209,29 +154,6 @@ func (r *Registry) ReadOnlyToolDefinitions() []llm.ToolDefinition {
 		}
 		if len(funcs) == 0 {
 			continue
-		}
-		defs = append(defs, llm.ToolDefinition{
-			Name:        name,
-			Description: t.Description(),
-			Functions:   funcs,
-		})
-	}
-	return defs
-}
-
-// GetLLMTools 导出所有工具定义（供 LLM native function calling）。
-// 输出按工具名排序，保证字节稳定。
-func (r *Registry) GetLLMTools() []llm.ToolDefinition {
-	defs := make([]llm.ToolDefinition, 0, len(r.tools))
-	for _, name := range r.sortedVisibleToolNames() {
-		t := r.tools[name]
-		funcs := make([]llm.FuncDef, len(t.Functions()))
-		for i, f := range t.Functions() {
-			funcs[i] = llm.FuncDef{
-				Name:        f.Name,
-				Description: f.Description,
-				Parameters:  f.Parameters,
-			}
 		}
 		defs = append(defs, llm.ToolDefinition{
 			Name:        name,
@@ -376,20 +298,6 @@ func (r *Registry) generatePrompt() string {
 	return buf.String()
 }
 
-// ToolOverview 生成所有可用工具的名称+描述概览（不含详细参数），供 LLM 了解工具能力
-func (r *Registry) ToolOverview() string {
-	var buf bytes.Buffer
-	for _, name := range r.sortedVisibleToolNames() {
-		t := r.tools[name]
-		buf.WriteString(fmt.Sprintf("工具名: %s —— %s\n", name, t.Description()))
-	}
-	result := buf.String()
-	if result == "" {
-		return ""
-	}
-	return "\n\n## 可用工具概览\n" + result
-}
-
 // GetLLMToolsFiltered 只导出指定名称的工具定义（供 Phase 5/6 按需加载）
 func (r *Registry) GetLLMToolsFiltered(names []string) []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(names))
@@ -451,6 +359,37 @@ func (r *Registry) FillDisplay(tc *ToolCall) {
 			return
 		}
 	}
+}
+
+// SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索。
+// hidden 工具不参与搜索（主循环 LLM 无途径获知）。
+func (r *Registry) SearchTools(query string) []ToolInfo {
+	var results []ToolInfo
+	q := strings.ToLower(query)
+	for name, t := range r.tools {
+		if r.hiddenNames[name] {
+			continue
+		}
+		desc := strings.ToLower(t.Description())
+		if strings.Contains(name, q) || strings.Contains(desc, q) {
+			funcs := t.Functions()
+			funcInfos := make([]ToolFunctionInfo, len(funcs))
+			for i, f := range funcs {
+				funcInfos[i] = ToolFunctionInfo{
+					Name:        f.Name,
+					Description: f.Description,
+					Parameters:  f.Parameters,
+				}
+			}
+			results = append(results, ToolInfo{
+				ID:          name,
+				Name:        name,
+				Description: t.Description(),
+				Functions:   funcInfos,
+			})
+		}
+	}
+	return results
 }
 
 // String 返回 "tool.function" 格式的名称

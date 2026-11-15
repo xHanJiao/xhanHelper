@@ -130,15 +130,6 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limi
 	return list, total, err
 }
 
-// CountRecent 统计用户最近的正常状态笔记数
-func (r *NoteRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Note{}).
-		Where("user_id = ? AND status = ? AND created_at >= ?", userID, model.NoteStatusNormal, since).
-		Count(&count).Error
-	return count, err
-}
-
 // DistinctUserIDs 返回有笔记的所有 user_id（供存量清洗工具枚举用户）。
 func (r *NoteRepo) DistinctUserIDs(ctx context.Context) ([]string, error) {
 	var ids []string

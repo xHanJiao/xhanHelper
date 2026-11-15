@@ -104,25 +104,3 @@ func TestReplyRepoListRecentPerAnnotation(t *testing.T) {
 		t.Fatalf("recent=%v, want [m4 m5]", got["a1"])
 	}
 }
-
-func TestReplyRepoDelete(t *testing.T) {
-	repo, cleanup := setupReplyRepo(t)
-	defer cleanup()
-	seedReplies(t, repo)
-	ctx := context.Background()
-
-	n, err := repo.DeleteByAnnotation(ctx, "a1", "u1")
-	if err != nil || n != 3 {
-		t.Fatalf("delete by annotation: n=%d err=%v", n, err)
-	}
-	if _, total, _ := repo.ListByAnnotationID(ctx, "a1", "u1", -1, 0); total != 0 {
-		t.Fatalf("a1 应清空，剩 %d", total)
-	}
-	if _, total, _ := repo.ListByAnnotationID(ctx, "a2", "u1", -1, 0); total != 1 {
-		t.Fatalf("a2 不应受影响")
-	}
-
-	if n, err := repo.DeleteByDocument(ctx, "doc1", "u1"); err != nil || n != 1 {
-		t.Fatalf("delete by document: n=%d err=%v", n, err)
-	}
-}

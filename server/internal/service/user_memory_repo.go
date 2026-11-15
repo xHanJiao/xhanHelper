@@ -245,15 +245,6 @@ func (r *UserMemoryRepo) SetRating(ctx context.Context, userID, id string, ratin
 		Update("rating", rating).Error
 }
 
-// CountRecent 统计用户最近的记忆数
-func (r *UserMemoryRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
-		Where("user_id = ? AND created_at >= ?", userID, since).
-		Count(&count).Error
-	return count, err
-}
-
 // TopicCount — topic + 计数结果
 type TopicCount struct {
 	Topic string `json:"topic"`

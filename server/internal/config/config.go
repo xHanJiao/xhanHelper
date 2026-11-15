@@ -39,7 +39,6 @@ type Config struct {
 	Storage           StorageConfig           `yaml:"storage"`
 	Backup            BackupConfig            `yaml:"backup"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
-	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
 	Activity          ActivityConfig          `yaml:"activity"`
 	Voice             VoiceConfig             `yaml:"voice"`
@@ -181,12 +180,6 @@ type MCPServerCfg struct {
 	Env             map[string]string `yaml:"env"`
 	IdleTimeoutSecs int               `yaml:"idle_timeout_secs"`
 	Description     string            `yaml:"description"`
-}
-
-// MCPConfig — MCP 配置
-type MCPConfig struct {
-	MaxConcurrent int            `yaml:"max_concurrent"`
-	Servers       []MCPServerCfg `yaml:"servers"`
 }
 
 // GlobalDefaultRoleConfig — 全局默认角色（无 agent_id 时生效）

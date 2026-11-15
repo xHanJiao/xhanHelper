@@ -127,15 +127,14 @@ func main() {
 	}
 
 	// --- 监控 ---
-	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation)
-	tools.MCPManager.StartIdleReaper(agents.BGCtx)
+	appinit.RegisterMonitorSnapshots(vs, repos.Conversation)
 
 	// --- 本地数据备份（仅本地模式；每小时检查、到期才跑）---
 	backupSvc := setupLocalBackup(cfg, db, agents.BGCtx)
 
 	// --- 路由 & 服务 ---
-	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc, activityStore)
-	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
+	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, vs, localUserID, backupSvc, activityStore)
+	appinit.Serve(cfg, router, agents.BGCancel)
 }
 
 // setupActivity 打开 events.db；禁用时返回 nil（不建库）。

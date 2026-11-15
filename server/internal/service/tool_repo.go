@@ -76,20 +76,3 @@ func (r *ToolRepo) DeleteTool(ctx context.Context, id, userID string) error {
 }
 
 // —— tool_data (memoization cache) ——
-
-// FindCachedResult 查找可缓存的调用结果
-func (r *ToolRepo) FindCachedResult(ctx context.Context, toolName, funcName, inputHash string) (*model.ToolData, error) {
-	var d model.ToolData
-	err := r.db.WithContext(ctx).
-		Where("tool_name = ? AND func_name = ? AND input_hash = ? AND cached = ?", toolName, funcName, inputHash, true).
-		First(&d).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &d, err
-}
-
-// SaveToolData 保存调用记录
-func (r *ToolRepo) SaveToolData(ctx context.Context, d *model.ToolData) error {
-	return r.db.WithContext(ctx).Create(d).Error
-}

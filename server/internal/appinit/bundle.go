@@ -6,7 +6,6 @@ import (
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/replay"
-	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -14,7 +13,6 @@ import (
 // ToolsBundle 工具层初始化的产物
 type ToolsBundle struct {
 	Registry            *tool.Registry
-	MCPManager          *mcp.Manager
 	MemExtractor        *agent.MemoryExtractor
 	ConceptEmbedService *agent.ConceptEmbedService
 	EntityPurger        *service.EntityPurger

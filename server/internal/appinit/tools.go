@@ -9,7 +9,6 @@ import (
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
-	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -45,23 +44,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	}
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(repos.Agent, repos.Version, repos.Conversation), log.Default()))
-
-	// --- MCP Manager（保留：monitor 看板统计用；MCP proxy 工具已废弃下掉） ---
-	mcpCfg := mcp.Config{MaxConcurrent: cfg.MCP.MaxConcurrent}
-	for _, s := range cfg.MCP.Servers {
-		if s.Name == "" || s.Command == "" {
-			continue
-		}
-		mcpCfg.Servers = append(mcpCfg.Servers, mcp.ServerConfig{
-			Name:            s.Name,
-			Command:         s.Command,
-			Args:            s.Args,
-			Env:             s.Env,
-			IdleTimeoutSecs: s.IdleTimeoutSecs,
-			Description:     s.Description,
-		})
-	}
-	mcpManager := mcp.NewManager(mcpCfg)
 
 	// --- Phase 6: 检索工具 ---
 	conceptEmbedService := agent.NewConceptEmbedService(infra, repos.ConceptEmbed, repos.Embedding)
@@ -122,7 +104,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	return &ToolsBundle{
 		Registry:            reg,
-		MCPManager:          mcpManager,
 		MemExtractor:        memExtractor,
 		ConceptEmbedService: conceptEmbedService,
 		EntityPurger:        entityPurger,

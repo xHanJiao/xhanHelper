@@ -21,21 +21,18 @@ import (
 	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
-	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 )
 
 // RegisterMonitorSnapshots 注册监控快照
-func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, convRepo *service.ConversationRepo) {
+func RegisterMonitorSnapshots(vs *agent.VectorStore, convRepo *service.ConversationRepo) {
 	snapshots := &snapshotProvider{
 		vectorStore: vs,
-		mcpManager:  mcpManager,
 		convRepo:    convRepo,
 	}
 	monitor.Register("vector_store", snapshots.VectorStore)
-	monitor.Register("mcp", snapshots.MCP)
 	monitor.Register("active_conversations", snapshots.ActiveConversations)
 }
 
@@ -127,7 +124,7 @@ func EnsureLocalUser(cfg *config.Config, userRepo *service.UserRepo) (string, er
 }
 
 // InitRouter 创建路由、注册所有 handler
-func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service, activityStore *activity.Store) *gin.Engine {
+func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service, activityStore *activity.Store) *gin.Engine {
 	localAuth := middleware.LocalAuth{
 		Enabled: cfg.Server.LocalSingleUser,
 		UserID:  localUserID,
@@ -259,7 +256,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 }
 
 // Serve 启动 HTTP 服务器并处理优雅关闭
-func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, mcpManager *mcp.Manager, mcpIdleCtx context.Context) {
+func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc) {
 	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
 	srv := &http.Server{
 		Addr:    addr,
@@ -285,7 +282,6 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 	log.Println("shutting down...")
 
 	bgCancel()
-	mcpManager.Shutdown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -296,7 +292,6 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 // snapshotProvider 提供监控看板的快照数据
 type snapshotProvider struct {
 	vectorStore *agent.VectorStore
-	mcpManager  *mcp.Manager
 	convRepo    *service.ConversationRepo
 }
 
@@ -305,13 +300,6 @@ func (p *snapshotProvider) VectorStore() any {
 		return nil
 	}
 	return p.vectorStore.Stats()
-}
-
-func (p *snapshotProvider) MCP() any {
-	if p.mcpManager == nil {
-		return nil
-	}
-	return p.mcpManager.Stats()
 }
 
 func (p *snapshotProvider) ActiveConversations() any {

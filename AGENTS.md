@@ -45,7 +45,7 @@ xhanHelper/
 │       ├── eval/        # 检索评测框架（数据集/标注/指标）
 │       ├── profilefield/# 用户画像白名单字段定义（字段即代码，人工放行）
 │       ├── monitor/     # 监控看板 + Admin 中间件 + WrapLLMClient
-│       ├── mcp/ async/ idgen/ util/ view/
+│       ├── async/ idgen/ util/ view/
 ├── front-end/                          # Vue 3
 │   └── src/{views,components,composables,stores,api,router,utils}
 ├── client/xHelper/
@@ -92,7 +92,7 @@ POST /api/chat
 - 用户层：`UserMemory`、`UserProfile`、`UserProfileFact`、`UserPrompt`、`ImageAsset`
 - 反思：`ThemeState`、`Mission`、`PendingFinding`、`MailboxItem`、`DelayedTask`、`ScheduledTask`、`ReflectionTrace` / `ReflectionLLMCall` / `ReflectionDecision`
 - 向量：`Embedding`、`EmbeddingChunk`、`ConceptEmbedding`
-- 基建：`ToolRegistry`、`MCPServerRecord`、`SearchUsage`、`LlmCostDetail`、`LlmModelPrice`、`LLMCallIO`
+- 基建：`ToolRegistry`、`SearchUsage`、`LlmCostDetail`、`LlmModelPrice`、`LLMCallIO`
 
 ## LLM 调用
 
@@ -170,7 +170,7 @@ type Tool interface {
   - `~/Library/Application Support/xhanHelper-dev/xhan_helper.db` = **dev 沙盒库**（`make local-dev` / `APP_ENV=local.dev`，端口 18924）。测试、试验、清洗演练用这个。
   - 判据：**路径里带 `-dev` 的才是 dev**。不确定时先 `sqlite3 -readonly <db> "SELECT count(*) FROM user_memories"` 只读确认，绝不写 prod。
 - 敏感变量：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`XHAN_HELPER_DB_PASSWORD`、`ALLOWED_USER`、`XHAN_HELPER_ADMIN`。本地放 `server/.env`（已 gitignore，`make dev` 会加载）
-- 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`web_tools`、`storage`、`share`、`archive`、`mcp`、`snowflake`、`global_default_role`
+- 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`web_tools`、`storage`、`share`、`archive`、`snowflake`、`global_default_role`
 - 后台任务总开关 `server.disable_background_tasks`，关闭后不启 `CronRunner`、不跑 profile 迁移、`onChatEnd` 短路
 
 ## 常用命令
@@ -348,7 +348,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 ## 已知过时/废弃（不要照着做）
 
 - `server/Makefile` 的 `build-topic-fix` / `build-backfill` / `build-rebuild` 指向的 `cmd/` 子目录已不存在
-- `tool.DynamicToolLoader` 接口是死代码（无实现无调用）；"每 30s 从 DB 加载动态工具 + sidecar 转发"不成立。MCP proxy 工具已下掉，`mcp.Manager` 仅剩监控统计用途
+- `tool.DynamicToolLoader` 接口是死代码（无实现无调用）；"每 30s 从 DB 加载动态工具 + sidecar 转发"不成立。**服务端 MCP 已于 2026-11-15 整体移除**（`server/internal/mcp/`、`config.mcp`、`MCPServerRecord`、`ToolData`）；MCP 只存在于 Mac 客户端（`client/xHelper/Shared/MCP/`，见 `docs/design/mac-apps/client-side-mcp.md`）
 - `docs/agents/*.md`、`docs/backend-reference.md` 是历史脚手架（引用的 `CONTEXT-MAP.md`、`docs/adr/`、`/api/devices/register` 都不存在）
 - **主题/状态子系统已于 2026-11-05 整体删除**（`agent/theme_*.go`、`agent/state_*.go`、`service/theme_state_repo.go`、`model/theme_state.go`、`reflection` 配置段）。历史设计文档（`docs/design/phase-6/`、`phase-13/`、`phase-15/`）只作考古，别再照着接线。存量库的 `theme_states` / theme 向量可用 `cmd/entity-gc --purge-legacy-themes --write` 清理
 - 根 `scripts/*.sh` 是 device-token 时代脚本，已不适用；服务端脚本在 `server/scripts/`。**例外**：根 `scripts/dev-stats.py` 是仓库级统计工具（见「常用命令」），不是遗留脚本

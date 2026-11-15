@@ -294,7 +294,7 @@ func (r *Registry) SearchTools(query string) []ToolInfo {
 	return results
 }
 
-// String 返回 "tool.function" 格式的名称
+// String 返回 "tool.function" 格式的名称（fmt.Stringer，仅为日志/调试输出预留，当前无显式调用方）
 func (tc ToolCall) String() string {
 	return tc.Tool + "." + tc.Function
 }

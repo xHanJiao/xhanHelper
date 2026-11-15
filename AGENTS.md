@@ -251,7 +251,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 - 派生层（`interval_closed`/`sessions`/`event_session`/`day_stats`/`day_health`/`event_refs`(source≠explicit)/`event_resources`）**只清重建、不做增量补丁**；`Recompute()` 全量跑。
 - `event_refs` 只产 `source='resource'`（explicit 不落 refs，直接关系由 `events` 列承载；time_window/semantic 不启用）。
 - `type` 契约写入端强制（`validEventType`）：违契约的事件 `Emit` 丢弃、上传接口 400。
-- 明细保留 90 天硬删（`CleanupBefore`/`CleanupExpired`，每日节拍**独立于重算判定**执行）；按资源手动清走 `CleanupResource`（只清资源映射、不动事实层；**下次 `Recompute` 会从事件重建，非永久遗忘**）。
+- 明细保留 90 天硬删（`CleanupBefore`/`CleanupExpired`，每日节拍**独立于重算判定**执行）。~~按资源手动清走 `CleanupResource`~~：该入口因生产零调用已于 2026-11-15 随死代码清理删除，需要「按资源遗忘」时改走 `CleanupExpired` 或重新引入该口子（实现见 git 历史 `activity/cleanup.go`）。
 
 ## UI 预览与设计 token
 

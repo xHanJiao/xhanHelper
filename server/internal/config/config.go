@@ -172,16 +172,6 @@ func (s *SubAgentConfig) PromptUserContext() bool {
 	return s.UserContextEnabled != nil && *s.UserContextEnabled
 }
 
-// MCPServerCfg — 单个 MCP server 配置
-type MCPServerCfg struct {
-	Name            string            `yaml:"name"`
-	Command         string            `yaml:"command"`
-	Args            []string          `yaml:"args"`
-	Env             map[string]string `yaml:"env"`
-	IdleTimeoutSecs int               `yaml:"idle_timeout_secs"`
-	Description     string            `yaml:"description"`
-}
-
 // GlobalDefaultRoleConfig — 全局默认角色（无 agent_id 时生效）
 type GlobalDefaultRoleConfig struct {
 	SystemPrompt string `yaml:"system_prompt"` // 全局默认角色 system prompt（Markdown）

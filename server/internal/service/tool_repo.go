@@ -74,5 +74,3 @@ func (r *ToolRepo) DeleteTool(ctx context.Context, id, userID string) error {
 		Where("id = ? AND user_id = ?", id, userID).
 		Delete(&model.ToolRegistry{}).Error
 }
-
-// —— tool_data (memoization cache) ——

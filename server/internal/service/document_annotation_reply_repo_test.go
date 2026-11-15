@@ -104,3 +104,22 @@ func TestReplyRepoListRecentPerAnnotation(t *testing.T) {
 		t.Fatalf("recent=%v, want [m4 m5]", got["a1"])
 	}
 }
+
+// TestReplyRepoDeleteByAnnotation 按批注删除回复（级联删除路径，随 DeleteByDocument 删除后保留）。
+func TestReplyRepoDeleteByAnnotation(t *testing.T) {
+	repo, cleanup := setupReplyRepo(t)
+	defer cleanup()
+	seedReplies(t, repo)
+	ctx := context.Background()
+
+	n, err := repo.DeleteByAnnotation(ctx, "a1", "u1")
+	if err != nil || n != 3 {
+		t.Fatalf("delete by annotation: n=%d err=%v", n, err)
+	}
+	if _, total, _ := repo.ListByAnnotationID(ctx, "a1", "u1", -1, 0); total != 0 {
+		t.Fatalf("a1 应清空，剩 %d", total)
+	}
+	if _, total, _ := repo.ListByAnnotationID(ctx, "a2", "u1", -1, 0); total != 1 {
+		t.Fatalf("a2 不应受影响")
+	}
+}

@@ -477,6 +477,8 @@ type ClientTool struct {
 ### 2.3 工具合并: `mkLlmChatReq`
 
 ```go
+// 注意：GetNativeFCTools 已于 2026-11-15 随死代码清理删除，现主链路走
+// registry.GetLLMToolsFiltered(已排序的暴露集)。以下示例仅保留历史形态。
 var tools []llm.ToolDefinition
 if o.useNativeFC {
     tools = o.registry.GetNativeFCTools()

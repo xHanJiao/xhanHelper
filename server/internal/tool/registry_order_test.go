@@ -61,31 +61,3 @@ func TestGetLLMToolsFiltered_OrderAndDeterminism(t *testing.T) {
 		t.Errorf("未知名字应跳过, got %+v", got)
 	}
 }
-
-func TestGeneratePrompt_Deterministic(t *testing.T) {
-	r := newOrderTestRegistry()
-	a := r.GeneratePrompt()
-	b := r.GeneratePrompt()
-	if a != b {
-		t.Error("GeneratePrompt 两次调用应字节一致")
-	}
-	// 工具定义段应按名排序：alpha 先于 mid 先于 zeta
-	ia := indexOf(a, "## 工具: alpha")
-	im := indexOf(a, "## 工具: mid")
-	iz := indexOf(a, "## 工具: zeta")
-	if ia < 0 || im < 0 || iz < 0 {
-		t.Fatalf("GeneratePrompt 应包含全部工具定义: %d %d %d", ia, im, iz)
-	}
-	if !(ia < im && im < iz) {
-		t.Error("GeneratePrompt 工具段应按名排序")
-	}
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
-}

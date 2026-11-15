@@ -132,13 +132,6 @@ type reactState struct {
 	expMutex     sync.Mutex // 并发工具调用写 exposedTools 用
 }
 
-// LLMResponse — prompt engineering 文本回复的结构化形态（反思链路 ReactLoop 解析用）。
-// 主聊天走原生 function calling，不使用此类型。
-type LLMResponse struct {
-	Reply     string          `json:"reply"`
-	ToolCalls []tool.ToolCall `json:"tool_calls"`
-}
-
 // msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
 type msgCreator interface {
 	Create(ctx context.Context, m *model.Message) error
@@ -2464,31 +2457,4 @@ func splitToolFuncName(name string) (string, string) {
 		return name, name
 	}
 	return name[:idx], name[idx+2:]
-}
-
-// ParseLLMResponse 解析 prompt engineering 格式的文本回复（「文字前缀 + {reply,tool_calls} 信封」）。
-// 仅供反思子系统 ReactLoop 使用；主聊天走原生 function calling，不再调用本函数。
-func ParseLLMResponse(text string) (*LLMResponse, error) {
-	var resp LLMResponse
-	prefix, err := ParseFlashJSON(text, &resp)
-	if err != nil {
-		return nil, err // 非法 JSON
-	}
-	if prefix != "" {
-		if resp.Reply != "" {
-			resp.Reply = prefix + "\n\n" + resp.Reply
-		} else {
-			resp.Reply = prefix
-		}
-	}
-	if resp.ToolCalls == nil && resp.Reply == "" {
-		return nil, nil // 没找到 JSON，纯文本消息
-	}
-	if resp.ToolCalls == nil {
-		resp.ToolCalls = []tool.ToolCall{}
-	}
-	for i, tc := range resp.ToolCalls {
-		resp.ToolCalls[i].Function = strings.TrimPrefix(tc.Function, "_")
-	}
-	return &resp, nil
 }

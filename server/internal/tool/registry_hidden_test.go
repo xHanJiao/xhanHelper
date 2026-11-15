@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -27,9 +26,6 @@ func TestHiddenTool_ExcludedFromVisibleNames(t *testing.T) {
 		if name == "profile" {
 			t.Error("hidden 工具不应出现在 VisibleToolNames（expose_tools 候选集）")
 		}
-	}
-	if strings.Contains(r.GeneratePrompt(), "## 工具: profile") {
-		t.Error("GeneratePrompt 也不应含 hidden 工具（sortedVisibleToolNames 已过滤）")
 	}
 }
 

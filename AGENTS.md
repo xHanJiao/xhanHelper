@@ -76,12 +76,11 @@ POST /api/chat
 硬约束：**进入请求体的动态内容必须字节稳定**（工具定义/目录按工具名排序），否则破坏 DeepSeek 前缀缓存。
 动态内容（检索上下文/画像/摘要）一律注入当前 user 消息，**不放进 system prompt**。
 
-## 三套 ReAct 循环（改循环前先确认改的是哪一套）
+## 两套 ReAct 循环（改循环前先确认改的是哪一套）
 
 | 循环 | 文件 | 调用方式 | 用在哪 |
 |------|------|----------|--------|
 | 主编排循环 | `agent/orchestrator.go` | 流式 `Chat`，原生 FC 优先，最终轮强制收敛 | `POST /api/chat` 用户主对话 |
-| `ReactLoop` | `agent/react_loop.go` | `ChatSync` + prompt engineering，工具结果以 `role=user` 回填 | 反思子系统（MissionRunner），写 `ReflectionTrace` |
 | `MiniReAct` | `agent/mini_react.go` | `ChatSync` + 原生 FC，结果以 `role=tool` 回填，主循环耗尽后强制收敛轮 | 后台 worker 与 subagent（`task` 工具），事件前缀 `mini_react:*` |
 
 ## 数据模型（`server/internal/model/`，按域分组）
@@ -90,7 +89,7 @@ POST /api/chat
 - 对话：`Conversation`（含 parent_id 子会话、mode `work|plan`）、`Message`（reasoning_content / tool_calls_json / request_json / response_json / Embedding / Status）、`ConversationSummary`、`ConversationPlan` + `PlanStep`、`ContentVersion`
 - 内容：`Bill`、`Note`、`Document`、`DocumentShare`、`MessageShare`、`Reminder`、`Agent`
 - 用户层：`UserMemory`、`UserProfile`、`UserProfileFact`、`UserPrompt`、`ImageAsset`
-- 反思：`ThemeState`、`Mission`、`PendingFinding`、`MailboxItem`、`DelayedTask`、`ScheduledTask`、`ReflectionTrace` / `ReflectionLLMCall` / `ReflectionDecision`
+- 反思：`ThemeState`、`Mission`、`PendingFinding`、`MailboxItem`、`DelayedTask`、`ScheduledTask`
 - 向量：`Embedding`、`EmbeddingChunk`、`ConceptEmbedding`
 - 基建：`ToolRegistry`、`SearchUsage`、`LlmCostDetail`、`LlmModelPrice`、`LLMCallIO`
 
@@ -101,7 +100,7 @@ POST /api/chat
 - **服务端是 LLM 参数的唯一事实来源**：`/api/chat` 请求体里的 `temperature` / `max_tokens` / `thinking` 会被解析但**有意不传进 `RunRequest`**（`controller/chat.go`），一律用服务端配置默认。客户端 UI 上那几个旋钮当前不生效 —— 这是设计，不是 bug，别去"修"
 - 同理：全链路**没有 `finish_reason == "length"` 处理**，`max_tokens` 触顶是静默硬截断。要限制回答长度请用 prompt（如 `brief_answer` 注入 system prompt 的输出约束），不要靠调 `max_tokens`
 - 装饰器链：`llmcost.CostTracker`（token 记账）+ `IOAuditWrapper`（ChatSync I/O 审计，保留 7 天）
-- 主聊天工具调用只走**原生 function calling**（工具定义内置在请求体 `tools`，读 `msg.ToolCalls`）。从前的 prompt engineering 路径（工具定义注入 system prompt → 解析文本 JSON）已从主链路移除；`ParseLLMResponse` 仅保留给反思子系统的 `ReactLoop`
+- 主聊天工具调用只走**原生 function calling**（工具定义内置在请求体 `tools`，读 `msg.ToolCalls`）。从前的 prompt engineering 路径（工具定义注入 system prompt → 解析文本 JSON）已彻底移除（`ParseLLMResponse` / `Registry.GeneratePrompt` / `ReactLoop` 于 2026-11-15 删除）
 
 ### SSE 事件（`controller/chat.go` 分发）
 
@@ -208,9 +207,9 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 | 事件（只读） | `event.go` | `/api/event-threads` 列表与详情（写操作走聊天里的 `event` 工具） |
 | 智能体 / 工具 / Prompt | `agents.go` `tools.go` `prompts.go` | CRUD + `agents-for-input-bar` + prompt 版本回滚 |
 | 文档 / 图片 / 提醒 | `documents.go` `images.go` `reminders.go` | 文档 CRUD + tags + 分享；图片上传/读取；提醒 ack/cancel |
-| 信箱 / Mission | `reflection_routes.go` | mailbox 读/归档/发起对话、missions |
+| 信箱 / Mission | `admin_extra_routes.go` | mailbox 读/归档/发起对话、missions |
 | 公开（无认证） | `router.go` | `/api/share/:token`、`/api/share/messages/:token`、`/images/:file`（仅 public） |
-| Admin | `reflection_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、reflection traces、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
+| Admin | `admin_extra_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
 
 ## 分支约定
 

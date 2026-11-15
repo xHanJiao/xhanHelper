@@ -65,8 +65,8 @@ type LLMClients struct {
 | 主题嵌入 | `TopicEmbedder` (get_topic_stats.go) | `agent.ThemeEmbedder` |
 | 主题向量写入 | `ThemeVectorWriter` (theme.go) | `agent.ThemeEmbedder` |
 | 定时器 | `CommitmentTimer` (reminder.go) | `agent.CommitmentTimer` |
-| MCP 代理 | `MCPToolCaller` (mcp_tool.go) | `mcp.Manager` |
-| 工具缓存 | `CacheReader`/`CacheWriter` (dynamic.go) | `service.ToolRepo` |
+| ~~MCP 代理~~ | ~~`MCPToolCaller` (mcp_tool.go)~~ | ~~`mcp.Manager`~~（2026-11-15 服务端 MCP 已整体移除，本行仅作历史） |
+| ~~工具缓存~~ | ~~`CacheReader`/`CacheWriter` (dynamic.go)~~ | ~~`service.ToolRepo`~~（同上，缓存方法随之删除） |
 
 **策略**：所有能合并的接口迁入 `app` 包，作为唯一的规范定义。`tool` 和 `agent` 都从 `app` import，消除重复。`tool` 包只保留调用方需要的接口子集（接口隔离）。
 

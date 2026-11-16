@@ -137,6 +137,8 @@ final class BookReaderController: ObservableObject {
     private var saveTask: Task<Void, Never>?
     /// 换节令牌：只有最后一次 `loadSection` 允许写进 `sectionIndex`
     private var chapterLoadToken = UUID()
+    /// 注释文件令牌：连点两个注标时，只认最后一次读回来的内容
+    private var noteRequestToken = UUID()
     /// 本章锚点（fragment → 拍平偏移），由 JS 在 `chapterReady` 后回报
     private var anchorOffsets: [String: Int] = [:]
     /// 跨章跳目录时暂存锚点，等新章渲染完再滚过去
@@ -803,6 +805,15 @@ final class BookReaderController: ObservableObject {
         case "sectionJump":
             jumpSection(message["delta"] as? Int ?? 1)
 
+        case "noteFile":
+            handleNoteFile(message)
+
+        case "bookLink":
+            if let href = message["href"] as? String { openBookLink(href) }
+
+        case "openExternal":
+            if let href = message["href"] as? String { openExternal(href) }
+
         case "diag":
             // 导航诊断：真机上「按键/滚轮换节不灵」时看这条。
             // 没有 kind=key 的日志 = 事件没进到页面（焦点不在正文）；
@@ -830,6 +841,125 @@ final class BookReaderController: ObservableObject {
 
         default:
             LogBuffer.shared.info("书阅读器：未知消息 \(type)")
+        }
+    }
+
+
+    // MARK: - 脚注 / 链接
+
+    /// 注释目标不在当前节（同文件其他节 / 另一个文件 / `linear="no"` 的尾注文件）：
+    /// 读回整份 XHTML 再让 JS 取 `#frag`，读者不离开当前位置。
+    private func handleNoteFile(_ message: [String: Any]) {
+        guard let section = book.section(at: sectionIndex),
+              let current = book.chapter(at: section.chapterIndex) else { return }
+        let raw = (message["href"] as? String) ?? ""
+        let frag = (message["frag"] as? String) ?? ""
+        guard !frag.isEmpty else { return }
+
+        let resolved: String
+        if raw.isEmpty || raw.hasPrefix("#") {
+            resolved = current.href              /* 同文件跨节：读当前章整份 */
+        } else {
+            guard let normalized = EpubArchive.normalize(
+                raw, baseDir: EpubArchive.dirName(of: current.href)
+            ) else {
+                LogBuffer.shared.error("书阅读器：注释路径非法 \(raw)")
+                ToastCenter.shared.show("这条注释的路径不合法")
+                return
+            }
+            resolved = normalized
+        }
+        let ext = (resolved as NSString).pathExtension.lowercased()
+        guard ["xhtml", "html", "htm"].contains(ext) else {
+            LogBuffer.shared.error("书阅读器：注释文件类型不支持 \(resolved)")
+            ToastCenter.shared.show("这条注释的文件类型不支持")
+            return
+        }
+
+        let fileURL = store.contentDir(book.id).appendingPathComponent(resolved)
+        let size: Int
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            size = (attrs[.size] as? NSNumber)?.intValue ?? 0
+        } catch {
+            LogBuffer.shared.error("书阅读器：注释文件读不到 \(resolved)：\(error)")
+            ToastCenter.shared.show("这条注释读不出来")
+            return
+        }
+        guard size > 0, size <= 5 * 1024 * 1024 else {
+            LogBuffer.shared.error("书阅读器：注释文件为空或过大 \(resolved)（\(size) 字节）")
+            ToastCenter.shared.show("这条注释读不出来")
+            return
+        }
+
+        let token = UUID()
+        noteRequestToken = token
+        let store = self.store
+        let bookID = book.id
+        let base = fileURL.absoluteString
+        Task {
+            do {
+                let html = try await Task.detached(priority: .userInitiated) {
+                    try store.chapterHTML(id: bookID, href: resolved)
+                }.value
+                guard token == noteRequestToken, let webView else { return }
+                webView.callAsyncJavaScript(
+                    "reader.showExternalNote(html, base, frag);",
+                    arguments: ["html": html, "base": base, "frag": frag],
+                    in: nil, in: .page
+                ) { result in
+                    if case .failure(let error) = result {
+                        LogBuffer.shared.error("书阅读器：注释渲染失败 \(error)")
+                        ToastCenter.shared.show("这条注释没能显示")
+                    }
+                }
+            } catch {
+                guard token == noteRequestToken else { return }
+                LogBuffer.shared.error("书阅读器：读注释文件失败 \(resolved)：\(error)")
+                ToastCenter.shared.show("这条注释读不出来")
+            }
+        }
+    }
+
+    /// 普通书内链接：按当前章目录归一 → 找章节 → 跳节/滚锚点。
+    private func openBookLink(_ raw: String) {
+        guard let section = book.section(at: sectionIndex),
+              let current = book.chapter(at: section.chapterIndex),
+              let normalized = EpubArchive.normalize(
+                raw, baseDir: EpubArchive.dirName(of: current.href)
+              ),
+              let target = book.chapters.first(where: { $0.href == normalized }) else {
+            LogBuffer.shared.warning("书阅读器：书内链接目标不在阅读顺序里 \(raw)")
+            ToastCenter.shared.show("这个链接不在书里")
+            return
+        }
+        let fragment = EpubArchive.fragment(of: raw)
+        if let item = book.toc.first(where: { $0.chapterIndex == target.index && $0.fragment == fragment }) {
+            goToTOC(item)
+            return
+        }
+        guard let targetSection = firstSectionIndex(inChapter: target.index) else { return }
+        if targetSection == sectionIndex, let fragment {
+            evaluate("reader.scrollToAnchor(\(MarkdownWebUtils.jsString(fragment)))")
+            return
+        }
+        goToSection(targetSection, offset: 0, anchor: fragment)
+    }
+
+    /// 外链只放行这三种 scheme；其余（file:/javascript:/data:）一律不交给系统。
+    private func openExternal(_ raw: String) {
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https", "mailto"].contains(scheme) else {
+            LogBuffer.shared.warning("书阅读器：外链 scheme 不允许 \(raw.prefix(32))")
+            ToastCenter.shared.show("这个链接不能打开")
+            return
+        }
+        if NSWorkspace.shared.open(url) {
+            LogBuffer.shared.info("书阅读器：打开外链 \(scheme)://\(url.host ?? "")")
+        } else {
+            LogBuffer.shared.error("书阅读器：打开外链失败 \(scheme)://\(url.host ?? "")")
+            ToastCenter.shared.show("没能打开链接")
         }
     }
 

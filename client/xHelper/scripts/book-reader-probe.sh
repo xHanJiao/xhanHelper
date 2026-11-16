@@ -358,6 +358,121 @@ hook = r"""<script nonce="testnonce">
     add('12 方向键（两种模式 × 四个键 + ⌥⌘）', keyFails.length === 0,
         keyFails.length ? '不通过：' + keyFails.join(' / ') : '八个组合全对');
 
+    /* ---------- 13-19 批 16：脚注 / 链接 / 内联图 / srcset ---------- */
+    var IMG1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/gHrKAAAAABJRU5ErkJggg==';
+    var noteHTML =
+      '<h2>注释测试</h2>' +
+      '<p id="np1">正文一<sup><a epub:type="noteref" href="#fn-1"><img src="' + IMG1 + '" alt="注"/></a></sup>后面还有字。</p>' +
+      '<aside epub:type="footnote" id="fn-1"><ol class="duokan-footnote-content"><li class="duokan-footnote-item">这是第一条注释，应该出现在卡片里。</li></ol></aside>' +
+      '<p id="np2">正文二<sup><a epub:type="noteref" href="#fn-2">2</a></sup>。</p>' +
+      '<aside epub:type="footnote" id="fn-2"><p>第二条注释，带 <strong>加粗</strong>。</p></aside>' +
+      '<p id="np3">跨文件<sup><a epub:type="noteref" href="notes.xhtml#en-1">3</a></sup>。</p>' +
+      '<p id="np4">普通锚点<sup><a href="#np5">4</a></sup>。</p>' +
+      '<p id="np5">普通段落，不应弹注释。</p>' +
+      '<p id="np6">外链 <a href="https://example.com/a?b=1#c">example</a>；书内 <a href="ch2.xhtml#s2">ch2</a>；页内 <a href="#np5">锚点</a>。</p>' +
+      '<p id="np7">行内图 <img id="inline-img" src="' + IMG1 + '"/> 后面还有字。</p>' +
+      '<p id="np8"><img id="block-img" src="' + IMG1 + '"/></p>' +
+      '<figure><img id="fig-img" src="' + IMG1 + '"/><figcaption>图注</figcaption></figure>' +
+      '<picture><source id="src-source" srcset="../Images/a.png 1x, ../Images/b.png 2x"/><img src="' + IMG1 + '"/></picture>' +
+      '<audio src="demo.mp3">音频</audio>' +
+      '<p id="np9"><ruby>東京<rt>とうきょう</rt></ruby></p>';
+
+    function lastPost(type) {
+      var list = window.__posts.filter(function (p) { return p && p.type === type; });
+      return list.length ? list[list.length - 1] : null;
+    }
+    function clickEl(el) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+
+    reader.setTypo({ measure: 728 });
+    reader.setReadingMode('scroll');
+    reader.setChapter(noteHTML, 'file:///tmp/', true, true);
+    void content.offsetHeight;
+
+    var fnRefs = content.querySelectorAll('a.fn-ref');
+    var note1 = document.getElementById('fn-1');
+    var note2 = document.getElementById('fn-2');
+    var hiddenOK = getComputedStyle(note1).display === 'none' && getComputedStyle(note2).display === 'none';
+    reader.find('这是第一条注释');
+    var noteFind = lastPost('findResult');
+    reader.clearFind();
+    var findOK = !!noteFind && noteFind.count === 0;
+    add('13 脚注识别与隐藏',
+        fnRefs.length === 3 && hiddenOK && findOK,
+        '注标=' + fnRefs.length + '（期望 3）/ aside 隐藏=' + hiddenOK + ' / 注释文字 find=' + (noteFind ? noteFind.count : '-'));
+
+    /* 点注标：卡片出现；不能落进 IMG → 大图浮层 */
+    var noteIcon = content.querySelector('#np1 img');
+    window.__posts = [];
+    clickEl(noteIcon);
+    var pop = document.getElementById('note-pop');
+    var popOpen = pop.classList.contains('open');
+    var popText = pop.querySelector('.note-body').textContent;
+    var noLightbox = posts('image') === 0;
+    add('14 注释卡片',
+        popOpen && popText.indexOf('第一条注释') >= 0 && noLightbox,
+        '打开=' + popOpen + ' / 内容=' + (popText.indexOf('第一条注释') >= 0) + ' / 未弹大图=' + noLightbox);
+    add('15 注释卡片可关闭', (function () {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      var closedByEsc = !pop.classList.contains('open');
+      clickEl(noteIcon);
+      window.dispatchEvent(new Event('scroll'));
+      var closedByScroll = !pop.classList.contains('open');
+      clickEl(noteIcon);
+      document.getElementById('note-scrim').click();
+      var closedByScrim = !pop.classList.contains('open');
+      return closedByEsc && closedByScroll && closedByScrim;
+    })(), 'Esc / 滚动 / 遮罩 都能收');
+
+    /* 跨文件尾注：目标不在 DOM → 发 noteFile */
+    window.__posts = [];
+    clickEl(content.querySelector('#np3 a.fn-ref'));
+    var nf = lastPost('noteFile');
+    add('16 跨文件注释发 noteFile',
+        !!nf && (nf.href || '').indexOf('notes.xhtml') >= 0 && nf.frag === 'en-1',
+        nf ? ('href=' + nf.href + ' frag=' + nf.frag) : '没发');
+
+    /* 链接分发：外链 / 书内 / 普通页内锚点 */
+    var extA = content.querySelector('a[data-external]');
+    var bookA = content.querySelector('a[data-book-href]:not(.fn-ref)');
+    window.__posts = [];
+    clickEl(extA);
+    var extPost = lastPost('openExternal');
+    window.__posts = [];
+    clickEl(bookA);
+    var bookPost = lastPost('bookLink');
+    window.__posts = [];
+    clickEl(content.querySelector('#np4 a[href^="#"]'));
+    var plainOK = posts('bookLink') === 0 && posts('openExternal') === 0 && !pop.classList.contains('open');
+    add('17 链接分发',
+        !!extPost && (extPost.href || '').indexOf('https://example.com') === 0 &&
+        !!bookPost && (bookPost.href || '').indexOf('ch2.xhtml') >= 0 && plainOK,
+        '外链=' + (extPost ? 'openExternal' : '没发') +
+        ' / 书内=' + (bookPost ? 'bookLink' : '没发') +
+        ' / 无类型 sup=' + (plainOK ? '按锚点' : '误弹/误跳'));
+
+    /* 内联图 vs 独占图（含注标图标 1em） */
+    var inlineImg = document.getElementById('inline-img');
+    var blockImg = document.getElementById('block-img');
+    var figImg = document.getElementById('fig-img');
+    var iconStyle = getComputedStyle(noteIcon);
+    add('18 内联图 / 独占图',
+        getComputedStyle(inlineImg).display === 'inline' &&
+        getComputedStyle(blockImg).display === 'block' &&
+        getComputedStyle(figImg).display === 'block' &&
+        iconStyle.display === 'inline' && parseFloat(iconStyle.width) < 30,
+        '行内=' + getComputedStyle(inlineImg).display +
+        ' / 独占=' + getComputedStyle(blockImg).display +
+        ' / figure=' + getComputedStyle(figImg).display +
+        ' / 注标=' + iconStyle.display + ' ' + iconStyle.width);
+
+    /* srcset 重写 + 音视频移除 */
+    var srcset = document.getElementById('src-source').getAttribute('srcset') || '';
+    add('19 srcset / 音视频',
+        srcset.indexOf('file:') >= 0 && srcset.indexOf('../') < 0 && !content.querySelector('audio'),
+        'srcset=' + srcset + ' / audio=' + (content.querySelector('audio') ? '还在' : '已移除'));
+
     return JSON.stringify({ rows: rows });
   };
 })();

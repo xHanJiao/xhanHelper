@@ -994,6 +994,9 @@ span.ann-bubble {
 }
 span.ann-bubble:hover { transform: scale(1.6); }
 
+/* 注释卡片：doc 模式不显示；book 模式只在 .open 时显示 */
+#note-scrim, #note-pop { display: none; }
+
 /* 浮动工具条 / 菜单 / 浮层 */
 .floating {
   position: fixed; z-index: 60; display: none;
@@ -1096,8 +1099,33 @@ html.book #content h1 { font-size: calc(var(--fs) * 1.45); }
 html.book #content h2 { font-size: calc(var(--fs) * 1.24); border-bottom: 0; padding-bottom: 0; }
 html.book #content h3 { font-size: calc(var(--fs) * 1.1); }
 html.book #content h4, html.book #content h5, html.book #content h6 { font-size: var(--fs); }
-html.book #content img { display: block; margin: 18px auto; }
+/* 图片默认按行内处理（注标、行内符号、场景分隔符）；只有「独占一段」的才当块级图 */
+html.book #content img, html.book #content svg { max-width: 100%; height: auto; }
+html.book #content img.fig, html.book #content svg.fig,
+html.book #content figure > img, html.book #content figure > svg {
+  display: block; margin: 18px auto;
+}
 html.book #content a { color: inherit; border-bottom: 0; text-decoration: none; }
+html.book #content a.ext-link {
+  color: var(--accent);
+  border-bottom: 1px dotted color-mix(in srgb, var(--accent) 45%, transparent);
+}
+html.book #content a.fn-ref { color: var(--accent); white-space: nowrap; }
+html.book #content a.fn-ref img { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 .08em; }
+html.book #content .book-note { display: none !important; }
+html.book #content .broken-img {
+  display: inline-block; padding: 2px 6px; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 6px;
+  font-size: calc(var(--fs) * .72);
+}
+html.book #content ruby rt { font-size: .5em; line-height: 1; color: var(--muted); }
+html.book #content figcaption {
+  margin: 6px 0 16px; text-align: center;
+  font-size: calc(var(--fs) * .82); color: var(--muted);
+}
+html.book #content dl { margin: 14px 0; }
+html.book #content dt { font-weight: 600; }
+html.book #content dd { margin: 4px 0 10px 1.6em; color: var(--muted); }
 html.book #content .chapter-next {
   margin: 40px auto 0; padding: 10px 0; max-width: 260px;
   text-align: center; font-size: calc(var(--fs) * 0.82); color: var(--accent);
@@ -1105,6 +1133,40 @@ html.book #content .chapter-next {
   user-select: none;
 }
 html.book #content .chapter-next:hover { background: var(--accent-soft); }
+
+/* 注释底部卡片：实色纸底（不用 backdrop-filter，WKWebView 与非不透明窗叠加不可靠） */
+html.book #note-scrim { position: fixed; inset: 0; z-index: 78; }
+html.book #note-scrim.open { display: block; }
+html.book #note-pop {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+  z-index: 80; display: none; flex-direction: column;
+  width: min(calc(100vw - 32px), calc(var(--measure, 728px) + 56px));
+  max-height: 38vh; padding: 9px 14px 12px;
+  background: rgba(255,255,255,.96); color: var(--text);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.16);
+}
+html.book #note-pop.open { display: flex; }
+@media (prefers-color-scheme: dark) {
+  html.book #note-pop { background: rgba(28,28,30,.96); }
+}
+html.book #note-pop .note-head {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
+}
+html.book #note-pop .note-head span {
+  font-size: calc(var(--fs) * .72); letter-spacing: .2em;
+  color: var(--accent); font-weight: 600;
+}
+html.book #note-pop .note-close {
+  border: 0; background: none; color: var(--muted); cursor: pointer;
+  font-size: calc(var(--fs) * 1.1); line-height: 1; padding: 0 2px;
+}
+html.book #note-pop .note-close:hover { color: var(--text); }
+html.book #note-pop .note-body {
+  overflow-y: auto; font-size: calc(var(--fs) * .9); line-height: 1.7;
+}
+html.book #note-pop .note-body p { margin: .35em 0; }
+html.book #note-pop .note-body img { max-width: 100%; height: auto; }
 
 /* 翻页模式：`#content` 自己就是 pager（多栏 + 横向滚动）。
    一栏 = 一屏 = `--measure`：几何与滚动模式完全一致，换模式版面不跳。 */
@@ -1186,6 +1248,14 @@ html.paged #content h1, html.paged #content h2, html.paged #content h3 { break-a
     删除划线
   </button>
 </div>
+
+<!-- 注释底部卡片（book 模式）：scrim 负责「点空白关闭」，卡片本身不挡翻页分区 -->
+<div id="note-scrim" class="ui"></div>
+<div id="note-pop" class="ui" role="dialog" aria-label="注释">
+  <div class="note-head"><span>注</span><button class="note-close" id="note-close" aria-label="关闭">×</button></div>
+  <div class="note-body"></div>
+</div>
+
 <script nonce="__NONCE__">
 __MARKED_JS__
 </script>
@@ -1228,7 +1298,7 @@ var reader = (function () {
     var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
       acceptNode: function (n) {
         return n.parentNode && n.parentNode.closest
-          && n.parentNode.closest('.blocked-img, .chapter-next')
+          && n.parentNode.closest('.blocked-img, .chapter-next, .book-note')
           ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
       }
     });
@@ -1784,7 +1854,30 @@ var reader = (function () {
 
   /* ---------- 点击：图 → 放大；划线/气泡 → 定位右侧批注 ---------- */
   content.addEventListener('click', function (e) {
-    if (e.target && e.target.tagName === 'IMG') {
+    var tgt = e.target;
+    var fnRef = tgt && tgt.closest ? tgt.closest('a.fn-ref') : null;
+    if (fnRef) { e.preventDefault(); openNoteFromRef(fnRef); return; }
+    var ext = tgt && tgt.closest ? tgt.closest('a[data-external]') : null;
+    if (ext) {
+      e.preventDefault();
+      post({ type: 'openExternal', href: ext.getAttribute('data-external') });
+      return;
+    }
+    var bookLink = tgt && tgt.closest ? tgt.closest('a[data-book-href]') : null;
+    if (bookLink) {
+      e.preventDefault();
+      post({ type: 'bookLink', href: bookLink.getAttribute('data-book-href') });
+      return;
+    }
+    if (BOOK) {
+      var anchor = tgt && tgt.closest ? tgt.closest('a[href^="#"]') : null;
+      if (anchor) {
+        var frag = decodeFrag((anchor.getAttribute('href') || '').slice(1));
+        if (frag) { e.preventDefault(); scrollToAnchor(frag); }
+        return;
+      }
+    }
+    if (tgt && tgt.tagName === 'IMG') {
       /* mermaid 的浅/深两张靠 CSS 只显示当前主题那张，隐藏那张收不到点击，
          所以命中的一定是该显示的那张。src 已被浏览器解析：配图是绝对 URL、
          mermaid 是 data URI —— 原样交给原生浮层，不在 JS 里管加载。 */
@@ -1841,7 +1934,7 @@ var reader = (function () {
   function hideCtx() { ctxmenu.classList.remove('open'); }
   function clearSel() { var s = window.getSelection(); if (s) s.removeAllRanges(); }
   function hideToolbar() { toolbar.classList.remove('open'); }
-  function hideAll() { hideToolbar(); hideCtx(); }
+  function hideAll() { hideToolbar(); hideCtx(); hideNote(); }
 
   function scrollToCurrent() {
     if (findIdx < 0 || findIdx >= findRanges.length) return;
@@ -1942,7 +2035,9 @@ var reader = (function () {
     function isScriptURL(v) {
       return /^(javascript|vbscript):/i.test(String(v).replace(/[\u0000-\u0020\u007f]/g, ''));
     }
-    [].forEach.call(root.querySelectorAll('script, iframe, object, embed, link, meta, base, form'), function (n) {
+    var kill = 'script, iframe, object, embed, link, meta, base, form';
+    if (BOOK) kill += ', audio, video, track';
+    [].forEach.call(root.querySelectorAll(kill), function (n) {
       if (n.parentNode) n.parentNode.removeChild(n);
     });
     [].forEach.call(root.querySelectorAll('*'), function (el) {
@@ -2117,27 +2212,255 @@ var reader = (function () {
 
   /* 书里的相对路径（图片、SVG <image>）按「章节所在目录」转成绝对 file://：
      WebView 的 baseURL 固定是 content/ 根，章节可能在 OEBPS/Text/ 里。 */
-  function rewriteResources(dirURL) {
-    if (!dirURL) return;
+  /* 相对路径（图片 / SVG <image> / srcset）按「资源所在位置」转绝对 file://。
+     `baseURL` 既可以是章节目录（以 / 结尾），也可以是某个文件（注释文件）——
+     `new URL(相对, base)` 两种都能解析。 */
+  function rewriteResources(root, baseURL) {
+    root = root || content;
+    if (!baseURL) return;
     function abs(v) {
       v = String(v || '').trim();
       if (!v || /^(data:|blob:|https?:|file:|#)/i.test(v)) return v;
-      try { return new URL(v, dirURL).href; } catch (e) { return v; }
+      try { return new URL(v, baseURL).href; } catch (e) { return v; }
     }
-    [].forEach.call(content.querySelectorAll('img, image'), function (el) {
+    function rewriteSrcset(value) {
+      return String(value || '').split(',').map(function (part) {
+        var m = part.match(/^(\s*)(\S+)([\s\S]*)$/);
+        if (!m) return part;
+        if (/^data:/i.test(m[2])) return part;   /* data URI 里可能有逗号，别拆 */
+        return m[1] + abs(m[2]) + m[3];
+      }).join(',');
+    }
+    [].forEach.call(root.querySelectorAll('img, image'), function (el) {
       var raw = el.getAttribute('src') || el.getAttribute('xlink:href') || el.getAttribute('href');
-      if (!raw) return;
-      var full = abs(raw);
-      el.setAttribute('src', full);
-      if (el.tagName.toLowerCase() === 'image') {
-        el.setAttribute('xlink:href', full);
-        el.removeAttribute('href');
+      if (raw) {
+        var full = abs(raw);
+        el.setAttribute('src', full);
+        if (el.tagName.toLowerCase() === 'image') {
+          el.setAttribute('xlink:href', full);
+          el.removeAttribute('href');
+        }
       }
+      var set = el.getAttribute('srcset');
+      if (set) el.setAttribute('srcset', rewriteSrcset(set));
     });
-    /* 跨章链接 / 外链：本阅读器不做书内导航，去掉 href 保留文字，别点一下就白页 */
-    [].forEach.call(content.querySelectorAll('a[href]'), function (a) {
-      if ((a.getAttribute('href') || '').charAt(0) === '#') return;
+    [].forEach.call(root.querySelectorAll('source[srcset]'), function (el) {
+      el.setAttribute('srcset', rewriteSrcset(el.getAttribute('srcset')));
+    });
+    /* 链接只接三种：页内锚点 / 书内 XHTML / 外链；其余留文字去 href */
+    [].forEach.call(root.querySelectorAll('a[href]'), function (a) {
+      var raw = a.getAttribute('href') || '';
+      if (raw.charAt(0) === '#') return;
+      var full = abs(raw);
+      if (/^(https?|mailto):/i.test(full)) {
+        a.setAttribute('data-external', full);
+        a.classList.add('ext-link');
+        a.removeAttribute('href');
+        return;
+      }
+      if (/\.x?html?(?:[?#]|$)/i.test(raw)) {
+        a.setAttribute('data-book-href', raw);
+        a.removeAttribute('href');
+        return;
+      }
       a.removeAttribute('href');
+    });
+  }
+
+  /* ============ 脚注 / 尾注 ============
+     判定表移植自 foliate-js `footnotes.js`（MIT），见 design round-2 §16.1。
+     注意：正文是 innerHTML 进 HTML 文档，`epub:type` 是字面属性名，
+     getAttributeNS 拿不到 —— 两种都读。 */
+  var NOTE_TYPES = { footnote: 1, endnote: 1, rearnote: 1, note: 1, biblioentry: 1, definition: 1 };
+  var NOTE_ROLES = { 'doc-footnote': 1, 'doc-endnote': 1, 'doc-rearnote': 1, 'doc-note': 1,
+                     'doc-biblioentry': 1, 'definition': 1 };
+  var REF_TYPES = { biblioref: 1, glossref: 1, noteref: 1 };
+  var REF_ROLES = { 'doc-biblioref': 1, 'doc-glossref': 1, 'doc-noteref': 1 };
+
+  function tokenSet(raw) {
+    var out = {};
+    String(raw || '').split(/\s+/).forEach(function (v) { if (v) out[v] = 1; });
+    return out;
+  }
+  function epubTypes(el) {
+    var raw = (el && el.getAttribute && el.getAttribute('epub:type'))
+           || (el && el.getAttributeNS && el.getAttributeNS('http://www.idpf.org/2007/ops', 'type'))
+           || '';
+    return tokenSet(raw);
+  }
+  function rolesOf(el) {
+    return tokenSet(el && el.getAttribute && el.getAttribute('role'));
+  }
+  function hasAny(set, dict) {
+    for (var k in dict) { if (set[k]) return true; }
+    return false;
+  }
+  function isSupLike(a) {
+    if (!a) return false;
+    if (a.matches && a.matches('sup')) return true;
+    if (a.children && a.children.length === 1 && a.children[0].matches
+        && a.children[0].matches('sup')) return true;
+    return !!(a.parentElement && a.parentElement.matches && a.parentElement.matches('sup'));
+  }
+  function isNoteTarget(el) {
+    if (!el) return false;
+    if (hasAny(epubTypes(el), NOTE_TYPES) || hasAny(rolesOf(el), NOTE_ROLES)) return true;
+    if (el.closest && el.closest('.duokan-footnote-content')) return true;
+    var p = el.parentElement;
+    for (var i = 0; i < 4 && p; i++, p = p.parentElement) {
+      var t = epubTypes(p);
+      if (t.endnotes || t.endnote || t.footnotes) return true;
+      if (rolesOf(p)['doc-endnotes']) return true;
+    }
+    return false;
+  }
+  function refHref(a) {
+    return a.getAttribute('href') || a.getAttribute('data-book-href')
+        || a.getAttribute('data-note-href') || '';
+  }
+  function decodeFrag(v) {
+    try { return decodeURIComponent(String(v || '')); }
+    catch (e) { return String(v || ''); }
+  }
+  function refFrag(a) {
+    var href = refHref(a);
+    var i = href.indexOf('#');
+    return i >= 0 ? decodeFrag(href.slice(i + 1)) : '';
+  }
+  function isNoteRef(a) {
+    var t = epubTypes(a), r = rolesOf(a);
+    if (hasAny(t, REF_TYPES) || hasAny(r, REF_ROLES)) return true;
+    if (t.backlink || r['doc-backlink']) return false;
+    var href = refHref(a);
+    if (href.charAt(0) !== '#' && !/\.x?html?(?:#|$)/i.test(href)) return false;
+    return isSupLike(a);
+  }
+
+  var notePop = document.getElementById('note-pop');
+  var noteScrim = document.getElementById('note-scrim');
+  var noteBody = notePop ? notePop.querySelector('.note-body') : null;
+  var noteOpen = false;
+  /* 跨文件注释是异步读回来的：读回来之前用户已经关掉/点了别的注标，就丢弃这次结果 */
+  var pendingNoteFrag = null;
+
+  function hideNote() {
+    if (!noteOpen) return;
+    noteOpen = false;
+    if (notePop) notePop.classList.remove('open');
+    if (noteScrim) noteScrim.classList.remove('open');
+    if (noteBody) noteBody.innerHTML = '';
+    pendingNoteFrag = null;
+  }
+  function showNoteHTML(html) {
+    if (!noteBody || !notePop) return;
+    noteBody.innerHTML = html || '<p>（这条注释是空的）</p>';
+    notePop.classList.add('open');
+    if (noteScrim) noteScrim.classList.add('open');
+    noteOpen = true;
+  }
+  /* 取一条注释的内容：去样式/脚本；aside 里的 li 拆成段落（多看常见结构） */
+  function noteContentHTML(el) {
+    var clone = el.cloneNode(true);
+    [].forEach.call(clone.querySelectorAll('[style]'), function (n) { n.removeAttribute('style'); });
+    harden(clone);
+    var lis = clone.querySelectorAll('li');
+    if (clone.tagName === 'ASIDE' && lis.length) {
+      var parts = [];
+      [].forEach.call(lis, function (li) { parts.push('<p>' + li.innerHTML + '</p>'); });
+      return parts.join('');
+    }
+    return clone.innerHTML;
+  }
+  function openNoteFromRef(a) {
+    hideNote();
+    var frag = refFrag(a);
+    if (!frag) return;
+    var target = document.getElementById(frag) || anchorElement(frag);
+    if (target && isNoteTarget(target)) {
+      showNoteHTML(noteContentHTML(target));
+      return;
+    }
+    pendingNoteFrag = frag;
+    post({ type: 'noteFile', href: refHref(a), frag: frag });
+  }
+  /* 跨文件 / 同文件跨节：Swift 读回整份 XHTML，这里只取 #frag */
+  function showExternalNote(html, baseURL, frag) {
+    try {
+      var doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+      rewriteResources(doc, baseURL);
+      harden(doc);
+      [].forEach.call(doc.querySelectorAll('[style]'), function (n) { n.removeAttribute('style'); });
+      if (pendingNoteFrag !== frag) return;   /* 读回来晚了：用户已经关掉或换了别的注释 */
+      var el = doc.getElementById(frag);
+      if (!el) { post({ type: 'toast', text: '这条注释没找到' }); pendingNoteFrag = null; return; }
+      pendingNoteFrag = null;
+      showNoteHTML(noteContentHTML(el));
+    } catch (e) {
+      post({ type: 'toast', text: '注释读不出来：' + ((e && e.message) || e) });
+    }
+  }
+
+  function prepareNotes() {
+    var total = 0, hidden = 0, unresolved = 0;
+    [].forEach.call(content.querySelectorAll('a'), function (a) {
+      if (!isNoteRef(a)) return;
+      var frag = refFrag(a);
+      if (!frag) return;
+      var target = document.getElementById(frag) || anchorElement(frag);
+      /* 目标在本文里、但明显不是注释（如 <sup><a href="#s1">1</a></sup>）：
+         不标记，点击按普通锚点跳，别把普通引用弹成注释 */
+      if (target && !isNoteTarget(target)) return;
+      if (!target) unresolved++;
+      a.classList.add('fn-ref');
+      a.setAttribute('role', 'button');
+      a.setAttribute('aria-label', '注释');
+      a.setAttribute('data-note-href', refHref(a));
+      [].forEach.call(a.querySelectorAll('img'), function (img) {
+        img.setAttribute('alt', '注');
+        img.classList.add('fn-icon');
+      });
+      if (target && target.tagName === 'ASIDE') {
+        target.classList.add('book-note');
+        hidden++;
+      }
+      total++;
+    });
+    navDiag('notes', { total: total, hidden: hidden, unresolved: unresolved });
+  }
+
+  /* 图片：只有「独占一段」的才 block；注标/行内符号保持 inline */
+  function classifyImages(root) {
+    [].forEach.call(root.querySelectorAll('img, svg'), function (el) {
+      if (el.closest && el.closest('.fn-ref')) return;
+      var p = el.parentElement;
+      if (!p) return;
+      if (p.tagName === 'FIGURE') { el.classList.add('fig'); return; }
+      if (!/^(P|DIV|SECTION|LI|BODY)$/.test(p.tagName)) return;
+      var other = false;
+      for (var n = p.firstChild; n; n = n.nextSibling) {
+        if (n === el) continue;
+        if (n.nodeType === 3 && !n.nodeValue.trim()) continue;
+        if (n.nodeType === 1 && /^(BR|IMG|SVG|svg)$/.test(n.tagName)) continue;
+        other = true;
+        break;
+      }
+      if (!other) el.classList.add('fig');
+    });
+  }
+
+  function markBrokenImg(img) {
+    if (!img || img.getAttribute('data-broken')) return;
+    img.setAttribute('data-broken', '1');
+    if (img.closest && img.closest('.fn-ref')) { img.style.display = 'none'; return; }
+    var span = document.createElement('span');
+    span.className = 'broken-img';
+    span.textContent = '图片加载失败' + (img.getAttribute('alt') ? '：' + img.getAttribute('alt') : '');
+    if (img.parentNode) img.parentNode.replaceChild(span, img);
+  }
+  function watchImages(root) {
+    [].forEach.call(root.querySelectorAll('img'), function (img) {
+      img.addEventListener('error', function () { markBrokenImg(img); });
+      if (img.complete && img.naturalWidth === 0 && img.getAttribute('src')) markBrokenImg(img);
     });
   }
 
@@ -2167,6 +2490,7 @@ var reader = (function () {
   var chapterHasNext = false, chapterHasPrev = false, advancing = false;
 
   function applyChapter(html, dirURL, hasNext, hasPrev) {
+    hideNote();
     chapterHasNext = !!hasNext;
     chapterHasPrev = !!hasPrev;
     unwrapAll();
@@ -2184,13 +2508,16 @@ var reader = (function () {
     [].forEach.call(content.querySelectorAll('style'), function (n) {
       if (n.parentNode) n.parentNode.removeChild(n);
     });
-    rewriteResources(dirURL);
+    rewriteResources(content, dirURL);
     harden(content);
+    prepareNotes();
     /* 出版社的 inline style（字号/颜色/position/display）会盖掉我们的排版，
        深色模式下还可能变成白底黑字或整段隐形 —— 一律剥掉（design §5.2） */
     [].forEach.call(content.querySelectorAll('[style]'), function (el) {
       el.removeAttribute('style');
     });
+    classifyImages(content);
+    watchImages(content);
     content.normalize();
     if (hasNext) {
       var next = document.createElement('div');
@@ -2262,6 +2589,7 @@ var reader = (function () {
 
   /* 排版改动（字号/行距/段距/页宽/字体）：记位置 → 改 → 回位 */
   function setTypo(opts) {
+    hideNote();
     var off = position();
     applyVars(opts);
     void content.offsetHeight;
@@ -2271,6 +2599,7 @@ var reader = (function () {
 
   /* 上下滚动 ⇄ 左右翻页。两套滚动容器互不相干，换完按字符偏移找回同一句。 */
   function setReadingMode(mode) {
+    hideNote();
     var wantPaged = mode === 'paged';
     if (wantPaged === paged()) { restorePosition(lastOff); return; }
     var off = position();
@@ -2284,6 +2613,7 @@ var reader = (function () {
   }
 
   function turnPage(delta) {
+    hideNote();
     if (!paged()) return false;
     var span = pageSpan();
     var max = pageMax();
@@ -2345,6 +2675,8 @@ var reader = (function () {
   var edgeAcc = 0, edgeAt = 0;
   document.addEventListener('wheel', function (e) {
     if (!BOOK) return;
+    if (e.target && e.target.closest && e.target.closest('#note-pop')) return;
+    hideNote();
     var now = Date.now();
     if (!paged()) {
       /* 不挡原生滚动，只在「已经到底 / 到顶」之后累计够一段才换节 */
@@ -2373,11 +2705,36 @@ var reader = (function () {
     turnPage(d > 0 ? 1 : -1);
   }, { passive: false });
 
+  /* 滚动（含翻页动画）就收起注释卡片；遮罩点击 = 关闭 */
+  window.addEventListener('scroll', function () { hideNote(); }, { passive: true });
+  content.addEventListener('scroll', function () { hideNote(); }, { passive: true });
+  if (noteScrim) {
+    noteScrim.addEventListener('click', function (e) { e.preventDefault(); hideNote(); });
+  }
+  if (notePop) {
+    notePop.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('#note-close')) {
+        e.preventDefault();
+        hideNote();
+        return;
+      }
+      if (e.target.closest && e.target.closest('a')) e.preventDefault();
+    });
+  }
+
   /* 键盘（design §9.5）：←/→/↑/↓ 两种模式都接；空格/PageUp/PageDown 在滚动模式翻一屏。
      ⌘/⌃ 组合一律放过（⌘F 等由 SwiftUI 接管），⌥⌘+方向 = 跳上一节/下一节开头。
      正在选字、按住 Shift 扩选时不抢键。 */
   document.addEventListener('keydown', function (e) {
     if (!BOOK) return;
+    if (e.key === 'Escape' && noteOpen) { e.preventDefault(); hideNote(); return; }
+    var focused = document.activeElement;
+    if (focused && focused.closest && focused.closest('.fn-ref')
+        && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      focused.click();
+      return;
+    }
     var arrow = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
              || e.key === 'ArrowUp' || e.key === 'ArrowDown';
     var forward = arrow && (e.key === 'ArrowRight' || e.key === 'ArrowDown');
@@ -2462,6 +2819,7 @@ var reader = (function () {
     annotationRect: annotationRect,
     /* 书模式 */
     setChapter: setChapter,
+    showExternalNote: showExternalNote,
     scrollToAnchor: scrollToAnchor,
     collectAnchors: collectAnchors,
     position: position,

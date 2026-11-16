@@ -106,6 +106,19 @@ nonisolated struct BookStore {
         try writeJSON(items, to: bookDir(bookID).appendingPathComponent("annotations.json"))
     }
 
+    // MARK: - 书签
+
+    /// 同批注：缺失 = 还没有书签（返回空）；**损坏则抛错**，不能拿空列表把书签抹掉。
+    func bookmarks(bookID: String) throws -> [BookBookmark] {
+        let url = bookDir(bookID).appendingPathComponent("bookmarks.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        return try decode([BookBookmark].self, at: url)
+    }
+
+    func saveBookmarks(_ items: [BookBookmark], bookID: String) throws {
+        try writeJSON(items, to: bookDir(bookID).appendingPathComponent("bookmarks.json"))
+    }
+
     /// 用已解包内容重算目录 / 章节 / **节**（不重新解压、不动批注）。
     /// 解析器升级后（补锚点、滤空标题、大章切节）老 meta.json 靠这条自愈，
     /// 不必让用户删书重导 —— 重导会丢批注。
@@ -158,6 +171,7 @@ nonisolated struct BookStore {
             }
         }
         migrateAnnotations(bookID: id, from: oldSections, to: newSections)
+        migrateBookmarks(bookID: id, from: oldSections, to: newSections)
 
         try save(meta)
         return meta
@@ -196,6 +210,40 @@ nonisolated struct BookStore {
             return
         }
         NSLog("[BookStore] 批注迁移 \(moved)/\(migrated.count) 条（parser v\(Self.currentParserVersion)）")
+    }
+
+    /// 书签比批注多一个节内偏移，换算与进度一致；读不出来同样整块跳过。
+    private func migrateBookmarks(bookID: String, from oldSections: [BookSection],
+                                  to newSections: [BookSection]) {
+        let items: [BookBookmark]
+        do { items = try bookmarks(bookID: bookID) } catch {
+            NSLog("[BookStore] 书签迁移跳过：读书签失败 \(error)")
+            return
+        }
+        guard !items.isEmpty else { return }
+        var migrated = items
+        var moved = 0
+        for i in migrated.indices {
+            guard let at = BookStructureMigration.chapterOffset(sectionIndex: migrated[i].sectionIndex,
+                                                                offset: migrated[i].offset,
+                                                                in: oldSections),
+                  let landed = BookStructureMigration.locate(chapter: at.chapter, offset: at.offset,
+                                                             in: newSections) else { continue }
+            guard newSections.indices.contains(landed.index),
+                  newSections[landed.index].chapterIndex == migrated[i].chapterIndex else {
+                NSLog("[BookStore] 书签 \(migrated[i].id) 章节对不上，保留原位置")
+                continue
+            }
+            if migrated[i].sectionIndex != landed.index || migrated[i].offset != landed.offset { moved += 1 }
+            migrated[i].sectionIndex = landed.index
+            migrated[i].offset = landed.offset
+        }
+        guard moved > 0 else { return }
+        do { try saveBookmarks(migrated, bookID: bookID) } catch {
+            NSLog("[BookStore] 书签迁移写盘失败 \(error)")
+            return
+        }
+        NSLog("[BookStore] 书签迁移 \(moved)/\(migrated.count) 条（parser v\(Self.currentParserVersion)）")
     }
 
     // MARK: - 正文

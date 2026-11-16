@@ -171,6 +171,31 @@ final class BookStoreTests: XCTestCase {
         }
     }
 
+    func testBookmarksRoundTrip() throws {
+        let meta = try store.importBook(source: source)
+        let item = BookBookmark(id: "b1", chapterIndex: 0, sectionIndex: 1, offset: 42,
+                                quote: "第一段", createdAt: Date())
+        try store.saveBookmarks([item], bookID: meta.id)
+        let loaded = try store.bookmarks(bookID: meta.id)
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded.first?.sectionIndex, 1)
+        XCTAssertEqual(loaded.first?.offset, 42)
+        XCTAssertEqual(loaded.first?.quote, "第一段")
+        // 没有 bookmarks.json = 还没有书签，不该报错
+        try FileManager.default.removeItem(at: store.bookDir(meta.id).appendingPathComponent("bookmarks.json"))
+        XCTAssertTrue(try store.bookmarks(bookID: meta.id).isEmpty)
+    }
+
+    func testCorruptBookmarksThrowInsteadOfReturningEmpty() throws {
+        let meta = try store.importBook(source: source)
+        try Data("not json".utf8).write(to: store.bookDir(meta.id).appendingPathComponent("bookmarks.json"))
+        XCTAssertThrowsError(try store.bookmarks(bookID: meta.id)) { thrown in
+            guard case BookStoreError.readFailed = thrown else {
+                return XCTFail("应报 readFailed，实际 \(thrown)")
+            }
+        }
+    }
+
     func testDeleteRemovesDirectoryAndIsIdempotent() throws {
         let meta = try store.importBook(source: source)
         try store.delete(id: meta.id)
@@ -232,6 +257,27 @@ final class BookStoreTests: XCTestCase {
         XCTAssertEqual(refreshed?.progress?.sectionIndex, 0, "进度要跟着新节走，不能跳回书首")
         XCTAssertEqual(try store.annotations(bookID: meta.id).first?.sectionIndex, 0,
                        "批注不迁移 = 升级后划线全没了")
+    }
+
+    func testRefreshMigratesBookmarks() throws {
+        let meta = try store.importBook(source: source)
+        var old = meta
+        old.sections = [
+            BookSection(index: 0, chapterIndex: 0, title: "", fragment: nil,
+                        start: 0, end: 5, charCount: 100),
+            BookSection(index: 1, chapterIndex: 0, title: "", fragment: nil,
+                        start: 5, end: 10, charCount: 100),
+        ]
+        old.parserVersion = BookStore.currentParserVersion - 1
+        try store.save(old)
+        let bookmark = BookBookmark(id: "b1", chapterIndex: 0, sectionIndex: 1, offset: 30,
+                                    quote: "第一段", createdAt: Date())
+        try store.saveBookmarks([bookmark], bookID: meta.id)
+
+        _ = try store.refreshStructure(id: meta.id)
+        let loaded = try store.bookmarks(bookID: meta.id).first
+        XCTAssertEqual(loaded?.sectionIndex, 0, "书签也要跟着新节走")
+        XCTAssertGreaterThan(loaded?.offset ?? 0, 0, "章内偏移要带过来，不能回到节首")
     }
 
 }

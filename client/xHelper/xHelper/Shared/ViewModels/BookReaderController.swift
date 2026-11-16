@@ -115,6 +115,10 @@ final class BookReaderController: ObservableObject {
     @Published private(set) var allAnnotations: [BookAnnotation] = []
     /// 批注载入失败（面板要区分「真的没有批注」和「没读出来」）
     @Published private(set) var annotationsFailed = false
+    /// 全书书签（侧栏「书签」tab）。`bookmarkedHere` 只反映**当前位置**有没有书签，供顶栏图标。
+    @Published private(set) var bookmarks: [BookBookmark] = []
+    @Published private(set) var bookmarksFailed = false
+    @Published private(set) var bookmarkedHere = false
     /// 当前读到目录里的哪一条（key = chapterIndex:fragment）。滚动时跟着变，
     /// 面板高亮与顶栏章名都靠它 —— 不然「一个 spine 文件装整本书」的书会把整列都标成当前。
     @Published private(set) var currentTOCKey: String?
@@ -145,12 +149,16 @@ final class BookReaderController: ObservableObject {
     private var pendingAnchor: String?
     /// 批注是否已从磁盘读成功：失败时禁止写盘，免得把用户的批注覆盖成空
     private var annotationsLoaded = false
+    /// 书签同理
+    private var bookmarksLoaded = false
     /// `meta.json` 的写盘（进度 / 目录补全）走同一条串行队列：
     /// 两者都是「读-改-整份写」，并发时后完成者会把对方的改动盖回去。
     private let metaWriteQueue = DispatchQueue(label: "xhanHelper.book.meta.write")
     /// 书内批注写盘串行队列：并发 detached 各自快照整份列表，后完成者会写回旧快照
     /// （快速「建一条 + 删一条」会把删掉的写回来），所以按修改顺序串行落盘
     private let annotationWriteQueue = DispatchQueue(label: "xhanHelper.book.annotations.write")
+    /// 书签写盘串行队列（理由同批注）
+    private let bookmarkWriteQueue = DispatchQueue(label: "xhanHelper.book.bookmarks.write")
     private var readTrace: BookActivity.ReadTrace?
     private let settings: BookReadingSettings
 
@@ -199,6 +207,7 @@ final class BookReaderController: ObservableObject {
             book = refreshed
             // 结构重算会把批注按新节号重映射（磁盘已改）：重读一次，否则内存里还是旧节号，划线全画不出
             if annotationsLoaded { loadAnnotations() }
+            if bookmarksLoaded { loadBookmarks() }
             sectionIndex = max(0, min(sectionIndex, max(refreshed.effectiveSections.count - 1, 0)))
             // 迁移后的进度可能落在别的节（老进度只记了章内偏移）：跟过去，别让读者回到书首
             if let migrated = refreshed.progress?.sectionIndex,
@@ -251,6 +260,7 @@ final class BookReaderController: ObservableObject {
     func handleReady() {
         isReady = true
         loadAnnotations()
+        loadBookmarks()
         loadSection(sectionIndex, offset: pendingOffset, anchor: nil)
         let focused = webView.map { $0.window?.firstResponder === $0 } ?? false
         LogBuffer.shared.info("书阅读器：页面就绪，正文是否第一响应者=\(focused ? "是" : "否（键盘进不来）")")
@@ -298,6 +308,7 @@ final class BookReaderController: ObservableObject {
         if index == sectionIndex, anchor == nil {
             evaluate("reader.restorePosition(\(max(0, offset)))")
             pendingOffset = max(0, offset)
+            refreshBookmarkedHere()
             return
         }
         // 换节前先把本节位置存下来（offset 属于旧节，回调可能在新节加载后才回来）
@@ -697,6 +708,137 @@ final class BookReaderController: ObservableObject {
         ActivityClient.emit(BookActivity.annotationDeleted(bookID: book.id, annotationID: id))
     }
 
+    // MARK: - 书签
+
+    private func loadBookmarks() {
+        let store = self.store
+        let bookID = book.id
+        Task {
+            do {
+                let loaded = try await Task.detached(priority: .userInitiated) {
+                    try store.bookmarks(bookID: bookID)
+                }.value
+                // 节号对不上当前结构（书被重解析过）：丢弃这条，不猜位置
+                let valid = loaded.filter { item in
+                    guard let section = book.section(at: item.sectionIndex) else { return false }
+                    guard section.chapterIndex == item.chapterIndex else {
+                        LogBuffer.shared.warning("书阅读器：书签 \(item.id) 的章/节对不上，已丢弃")
+                        return false
+                    }
+                    return true
+                }
+                bookmarks = Self.sorted(valid)
+                bookmarksLoaded = true
+                bookmarksFailed = false
+                refreshBookmarkedHere()
+            } catch {
+                // 同批注：读不出来不能当「没有书签」，否则下次写入会把盘上的整份覆盖掉
+                bookmarksLoaded = false
+                bookmarksFailed = true
+                LogBuffer.shared.error("书阅读器：读书签失败，本次禁止写入 \(error)")
+                ToastCenter.shared.show("书签读取失败：本次只浏览，不改动已有书签")
+            }
+        }
+    }
+
+    private static func sorted(_ items: [BookBookmark]) -> [BookBookmark] {
+        items.sorted { ($0.sectionIndex, $0.offset) < ($1.sectionIndex, $1.offset) }
+    }
+
+    /// 当前位置的书签：同节 ±40 字算同一个落点（翻页/重排后会有几字漂移）
+    private func bookmark(at offset: Int) -> BookBookmark? {
+        bookmarks.first { $0.sectionIndex == sectionIndex && abs($0.offset - offset) <= 40 }
+    }
+
+    private func refreshBookmarkedHere() {
+        let value = bookmark(at: pendingOffset) != nil
+        if value != bookmarkedHere { bookmarkedHere = value }
+    }
+
+    /// 顶栏书签按钮 / ⌘D：当前位置已有书签就删，没有就加
+    func toggleBookmark() {
+        guard bookmarksLoaded else {
+            ToastCenter.shared.show("书签没能载入，本次改动不保存")
+            return
+        }
+        if let existing = bookmark(at: pendingOffset) {
+            removeBookmark(id: existing.id)
+            return
+        }
+        let chapter = chapterIndex
+        let section = sectionIndex
+        let offset = pendingOffset
+        guard let webView else {
+            addBookmark(chapterIndex: chapter, section: section, offset: offset, quote: "")
+            return
+        }
+        webView.evaluateJavaScript("reader.snippet(\(offset), 60)") { [weak self] value, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    LogBuffer.shared.warning("书阅读器：取书签摘录失败，记一条没有摘录的书签 \(error)")
+                }
+                self.addBookmark(chapterIndex: chapter, section: section, offset: offset,
+                                 quote: (value as? String) ?? "")
+            }
+        }
+    }
+
+    private func addBookmark(chapterIndex: Int, section: Int, offset: Int, quote: String) {
+        // 摘录是异步取回来的，期间读者可能已经翻走：位置变了就不记（免得书签落到别的页）
+        guard section == sectionIndex else {
+            ToastCenter.shared.show("页面已翻走，书签没有记下")
+            return
+        }
+        guard bookmark(at: offset) == nil else { return }   // 连按 ⌘D：不建第二条
+        let item = BookBookmark(id: UUID().uuidString, chapterIndex: chapterIndex,
+                                sectionIndex: section, offset: offset,
+                                quote: quote, createdAt: Date())
+        bookmarks = Self.sorted(bookmarks + [item])
+        refreshBookmarkedHere()
+        saveBookmarks()
+        ToastCenter.shared.show("已添加书签")
+    }
+
+    func removeBookmark(id: String) {
+        bookmarks.removeAll { $0.id == id }
+        refreshBookmarkedHere()
+        saveBookmarks()
+        ToastCenter.shared.show("已删除书签")
+    }
+
+    /// 侧栏点书签：回到那一页
+    func goToBookmark(_ item: BookBookmark) {
+        guard book.section(at: item.sectionIndex) != nil else {
+            LogBuffer.shared.warning("书阅读器：书签指向的节不存在 \(item.sectionIndex)")
+            ToastCenter.shared.show("这个书签的位置已经不在书里了")
+            return
+        }
+        if item.sectionIndex == sectionIndex {
+            pendingOffset = item.offset
+            evaluate("reader.restorePosition(\(item.offset))")
+            refreshBookmarkedHere()
+            return
+        }
+        goToSection(item.sectionIndex, offset: item.offset)
+    }
+
+    private func saveBookmarks() {
+        guard bookmarksLoaded else {
+            LogBuffer.shared.error("书阅读器：书签未成功载入，拒绝写盘（避免覆盖已有书签）")
+            return
+        }
+        let store = self.store
+        let bookID = book.id
+        let items = bookmarks
+        bookmarkWriteQueue.async {
+            do { try store.saveBookmarks(items, bookID: bookID) } catch {
+                NSLog("[BookReader] 保存书签失败：\(error)")
+                Task { @MainActor in ToastCenter.shared.show("书签没能保存：\(error.localizedDescription)") }
+            }
+        }
+    }
+
     // MARK: - 面板动作
 
     func updateNote(id: String, note: String) {
@@ -736,6 +878,7 @@ final class BookReaderController: ObservableObject {
                 ToastCenter.shared.show("这一章渲染失败：\(error)")
             }
             publishAnnotations()
+            refreshBookmarkedHere()
             if let anchor = pendingAnchor {
                 pendingAnchor = nil
                 evaluate("reader.scrollToAnchor(\(MarkdownWebUtils.jsString(anchor)))")
@@ -763,6 +906,7 @@ final class BookReaderController: ObservableObject {
             if let off = (message["offset"] as? NSNumber)?.intValue {
                 pendingOffset = max(0, off)
                 updateCurrentTOC(offset: pendingOffset)
+                refreshBookmarkedHere()
             }
 
         case "create":

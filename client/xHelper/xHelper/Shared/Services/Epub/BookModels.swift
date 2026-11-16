@@ -140,6 +140,18 @@ nonisolated struct BookAnnotation: Codable, Equatable, Identifiable {
     var updatedAt: Date
 }
 
+/// 一个书签：读者按 ⌘D 记住的那一页（落 `Books/<id>/bookmarks.json`）。
+nonisolated struct BookBookmark: Codable, Equatable, Identifiable {
+    var id: String
+    var chapterIndex: Int
+    var sectionIndex: Int
+    /// 节内扁平偏移（与进度同口径）
+    var offset: Int
+    /// 当前页首附近的一段原文，列表里当预览（纯展示，不参与定位）
+    var quote: String
+    var createdAt: Date
+}
+
 // MARK: - 导入失败
 
 /// 导入失败的分类。UI 只显示「徽章 + 一行原因」，完整解释进 tooltip（设计文档 §四）。

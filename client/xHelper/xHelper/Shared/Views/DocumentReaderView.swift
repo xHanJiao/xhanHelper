@@ -2245,8 +2245,13 @@ var reader = (function () {
     lastOff = off;
   }
 
-  /* 书里的相对路径（图片、SVG <image>）按「章节所在目录」转成绝对 file://：
-     WebView 的 baseURL 固定是 content/ 根，章节可能在 OEBPS/Text/ 里。 */
+  /* 书签预览的摘录：与划线 quote 同口径（拍平后折叠空白），不涉及定位。 */
+  function snippet(off, len) {
+    var flat = flatten();
+    var start = Math.min(Math.max(0, off || 0), flat.text.length);
+    return flat.text.slice(start, start + (len || 60)).replace(/\s+/g, ' ').trim();
+  }
+
   /* 相对路径（图片 / SVG <image> / srcset）按「资源所在位置」转绝对 file://。
      `baseURL` 既可以是章节目录（以 / 结尾），也可以是某个文件（注释文件）——
      `new URL(相对, base)` 两种都能解析。 */
@@ -2939,6 +2944,7 @@ var reader = (function () {
     collectAnchors: collectAnchors,
     position: position,
     restorePosition: restorePosition,
+    snippet: snippet,
     setTypo: setTypo,
     setReadingMode: setReadingMode,
     turnPage: turnPage,

@@ -276,26 +276,29 @@ v5 可能改变节边界（wrapper/script/prefix）。`refreshStructure` 目前�
 
 ## 五、批 18：阅读体验
 
-### 18.1 目录：滚到当前 + 折叠
+### 18.1 目录：滚到当前 + 折叠（2026-11-16 已落地）
 
-- `ScrollView` 包 `ScrollViewReader`，每行 `.id(row.id)`；面板 `onAppear` 后下一拍 `scrollTo(currentTOCKey, anchor: .center)`。
-- 打开前先展开当前条的**所有祖先**（flat 列表按 depth 回溯）。
-- 折叠：`@State collapsed: Set<String>`；渲染时按 depth 跳过被折叠子树：
+- `ScrollView` 包 `ScrollViewReader`，每行 `.id(line.id)`；面板 `onAppear` 后下一拍 `scrollTo(currentTOCKey, anchor: .center)`。
+- 打开前先展开当前条的**所有祖先**（flat 列表按 depth 回溯）；只在 `onAppear` 展开，**不跟着滚动位置反复展开**（否则用户刚折起来就被掰开）。
+- 此后 `onChange(currentTOCKey)` 只滚不展开：读到哪跟到哪；目标被用户折叠掉时 `scrollTo` 找不到行，自然不动。
+- 折叠：`@State collapsedTOC: Set<String>`（key = `BookTOCItem.key`）；渲染时按 depth 跳过被折叠子树：
   ```
   var hiddenDepth: Int? = nil
-  for row in allRows {
-    if let d = hiddenDepth, row.depth > d { continue }
+  for line in outline {
+    if let d = hiddenDepth, line.depth > d { continue }
     hiddenDepth = nil
-    append(row)
-    if collapsed.contains(row.id), hasChildren(row) { hiddenDepth = row.depth }
+    out.append(line)
+    if collapsed.contains(line.id), line.hasChildren { hiddenDepth = line.depth }
   }
   ```
-- 有子项的行显示 chevron（独立 Button，不触发跳转）；展开时旋转 90°。
+- 父子关系由扁平目录的 `depth` 用栈还原（父 = 前面最近一个 depth 更小的条目），只有 `hasChildren` 的行显示 chevron（独立 Button，不触发跳转），展开时旋转 90°。
 - 默认全展开；状态不持久化（D5）。
 
-### 18.2 全书百分比
+### 18.2 全书百分比（2026-11-16 已落地）
 
-- 顶栏 `.help` 追加「全书 42%」；目录头显示「目录 · 174 条 · 42%」。
+- 顶栏书名/节标题的 `.help` 末尾追加「· 全书 42%」。
+- 侧栏（目录 / 书签双 tab）的副标题行显示计数 + 百分比：目录 →「174 条 · 全书 42%」，书签 →「N 条」。
+  （原计划的「目录头显示『目录 · 174 条 · 42%』」因侧栏加了 tab 行而改放副标题行；220pt 宽度放不下三段文字。）
 - 数据用 `controller.bookProgress`（已有，随进度防抖更新），不加新 chrome。
 
 ### 18.3 宽表（2026-11-16 已落地，真机撞到「表格被栏边界裁掉」后提前做）
@@ -306,7 +309,7 @@ v5 可能改变节边界（wrapper/script/prefix）。`refreshStructure` 目前�
 - 探针：wrapper 溢出、`turnPage` 仍精确一页；滚轮在表中间不 `preventDefault`、到最右才接管。
 - 降级方案（翻页模式缩字号）因探针全绿未启用。
 
-### 18.4 书签
+### 18.4 书签（2026-11-16 已落地）
 
 模型（`BookModels.swift`）：
 
@@ -331,9 +334,19 @@ struct BookBookmark: Codable, Identifiable, Equatable {
 - 保存失败：日志 + toast；不静默。
 - 书删掉 → 连同 `bookmarks.json` 一起删（目录级删除，已有行为）。
 
+实现补充（落地时的取舍）：
+
+- 摘录是异步取回来的，回来时读者可能已经翻走 → 节号变了就不记，提示「页面已翻走」；同位置再来一次也不建第二条。
+- 顶栏图标的「这里有没有书签」用独立的 `bookmarkedHere`（只在布尔翻转时 publish），**没有**把 `pendingOffset` 变成 `@Published`：位置消息每 200ms 一条，整页（含 174 行目录）跟着重算会卡。
+- 书签和批注/进度一样按「章内字数偏移」迁移（`BookStore.migrateBookmarks`），否则 parser 升级后书签会指到错的节；校验 `chapterIndex` 对不上就保留原值 + 日志。
+- 侧栏 tab 不持久化（只有「侧栏开不开」记忆），每次进阅读页先看目录。
+
 ### 18.5 测试
 
-`book-reader-probe` 加宽表断言；`snapshot-reader` 看卡片/目录/书签面板；typecheck。
+- `book-reader-probe`：新增 25 号断言（`reader.snippet` 取摘录、跨块时空白折叠），现 28 条 × 2 宽度全绿。
+- `swift test` 493 条全绿（新增：书签往返 / `bookmarks.json` 损坏抛错 / 结构重算迁移书签）。
+- 目录 / 书签面板是纯 SwiftUI，**`snapshot-reader.sh` 看不到**（它渲染的只是 WKWebView 正文）：这两块靠 Xcode 预览 + 真机。
+- typecheck 0 error（`-import-objc-header` 带 CEF 桥，否则 `XHCefBrowserView` 假红）。
 
 ---
 
@@ -514,3 +527,20 @@ struct BookBookmark: Codable, Identifiable, Equatable {
 验证：`book-reader-probe.sh` **27 条 × 2 宽度全绿**（新增 20 role 注标 / 21 容器按语义藏（含「没人指的尾注区块必须仍可读」）/ 22 链接样式 / 23 宽表横滚 / 24 滚轮让位）；`check-reader-html.sh` 176、`paged-reader-probe.sh` 8 全绿；typecheck 0 error。
 
 真机待验：`reader-test-main.epub` 第二章「注」应变绿、ARIA 注释不再内联；附录表格可在栏内横滚、滚到头才翻页；浅色/深色下点线是否够清楚。
+
+### 2026-11-16 · 批 18 已落地（目录 / 全书百分比 / 书签）
+
+| 改动 | 位置 |
+|---|---|
+| 侧栏改「目录 / 书签」双 tab；副标题行显示计数 + 全书百分比；折叠状态只记本次会话 | `BookReaderView.sidebarPanel` |
+| 目录：扁平 `depth` 用栈还原父子，折叠子树按 depth 跳过；有子项的行带 chevron（独立按钮，展开转 90°） | `tocOutline` / `visibleTOCLines` / `tocRow` |
+| 目录滚动到当前：面板打开时先展开当前条所有祖先，下一拍 `scrollTo(.center)`；之后 `currentTOCKey` 变化只滚不展开 | `revealCurrentTOC` / `scrollTOC` |
+| 顶栏书名 tooltip 追加「· 全书 42%」 | `header` / `bookPercent` |
+| 书签模型 + 存储（`books/<id>/bookmarks.json`，缺失=空、损坏=抛错、串行写盘） | `BookBookmark` / `BookStore.bookmarks` / `saveBookmarks` |
+| 顶栏 `bookmark` / `bookmark.fill` + `⌘D`（同节 ±40 字内已有 → 删，否则加；摘录走 `reader.snippet`） | `BookReaderController.toggleBookmark` / `DocumentReaderView` 模板 |
+| 书签列表：按 (sectionIndex, offset) 排，quote 两行 + 节标题，× 删除，点行跳转；加载时 `chapterIndex` 对不上就丢弃 + 日志 | `bookmarkList` / `bookmarkRow` / `goToBookmark` |
+| 书签跟着 parser 升级迁移（章内字数偏移口径，含节内偏移） | `BookStore.migrateBookmarks` |
+
+验证：`swift test` **493 全绿**（新增书签往返 / 损坏抛错 / 迁移 3 条）；`book-reader-probe.sh` **28 条 × 2 宽度全绿**（新增 25 书签摘录）；`check-reader-html.sh` 176、`paged-reader-probe.sh` 8 全绿；typecheck 0 error。
+
+真机待验：目录折叠 + 打开时自动滚到当前条（大目录的书最明显）；⌘D 加/删书签、顶栏图标跟着变；点书签跳回原页；换书/重启后书签还在。书签面板是纯 SwiftUI，脚本截图靶看不到，只能真机或 Xcode 预览。

@@ -1,5 +1,5 @@
 #!/bin/bash
-# 书阅读器（BOOK 模式）模板自查：真 WKWebView 里跑十五条断言（两种宽度各跑一遍），不截图。
+# 书阅读器（BOOK 模式）模板自查：真 WKWebView 里跑全部断言（两种宽度各跑一遍），不截图。
 #
 # 验的是设计文档 `docs/design/epub-reader/design.md` §5.5 / §5.7 / §六 在 WebKit 的真实行为：
 #   1 章节注入：正文出现、块结构正确
@@ -579,6 +579,18 @@ hook = r"""<script nonce="testnonce">
           '没到头不抢=' + letGo + ' / 页没动=' + pageStill + ' / 到头后接管=' + tookOver);
     })();
 
+    /* 25 书签摘录：snippet(off, len) 从拍平文本取一段，空白折叠、不带块分隔符 */
+    (function bookmarkSnippet() {
+      reader.setChapter('<p id="bm1">第一段书签文本，用来验证摘录。</p><p>第二段不要选中。</p>',
+                        'file:///tmp/', true, true);
+      void content.offsetHeight;
+      var head = reader.snippet(0, 4);
+      var cross = reader.snippet(15, 6);   /* 起点落在块间分隔符上 */
+      add('25 书签摘录',
+          head === '第一段书' && cross === '第二段不要',
+          '开头=' + JSON.stringify(head) + ' / 跨段=' + JSON.stringify(cross));
+    })();
+
     return JSON.stringify({ rows: rows });
   };
 })();
@@ -595,7 +607,7 @@ if [ ! -x "$BIN" ] || [ "$HERE/paged-reader-probe.swift" -nt "$BIN" ]; then
 fi
 
 echo "页面：$HTML"
-echo "—— 书阅读器十五条断言 ——"
+echo "—— 书阅读器全部断言 ——"
 PROBE_FN=__bookProbe "$BIN" "$HTML"
 echo "—— 窄面板（360pt，模拟右栏）——"
 PROBE_FN=__bookProbe PROBE_WIDTH=360 "$BIN" "$HTML"

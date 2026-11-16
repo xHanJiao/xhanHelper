@@ -415,31 +415,35 @@ struct BookReaderView: View {
         .onTapGesture { controller.goToTOC(line.item) }
     }
 
-    /// 目录条目：TOC 为空（坏 NCX）时退化成「每章一行」，没有层级也就没有折叠
+    /// 目录条目：TOC 为空（坏 NCX）时退化成「每章一行」，没有层级也就没有折叠。
+    ///
+    /// 行的 id 用「下标 + item.key」：作者把两个标题指到同一章同一 `#frag` 时 `key` 会撞，
+    /// 撞了就是「折一条连另一条一起折 + `ForEach` 重复 id」——下标保证唯一。
     private var tocOutline: [TOCLine] {
         if controller.book.toc.isEmpty {
             return controller.book.chapters.map { chapter in
                 let item = BookTOCItem(title: chapter.title, chapterIndex: chapter.index,
                                        depth: 0, fragment: nil)
-                return TOCLine(id: item.key, item: item, parent: nil, hasChildren: false,
-                               isCurrent: chapter.index == controller.chapterIndex)
+                return TOCLine(id: "chapter-\(chapter.index)", item: item, parent: nil,
+                               hasChildren: false, isCurrent: chapter.index == controller.chapterIndex)
             }
         }
-        let items = controller.book.toc
         // 扁平目录带 depth：用栈还原父子（父 = 前面最近一个 depth 更小的条目）
-        var parents: [String?] = []
-        var stack: [(depth: Int, key: String)] = []
-        for item in items {
+        var rows: [TOCLine] = []
+        var stack: [(depth: Int, id: String)] = []
+        for (index, item) in controller.book.toc.enumerated() {
             while let last = stack.last, last.depth >= item.depth { stack.removeLast() }
-            parents.append(stack.last?.key)
-            stack.append((item.depth, item.key))
+            let id = "\(index)#\(item.key)"
+            rows.append(TOCLine(id: id, item: item, parent: stack.last?.id,
+                                hasChildren: false, isCurrent: false))
+            stack.append((item.depth, id))
         }
         var withChildren = Set<String>()
-        for parent in parents { if let parent { withChildren.insert(parent) } }
-        return items.enumerated().map { index, item in
-            TOCLine(id: item.key, item: item, parent: parents[index],
-                    hasChildren: withChildren.contains(item.key),
-                    isCurrent: item.key == controller.currentTOCKey)
+        for row in rows { if let parent = row.parent { withChildren.insert(parent) } }
+        return rows.map {
+            TOCLine(id: $0.id, item: $0.item, parent: $0.parent,
+                    hasChildren: withChildren.contains($0.id),
+                    isCurrent: $0.item.key == controller.currentTOCKey)
         }
     }
 
@@ -457,12 +461,18 @@ struct BookReaderView: View {
         return out
     }
 
-    /// 打开侧栏 / 换到别的条目时，把当前条的所有祖先展开（否则「当前」被折叠在里面看不到）
+    private var currentTOCLineID: String? {
+        guard let key = controller.currentTOCKey else { return nil }
+        return tocOutline.first { $0.item.key == key }?.id
+    }
+
+    /// 打开侧栏时把当前条的所有祖先展开（否则「当前」被折叠在里面看不到）
     private func revealCurrentTOC() {
-        guard let key = controller.currentTOCKey else { return }
+        let lines = tocOutline
+        guard let target = lines.first(where: { $0.item.key == controller.currentTOCKey }) else { return }
         var byID: [String: TOCLine] = [:]
-        for line in tocOutline where byID[line.id] == nil { byID[line.id] = line }
-        var cursor = byID[key]?.parent
+        for line in lines { byID[line.id] = line }
+        var cursor = target.parent
         while let current = cursor {
             collapsedTOC.remove(current)
             cursor = byID[current]?.parent
@@ -470,13 +480,13 @@ struct BookReaderView: View {
     }
 
     private func scrollTOC(_ proxy: ScrollViewProxy, animated: Bool) {
-        guard let key = controller.currentTOCKey else { return }
+        guard let id = currentTOCLineID else { return }
         // 下一拍：刚展开/刚切 tab 时行还没布局，同拍 scrollTo 找不到目标
         DispatchQueue.main.async {
             if animated {
-                withAnimation(.easeInOut(duration: 0.18)) { proxy.scrollTo(key, anchor: .center) }
+                withAnimation(.easeInOut(duration: 0.18)) { proxy.scrollTo(id, anchor: .center) }
             } else {
-                proxy.scrollTo(key, anchor: .center)
+                proxy.scrollTo(id, anchor: .center)
             }
         }
     }

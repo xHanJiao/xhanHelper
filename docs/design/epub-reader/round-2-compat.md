@@ -340,6 +340,11 @@ struct BookBookmark: Codable, Identifiable, Equatable {
 - 顶栏图标的「这里有没有书签」用独立的 `bookmarkedHere`（只在布尔翻转时 publish），**没有**把 `pendingOffset` 变成 `@Published`：位置消息每 200ms 一条，整页（含 174 行目录）跟着重算会卡。
 - 书签和批注/进度一样按「章内字数偏移」迁移（`BookStore.migrateBookmarks`），否则 parser 升级后书签会指到错的节；校验 `chapterIndex` 对不上就保留原值 + 日志。
 - 侧栏 tab 不持久化（只有「侧栏开不开」记忆），每次进阅读页先看目录。
+- 目录行的 id 是「下标 + `item.key`」：作者把两个标题指到同一章同一 `#frag` 时 `item.key` 会撞，
+  撞了会出现「折一条另一条也折」+ `ForEach` 重复 id。折叠集合、`scrollTo`、祖先回溯都改按这个唯一 id。
+- 批注 / 书签写盘失败都 toast（原先批注只有 `NSLog`），口径统一。
+- `⌘D` 走 SwiftUI 的 key equivalent，不经过文本输入：查找框聚焦时仍生效（replace 的是 `NSApp` 层的
+  `performKeyEquivalent`，`NSTextField` 只吃 ⌘A/C/V/X/Z 这类标准编辑命令；全应用也没有别的 ⌘D 绑定）。
 
 ### 18.5 测试
 

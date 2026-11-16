@@ -642,6 +642,8 @@ final class BookReaderController: ObservableObject {
         annotationWriteQueue.async {
             do { try store.saveAnnotations(items, bookID: bookID) } catch {
                 NSLog("[BookReader] 保存批注失败：\(error)")
+                // 与书签同口径：写不进磁盘要当场说，不能只留日志
+                Task { @MainActor in ToastCenter.shared.show("批注没能保存：\(error.localizedDescription)") }
             }
         }
     }

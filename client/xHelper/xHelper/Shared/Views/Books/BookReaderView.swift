@@ -16,6 +16,10 @@ struct BookReaderView: View {
     @State private var showFind = false
     @State private var findQuery = ""
     @FocusState private var findFieldFocused: Bool
+    /// 侧栏 tab（目录 / 书签）：不持久化，每次进来先看目录
+    @State private var sidebarTab: SidebarTab = .toc
+    /// 折叠了哪些目录条（key = `BookTOCItem.key`）：只记得本次会话
+    @State private var collapsedTOC: Set<String> = []
 
     /// 目录/批注面板的展开态：跨书、跨启动记忆（design §9.3：默认收起）
     @AppStorage("xhan_book_toc_open") private var tocOpenStored = false
@@ -40,9 +44,9 @@ struct BookReaderView: View {
                 HStack(spacing: 0) {
                     if controller.hasChapterNavigation {
                         if controller.tocOpen {
-                            tocPanel
+                            sidebarPanel
                         } else {
-                            collapsedStrip(icon: "chevron.right", help: "展开目录") {
+                            collapsedStrip(icon: "chevron.right", help: "展开目录与书签") {
                                 controller.tocOpen = true
                             }
                         }
@@ -117,7 +121,7 @@ struct BookReaderView: View {
             headerTitle
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .help(headerTitleText)
+                .help("\(headerTitleText) · 全书 \(bookPercent)%")
 
             Spacer()
 
@@ -140,11 +144,18 @@ struct BookReaderView: View {
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
 
                 chromeButton("sidebar.leading",
-                             help: controller.tocOpen ? "收起目录" : "展开目录",
+                             help: controller.tocOpen ? "收起目录与书签" : "展开目录与书签",
                              active: controller.tocOpen) {
                     withAnimation { controller.tocOpen.toggle() }
                 }
             }
+
+            chromeButton(controller.bookmarkedHere ? "bookmark.fill" : "bookmark",
+                         help: controller.bookmarkedHere ? "取消书签（⌘D）" : "记住这一页（⌘D）",
+                         active: controller.bookmarkedHere) {
+                controller.toggleBookmark()
+            }
+            .keyboardShortcut("d", modifiers: .command)
 
             chromeButton("magnifyingglass", help: "在本节查找（⌘F）", active: showFind) {
                 toggleFind()
@@ -281,75 +292,278 @@ struct BookReaderView: View {
         .animation(.easeIn(duration: 0.12).delay(0.25), value: controller.isLoadingChapter)
     }
 
-    // MARK: - 目录
+    // MARK: - 侧栏（目录 / 书签）
 
-    private var tocPanel: some View {
+    private enum SidebarTab: String, CaseIterable {
+        case toc = "目录", bookmarks = "书签"
+    }
+
+    private var sidebarPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(controller.book.toc.isEmpty ? "目录 · \(controller.book.chapterCount) 章" : "目录 · \(controller.book.toc.count) 条")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                Spacer()
+            HStack(spacing: 2) {
+                ForEach(SidebarTab.allCases, id: \.self) { tab in
+                    sidebarTabButton(tab)
+                }
+                Spacer(minLength: 4)
                 Button { withAnimation { controller.tocOpen = false } } label: {
                     Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
                 }
                 .buttonStyle(.plain)
-                .help("收起目录")
+                .help("收起侧栏")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 8)
+            .padding(.top, 7)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(tocRows) { row in
-                        HStack(spacing: 6) {
-                            Text(row.item.title)
-                                .font(.system(size: 12, weight: row.isCurrent ? .semibold : .regular))
-                                .foregroundColor(row.isCurrent ? .primary : .secondary)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.leading, CGFloat(row.item.depth) * 12 + 10)
-                        .padding(.trailing, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            row.isCurrent ? Color("appAccent").opacity(0.10) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 5)
-                        )
-                        .padding(.horizontal, 6)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            controller.goToTOC(row.item)
-                        }
-                    }
-                }
-                .padding(.bottom, 8)
-            }
+            Text(sidebarMeta)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 2)
+                .padding(.bottom, 4)
+
+            if sidebarTab == .toc { tocList } else { bookmarkList }
         }
         .frame(width: 220)
         .background(Color.primary.opacity(0.02))
     }
 
-    /// 目录条目：TOC 为空（坏 NCX）时退化成「每章一行」
-    private var tocRows: [TOCRow] {
-        if !controller.book.toc.isEmpty {
-            return controller.book.toc.map { item in
-                TOCRow(id: item.key, item: item,
-                       isCurrent: item.key == controller.currentTOCKey)
-            }
+    private func sidebarTabButton(_ tab: SidebarTab) -> some View {
+        Button { sidebarTab = tab } label: {
+            Text(tab.rawValue)
+                .font(.system(size: 11, weight: sidebarTab == tab ? .semibold : .regular))
+                .foregroundColor(sidebarTab == tab ? .primary : .secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(sidebarTab == tab ? Color.primary.opacity(0.07) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
         }
-        return controller.book.chapters.map { chapter in
-            let item = BookTOCItem(title: chapter.title, chapterIndex: chapter.index,
-                                   depth: 0, fragment: nil)
-            return TOCRow(id: item.key, item: item,
-                          isCurrent: item.chapterIndex == controller.chapterIndex)
+        .buttonStyle(.plain)
+    }
+
+    private var bookPercent: Int { Int((controller.bookProgress * 100).rounded()) }
+
+    private var sidebarMeta: String {
+        switch sidebarTab {
+        case .toc:
+            let count = controller.book.toc.isEmpty
+                ? "\(controller.book.chapterCount) 章" : "\(controller.book.toc.count) 条"
+            return "\(count) · 全书 \(bookPercent)%"
+        case .bookmarks:
+            if controller.bookmarksFailed { return "没能载入（本次不改动已有书签）" }
+            return controller.bookmarks.isEmpty ? "⌘D 记住这一页" : "\(controller.bookmarks.count) 条"
         }
     }
 
-    private struct TOCRow: Identifiable {
+    // MARK: - 目录
+
+    private var tocList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(visibleTOCLines) { line in
+                        tocRow(line).id(line.id)
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+            .onAppear {
+                revealCurrentTOC()
+                scrollTOC(proxy, animated: false)
+            }
+            // 读到哪就跟到哪：高亮挪出视口后目录自己滚（折叠态下目标不在列表里就自然不动）
+            .onChange(of: controller.currentTOCKey) { _, _ in
+                scrollTOC(proxy, animated: true)
+            }
+        }
+    }
+
+    private func tocRow(_ line: TOCLine) -> some View {
+        let folded = collapsedTOC.contains(line.id)
+        return HStack(spacing: 6) {
+            if line.hasChildren {
+                Button {
+                    if folded { collapsedTOC.remove(line.id) } else { collapsedTOC.insert(line.id) }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(folded ? 0 : 90))
+                        .frame(width: 12, height: 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(folded ? "展开子项" : "收起子项")
+            } else {
+                Color.clear.frame(width: 12, height: 12)
+            }
+            Text(line.item.title)
+                .font(.system(size: 12, weight: line.isCurrent ? .semibold : .regular))
+                .foregroundColor(line.isCurrent ? .primary : .secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, CGFloat(line.item.depth) * 12 + 4)
+        .padding(.trailing, 10)
+        .padding(.vertical, 5)
+        .background(
+            line.isCurrent ? Color("appAccent").opacity(0.10) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 5)
+        )
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { controller.goToTOC(line.item) }
+    }
+
+    /// 目录条目：TOC 为空（坏 NCX）时退化成「每章一行」，没有层级也就没有折叠。
+    ///
+    /// 行的 id 用「下标 + item.key」：作者把两个标题指到同一章同一 `#frag` 时 `key` 会撞，
+    /// 撞了就是「折一条连另一条一起折 + `ForEach` 重复 id」——下标保证唯一。
+    private var tocOutline: [TOCLine] {
+        if controller.book.toc.isEmpty {
+            return controller.book.chapters.map { chapter in
+                let item = BookTOCItem(title: chapter.title, chapterIndex: chapter.index,
+                                       depth: 0, fragment: nil)
+                return TOCLine(id: "chapter-\(chapter.index)", item: item, parent: nil,
+                               hasChildren: false, isCurrent: chapter.index == controller.chapterIndex)
+            }
+        }
+        // 扁平目录带 depth：用栈还原父子（父 = 前面最近一个 depth 更小的条目）
+        var rows: [TOCLine] = []
+        var stack: [(depth: Int, id: String)] = []
+        for (index, item) in controller.book.toc.enumerated() {
+            while let last = stack.last, last.depth >= item.depth { stack.removeLast() }
+            let id = "\(index)#\(item.key)"
+            rows.append(TOCLine(id: id, item: item, parent: stack.last?.id,
+                                hasChildren: false, isCurrent: false))
+            stack.append((item.depth, id))
+        }
+        var withChildren = Set<String>()
+        for row in rows { if let parent = row.parent { withChildren.insert(parent) } }
+        return rows.map {
+            TOCLine(id: $0.id, item: $0.item, parent: $0.parent,
+                    hasChildren: withChildren.contains($0.id),
+                    isCurrent: $0.item.key == controller.currentTOCKey)
+        }
+    }
+
+    /// 折叠后实际显示的行：被折叠条的整棵子树按 depth 跳过
+    private var visibleTOCLines: [TOCLine] {
+        guard !collapsedTOC.isEmpty else { return tocOutline }
+        var hiddenUnder: Int?
+        var out: [TOCLine] = []
+        for line in tocOutline {
+            if let depth = hiddenUnder, line.item.depth > depth { continue }
+            hiddenUnder = nil
+            out.append(line)
+            if collapsedTOC.contains(line.id), line.hasChildren { hiddenUnder = line.item.depth }
+        }
+        return out
+    }
+
+    private var currentTOCLineID: String? {
+        guard let key = controller.currentTOCKey else { return nil }
+        return tocOutline.first { $0.item.key == key }?.id
+    }
+
+    /// 打开侧栏时把当前条的所有祖先展开（否则「当前」被折叠在里面看不到）
+    private func revealCurrentTOC() {
+        let lines = tocOutline
+        guard let target = lines.first(where: { $0.item.key == controller.currentTOCKey }) else { return }
+        var byID: [String: TOCLine] = [:]
+        for line in lines { byID[line.id] = line }
+        var cursor = target.parent
+        while let current = cursor {
+            collapsedTOC.remove(current)
+            cursor = byID[current]?.parent
+        }
+    }
+
+    private func scrollTOC(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard let id = currentTOCLineID else { return }
+        // 下一拍：刚展开/刚切 tab 时行还没布局，同拍 scrollTo 找不到目标
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeInOut(duration: 0.18)) { proxy.scrollTo(id, anchor: .center) }
+            } else {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        }
+    }
+
+    private struct TOCLine: Identifiable {
         let id: String
         let item: BookTOCItem
+        let parent: String?
+        let hasChildren: Bool
         let isCurrent: Bool
+    }
+
+    // MARK: - 书签
+
+    private var bookmarkList: some View {
+        Group {
+            if controller.bookmarks.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: controller.bookmarksFailed ? "exclamationmark.triangle" : "bookmark")
+                        .font(.system(size: 20, weight: .light))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text(controller.bookmarksFailed
+                         ? "书签没能载入（本次不改动已有书签）"
+                         : "读到想记住的地方，按 ⌘D")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(controller.bookmarks) { item in
+                            bookmarkRow(item)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 8)
+                }
+            }
+        }
+    }
+
+    private func bookmarkRow(_ item: BookBookmark) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.quote.isEmpty ? "（没有摘录）" : item.quote)
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Text(bookmarkSubtitle(item))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button { controller.removeBookmark(id: item.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("删除这个书签")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .onTapGesture { controller.goToBookmark(item) }
+    }
+
+    private func bookmarkSubtitle(_ item: BookBookmark) -> String {
+        let title = controller.book.section(at: item.sectionIndex)?.title ?? ""
+        return title.isEmpty ? "第 \(item.chapterIndex + 1) 章" : title
     }
 
     private func collapsedStrip(icon: String, help: String, action: @escaping () -> Void) -> some View {
@@ -515,7 +729,8 @@ private struct BookReaderWebView: NSViewRepresentable {
         // 页面放在 content/ 里、授权整个 content/ → 图全量可读。删除书时随目录一起清掉。
         let store = BookStore(root: LocalPaths.booksDir)
         let pageURL = store.contentDir(controller.book.id).appendingPathComponent(".xhan-reader.html")
-        let html = ReaderHTML.buildBook(typography: settings.typography)
+        let html = ReaderHTML.buildBook(typography: settings.typography,
+                                        language: controller.book.language)
         do {
             // 内容没变就不重写，省掉每次打开的写盘
             let existing = try? String(contentsOf: pageURL, encoding: .utf8)

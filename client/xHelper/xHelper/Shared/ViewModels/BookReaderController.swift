@@ -115,6 +115,10 @@ final class BookReaderController: ObservableObject {
     @Published private(set) var allAnnotations: [BookAnnotation] = []
     /// 批注载入失败（面板要区分「真的没有批注」和「没读出来」）
     @Published private(set) var annotationsFailed = false
+    /// 全书书签（侧栏「书签」tab）。`bookmarkedHere` 只反映**当前位置**有没有书签，供顶栏图标。
+    @Published private(set) var bookmarks: [BookBookmark] = []
+    @Published private(set) var bookmarksFailed = false
+    @Published private(set) var bookmarkedHere = false
     /// 当前读到目录里的哪一条（key = chapterIndex:fragment）。滚动时跟着变，
     /// 面板高亮与顶栏章名都靠它 —— 不然「一个 spine 文件装整本书」的书会把整列都标成当前。
     @Published private(set) var currentTOCKey: String?
@@ -137,18 +141,24 @@ final class BookReaderController: ObservableObject {
     private var saveTask: Task<Void, Never>?
     /// 换节令牌：只有最后一次 `loadSection` 允许写进 `sectionIndex`
     private var chapterLoadToken = UUID()
+    /// 注释文件令牌：连点两个注标时，只认最后一次读回来的内容
+    private var noteRequestToken = UUID()
     /// 本章锚点（fragment → 拍平偏移），由 JS 在 `chapterReady` 后回报
     private var anchorOffsets: [String: Int] = [:]
     /// 跨章跳目录时暂存锚点，等新章渲染完再滚过去
     private var pendingAnchor: String?
     /// 批注是否已从磁盘读成功：失败时禁止写盘，免得把用户的批注覆盖成空
     private var annotationsLoaded = false
+    /// 书签同理
+    private var bookmarksLoaded = false
     /// `meta.json` 的写盘（进度 / 目录补全）走同一条串行队列：
     /// 两者都是「读-改-整份写」，并发时后完成者会把对方的改动盖回去。
     private let metaWriteQueue = DispatchQueue(label: "xhanHelper.book.meta.write")
     /// 书内批注写盘串行队列：并发 detached 各自快照整份列表，后完成者会写回旧快照
     /// （快速「建一条 + 删一条」会把删掉的写回来），所以按修改顺序串行落盘
     private let annotationWriteQueue = DispatchQueue(label: "xhanHelper.book.annotations.write")
+    /// 书签写盘串行队列（理由同批注）
+    private let bookmarkWriteQueue = DispatchQueue(label: "xhanHelper.book.bookmarks.write")
     private var readTrace: BookActivity.ReadTrace?
     private let settings: BookReadingSettings
 
@@ -195,6 +205,9 @@ final class BookReaderController: ObservableObject {
             guard let refreshed else { return }
             LogBuffer.shared.info("书阅读器：结构已按新解析补全（\(refreshed.toc.count) 条目录 / \(refreshed.effectiveSections.count) 节）")
             book = refreshed
+            // 结构重算会把批注按新节号重映射（磁盘已改）：重读一次，否则内存里还是旧节号，划线全画不出
+            if annotationsLoaded { loadAnnotations() }
+            if bookmarksLoaded { loadBookmarks() }
             sectionIndex = max(0, min(sectionIndex, max(refreshed.effectiveSections.count - 1, 0)))
             // 迁移后的进度可能落在别的节（老进度只记了章内偏移）：跟过去，别让读者回到书首
             if let migrated = refreshed.progress?.sectionIndex,
@@ -247,6 +260,7 @@ final class BookReaderController: ObservableObject {
     func handleReady() {
         isReady = true
         loadAnnotations()
+        loadBookmarks()
         loadSection(sectionIndex, offset: pendingOffset, anchor: nil)
         let focused = webView.map { $0.window?.firstResponder === $0 } ?? false
         LogBuffer.shared.info("书阅读器：页面就绪，正文是否第一响应者=\(focused ? "是" : "否（键盘进不来）")")
@@ -294,6 +308,7 @@ final class BookReaderController: ObservableObject {
         if index == sectionIndex, anchor == nil {
             evaluate("reader.restorePosition(\(max(0, offset)))")
             pendingOffset = max(0, offset)
+            refreshBookmarkedHere()
             return
         }
         // 换节前先把本节位置存下来（offset 属于旧节，回调可能在新节加载后才回来）
@@ -627,6 +642,8 @@ final class BookReaderController: ObservableObject {
         annotationWriteQueue.async {
             do { try store.saveAnnotations(items, bookID: bookID) } catch {
                 NSLog("[BookReader] 保存批注失败：\(error)")
+                // 与书签同口径：写不进磁盘要当场说，不能只留日志
+                Task { @MainActor in ToastCenter.shared.show("批注没能保存：\(error.localizedDescription)") }
             }
         }
     }
@@ -693,6 +710,137 @@ final class BookReaderController: ObservableObject {
         ActivityClient.emit(BookActivity.annotationDeleted(bookID: book.id, annotationID: id))
     }
 
+    // MARK: - 书签
+
+    private func loadBookmarks() {
+        let store = self.store
+        let bookID = book.id
+        Task {
+            do {
+                let loaded = try await Task.detached(priority: .userInitiated) {
+                    try store.bookmarks(bookID: bookID)
+                }.value
+                // 节号对不上当前结构（书被重解析过）：丢弃这条，不猜位置
+                let valid = loaded.filter { item in
+                    guard let section = book.section(at: item.sectionIndex) else { return false }
+                    guard section.chapterIndex == item.chapterIndex else {
+                        LogBuffer.shared.warning("书阅读器：书签 \(item.id) 的章/节对不上，已丢弃")
+                        return false
+                    }
+                    return true
+                }
+                bookmarks = Self.sorted(valid)
+                bookmarksLoaded = true
+                bookmarksFailed = false
+                refreshBookmarkedHere()
+            } catch {
+                // 同批注：读不出来不能当「没有书签」，否则下次写入会把盘上的整份覆盖掉
+                bookmarksLoaded = false
+                bookmarksFailed = true
+                LogBuffer.shared.error("书阅读器：读书签失败，本次禁止写入 \(error)")
+                ToastCenter.shared.show("书签读取失败：本次只浏览，不改动已有书签")
+            }
+        }
+    }
+
+    private static func sorted(_ items: [BookBookmark]) -> [BookBookmark] {
+        items.sorted { ($0.sectionIndex, $0.offset) < ($1.sectionIndex, $1.offset) }
+    }
+
+    /// 当前位置的书签：同节 ±40 字算同一个落点（翻页/重排后会有几字漂移）
+    private func bookmark(at offset: Int) -> BookBookmark? {
+        bookmarks.first { $0.sectionIndex == sectionIndex && abs($0.offset - offset) <= 40 }
+    }
+
+    private func refreshBookmarkedHere() {
+        let value = bookmark(at: pendingOffset) != nil
+        if value != bookmarkedHere { bookmarkedHere = value }
+    }
+
+    /// 顶栏书签按钮 / ⌘D：当前位置已有书签就删，没有就加
+    func toggleBookmark() {
+        guard bookmarksLoaded else {
+            ToastCenter.shared.show("书签没能载入，本次改动不保存")
+            return
+        }
+        if let existing = bookmark(at: pendingOffset) {
+            removeBookmark(id: existing.id)
+            return
+        }
+        let chapter = chapterIndex
+        let section = sectionIndex
+        let offset = pendingOffset
+        guard let webView else {
+            addBookmark(chapterIndex: chapter, section: section, offset: offset, quote: "")
+            return
+        }
+        webView.evaluateJavaScript("reader.snippet(\(offset), 60)") { [weak self] value, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    LogBuffer.shared.warning("书阅读器：取书签摘录失败，记一条没有摘录的书签 \(error)")
+                }
+                self.addBookmark(chapterIndex: chapter, section: section, offset: offset,
+                                 quote: (value as? String) ?? "")
+            }
+        }
+    }
+
+    private func addBookmark(chapterIndex: Int, section: Int, offset: Int, quote: String) {
+        // 摘录是异步取回来的，期间读者可能已经翻走：位置变了就不记（免得书签落到别的页）
+        guard section == sectionIndex else {
+            ToastCenter.shared.show("页面已翻走，书签没有记下")
+            return
+        }
+        guard bookmark(at: offset) == nil else { return }   // 连按 ⌘D：不建第二条
+        let item = BookBookmark(id: UUID().uuidString, chapterIndex: chapterIndex,
+                                sectionIndex: section, offset: offset,
+                                quote: quote, createdAt: Date())
+        bookmarks = Self.sorted(bookmarks + [item])
+        refreshBookmarkedHere()
+        saveBookmarks()
+        ToastCenter.shared.show("已添加书签")
+    }
+
+    func removeBookmark(id: String) {
+        bookmarks.removeAll { $0.id == id }
+        refreshBookmarkedHere()
+        saveBookmarks()
+        ToastCenter.shared.show("已删除书签")
+    }
+
+    /// 侧栏点书签：回到那一页
+    func goToBookmark(_ item: BookBookmark) {
+        guard book.section(at: item.sectionIndex) != nil else {
+            LogBuffer.shared.warning("书阅读器：书签指向的节不存在 \(item.sectionIndex)")
+            ToastCenter.shared.show("这个书签的位置已经不在书里了")
+            return
+        }
+        if item.sectionIndex == sectionIndex {
+            pendingOffset = item.offset
+            evaluate("reader.restorePosition(\(item.offset))")
+            refreshBookmarkedHere()
+            return
+        }
+        goToSection(item.sectionIndex, offset: item.offset)
+    }
+
+    private func saveBookmarks() {
+        guard bookmarksLoaded else {
+            LogBuffer.shared.error("书阅读器：书签未成功载入，拒绝写盘（避免覆盖已有书签）")
+            return
+        }
+        let store = self.store
+        let bookID = book.id
+        let items = bookmarks
+        bookmarkWriteQueue.async {
+            do { try store.saveBookmarks(items, bookID: bookID) } catch {
+                NSLog("[BookReader] 保存书签失败：\(error)")
+                Task { @MainActor in ToastCenter.shared.show("书签没能保存：\(error.localizedDescription)") }
+            }
+        }
+    }
+
     // MARK: - 面板动作
 
     func updateNote(id: String, note: String) {
@@ -732,6 +880,7 @@ final class BookReaderController: ObservableObject {
                 ToastCenter.shared.show("这一章渲染失败：\(error)")
             }
             publishAnnotations()
+            refreshBookmarkedHere()
             if let anchor = pendingAnchor {
                 pendingAnchor = nil
                 evaluate("reader.scrollToAnchor(\(MarkdownWebUtils.jsString(anchor)))")
@@ -759,6 +908,7 @@ final class BookReaderController: ObservableObject {
             if let off = (message["offset"] as? NSNumber)?.intValue {
                 pendingOffset = max(0, off)
                 updateCurrentTOC(offset: pendingOffset)
+                refreshBookmarkedHere()
             }
 
         case "create":
@@ -803,6 +953,15 @@ final class BookReaderController: ObservableObject {
         case "sectionJump":
             jumpSection(message["delta"] as? Int ?? 1)
 
+        case "noteFile":
+            handleNoteFile(message)
+
+        case "bookLink":
+            if let href = message["href"] as? String { openBookLink(href) }
+
+        case "openExternal":
+            if let href = message["href"] as? String { openExternal(href) }
+
         case "diag":
             // 导航诊断：真机上「按键/滚轮换节不灵」时看这条。
             // 没有 kind=key 的日志 = 事件没进到页面（焦点不在正文）；
@@ -830,6 +989,125 @@ final class BookReaderController: ObservableObject {
 
         default:
             LogBuffer.shared.info("书阅读器：未知消息 \(type)")
+        }
+    }
+
+
+    // MARK: - 脚注 / 链接
+
+    /// 注释目标不在当前节（同文件其他节 / 另一个文件 / `linear="no"` 的尾注文件）：
+    /// 读回整份 XHTML 再让 JS 取 `#frag`，读者不离开当前位置。
+    private func handleNoteFile(_ message: [String: Any]) {
+        guard let section = book.section(at: sectionIndex),
+              let current = book.chapter(at: section.chapterIndex) else { return }
+        let raw = (message["href"] as? String) ?? ""
+        let frag = (message["frag"] as? String) ?? ""
+        guard !frag.isEmpty else { return }
+
+        let resolved: String
+        if raw.isEmpty || raw.hasPrefix("#") {
+            resolved = current.href              /* 同文件跨节：读当前章整份 */
+        } else {
+            guard let normalized = EpubArchive.normalize(
+                raw, baseDir: EpubArchive.dirName(of: current.href)
+            ) else {
+                LogBuffer.shared.error("书阅读器：注释路径非法 \(raw)")
+                ToastCenter.shared.show("这条注释的路径不合法")
+                return
+            }
+            resolved = normalized
+        }
+        let ext = (resolved as NSString).pathExtension.lowercased()
+        guard ["xhtml", "html", "htm"].contains(ext) else {
+            LogBuffer.shared.error("书阅读器：注释文件类型不支持 \(resolved)")
+            ToastCenter.shared.show("这条注释的文件类型不支持")
+            return
+        }
+
+        let fileURL = store.contentDir(book.id).appendingPathComponent(resolved)
+        let size: Int
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            size = (attrs[.size] as? NSNumber)?.intValue ?? 0
+        } catch {
+            LogBuffer.shared.error("书阅读器：注释文件读不到 \(resolved)：\(error)")
+            ToastCenter.shared.show("这条注释读不出来")
+            return
+        }
+        guard size > 0, size <= 5 * 1024 * 1024 else {
+            LogBuffer.shared.error("书阅读器：注释文件为空或过大 \(resolved)（\(size) 字节）")
+            ToastCenter.shared.show("这条注释读不出来")
+            return
+        }
+
+        let token = UUID()
+        noteRequestToken = token
+        let store = self.store
+        let bookID = book.id
+        let base = fileURL.absoluteString
+        Task {
+            do {
+                let html = try await Task.detached(priority: .userInitiated) {
+                    try store.chapterHTML(id: bookID, href: resolved)
+                }.value
+                guard token == noteRequestToken, let webView else { return }
+                webView.callAsyncJavaScript(
+                    "reader.showExternalNote(html, base, frag);",
+                    arguments: ["html": html, "base": base, "frag": frag],
+                    in: nil, in: .page
+                ) { result in
+                    if case .failure(let error) = result {
+                        LogBuffer.shared.error("书阅读器：注释渲染失败 \(error)")
+                        ToastCenter.shared.show("这条注释没能显示")
+                    }
+                }
+            } catch {
+                guard token == noteRequestToken else { return }
+                LogBuffer.shared.error("书阅读器：读注释文件失败 \(resolved)：\(error)")
+                ToastCenter.shared.show("这条注释读不出来")
+            }
+        }
+    }
+
+    /// 普通书内链接：按当前章目录归一 → 找章节 → 跳节/滚锚点。
+    private func openBookLink(_ raw: String) {
+        guard let section = book.section(at: sectionIndex),
+              let current = book.chapter(at: section.chapterIndex),
+              let normalized = EpubArchive.normalize(
+                raw, baseDir: EpubArchive.dirName(of: current.href)
+              ),
+              let target = book.chapters.first(where: { $0.href == normalized }) else {
+            LogBuffer.shared.warning("书阅读器：书内链接目标不在阅读顺序里 \(raw)")
+            ToastCenter.shared.show("这个链接不在书里")
+            return
+        }
+        let fragment = EpubArchive.fragment(of: raw)
+        if let item = book.toc.first(where: { $0.chapterIndex == target.index && $0.fragment == fragment }) {
+            goToTOC(item)
+            return
+        }
+        guard let targetSection = firstSectionIndex(inChapter: target.index) else { return }
+        if targetSection == sectionIndex, let fragment {
+            evaluate("reader.scrollToAnchor(\(MarkdownWebUtils.jsString(fragment)))")
+            return
+        }
+        goToSection(targetSection, offset: 0, anchor: fragment)
+    }
+
+    /// 外链只放行这三种 scheme；其余（file:/javascript:/data:）一律不交给系统。
+    private func openExternal(_ raw: String) {
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https", "mailto"].contains(scheme) else {
+            LogBuffer.shared.warning("书阅读器：外链 scheme 不允许 \(raw.prefix(32))")
+            ToastCenter.shared.show("这个链接不能打开")
+            return
+        }
+        if NSWorkspace.shared.open(url) {
+            LogBuffer.shared.info("书阅读器：打开外链 \(scheme)://\(url.host ?? "")")
+        } else {
+            LogBuffer.shared.error("书阅读器：打开外链失败 \(scheme)://\(url.host ?? "")")
+            ToastCenter.shared.show("没能打开链接")
         }
     }
 

@@ -26,9 +26,17 @@ nonisolated extension EpubPackage {
     static func parse(contentDir: URL) throws -> EpubPackage {
         let fm = FileManager.default
 
-        // DRM：EPUB 的加密清单只要存在就是加密书（不尝试解密）
-        if fm.fileExists(atPath: contentDir.appendingPathComponent("META-INF/encryption.xml").path) {
+        // DRM：LCP 许可证 = 加密；encryption.xml 里只放行「字体混淆」，其余算法一律拒
+        // （字体混淆只打乱字体内码，正文是明文；阅读器用系统字体，不解密也能读）
+        if fm.fileExists(atPath: contentDir.appendingPathComponent("META-INF/license.lcpl").path) {
             throw BookImportError.drm
+        }
+        let encryptionURL = contentDir.appendingPathComponent("META-INF/encryption.xml")
+        if fm.fileExists(atPath: encryptionURL.path) {
+            guard let encryptionData = readData(encryptionURL) else {
+                throw BookImportError.invalidFile("META-INF/encryption.xml 读不出来")
+            }
+            if XMLScan.encryptionIsDRM(encryptionData) { throw BookImportError.drm }
         }
 
         // container.xml → 根 OPF
@@ -59,8 +67,8 @@ nonisolated extension EpubPackage {
         if let navItem = opf.items.values.first(where: { item in
             item.properties.split(separator: " ").contains("nav")
         }), let navRel = EpubArchive.normalize(navItem.href, baseDir: opfDir),
-           let navData = readData(contentDir.appendingPathComponent(navRel)),
-           let navEntries = XMLScan.navTOC(navData) {
+           let navText = readTextBestEffort(contentDir.appendingPathComponent(navRel)),
+           let navEntries = XMLScan.navTOC(navText) {
             entries = navEntries
             tocBase = EpubArchive.dirName(of: navRel)
         } else if let ncxItem = ncxItem(opf: opf),
@@ -109,7 +117,7 @@ nonisolated extension EpubPackage {
             chapters.append(BookChapter(
                 index: chapterIndex,
                 href: href,
-                title: HTMLText.firstHeading(html) ?? "第 \(chapterIndex + 1) 章",
+                title: HTMLText.chapterTitle(html: html, href: href, index: chapterIndex),
                 // 纯图章字数为 0，保底 1 免得后续按字数加权时除零
                 charCount: max(1, HTMLText.charCount(html))
             ))
@@ -232,6 +240,12 @@ nonisolated extension EpubPackage {
            fm.fileExists(atPath: contentDir.appendingPathComponent(rel).path) {
             coverPath = rel
         }
+        // 没有 manifest 封面：很多老书把封面做成「封面页 XHTML 里放一张图」，顺着 guide /
+        // spine 的 cover、titlepage 页抓第一张图。只对新导入生效（结构重算不补封面）
+        if coverPath == nil {
+            coverPath = coverFromPage(opf: opf, chapters: chapters,
+                                      contentDir: contentDir, opfDir: opfDir)
+        }
 
         return EpubPackage(
             title: opf.title,
@@ -242,6 +256,34 @@ nonisolated extension EpubPackage {
             toc: toc,
             coverPath: coverPath
         )
+    }
+
+    /// 封面页书：manifest 没声明封面时，从 guide 的 cover / spine 里 href 含 cover、
+    /// titlepage 的 XHTML 抓第一张图。图片文件名带 `cover` 的最可信（封面页里常先放出版社 logo）。
+    private static func coverFromPage(opf: OPFDocument, chapters: [BookChapter],
+                                      contentDir: URL, opfDir: String) -> String? {
+        var candidates: [String] = []
+        if let guide = opf.guideCover,
+           let rel = EpubArchive.normalize(guide, baseDir: opfDir) { candidates.append(rel) }
+        let lowered = chapters.map { (href: $0.href, lower: $0.href.lowercased()) }
+        candidates += lowered.filter { $0.lower.contains("cover") }.map { $0.href }
+        candidates += lowered.filter { $0.lower.contains("titlepage") || $0.lower.contains("title_page") }
+            .map { $0.href }
+
+        let allowed: Set<String> = ["jpg", "jpeg", "png", "gif", "webp"]
+        var found: [String] = []
+        var seen = Set<String>()
+        for href in candidates where seen.insert(href).inserted {
+            guard let html = readTextBestEffort(contentDir.appendingPathComponent(href)),
+                  let src = HTMLText.firstImageSrc(html),
+                  let rel = EpubArchive.normalize(src, baseDir: EpubArchive.dirName(of: href)),
+                  allowed.contains((rel as NSString).pathExtension.lowercased()),
+                  FileManager.default.fileExists(
+                    atPath: contentDir.appendingPathComponent(rel).path) else { continue }
+            found.append(rel)
+        }
+        return found.first { ($0 as NSString).lastPathComponent.lowercased().contains("cover") }
+            ?? found.first
     }
 
     /// spine@toc → manifest item；没有就按 media-type 找 NCX。
@@ -274,6 +316,14 @@ nonisolated extension EpubPackage {
         }
     }
 
+    /// 读文本，失败只记日志返回 nil（调用方本来就有兜底路径）。
+    private static func readTextBestEffort(_ url: URL) -> String? {
+        do { return try readText(url) } catch {
+            NSLog("[EpubPackage] 读取失败 \(url.path)：\(error)")
+            return nil
+        }
+    }
+
     private static func fileSize(_ url: URL) -> Int? {
         do {
             let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -293,13 +343,41 @@ nonisolated extension EpubPackage {
 /// 从 XHTML 里抠「首个标题」和「近似字数」。刻意不建 DOM：正文渲染交给 JS。
 nonisolated enum HTMLText {
 
+    /// 章节标题：内文 h1/h2 → 按 href 关键词兜底（封面页 / 扉页这类本来就没有标题的页）。
+    /// 不删章节、不重排 —— 章节下标变了，进度和批注全错位。
+    static func chapterTitle(html: String, href: String, index: Int) -> String {
+        if let heading = firstHeading(html) { return heading }
+        let lower = href.lowercased()
+        if lower.contains("cover") { return "封面" }
+        if lower.contains("titlepage") || lower.contains("title_page") { return "扉页" }
+        if lower.contains("copyright") { return "版权信息" }
+        if lower.contains("colophon") { return "版权页" }
+        // 「toc」要卡路径边界：`protocol.xhtml` 里也含这三个字母
+        if lower.contains("/toc") || lower.hasPrefix("toc")
+            || lower.contains("/nav") || lower.hasPrefix("nav") { return "目录" }
+        return "第 \(index + 1) 章"
+    }
+
     /// 首个 h1（没有就 h2）的纯文本；空标签视为没有。
+    /// 标签允许命名空间前缀（`<xhtml:h1>`：有些书整篇带前缀）
     static func firstHeading(_ html: String) -> String? {
         for tag in ["h1", "h2"] {
-            let pattern = "<\(tag)\\b[^>]*>(.*?)</\(tag)>"
+            let pattern = "<(?:[A-Za-z][\\w.\\-]*:)?\(tag)\\b[^>]*>(.*?)</(?:[A-Za-z][\\w.\\-]*:)?\(tag)>"
             guard let raw = firstMatch(pattern, in: html) else { continue }
             let text = plainText(raw).trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { return text }
+        }
+        return nil
+    }
+
+    /// 正文里第一张图的地址（`<img src>` 或 SVG `<image xlink:href|href>`）
+    static func firstImageSrc(_ html: String) -> String? {
+        let patterns = [
+            "<img\\b[^>]*?\\ssrc\\s*=\\s*[\"']([^\"']+)[\"']",
+            "<image\\b[^>]*?\\b(?:xlink:href|href)\\s*=\\s*[\"']([^\"']+)[\"']",
+        ]
+        for pattern in patterns {
+            if let raw = firstMatch(pattern, in: html) { return raw }
         }
         return nil
     }
@@ -356,13 +434,27 @@ nonisolated enum HTMLText {
         let levels = scanned.anchors.compactMapValues(\.headingLevel)
         var pieces = topLevelRanges(body)
         var total = pieces.reduce(0) { $0 + $1.textCount }
-        // 整本正文被单个 `<div>`/`<body 内的 wrapper>` 包住时，顶层只有一个片段 → 下探一层，
-        // 否则 174 个锚点全落同一片，切分等于没做
-        if pieces.count == 1, total > sectionCharLimit,
-           let inner = innerPieces(of: pieces[0].range, in: body) {
-            pieces = inner
-            total = pieces.reduce(0) { $0 + $1.textCount }
+        // 正文被 `<div>` 之类的 wrapper 包住时（常见于排版工具：`<body><h1>书名</h1><div>全书</div>`），
+        // 顶层片段切不开 —— 174 个锚点全落同一片，切分等于没做。把**每一个**超限的 wrapper
+        // 逐层展开（多层容器也认），兄弟片段（章首标题等）原样保留。
+        var descent = 0
+        while descent < 8 {
+            var changed = false
+            var i = 0
+            while i < pieces.count {
+                if pieces[i].textCount > sectionCharLimit,
+                   let inner = innerPieces(of: pieces[i].range, in: body) {
+                    pieces.replaceSubrange(i...i, with: inner)
+                    changed = true
+                    i += inner.count
+                } else {
+                    i += 1
+                }
+            }
+            if !changed { break }
+            descent += 1
         }
+        total = pieces.reduce(0) { $0 + $1.textCount }
         let bodyLength = body.utf16.count
 
         // 小章整章一节：绝大多数书走这条路，行为与切分前完全一致
@@ -441,7 +533,10 @@ nonisolated enum HTMLText {
         let innerStart = units.distance(from: units.startIndex, to: openEnd)
         let inner = String(body[openEnd..<closeStart])
         let pieces = topLevelRanges(inner)
-        guard pieces.count > 1 else { return nil }
+        // 只有一个子片段也照样交回去：外层是 wrapper、里层还是 wrapper 的书不少，
+        // 一刀切「必须多于一个」会让两层容器的书永远切不开（此前的单层下探就栽在这）。
+        // 纯文本（没标签）就别再往下钻了，钻进去只会把段落标签切掉。
+        guard !pieces.isEmpty, pieces.count > 1 || inner.contains("<") else { return nil }
         return pieces.map { piece in
             ((piece.range.lowerBound + innerStart)..<(piece.range.upperBound + innerStart), piece.textCount)
         }
@@ -504,7 +599,7 @@ nonisolated enum HTMLText {
                 name.unicodeScalars.append(UnicodeScalar(c) ?? "?")
                 j = units.index(after: j)
             }
-            return (name.lowercased(), j)
+            return (localTag(name), j)
         }
         /// 跳过整个元素内容（`<script>` / `<style>` 里的 `<` 不是标签）
         func skipElement(_ name: String, from index: String.UTF16View.Index) -> String.UTF16View.Index {
@@ -593,6 +688,11 @@ nonisolated enum HTMLText {
     private static let markupOpen = Array("<!".utf16)
     private static let piOpen = Array("<?".utf16)
     private static let closeTag = Array("</".utf16)
+
+    /// 去命名空间前缀：`<xhtml:p>` / `<xhtml:br/>` 这类写法要当 `p` / `br` 处理
+    private static func localTag(_ name: String) -> String {
+        name.split(separator: ":").last.map { $0.lowercased() } ?? name.lowercased()
+    }
 
     private static func headingLevel(ofTag tag: String) -> Int? {
         guard tag.count == 2, tag.hasPrefix("h"),
@@ -714,6 +814,26 @@ nonisolated enum HTMLText {
             }
             return true
         }
+        /// 跳到 `</name>` 之后：`<script>` / `<style>` 的内容里可能有裸 `<`（老书常见），
+        /// 按标签扫描会把它们当成元素、把 depth 弄乱。
+        func skipElement(_ name: String, from start: String.UTF16View.Index) -> String.UTF16View.Index {
+            var j = start
+            while j < units.endIndex {
+                if units[j] == 60, matches(j, Array("</".utf16)) {
+                    var k = units.index(j, offsetBy: 2)
+                    var found = ""
+                    while k < units.endIndex {
+                        let c = units[k]
+                        if c == 32 || c == 9 || c == 10 || c == 13 || c == 62 { break }
+                        found.unicodeScalars.append(UnicodeScalar(c) ?? "?")
+                        k = units.index(after: k)
+                    }
+                    if found.lowercased() == name { return skip(j, to: [62]) }
+                }
+                j = units.index(after: j)
+            }
+            return units.endIndex
+        }
         /// 从 index 起找到 `terminator` 之后的位置（找不到就返回 endIndex）
         func skip(_ index: String.UTF16View.Index, to terminator: [UInt16]) -> String.UTF16View.Index {
             var j = index
@@ -744,7 +864,7 @@ nonisolated enum HTMLText {
                     inName = false
                 } else if c == 62 {                     // '>'
                     let end = units.index(after: j)
-                    return (end, lastNonSpace == 47, name.lowercased())   // '/'
+                    return (end, lastNonSpace == 47, localTag(name))       // '/'
                 } else if inName, c != 32 && c != 9 && c != 10 && c != 13 && c != 47 {
                     name.unicodeScalars.append(UnicodeScalar(c) ?? "?")
                 } else {
@@ -753,7 +873,7 @@ nonisolated enum HTMLText {
                 if c != 32 && c != 9 && c != 10 && c != 13 { lastNonSpace = c }
                 j = units.index(after: j)
             }
-            return (units.endIndex, false, name.lowercased())
+            return (units.endIndex, false, localTag(name))
         }
 
         while i < units.endIndex {
@@ -788,6 +908,11 @@ nonisolated enum HTMLText {
             }
             let tag = scanStartTag(i)
             i = tag.end
+            // `<script>` / `<style>`：整段跳过去（含闭合标签），不改 depth
+            if !tag.selfClosing, tag.name == "script" || tag.name == "style" {
+                i = skipElement(tag.name, from: tag.end)
+                continue
+            }
             // void 元素（`<br>` / `<img>` 这种 HTML 写法，EPUB 里并不罕见）也必须当自闭合，
             // 否则 depth 永远回不到 0，整本并成一个「顶层片段」→ 切分静默失效。
             if tag.selfClosing || Self.voidElements.contains(tag.name) {
@@ -954,6 +1079,8 @@ nonisolated struct OPFDocument {
     var spine: [String]
     var spineToc: String?
     var coverID: String?
+    /// EPUB2 `<guide><reference type="cover" href="…">`（封面页书的兜底）
+    var guideCover: String?
     var fixedLayout: Bool
 }
 
@@ -975,19 +1102,45 @@ nonisolated enum XMLScan {
             spine: delegate.spine,
             spineToc: delegate.spineToc,
             coverID: delegate.coverID,
+            guideCover: delegate.guideCover,
             fixedLayout: delegate.fixedLayout
         )
     }
 
     /// EPUB3 nav（XHTML）。返回 nil = 这份 nav 读不出目录（调用方退回 NCX）。
-    static func navTOC(_ data: Data) -> [TOCEntry]? {
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
-        let normalized = HTMLNamedEntities.toNumeric(text)
-        guard let normalizedData = normalized.data(using: .utf8) else { return nil }
+    /// 先转成 String（老书可能是 UTF-16/GBK），**必须去掉 XML 声明**：
+    /// 源文件声明 `encoding="utf-16"`，重新按 UTF-8 编码后声明与内容不符，XMLParser 会直接失败。
+    static func navTOC(_ text: String) -> [TOCEntry]? {
+        let normalized = HTMLNamedEntities.toNumeric(stripXMLDeclaration(text))
+        guard let data = normalized.data(using: .utf8) else { return nil }
         let delegate = NavDelegate()
-        guard run(delegate, normalizedData), !delegate.entries.isEmpty else { return nil }
+        guard run(delegate, data), !delegate.entries.isEmpty else { return nil }
         return delegate.entries
     }
+
+    private static func stripXMLDeclaration(_ text: String) -> String {
+        guard let start = text.firstIndex(where: { !$0.isWhitespace }), text[start...].hasPrefix("<?xml"),
+              let close = text.range(of: "?>") else { return text }
+        return String(text[close.upperBound...])
+    }
+
+    /// encryption.xml 是否算 DRM。放行两种「字体混淆」算法，其余（AES / 未知 / 缺 URI / 解析失败）都拒。
+    /// 空白清单（`<encryption/>`）放行 —— 有清单不等于加密。
+    static func encryptionIsDRM(_ data: Data) -> Bool {
+        let delegate = EncryptionDelegate()
+        guard run(delegate, data) else { return true }
+        return delegate.entries.contains { entry in
+            guard let algorithm = entry.algorithm, let uri = entry.uri, !uri.isEmpty else { return true }
+            let key = algorithm.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return !allowedEncryptionAlgorithms.contains(key)
+        }
+    }
+
+    /// 两种「只是打乱字体内码」的算法：IDPF 字体混淆 / Adobe 字体混淆
+    private static let allowedEncryptionAlgorithms: Set<String> = [
+        "http://www.idpf.org/2008/embedding",
+        "http://ns.adobe.com/pdf/enc#rc",
+    ]
 
     static func ncxTOC(_ data: Data) -> [TOCEntry]? {
         let delegate = NCXDelegate()
@@ -1019,6 +1172,35 @@ nonisolated private final class ContainerDelegate: NSObject, XMLParserDelegate {
     }
 }
 
+nonisolated private final class EncryptionDelegate: NSObject, XMLParserDelegate {
+    struct Entry { var algorithm: String?; var uri: String? }
+    private(set) var entries: [Entry] = []
+    private var current: Entry?
+
+    func parser(_ parser: XMLParser, didStartElement elementName: String,
+                namespaceURI: String?, qualifiedName: String?, attributes: [String: String]) {
+        switch XMLScan.local(elementName) {
+        case "EncryptedData":
+            current = Entry(algorithm: nil, uri: nil)
+        case "EncryptionMethod":
+            if current == nil { current = Entry(algorithm: nil, uri: nil) }
+            current?.algorithm = attributes["Algorithm"]
+        case "CipherReference":
+            if current == nil { current = Entry(algorithm: nil, uri: nil) }
+            current?.uri = attributes["URI"]
+        default:
+            break
+        }
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String,
+                namespaceURI: String?, qualifiedName: String?) {
+        guard XMLScan.local(elementName) == "EncryptedData", let entry = current else { return }
+        entries.append(entry)
+        current = nil
+    }
+}
+
 nonisolated private final class OPFDelegate: NSObject, XMLParserDelegate {
     var title = ""
     var author: String?
@@ -1027,9 +1209,11 @@ nonisolated private final class OPFDelegate: NSObject, XMLParserDelegate {
     var spine: [String] = []
     var spineToc: String?
     var coverID: String?
+    var guideCover: String?
     var fixedLayout = false
 
     private var inMetadata = false
+    private var inGuide = false
     private var capture: String?
     private var buffer = ""
 
@@ -1060,6 +1244,10 @@ nonisolated private final class OPFDelegate: NSObject, XMLParserDelegate {
                     properties: attributes["properties"] ?? ""
                 )
             }
+        case "guide":
+            inGuide = true
+        case "reference":
+            if inGuide, attributes["type"]?.lowercased() == "cover" { guideCover = attributes["href"] }
         case "spine":
             spineToc = attributes["toc"]
         case "itemref":
@@ -1077,6 +1265,7 @@ nonisolated private final class OPFDelegate: NSObject, XMLParserDelegate {
                 namespaceURI: String?, qualifiedName: String?) {
         let el = XMLScan.local(elementName)
         if el == "metadata" { inMetadata = false }
+        if el == "guide" { inGuide = false }
         guard el == "title" || el == "creator" || el == "language" || el == "meta" else { return }
         guard let field = capture else { return }
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -761,3 +761,7 @@ JS 现有的 `create` / `update` / `delete` 消息原样用。`BookReaderControl
 踩坑：诊断函数一开始叫 `report()`，而模板里 `report()` 已经是「发 findResult」的那个函数 —— **同名函数声明后置覆盖**，`find()` 静默不再回报命中数。改名 `navDiag()`。详见 `docs/bugs/067-reader-template-report-shadowing.md`；自查脚本要**两个都跑**（`check-reader-html.sh` 抓到的，`book-reader-probe.sh` 看不出来）。
 
 影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（`navDiag` / wheel 累计量 / keydown 诊断）、`Views/Books/BookReaderView.swift`（抢焦点）、`ViewModels/BookReaderController.swift`（`diag` 消息、`handleReady` 记第一响应者）。
+
+### 2026-11-15 · 第二轮方案（批 16–18）
+
+下一轮的语义兼容与阅读体验方案（脚注/尾注、书内链接、外链、内联图、DRM 误判、封面页书、解析健壮性、批注迁移、目录折叠、宽表、书签）见 `docs/design/epub-reader/round-2-compat.md`。本文档的 §5.2 / §5.4 / §9.5 / §十三 在实施时按那份文档同步更新。

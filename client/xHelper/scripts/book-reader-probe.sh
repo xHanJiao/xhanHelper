@@ -1,5 +1,5 @@
 #!/bin/bash
-# 书阅读器（BOOK 模式）模板自查：真 WKWebView 里跑十五条断言（两种宽度各跑一遍），不截图。
+# 书阅读器（BOOK 模式）模板自查：真 WKWebView 里跑全部断言（两种宽度各跑一遍），不截图。
 #
 # 验的是设计文档 `docs/design/epub-reader/design.md` §5.5 / §5.7 / §六 在 WebKit 的真实行为：
 #   1 章节注入：正文出现、块结构正确
@@ -358,6 +358,239 @@ hook = r"""<script nonce="testnonce">
     add('12 方向键（两种模式 × 四个键 + ⌥⌘）', keyFails.length === 0,
         keyFails.length ? '不通过：' + keyFails.join(' / ') : '八个组合全对');
 
+    /* ---------- 13-19 批 16：脚注 / 链接 / 内联图 / srcset ---------- */
+    var IMG1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/gHrKAAAAABJRU5ErkJggg==';
+    var noteHTML =
+      '<h2>注释测试</h2>' +
+      '<p id="np1">正文一<sup><a epub:type="noteref" href="#fn-1"><img src="' + IMG1 + '" alt="注"/></a></sup>后面还有字。</p>' +
+      '<aside epub:type="footnote" id="fn-1"><ol class="duokan-footnote-content"><li class="duokan-footnote-item">这是第一条注释，应该出现在卡片里。</li></ol></aside>' +
+      '<p id="np2">正文二<sup><a epub:type="noteref" href="#fn-2">2</a></sup>。</p>' +
+      '<aside epub:type="footnote" id="fn-2"><p>第二条注释，带 <strong>加粗</strong>。</p></aside>' +
+      '<p id="np3">跨文件<sup><a epub:type="noteref" href="notes.xhtml#en-1">3</a></sup>。</p>' +
+      '<p id="np4">普通锚点<sup><a href="#np5">4</a></sup>。</p>' +
+      '<p id="np5">普通段落，不应弹注释。</p>' +
+      '<p id="np6">外链 <a href="https://example.com/a?b=1#c">example</a>；书内 <a href="ch2.xhtml#s2">ch2</a>；页内 <a href="#np5">锚点</a>。</p>' +
+      '<p id="np7">行内图 <img id="inline-img" src="' + IMG1 + '"/> 后面还有字。</p>' +
+      '<p id="np8"><img id="block-img" src="' + IMG1 + '"/></p>' +
+      '<figure><img id="fig-img" src="' + IMG1 + '"/><figcaption>图注</figcaption></figure>' +
+      '<picture><source id="src-source" srcset="../Images/a.png 1x, ../Images/b.png 2x"/><img src="' + IMG1 + '"/></picture>' +
+      '<audio src="demo.mp3">音频</audio>' +
+      '<p id="np9"><ruby>東京<rt>とうきょう</rt></ruby></p>' +
+      '<p id="np10">role 注标：<span role="doc-noteref"><a href="#fn-3">注</a></span>。</p>' +
+      '<aside role="doc-footnote" id="fn-3"><p>用 ARIA role 写的注释。</p></aside>' +
+      '<div role="doc-footnote" id="fn-4"><p>div 容器的注释，也应藏起来。</p></div>' +
+      '<p id="np11">尾注引用<sup><a epub:type="noteref" href="#en-same">6</a></sup>。</p>' +
+      '<section epub:type="endnotes"><ol><li id="en-same"><p>同文件尾注列表。</p></li></ol></section>' +
+      '<section epub:type="footnotes"><ol><li id="en-free"><p>没人指的尾注区块，应该还能读。</p></li></ol></section>';
+
+    function lastPost(type) {
+      var list = window.__posts.filter(function (p) { return p && p.type === type; });
+      return list.length ? list[list.length - 1] : null;
+    }
+    function clickEl(el) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+
+    reader.setTypo({ measure: 728 });
+    reader.setReadingMode('scroll');
+    reader.setChapter(noteHTML, 'file:///tmp/', true, true);
+    void content.offsetHeight;
+
+    var fnRefs = content.querySelectorAll('a.fn-ref');
+    var note1 = document.getElementById('fn-1');
+    var note2 = document.getElementById('fn-2');
+    var note3 = document.getElementById('fn-3');
+    var note4 = document.getElementById('fn-4');
+    var hiddenOK = [note1, note2, note3, note4].every(function (el) {
+      return getComputedStyle(el).display === 'none';
+    });
+    reader.find('这是第一条注释');
+    var noteFind = lastPost('findResult');
+    reader.clearFind();
+    var findOK = !!noteFind && noteFind.count === 0;
+    add('13 脚注识别与隐藏',
+        fnRefs.length === 5 && hiddenOK && findOK,
+        '注标=' + fnRefs.length + '（期望 5）/ 各容器隐藏=' + hiddenOK + ' / 注释文字 find=' + (noteFind ? noteFind.count : '-'));
+
+    /* 点注标：卡片出现；不能落进 IMG → 大图浮层 */
+    var noteIcon = content.querySelector('#np1 img');
+    window.__posts = [];
+    clickEl(noteIcon);
+    var pop = document.getElementById('note-pop');
+    var popOpen = pop.classList.contains('open');
+    var popText = pop.querySelector('.note-body').textContent;
+    var noLightbox = posts('image') === 0;
+    add('14 注释卡片',
+        popOpen && popText.indexOf('第一条注释') >= 0 && noLightbox,
+        '打开=' + popOpen + ' / 内容=' + (popText.indexOf('第一条注释') >= 0) + ' / 未弹大图=' + noLightbox);
+    add('15 注释卡片可关闭', (function () {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      var closedByEsc = !pop.classList.contains('open');
+      clickEl(noteIcon);
+      window.dispatchEvent(new Event('scroll'));
+      var closedByScroll = !pop.classList.contains('open');
+      clickEl(noteIcon);
+      document.getElementById('note-scrim').click();
+      var closedByScrim = !pop.classList.contains('open');
+      return closedByEsc && closedByScroll && closedByScrim;
+    })(), 'Esc / 滚动 / 遮罩 都能收');
+
+    /* 跨文件尾注：目标不在 DOM → 发 noteFile */
+    window.__posts = [];
+    clickEl(content.querySelector('#np3 a.fn-ref'));
+    var nf = lastPost('noteFile');
+    add('16 跨文件注释发 noteFile',
+        !!nf && (nf.href || '').indexOf('notes.xhtml') >= 0 && nf.frag === 'en-1',
+        nf ? ('href=' + nf.href + ' frag=' + nf.frag) : '没发');
+
+    /* 链接分发：外链 / 书内 / 普通页内锚点 */
+    var extA = content.querySelector('a[data-external]');
+    var bookA = content.querySelector('a[data-book-href]:not(.fn-ref)');
+    window.__posts = [];
+    clickEl(extA);
+    var extPost = lastPost('openExternal');
+    window.__posts = [];
+    clickEl(bookA);
+    var bookPost = lastPost('bookLink');
+    window.__posts = [];
+    clickEl(content.querySelector('#np4 a[href^="#"]'));
+    var plainOK = posts('bookLink') === 0 && posts('openExternal') === 0 && !pop.classList.contains('open');
+    add('17 链接分发',
+        !!extPost && (extPost.href || '').indexOf('https://example.com') === 0 &&
+        !!bookPost && (bookPost.href || '').indexOf('ch2.xhtml') >= 0 && plainOK,
+        '外链=' + (extPost ? 'openExternal' : '没发') +
+        ' / 书内=' + (bookPost ? 'bookLink' : '没发') +
+        ' / 无类型 sup=' + (plainOK ? '按锚点' : '误弹/误跳'));
+
+    /* 内联图 vs 独占图（含注标图标 1em） */
+    var inlineImg = document.getElementById('inline-img');
+    var blockImg = document.getElementById('block-img');
+    var figImg = document.getElementById('fig-img');
+    var iconStyle = getComputedStyle(noteIcon);
+    add('18 内联图 / 独占图',
+        getComputedStyle(inlineImg).display === 'inline' &&
+        getComputedStyle(blockImg).display === 'block' &&
+        getComputedStyle(figImg).display === 'block' &&
+        iconStyle.display === 'inline' && parseFloat(iconStyle.width) < 30,
+        '行内=' + getComputedStyle(inlineImg).display +
+        ' / 独占=' + getComputedStyle(blockImg).display +
+        ' / figure=' + getComputedStyle(figImg).display +
+        ' / 注标=' + iconStyle.display + ' ' + iconStyle.width);
+
+    /* srcset 重写 + 音视频移除 */
+    var srcset = document.getElementById('src-source').getAttribute('srcset') || '';
+    add('19 srcset / 音视频',
+        srcset.indexOf('file:') >= 0 && srcset.indexOf('../') < 0 && !content.querySelector('audio'),
+        'srcset=' + srcset + ' / audio=' + (content.querySelector('audio') ? '还在' : '已移除'));
+
+    /* ---------- 20-22 真机撞到的三类漏判 / 样式 ---------- */
+    /* role 写在包注标的外层 <span> 上（ARIA 写法）：必须认出注标、aside 必须藏 */
+    var roleRef = content.querySelector('#np10 a');
+    window.__posts = [];
+    clickEl(roleRef);
+    var rolePopText = pop.querySelector('.note-body').textContent;
+    add('20 role 注标（role 在外层 span）',
+        roleRef.classList.contains('fn-ref') && pop.classList.contains('open') &&
+        rolePopText.indexOf('用 ARIA role 写的注释') >= 0,
+        '注标=' + roleRef.classList.contains('fn-ref') +
+        ' / 弹卡片=' + pop.classList.contains('open') +
+        ' / 内容=' + rolePopText.slice(0, 12));
+    document.getElementById('note-scrim').click();
+
+    /* 注释容器不止 ASIDE：div[role=doc-footnote] 与同文件 endnotes 列表都要藏 */
+    var endnotes = document.getElementById('en-same').closest('section');
+    var freeNotes = document.getElementById('en-free').closest('section');
+    add('21 注释容器按语义藏',
+        getComputedStyle(note4).display === 'none' &&
+        getComputedStyle(endnotes).display === 'none' &&
+        getComputedStyle(freeNotes).display !== 'none',
+        'div 容器=' + getComputedStyle(note4).display +
+        ' / 被指到的尾注区块=' + getComputedStyle(endnotes).display +
+        ' / 没人指的尾注区块=' + getComputedStyle(freeNotes).display + '（应可见）');
+
+    /* 链接必须看得出来：书内 / 页内 / 外链统一绿字点线 + pointer；注标不掺和 */
+    var bodyColor = getComputedStyle(content).color;
+    var extStyle = getComputedStyle(extA);
+    var bookStyle = getComputedStyle(bookA);
+    var anchorA = content.querySelector('#np6 a[href^="#"]');
+    var noteRefA = content.querySelector('#np1 a');
+    add('22 链接样式',
+        extStyle.color !== bodyColor && bookStyle.color !== bodyColor &&
+        extStyle.cursor === 'pointer' && bookStyle.cursor === 'pointer' &&
+        bookStyle.borderBottomStyle === 'dotted' &&
+        anchorA.classList.contains('book-link') &&
+        !noteRefA.classList.contains('book-link'),
+        '正文色=' + bodyColor + ' / 书内=' + bookStyle.color + ' ' + bookStyle.cursor +
+        ' / 页内带类=' + anchorA.classList.contains('book-link') +
+        ' / 注标不带类=' + !noteRefA.classList.contains('book-link'));
+
+    /* ---------- 23-24 宽表 ---------- */
+    /* 前面垫几段正文：一章只有一张表时撑不满一页，翻页步长恒为 0，测不出「表格不撑破分栏」 */
+    var tableHTML = '';
+    for (var fp = 0; fp < 4; fp++) {
+      tableHTML += '<p>' + new Array(200).join('填充正文，用来把这一章撑过一页。') + '</p>';
+    }
+    tableHTML += '<h2>宽表</h2><table><tr>';
+    for (var tc = 1; tc <= 10; tc++) tableHTML += '<th>列 ' + tc + ' 标题</th>';
+    tableHTML += '</tr>';
+    for (var tr = 1; tr <= 4; tr++) {
+      tableHTML += '<tr>';
+      for (var tc2 = 1; tc2 <= 10; tc2++) {
+        /* 用不可断行的长 token：中文可以在任意字间断行，自动布局会缩回栏宽，测不出溢出 */
+        tableHTML += '<td>cell-' + tc2 + '-' + new Array(24).join('x') + '</td>';
+      }
+      tableHTML += '</tr>';
+    }
+    tableHTML += '</table>';
+    reader.setTypo({ measure: 728 });
+    reader.setChapter(tableHTML, 'file:///tmp/', true, true);
+    reader.setReadingMode('paged');
+    void content.offsetHeight;
+    var twrap = content.querySelector('.table-scroll');
+    var span23 = content.clientWidth + 64;
+    var overflow = !!twrap && twrap.scrollWidth > twrap.clientWidth + 1;
+    var startX = content.scrollLeft;
+    reader.turnPage(1);
+    reader.snapPage();
+    var moved = content.scrollLeft - startX;
+    add('23 宽表横滚',
+        overflow && Math.abs(moved - span23) <= 2,
+        '窄栏内溢出=' + (twrap ? (twrap.scrollWidth + '>' + twrap.clientWidth) : '没有容器') +
+        ' / 翻一页步长=' + Math.round(moved) + '（期望 ' + Math.round(span23) + '）');
+
+    /* 翻页模式下滚轮先给宽表：没到头不翻页，到头才翻 */
+    (function tableWheel() {
+      var wrapEl = content.querySelector('.table-scroll');
+      var cellEl = wrapEl ? wrapEl.querySelector('td') : null;
+      if (!wrapEl || !cellEl) { add('24 滚轮让位给宽表', false, '没有表格容器'); return; }
+      reader.snapPage();
+      var beforePage = content.scrollLeft;
+      wrapEl.scrollLeft = 0;
+      var ev1 = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      cellEl.dispatchEvent(ev1);
+      var letGo = !ev1.defaultPrevented;
+      var pageStill = content.scrollLeft === beforePage;
+      wrapEl.scrollLeft = wrapEl.scrollWidth - wrapEl.clientWidth;
+      var ev2 = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      cellEl.dispatchEvent(ev2);
+      var tookOver = ev2.defaultPrevented;
+      reader.snapPage();
+      add('24 滚轮让位给宽表', letGo && pageStill && tookOver,
+          '没到头不抢=' + letGo + ' / 页没动=' + pageStill + ' / 到头后接管=' + tookOver);
+    })();
+
+    /* 25 书签摘录：snippet(off, len) 从拍平文本取一段，空白折叠、不带块分隔符 */
+    (function bookmarkSnippet() {
+      reader.setChapter('<p id="bm1">第一段书签文本，用来验证摘录。</p><p>第二段不要选中。</p>',
+                        'file:///tmp/', true, true);
+      void content.offsetHeight;
+      var head = reader.snippet(0, 4);
+      var cross = reader.snippet(15, 6);   /* 起点落在块间分隔符上 */
+      add('25 书签摘录',
+          head === '第一段书' && cross === '第二段不要',
+          '开头=' + JSON.stringify(head) + ' / 跨段=' + JSON.stringify(cross));
+    })();
+
     return JSON.stringify({ rows: rows });
   };
 })();
@@ -374,7 +607,7 @@ if [ ! -x "$BIN" ] || [ "$HERE/paged-reader-probe.swift" -nt "$BIN" ]; then
 fi
 
 echo "页面：$HTML"
-echo "—— 书阅读器十五条断言 ——"
+echo "—— 书阅读器全部断言 ——"
 PROBE_FN=__bookProbe "$BIN" "$HTML"
 echo "—— 窄面板（360pt，模拟右栏）——"
 PROBE_FN=__bookProbe PROBE_WIDTH=360 "$BIN" "$HTML"

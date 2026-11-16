@@ -375,7 +375,13 @@ hook = r"""<script nonce="testnonce">
       '<figure><img id="fig-img" src="' + IMG1 + '"/><figcaption>图注</figcaption></figure>' +
       '<picture><source id="src-source" srcset="../Images/a.png 1x, ../Images/b.png 2x"/><img src="' + IMG1 + '"/></picture>' +
       '<audio src="demo.mp3">音频</audio>' +
-      '<p id="np9"><ruby>東京<rt>とうきょう</rt></ruby></p>';
+      '<p id="np9"><ruby>東京<rt>とうきょう</rt></ruby></p>' +
+      '<p id="np10">role 注标：<span role="doc-noteref"><a href="#fn-3">注</a></span>。</p>' +
+      '<aside role="doc-footnote" id="fn-3"><p>用 ARIA role 写的注释。</p></aside>' +
+      '<div role="doc-footnote" id="fn-4"><p>div 容器的注释，也应藏起来。</p></div>' +
+      '<p id="np11">尾注引用<sup><a epub:type="noteref" href="#en-same">6</a></sup>。</p>' +
+      '<section epub:type="endnotes"><ol><li id="en-same"><p>同文件尾注列表。</p></li></ol></section>' +
+      '<section epub:type="footnotes"><ol><li id="en-free"><p>没人指的尾注区块，应该还能读。</p></li></ol></section>';
 
     function lastPost(type) {
       var list = window.__posts.filter(function (p) { return p && p.type === type; });
@@ -393,14 +399,18 @@ hook = r"""<script nonce="testnonce">
     var fnRefs = content.querySelectorAll('a.fn-ref');
     var note1 = document.getElementById('fn-1');
     var note2 = document.getElementById('fn-2');
-    var hiddenOK = getComputedStyle(note1).display === 'none' && getComputedStyle(note2).display === 'none';
+    var note3 = document.getElementById('fn-3');
+    var note4 = document.getElementById('fn-4');
+    var hiddenOK = [note1, note2, note3, note4].every(function (el) {
+      return getComputedStyle(el).display === 'none';
+    });
     reader.find('这是第一条注释');
     var noteFind = lastPost('findResult');
     reader.clearFind();
     var findOK = !!noteFind && noteFind.count === 0;
     add('13 脚注识别与隐藏',
-        fnRefs.length === 3 && hiddenOK && findOK,
-        '注标=' + fnRefs.length + '（期望 3）/ aside 隐藏=' + hiddenOK + ' / 注释文字 find=' + (noteFind ? noteFind.count : '-'));
+        fnRefs.length === 5 && hiddenOK && findOK,
+        '注标=' + fnRefs.length + '（期望 5）/ 各容器隐藏=' + hiddenOK + ' / 注释文字 find=' + (noteFind ? noteFind.count : '-'));
 
     /* 点注标：卡片出现；不能落进 IMG → 大图浮层 */
     var noteIcon = content.querySelector('#np1 img');
@@ -472,6 +482,102 @@ hook = r"""<script nonce="testnonce">
     add('19 srcset / 音视频',
         srcset.indexOf('file:') >= 0 && srcset.indexOf('../') < 0 && !content.querySelector('audio'),
         'srcset=' + srcset + ' / audio=' + (content.querySelector('audio') ? '还在' : '已移除'));
+
+    /* ---------- 20-22 真机撞到的三类漏判 / 样式 ---------- */
+    /* role 写在包注标的外层 <span> 上（ARIA 写法）：必须认出注标、aside 必须藏 */
+    var roleRef = content.querySelector('#np10 a');
+    window.__posts = [];
+    clickEl(roleRef);
+    var rolePopText = pop.querySelector('.note-body').textContent;
+    add('20 role 注标（role 在外层 span）',
+        roleRef.classList.contains('fn-ref') && pop.classList.contains('open') &&
+        rolePopText.indexOf('用 ARIA role 写的注释') >= 0,
+        '注标=' + roleRef.classList.contains('fn-ref') +
+        ' / 弹卡片=' + pop.classList.contains('open') +
+        ' / 内容=' + rolePopText.slice(0, 12));
+    document.getElementById('note-scrim').click();
+
+    /* 注释容器不止 ASIDE：div[role=doc-footnote] 与同文件 endnotes 列表都要藏 */
+    var endnotes = document.getElementById('en-same').closest('section');
+    var freeNotes = document.getElementById('en-free').closest('section');
+    add('21 注释容器按语义藏',
+        getComputedStyle(note4).display === 'none' &&
+        getComputedStyle(endnotes).display === 'none' &&
+        getComputedStyle(freeNotes).display !== 'none',
+        'div 容器=' + getComputedStyle(note4).display +
+        ' / 被指到的尾注区块=' + getComputedStyle(endnotes).display +
+        ' / 没人指的尾注区块=' + getComputedStyle(freeNotes).display + '（应可见）');
+
+    /* 链接必须看得出来：书内 / 页内 / 外链统一绿字点线 + pointer；注标不掺和 */
+    var bodyColor = getComputedStyle(content).color;
+    var extStyle = getComputedStyle(extA);
+    var bookStyle = getComputedStyle(bookA);
+    var anchorA = content.querySelector('#np6 a[href^="#"]');
+    var noteRefA = content.querySelector('#np1 a');
+    add('22 链接样式',
+        extStyle.color !== bodyColor && bookStyle.color !== bodyColor &&
+        extStyle.cursor === 'pointer' && bookStyle.cursor === 'pointer' &&
+        bookStyle.borderBottomStyle === 'dotted' &&
+        anchorA.classList.contains('book-link') &&
+        !noteRefA.classList.contains('book-link'),
+        '正文色=' + bodyColor + ' / 书内=' + bookStyle.color + ' ' + bookStyle.cursor +
+        ' / 页内带类=' + anchorA.classList.contains('book-link') +
+        ' / 注标不带类=' + !noteRefA.classList.contains('book-link'));
+
+    /* ---------- 23-24 宽表 ---------- */
+    /* 前面垫几段正文：一章只有一张表时撑不满一页，翻页步长恒为 0，测不出「表格不撑破分栏」 */
+    var tableHTML = '';
+    for (var fp = 0; fp < 4; fp++) {
+      tableHTML += '<p>' + new Array(200).join('填充正文，用来把这一章撑过一页。') + '</p>';
+    }
+    tableHTML += '<h2>宽表</h2><table><tr>';
+    for (var tc = 1; tc <= 10; tc++) tableHTML += '<th>列 ' + tc + ' 标题</th>';
+    tableHTML += '</tr>';
+    for (var tr = 1; tr <= 4; tr++) {
+      tableHTML += '<tr>';
+      for (var tc2 = 1; tc2 <= 10; tc2++) {
+        /* 用不可断行的长 token：中文可以在任意字间断行，自动布局会缩回栏宽，测不出溢出 */
+        tableHTML += '<td>cell-' + tc2 + '-' + new Array(24).join('x') + '</td>';
+      }
+      tableHTML += '</tr>';
+    }
+    tableHTML += '</table>';
+    reader.setTypo({ measure: 728 });
+    reader.setChapter(tableHTML, 'file:///tmp/', true, true);
+    reader.setReadingMode('paged');
+    void content.offsetHeight;
+    var twrap = content.querySelector('.table-scroll');
+    var span23 = content.clientWidth + 64;
+    var overflow = !!twrap && twrap.scrollWidth > twrap.clientWidth + 1;
+    var startX = content.scrollLeft;
+    reader.turnPage(1);
+    reader.snapPage();
+    var moved = content.scrollLeft - startX;
+    add('23 宽表横滚',
+        overflow && Math.abs(moved - span23) <= 2,
+        '窄栏内溢出=' + (twrap ? (twrap.scrollWidth + '>' + twrap.clientWidth) : '没有容器') +
+        ' / 翻一页步长=' + Math.round(moved) + '（期望 ' + Math.round(span23) + '）');
+
+    /* 翻页模式下滚轮先给宽表：没到头不翻页，到头才翻 */
+    (function tableWheel() {
+      var wrapEl = content.querySelector('.table-scroll');
+      var cellEl = wrapEl ? wrapEl.querySelector('td') : null;
+      if (!wrapEl || !cellEl) { add('24 滚轮让位给宽表', false, '没有表格容器'); return; }
+      reader.snapPage();
+      var beforePage = content.scrollLeft;
+      wrapEl.scrollLeft = 0;
+      var ev1 = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      cellEl.dispatchEvent(ev1);
+      var letGo = !ev1.defaultPrevented;
+      var pageStill = content.scrollLeft === beforePage;
+      wrapEl.scrollLeft = wrapEl.scrollWidth - wrapEl.clientWidth;
+      var ev2 = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      cellEl.dispatchEvent(ev2);
+      var tookOver = ev2.defaultPrevented;
+      reader.snapPage();
+      add('24 滚轮让位给宽表', letGo && pageStill && tookOver,
+          '没到头不抢=' + letGo + ' / 页没动=' + pageStill + ' / 到头后接管=' + tookOver);
+    })();
 
     return JSON.stringify({ rows: rows });
   };

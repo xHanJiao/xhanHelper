@@ -71,8 +71,13 @@ function epubTypes(el) {
 - **不要依赖 `getComputedStyle` 的 `vertical-align`**：出版社 CSS 在检测前已被剥掉，只能靠 `<sup>` / 父元素 / 类型判断。
 - `maybe()` 只在 `href` 以 `#` 或「相对 xhtml + fragment」时启用；外部链接不参与。
 - `maybe()` 命中的目标还必须「像注释」：带注释类型，或位于 `.duokan-footnote-content` / 尾注容器里；否则按普通锚点处理，避免把 `<sup><a href="#s1">1</a></sup>` 这种普通引用弹成注释。
-- 只隐藏 `aside[epub:type~=footnote]`。**不要隐藏 `li` / `section` 尾注**——尾注页本身还要能读。
+- 注标类型/角色既可能在 `<a>` 上，也可能在**包着它的祖先**上（`<span role="doc-noteref"><a href="#n">注</a></span>`，ARIA 写法很常见）：往上找 3 层，遇 `backlink` 直接否。
+- 注释容器按语义藏，不按标签名：
+  - 单条注释容器（`aside` / `div` / `p` / `blockquote`）：带注释类型/角色、且有锚点可指（自身或内部有 `id`）就藏；
+  - 注释「区块」（`section` / `ol` / `ul`）：**只有本章确实有注标指进它时**才藏——单独一页的尾注章节没有注标，藏了整章就空了（尾注页本身还要能读）。
+  - 祖先已藏则跳过；没有 `id` 的容器不藏（防误标吞正文）。
 - 隐藏方式：加 `.book-note`（`display:none !important`），**不移除 DOM**，保证 `anchorElement` / 目录锚点仍能找到它。
+- `NOTE_TYPES` 同时收单数（`footnote`）与复数（`footnotes` / `endnotes` / `rearnotes`）：复数用来标注释区块。
 
 ### 16.2 注释弹层
 
@@ -135,6 +140,9 @@ JS 侧：
 | 其他（`file:`、`javascript:`、`data:`、未知） | 删 href，保留文字 |
 
 - 点击分发顺序：`.fn-ref` → 外链 → 书内链接 → 图片 → 划线/翻页分区。全部 `preventDefault` 后 `return`。
+- **样式**（真机反馈：链接和正文完全一样、连光标都是箭头）：`prepareNotes` 之后跑一次 `classifyLinks`，
+  `data-book-href` 与 `href="#…"` 打 `.book-link`；`.book-link` 与 `.ext-link` 共用一条规则 ——
+  主题绿 + 1px 点线 + `cursor: pointer`，hover 加深变实线。`a.fn-ref` 跳过（有自己的样式）。
 - 翻页模式的点击分区已经识别 `a`（`onWidget`），不会抢。
 - 外链失败：日志 + toast；不打印完整 URL（只记 scheme + host）。
 
@@ -290,12 +298,13 @@ v5 可能改变节边界（wrapper/script/prefix）。`refreshStructure` 目前�
 - 顶栏 `.help` 追加「全书 42%」；目录头显示「目录 · 174 条 · 42%」。
 - 数据用 `controller.bookProgress`（已有，随进度防抖更新），不加新 chrome。
 
-### 18.3 宽表
+### 18.3 宽表（2026-11-16 已落地，真机撞到「表格被栏边界裁掉」后提前做）
 
-- `applyChapter` 后给每个 `table` 包一层 `.table-scroll`。
-- CSS：`max-width:100%; overflow-x:auto; margin:16px 0; break-inside:avoid`；内层 `table { margin:0 }`。
-- 探针：翻页模式下 `wrapper.scrollWidth > wrapper.clientWidth` 且 `pageSpan()` 不变、`turnPage` 仍是一页。
-- 不过就降级：只在滚动模式横滚；翻页模式 `table { font-size: .82em }`。
+- `applyChapter` 后 `wrapTables(content)`：每个 `table` 包一层 `.table-scroll`（幂等）。
+- CSS：wrapper `max-width:100%; overflow-x:auto; margin:16px 0; break-inside:avoid`；内层 `table { width:auto; min-width:100%; margin:0 }` —— **`width:auto` 是关键**，沿用 `width:100%` 等于容器宽，永远不溢出也就不可能滚。
+- 翻页模式：滚轮先看 `.table-scroll`，该方向还能滚就 `return`（不 `preventDefault`，交给原生），滚到头才翻页；`.table-scroll` 内的点击不算「点两侧 28% 翻页」。
+- 探针：wrapper 溢出、`turnPage` 仍精确一页；滚轮在表中间不 `preventDefault`、到最右才接管。
+- 降级方案（翻页模式缩字号）因探针全绿未启用。
 
 ### 18.4 书签
 
@@ -494,3 +503,14 @@ struct BookBookmark: Codable, Identifiable, Equatable {
 - 字体混淆只放行不解密：阅读器用系统字体，混淆字体不会被使用，属预期。
 - `refreshStructure` 不补封面（设计如此）：老书要新封面只能重导（重导会丢批注）。
 
+### 2026-11-16 · 真机反馈修复（链接样式 / role 注释 / 宽表）
+
+| 问题（真机截图） | 根因 | 修法 |
+|---|---|---|
+| 书内跳转、页内锚点和正文一模一样（光标还是箭头） | 只有外链被打了样式类；`href` 被摘掉后浏览器也不再给 pointer 光标 | `classifyLinks` 给 `data-book-href` / `href="#…"` 打 `.book-link`，与 `.ext-link` 共用「绿字 + 点线 + pointer」，hover 变实线 |
+| 第二章 ARIA 注释整段排在正文里 | `isNoteRef` 只看 `<a>`，而 `role="doc-noteref"` 在包它的 `<span>` 上；隐藏又只认 `ASIDE` | 新增 `refScope`（往上 3 层）+ `hideNoteContainers`（按语义藏；注释区块仅在「本章有注标指进去」时藏） |
+| 附录 10 列表格被栏边界裁掉、不能横滚 | `#content table { width:100% }`，列挤不进一栏，超出部分被裁 | `wrapTables` + `.table-scroll`（`overflow-x:auto`）；内层 `width:auto`；翻页滚轮到表头才接管、表内点击不翻页 |
+
+验证：`book-reader-probe.sh` **27 条 × 2 宽度全绿**（新增 20 role 注标 / 21 容器按语义藏（含「没人指的尾注区块必须仍可读」）/ 22 链接样式 / 23 宽表横滚 / 24 滚轮让位）；`check-reader-html.sh` 176、`paged-reader-probe.sh` 8 全绿；typecheck 0 error。
+
+真机待验：`reader-test-main.epub` 第二章「注」应变绿、ARIA 注释不再内联；附录表格可在栏内横滚、滚到头才翻页；浅色/深色下点线是否够清楚。

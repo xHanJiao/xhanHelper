@@ -1119,9 +1119,18 @@ html.book #content figure > img, html.book #content figure > svg {
   display: block; margin: 18px auto;
 }
 html.book #content a { color: inherit; border-bottom: 0; text-decoration: none; }
-html.book #content a.ext-link {
+/* 可点的链接必须看得出来：书内跳转（data-book-href）、页内锚点（href="#…"）与外链统一
+   绿字 + 点线。href 被摘掉后浏览器不再给 pointer 光标，得自己加。 */
+html.book #content a.ext-link,
+html.book #content a.book-link {
   color: var(--accent);
   border-bottom: 1px dotted color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: pointer;
+}
+html.book #content a.ext-link:hover,
+html.book #content a.book-link:hover {
+  color: var(--hl-hover);
+  border-bottom-style: solid;
 }
 html.book #content a.fn-ref { color: var(--accent); white-space: nowrap; }
 html.book #content a.fn-ref img { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 .08em; }
@@ -1139,6 +1148,18 @@ html.book #content figcaption {
 html.book #content dl { margin: 14px 0; }
 html.book #content dt { font-weight: 600; }
 html.book #content dd { margin: 4px 0 10px 1.6em; color: var(--muted); }
+
+/* 宽表：10 列的表格放不进 728pt 栏，超出部分会被栏边界直接裁掉 → 包一层横向滚动容器。
+   内层表格必须 width:auto：`width:100%` = 容器宽 = 栏宽，永远不溢出，也就永远滚不动。 */
+html.book #content .table-scroll {
+  max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  margin: 16px 0; break-inside: avoid;
+}
+html.book #content .table-scroll > table { width: auto; min-width: 100%; margin: 0; }
+html.book #content .table-scroll::-webkit-scrollbar { height: 8px; }
+html.book #content .table-scroll::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 4px;
+}
 html.book #content .chapter-next {
   margin: 40px auto 0; padding: 10px 0; max-width: 260px;
   text-align: center; font-size: calc(var(--fs) * 0.82); color: var(--accent);
@@ -1905,7 +1926,8 @@ var reader = (function () {
        链接、划线、气泡、章末按钮各有自己的行为，不让位。 */
     if (BOOK && paged()) {
       var box = content.getBoundingClientRect();
-      var onWidget = e.target.closest ? e.target.closest('a, mark.hl, .ann-bubble, .chapter-next') : null;
+      var onWidget = e.target.closest
+        ? e.target.closest('a, mark.hl, .ann-bubble, .chapter-next, .table-scroll') : null;
       if (!onWidget) {
         var x = e.clientX - box.left;
         if (x < box.width * 0.28) { turnPage(-1); return; }
@@ -2284,7 +2306,10 @@ var reader = (function () {
      判定表移植自 foliate-js `footnotes.js`（MIT），见 design round-2 §16.1。
      注意：正文是 innerHTML 进 HTML 文档，`epub:type` 是字面属性名，
      getAttributeNS 拿不到 —— 两种都读。 */
-  var NOTE_TYPES = { footnote: 1, endnote: 1, rearnote: 1, note: 1, biblioentry: 1, definition: 1 };
+  /* 单数指「一条注」，复数指「注释区块」（`<section epub:type="endnotes">`）：两种都要认，
+     否则整块尾注会当成正文排在书里（真机踩到）。 */
+  var NOTE_TYPES = { footnote: 1, footnotes: 1, endnote: 1, endnotes: 1, rearnote: 1, rearnotes: 1,
+                     note: 1, biblioentry: 1, definition: 1 };
   var NOTE_ROLES = { 'doc-footnote': 1, 'doc-endnote': 1, 'doc-rearnote': 1, 'doc-note': 1,
                      'doc-biblioentry': 1, 'definition': 1 };
   var REF_TYPES = { biblioref: 1, glossref: 1, noteref: 1 };
@@ -2340,13 +2365,56 @@ var reader = (function () {
     var i = href.indexOf('#');
     return i >= 0 ? decodeFrag(href.slice(i + 1)) : '';
   }
+  /* noteref 不总在 <a> 上：读屏写法常见 `<span role="doc-noteref"><a …>注</a></span>`。
+     往上找 3 层，遇到回链（backlink）就否。 */
+  function refScope(el) {
+    for (var i = 0; i < 4 && el; i++, el = el.parentElement) {
+      var t = epubTypes(el), r = rolesOf(el);
+      if (hasAny(t, REF_TYPES) || hasAny(r, REF_ROLES)) return true;
+      if (t.backlink || r['doc-backlink']) return false;
+    }
+    return false;
+  }
   function isNoteRef(a) {
-    var t = epubTypes(a), r = rolesOf(a);
-    if (hasAny(t, REF_TYPES) || hasAny(r, REF_ROLES)) return true;
-    if (t.backlink || r['doc-backlink']) return false;
+    if (refScope(a)) return true;
     var href = refHref(a);
     if (href.charAt(0) !== '#' && !/\.x?html?(?:#|$)/i.test(href)) return false;
     return isSupLike(a);
+  }
+
+  /* 注释容器按语义藏，不能只认 ASIDE：真实书里还有 `<div role="doc-footnote">`、
+     `<section epub:type="endnotes"><ol><li>`。两类分开处理：
+       1) 单条注释的容器（aside/div/p/blockquote）：有锚点可指就藏；
+       2) 注释「区块」（section/ol/ul）：只有本章确实有注标指进它时才藏 ——
+          单独一页的尾注章节没有注标，藏了整章就空了（尾注页本身还要能读）。
+     祖先已藏就跳过；没有 id 的容器不藏（防误标吞正文）。 */
+  function hideNoteContainers() {
+    var refs = {};
+    [].forEach.call(content.querySelectorAll('a'), function (a) {
+      if (!isNoteRef(a)) return;
+      var frag = refFrag(a);
+      if (frag) refs[frag] = 1;
+    });
+    var hidden = 0;
+    function hide(el) { el.classList.add('book-note'); hidden++; }
+
+    [].forEach.call(content.querySelectorAll('aside, div, p, blockquote'), function (el) {
+      if (el.closest && el.closest('.book-note')) return;
+      if (!isNoteTarget(el)) return;
+      if (!el.id && !el.querySelector('[id]')) return;
+      hide(el);
+    });
+    [].forEach.call(content.querySelectorAll('section, ol, ul'), function (el) {
+      if (el.closest && el.closest('.book-note')) return;
+      if (!isNoteTarget(el)) return;
+      var referenced = false;
+      [].forEach.call(el.querySelectorAll('[id]'), function (x) {
+        if (refs[x.id]) referenced = true;
+      });
+      if (!referenced) return;
+      hide(el);
+    });
+    return hidden;
   }
 
   var notePop = document.getElementById('note-pop');
@@ -2414,7 +2482,8 @@ var reader = (function () {
   }
 
   function prepareNotes() {
-    var total = 0, hidden = 0, unresolved = 0;
+    var total = 0, unresolved = 0;
+    var hidden = hideNoteContainers();
     [].forEach.call(content.querySelectorAll('a'), function (a) {
       if (!isNoteRef(a)) return;
       var frag = refFrag(a);
@@ -2432,13 +2501,35 @@ var reader = (function () {
         img.setAttribute('alt', '注');
         img.classList.add('fn-icon');
       });
-      if (target && target.tagName === 'ASIDE') {
-        target.classList.add('book-note');
-        hidden++;
-      }
       total++;
     });
     navDiag('notes', { total: total, hidden: hidden, unresolved: unresolved });
+  }
+
+  /* 表格外面包一层横向滚动容器（幂等：已包过就跳过） */
+  function wrapTables(root) {
+    [].forEach.call(root.querySelectorAll('table'), function (table) {
+      var p = table.parentElement;
+      if (p && p.classList && p.classList.contains('table-scroll')) return;
+      if (!table.parentNode) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'table-scroll';
+      table.parentNode.insertBefore(wrap, table);
+      wrap.appendChild(table);
+    });
+  }
+
+  /* 可点的链接统一打类（样式在 CSS）：fn-ref 有自己的样式，跳过。
+     必须在 prepareNotes 之后跑，否则注标会被同时涂成普通链接。 */
+  function classifyLinks(root) {
+    [].forEach.call(root.querySelectorAll('a'), function (a) {
+      if (a.classList.contains('fn-ref')) return;
+      if (a.hasAttribute('data-external')) { a.classList.add('ext-link'); return; }
+      if (a.hasAttribute('data-book-href')
+          || (a.getAttribute('href') || '').charAt(0) === '#') {
+        a.classList.add('book-link');
+      }
+    });
   }
 
   /* 图片：只有「独占一段」的才 block；注标/行内符号保持 inline */
@@ -2529,6 +2620,8 @@ var reader = (function () {
     [].forEach.call(content.querySelectorAll('[style]'), function (el) {
       el.removeAttribute('style');
     });
+    wrapTables(content);
+    classifyLinks(content);
     classifyImages(content);
     watchImages(content);
     content.normalize();
@@ -2707,6 +2800,15 @@ var reader = (function () {
       wheelLockAt = now;
       advanceSection(dy > 0 ? 1 : -1);
       return;
+    }
+    /* 宽表还没滚到头：交给原生横向滚动，别抢成翻页（到头后继续滚才翻页） */
+    var table = e.target && e.target.closest ? e.target.closest('.table-scroll') : null;
+    if (table) {
+      var dx = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      var maxLeft = table.scrollWidth - table.clientWidth;
+      var atStart = table.scrollLeft <= 0;
+      var atEnd = table.scrollLeft >= maxLeft - 1;
+      if (maxLeft > 1 && !((dx > 0 && atEnd) || (dx < 0 && atStart))) return;
     }
     e.preventDefault();
     var d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;

@@ -515,7 +515,8 @@ private struct BookReaderWebView: NSViewRepresentable {
         // 页面放在 content/ 里、授权整个 content/ → 图全量可读。删除书时随目录一起清掉。
         let store = BookStore(root: LocalPaths.booksDir)
         let pageURL = store.contentDir(controller.book.id).appendingPathComponent(".xhan-reader.html")
-        let html = ReaderHTML.buildBook(typography: settings.typography)
+        let html = ReaderHTML.buildBook(typography: settings.typography,
+                                        language: controller.book.language)
         do {
             // 内容没变就不重写，省掉每次打开的写盘
             let existing = try? String(contentsOf: pageURL, encoding: .utf8)

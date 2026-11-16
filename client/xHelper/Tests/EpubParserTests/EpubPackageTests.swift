@@ -218,6 +218,51 @@ final class EpubPackageTests: XCTestCase {
         XCTAssertEqual(plan.sectionByFragment["b"], 0)
     }
 
+    func testSectionPlanDescendsNestedWrappers() {
+        // 整本包在两层容器里（排版工具常见）：单层下探救不回来，会退化成「一节 = 整本书」
+        let para = String(repeating: "多层容器里的正文。", count: 100)
+        var body = "<div><div>"
+        body += "<h1 id=\"c1\">第一章</h1>"
+        for i in 1...40 {
+            body += "<p id=\"p\(i)\">\(para)</p>"
+        }
+        body += "</div></div>"
+        let plan = HTMLText.planSections(body: body,
+                                         anchors: [("c1", "第一章"), ("p10", "十"), ("p30", "三十")])
+        XCTAssertEqual(plan.sections.count, 3, "两层 wrapper 也要切出三节")
+        // 下探后节的区间在 wrapper 内部（外层 `<div>` 标签不进切片）：首尾相接即可
+        XCTAssertGreaterThan(plan.sections.first?.start ?? -1, 0)
+        XCTAssertLessThan(plan.sections.last?.end ?? .max, body.utf16.count)
+        for pair in zip(plan.sections, plan.sections.dropFirst()) {
+            XCTAssertEqual(pair.0.end, pair.1.start)
+        }
+    }
+
+    func testPrefixedTagsAreHandledLikePlainTags() {
+        let body = "<xhtml:div><xhtml:p id=\"a\">一</xhtml:p><xhtml:br/>"
+            + "<xhtml:h2 id=\"b\">标题</xhtml:h2></xhtml:div>"
+        let ranges = HTMLText.topLevelRanges(body)
+        XCTAssertEqual(ranges.count, 1, "前缀不影响嵌套判定（`</xhtml:div>` 要能收尾）")
+        XCTAssertEqual(ranges.first?.range.upperBound, body.utf16.count)
+
+        let index = HTMLText.scanBody(body)
+        XCTAssertEqual(index.anchors["a"]?.headingLevel, nil)
+        XCTAssertEqual(index.anchors["b"]?.headingLevel, 2, "<xhtml:h2> 也算标题")
+        XCTAssertEqual(index.firstHeadingLevel, 2)
+        XCTAssertEqual(HTMLText.firstHeading("<xhtml:h1>前缀标题</xhtml:h1>"), "前缀标题")
+    }
+
+    func testScriptContentDoesNotBreakPieces() {
+        let body = "<p>前</p><script>var s = \"<p>假段落</p>\";</script><p>后</p>"
+        let ranges = HTMLText.topLevelRanges(body)
+        XCTAssertEqual(ranges.count, 2, "script 里的 `<p>` 不能单独成段")
+        XCTAssertEqual(ranges.first?.range.lowerBound, 0)
+        XCTAssertEqual(ranges.last?.range.upperBound, body.utf16.count)
+        for pair in zip(ranges, ranges.dropFirst()) {
+            XCTAssertEqual(pair.0.range.upperBound, pair.1.range.lowerBound, "区间要连续覆盖")
+        }
+    }
+
     func testSectionPlanWithoutAnchorsChunksBySize() {
         let para = String(repeating: "无目录的大书只能按字数切。", count: 100)
         let body = (1...40).map { _ in "<p>\(para)</p>" }.joined()
@@ -243,6 +288,17 @@ final class EpubPackageTests: XCTestCase {
     }
 
     // MARK: - EPUB3 / nav
+
+    func testEPUB3ParsesNavInUTF16() throws {
+        let url = try SampleBook.epub3(navEncoding: .utf16)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let contentDir = EpubFixture.tempDir()
+        addTeardownBlock { try? FileManager.default.removeItem(at: contentDir) }
+        try EpubArchive.unzip(url, into: contentDir)
+        let package = try EpubPackage.parse(contentDir: contentDir)
+        XCTAssertEqual(package.toc.map(\.title), ["第一章\u{00A0}开端 & 续", "第二章—继续", "2.1 细节"],
+                       "nav 不是 UTF-8 也要读得出目录（声明与实际编码不符不该让 XMLParser 直接失败）")
+    }
 
     func testEPUB3ParsesNavWithNamedEntities() throws {
         let url = try SampleBook.epub3()
@@ -313,6 +369,40 @@ final class EpubPackageTests: XCTestCase {
         try assertImportFails(SampleBook.drm()) { error in
             XCTAssertEqual(error, .drm)
         }
+    }
+
+    func testFontObfuscationBookImports() throws {
+        // 字体混淆只是打乱字体内码、正文全明文：拒掉会把一批正常书挡在门外
+        for adobe in [false, true] {
+            let meta = try importMeta(SampleBook.fontObfuscated(adobe: adobe))
+            XCTAssertEqual(meta.chapterCount, 1, "字体混淆（adobe=\(adobe)）必须能导入")
+        }
+    }
+
+    func testEmptyEncryptionListImports() throws {
+        let meta = try importMeta(SampleBook.emptyEncryptionList())
+        XCTAssertEqual(meta.chapterCount, 1, "加密清单存在但为空 ≠ 加密")
+    }
+
+    func testBrokenEncryptionXMLIsRejected() throws {
+        // 看不懂的清单保守当 DRM：宁可拒一本，不能放一本加密书进来读成乱码
+        try assertImportFails(SampleBook.brokenEncryption()) { error in
+            XCTAssertEqual(error, .drm)
+        }
+    }
+
+    func testCoverPickedFromCoverPage() throws {
+        let meta = try importMeta(SampleBook.coverPageBook())
+        XCTAssertEqual(meta.coverFile, "cover.jpg", "封面页里的图要抽成书架封面")
+        XCTAssertEqual(meta.chapters[1].title, "封面", "封面页没有标题 → 按 href 兜底")
+        XCTAssertEqual(meta.chapters[0].title, "第 1 章")
+        XCTAssertEqual(meta.chapters.count, 3)
+    }
+
+    func testFrontMatterTitlesFallBackToHref() throws {
+        let meta = try importMeta(SampleBook.frontMatterBook())
+        XCTAssertEqual(meta.chapters.map(\.title), ["封面", "扉页", "版权信息", "第一章 起"],
+                       "没有 h1/h2 的前置页按 href 兜底；不删章节、不重排")
     }
 
     func testFixedLayoutIsRejected() throws {

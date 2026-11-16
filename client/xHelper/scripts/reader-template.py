@@ -39,6 +39,7 @@ def render(marked_path, title, tags_html, md, images, fs='20.06', mode='doc'):
     return (m.group(1)
             .replace('__NONCE__', 'testnonce')
             .replace('__MODE__', 'book' if book else 'doc')
+            .replace('__LANG__', 'zh')
             .replace('__HEADER_HTML__', header)
             .replace('__BOOK_JSON__', json.dumps(BOOK_JSON, ensure_ascii=False) if book else 'null')
             .replace('__FS__', fs)

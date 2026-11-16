@@ -111,6 +111,8 @@ nonisolated struct BookStore {
     /// 不必让用户删书重导 —— 重导会丢批注。
     func refreshStructure(id: String) throws -> BookMeta? {
         guard var meta = try meta(id: id) else { return nil }
+        // 旧结构要在覆盖前留下：批注/进度迁移靠它换算「章内字数偏移」
+        let oldSections = meta.effectiveSections
         let package = try EpubPackage.parse(contentDir: contentDir(id))
         meta.toc = package.toc
         meta.chapters = package.chapters
@@ -122,6 +124,7 @@ nonisolated struct BookStore {
         }
         // 老进度的 offset 是「章内扁平偏移」，新口径是「节内偏移」：
         // 按节字数把位置落到对应节的节首（一次性，最多偏一节）
+        var progressAlreadyMigrated = false
         if let progress = meta.progress, progress.sectionIndex == nil {
             let sections = meta.effectiveSections
             let chapterSections = sections.filter { $0.chapterIndex == progress.chapterIndex }
@@ -136,9 +139,63 @@ nonisolated struct BookStore {
                                           sectionIndex: landed?.index ?? 0,
                                           offset: 0,
                                           updatedAt: progress.updatedAt)
+            progressAlreadyMigrated = true
         }
+
+        // 节边界可能变了（下探更多层 wrapper / 修前缀标签 / 跳 script）：老节号按章内字数偏移
+        // 搬到新结构。结构没变时是 no-op（换算回来是同一个节、同一个偏移）
+        let newSections = meta.effectiveSections
+        if !progressAlreadyMigrated, let progress = meta.progress, let oldIndex = progress.sectionIndex,
+           let at = BookStructureMigration.chapterOffset(sectionIndex: oldIndex, offset: progress.offset,
+                                                         in: oldSections),
+           let landed = BookStructureMigration.locate(chapter: at.chapter, offset: at.offset,
+                                                      in: newSections) {
+            let moved = landed.index != oldIndex || landed.offset != progress.offset
+            meta.progress = BookProgress(chapterIndex: at.chapter, sectionIndex: landed.index,
+                                          offset: landed.offset, updatedAt: progress.updatedAt)
+            if moved {
+                NSLog("[BookStore] 进度迁移：第 \(oldIndex) 节/偏移 \(progress.offset) → 第 \(landed.index) 节/偏移 \(landed.offset)")
+            }
+        }
+        migrateAnnotations(bookID: id, from: oldSections, to: newSections)
+
         try save(meta)
         return meta
+    }
+
+    /// 批注只存节号（没有节内偏移）：按「该节起点」换算，节边界小挪时仍落在附近那一节。
+    /// 读不出来就整块跳过 —— 拿空列表写回会把用户批注清空。
+    private func migrateAnnotations(bookID: String, from oldSections: [BookSection],
+                                    to newSections: [BookSection]) {
+        let items: [BookAnnotation]
+        do { items = try annotations(bookID: bookID) } catch {
+            NSLog("[BookStore] 批注迁移跳过：读批注失败 \(error)")
+            return
+        }
+        guard !items.isEmpty else { return }
+        var migrated = items
+        var moved = 0
+        for i in migrated.indices {
+            guard let oldIndex = migrated[i].sectionIndex,
+                  let at = BookStructureMigration.chapterOffset(sectionIndex: oldIndex, offset: 0,
+                                                                in: oldSections),
+                  let landed = BookStructureMigration.locate(chapter: at.chapter, offset: at.offset,
+                                                             in: newSections) else { continue }
+            // 章节结构本身变了（不该发生）：保留原值并留日志，不猜
+            guard newSections.indices.contains(landed.index),
+                  newSections[landed.index].chapterIndex == migrated[i].chapterIndex else {
+                NSLog("[BookStore] 批注 \(migrated[i].id) 章节对不上，保留原节号 \(oldIndex)")
+                continue
+            }
+            if migrated[i].sectionIndex != landed.index { moved += 1 }
+            migrated[i].sectionIndex = landed.index
+        }
+        guard moved > 0 else { return }
+        do { try saveAnnotations(migrated, bookID: bookID) } catch {
+            NSLog("[BookStore] 批注迁移写盘失败 \(error)")
+            return
+        }
+        NSLog("[BookStore] 批注迁移 \(moved)/\(migrated.count) 条（parser v\(Self.currentParserVersion)）")
     }
 
     // MARK: - 正文
@@ -232,7 +289,9 @@ nonisolated extension BookStore {
     /// 解析器版本：改了章节/目录的解析口径就 +1，老书打开时会自动补一次（见 `refreshStructure`）
     /// 3 = 大章按目录锚点切「节」（阅读单元从 spine 文件变成节）
     /// 4 = 平目录按标题级别（h1…h6）推层级 + 「第 N 部分」下沉一级
-    static let currentParserVersion = 4
+    /// 5 = 字体混淆放行 / 封面页书 / 扉页标题兜底 / wrapper 逐层下探 + 前缀标签 + script 跳过
+    ///     + nav 非 UTF-8；升级时按「章内字数偏移」迁移批注与进度（见 `BookStructureMigration`）
+    static let currentParserVersion = 5
 
     /// 复制 → 解包 → 解析 → 抽封面 → 写 meta。失败时删掉半成品目录（没有 meta.json，书架也不会显示它）。
     ///

@@ -208,7 +208,8 @@ JS 侧：
 2. spine 里 href 含 `cover` 的 XHTML
 3. href 含 `titlepage` 的 XHTML
 
-从候选 XHTML 抓第一张：`<img src>` 或 `<image xlink:href|href>`；按该文件目录归一；只收 `jpg/jpeg/png/gif/webp`；文件必须存在。多个候选时优先文件名含 `cover`，其次声明尺寸最大。
+从候选 XHTML 抓第一张：`<img src>` 或 `<image xlink:href|href>`；按该文件目录归一；只收 `jpg/jpeg/png/gif/webp`；文件必须存在。多个候选时优先**图片文件名含 `cover`**，否则取第一个命中。
+（原计划的「其次声明尺寸最大」实现时省了：封面页里通常只有一张图，多张时文件名比 `width/height` 属性可靠，属性常缺或写错。）
 
 **只对新导入生效**：`refreshStructure` 不更新 `coverFile`，老书不会自动补封面（要补就得重导）。
 
@@ -231,7 +232,7 @@ JS 侧：
 
 | 问题 | 修法 |
 |---|---|
-| 整本包在多层 `<div>` 里，切节静默失效 | `planSections` 的「单片段下探」改成循环，封顶 8 层；每层 `innerPieces` 的偏移本来就加 `innerStart`，可以连续下探 |
+| 整本包在多层 `<div>` 里，切节静默失效 | `planSections` 改成「把**每个**超限的 wrapper 片段逐层展开」，封顶 8 轮。只要不是纯文本就继续下探（单层下探救不了两层容器，真机测试书踩到过）；兄弟片段（章首 `<h1>`）保持原样，`innerPieces` 的偏移本来就加 `innerStart` |
 | `<xhtml:p>` / `<xhtml:h1>` 等前缀 | `scanBody` / `topLevelRanges` 的标签名统一取 `split(":").last`；`voidElements`、标题级别、`<xhtml:br>` 都走这个判断；`firstHeading` 正则允许前缀 |
 | `<script>/<style>` 里的 `<` 被当标签 | `topLevelRanges` 扫到 `script|style` 就跳到闭合标签，不计内部文本；`scanBody` 已有类似逻辑，抽成共用或各写一份 |
 | nav 不是 UTF-8 | nav 改成先 `readText(url)`（UTF-8 → `usedEncoding` 嗅探）再解析；**转成 String 后必须去掉/重写 XML 声明**（源文件可能声明 `encoding="utf-16"`，重新按 UTF-8 编码后声明不匹配会让 `XMLParser` 直接失败）；失败仍退回 NCX |
@@ -244,13 +245,17 @@ JS 侧：
 
 v5 可能改变节边界（wrapper/script/prefix）。`refreshStructure` 目前只重算结构，不动批注；`annotations.json` 里存的是 `sectionIndex`，边界一变就可能画不出。
 
-在 controller 的 `refreshTOCIfStale` 完成后：
+在 `BookStore.refreshStructure` 里做（新旧结构都在手上，且与进度写盘同一条串行队列）：
 
-1. 用**旧** `effectiveSections` 把每条批注/进度换算成「章内字数偏移」：`前面各节 charCount 之和 + offset`；
-2. 在新 `effectiveSections` 里找包含该偏移的节，写回 `sectionIndex`；
+> 实现说明：`BookAnnotation` 没有节内偏移（只有 quote/prefix/suffix），批注按「所在节的**起点**」换算章内偏移；进度有 `offset`，换算精确。
+
+
+
+1. 用**旧** `effectiveSections` 把每条批注/进度换算成「章内字数偏移」：`前面各节 charCount 之和 + offset`（`BookStructureMigration`）；
+2. 在新 `effectiveSections` 里找包含该偏移的节，写回 `sectionIndex`（进度连节内偏移一起重算）；
 3. 批注的 `chapterIndex` 不一致 → 说明章节结构也变了（不该发生），保留原值并日志；
-4. 持久化批注（`saveAnnotations`）；进度走原有 `persistProgress`/meta 队列；
-5. 日志：`重映射 N 条批注 / M 条进度`。
+4. 持久化批注（`saveAnnotations`）；进度并进 `save(meta)`；读书器侧刷新完重读一次批注；
+5. 日志：`进度迁移：第 N 节/偏移 X → 第 M 节/偏移 Y`、`批注迁移 N/M 条`。
 
 无变化时是 no-op，成本很低，但能挡住「升级后划线全没了」。
 
@@ -462,3 +467,30 @@ struct BookBookmark: Codable, Identifiable, Equatable {
 - 卡片观感（360pt / 深色 / 字号）没有截图验证，按设计先用实色底 + 描边。
 - `#note-scrim` 是透明遮罩，确认不会挡住顶层 SwiftUI chrome（它只在 WebView 内）。
 - 批 17（DRM/封面/解析/迁移）与批 18（目录/书签/宽表）未开始。
+
+### 2026-11-16 · 批 17 已落地（parser v5）
+
+| 改动 | 位置 |
+|---|---|
+| DRM 判定：`license.lcpl` 直接拒；`encryption.xml` 逐条看算法，只放行 IDPF / Adobe 字体混淆；缺 URI / 未知算法 / 坏 XML 仍拒；空清单放行 | `EpubPackage.parse` + `XMLScan.encryptionIsDRM` |
+| 封面页书：manifest 没封面时，guide cover → spine 里 href 含 `cover` → 含 `titlepage` 的 XHTML 抓首图，优先图片名含 cover | `EpubPackage.coverFromPage` + `HTMLText.firstImageSrc` |
+| 扉页/版权页标题：无 h1/h2 时按 href 兜底（封面/扉页/版权信息/版权页/目录，其余「第 N 章」） | `HTMLText.chapterTitle` |
+| wrapper 切节：把每个超限片段逐层展开（不再只认「顶层只有一个片段」），封顶 8 轮 | `HTMLText.planSections` + `innerPieces` |
+| 前缀标签：`<xhtml:p>` / `<xhtml:h1>` / `<xhtml:br/>` 一律按本地名处理 | `HTMLText.localTag`（scanBody / topLevelRanges / headingLevel / firstHeading 正则） |
+| `<script>` / `<style>` 里的裸 `<`：整段跳过，不再切错片段 | `HTMLText.topLevelRanges` |
+| nav 非 UTF-8：先 `readText`（UTF-8 → 嗅探）再解析，并去掉 XML 声明（声明写 utf-16 但重编码成 UTF-8 会让 XMLParser 直接失败） | `XMLScan.navTOC(_ text:)` |
+| `<html lang>` 用书的 `dc:language`（BCP47 形状白名单，不合法回退 `zh`） | `ReaderHTML.buildBook(typography:language:)` |
+| 结构重算后的批注/进度迁移（章内字数偏移口径） | `BookStructureMigration` + `BookStore.refreshStructure` / `migrateAnnotations` |
+
+验证：
+
+- `swift test`：**490 条全绿**（新增 11 条：字体混淆两种算法 / 空清单 / 坏 XML / 封面页书 / 前置页标题 / 两层 wrapper / 前缀标签 / script 裸 `<` / nav UTF-16 / 迁移纯函数 / 刷新后批注+进度迁移）
+- 本机 4 本测试书实跑解析：`font-obfuscation` 能导入；`cover-only` 抽到封面且标题为「封面」；`parser-edge` 目录恢复（nav UTF-16）+ 正文切成 6 节；`main` 的大章 `big.xhtml` 由 1 节变成 8 节（锚点全部对得上）
+- `book-reader-probe.sh` 22 × 2、`check-reader-html.sh` 176、`paged-reader-probe.sh` 8 全绿；`swiftc -typecheck -D DEBUG` 0 error
+
+已知未覆盖 / 后续：
+
+- 真实书库里「老书打开触发 v5」没有真机跑过：本地旧书的批注是否都在、进度是否落回同页，需要用户拿真实书验一次。
+- 字体混淆只放行不解密：阅读器用系统字体，混淆字体不会被使用，属预期。
+- `refreshStructure` 不补封面（设计如此）：老书要新封面只能重导（重导会丢批注）。
+

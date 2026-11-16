@@ -133,8 +133,10 @@ enum SampleBook {
         ])
     }
 
-    /// EPUB3：nav 目录（嵌套 + `&nbsp;`/`&mdash;`），无 NCX
-    static func epub3(extraMetadata: String = "") throws -> URL {
+    /// EPUB3：nav 目录（嵌套 + `&nbsp;`/`&mdash;`），无 NCX。
+    /// `navEncoding` 用来造「nav 不是 UTF-8」的老书（UTF-16 带 BOM + 声明写 utf-16）。
+    static func epub3(extraMetadata: String = "",
+                      navEncoding: String.Encoding? = nil) throws -> URL {
         let opf = """
         <?xml version="1.0" encoding="UTF-8"?>
         <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
@@ -171,13 +173,24 @@ enum SampleBook {
         </nav>
         </body></html>
         """
+        var navData = Data(nav.utf8)
+        if let navEncoding {
+            let adjusted = nav.replacingOccurrences(of: "encoding=\"UTF-8\"",
+                                                    with: "encoding=\"UTF-16\"")
+            guard let encoded = adjusted.data(using: navEncoding) else {
+                throw NSError(domain: "fixture", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "nav 编码失败",
+                ])
+            }
+            navData = encoded
+        }
         return try EpubFixture.epub([
-            "mimetype": "application/epub+zip",
-            "META-INF/container.xml": containerXML,
-            "OEBPS/content.opf": opf,
-            "OEBPS/nav.xhtml": nav,
-            "OEBPS/text/c1.xhtml": chapter1,
-            "OEBPS/text/c2.xhtml": chapter2,
+            "mimetype": Data("application/epub+zip".utf8),
+            "META-INF/container.xml": Data(containerXML.utf8),
+            "OEBPS/content.opf": Data(opf.utf8),
+            "OEBPS/nav.xhtml": navData,
+            "OEBPS/text/c1.xhtml": Data(chapter1.utf8),
+            "OEBPS/text/c2.xhtml": Data(chapter2.utf8),
         ])
     }
 
@@ -354,8 +367,8 @@ enum SampleBook {
         ])
     }
 
-    /// 带 DRM 清单（模拟加密书）
-    static func drm() throws -> URL {
+    /// 带加密清单的书（正文 / 字体随便，只看 encryption.xml 怎么判）
+    private static func encryptedBook(encryption: String) throws -> URL {
         let opf = """
         <?xml version="1.0" encoding="UTF-8"?>
         <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
@@ -367,8 +380,133 @@ enum SampleBook {
         return try EpubFixture.epub([
             "mimetype": "application/epub+zip",
             "META-INF/container.xml": containerXML,
-            "META-INF/encryption.xml": "<encryption/>",
+            "META-INF/encryption.xml": encryption,
             "OEBPS/content.opf": opf,
+            "OEBPS/c1.xhtml": chapter1,
+        ])
+    }
+
+    /// 真 DRM：正文用 AES 加密
+    static func drm() throws -> URL {
+        try encryptedBook(encryption: """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+                    xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+          <enc:EncryptedData>
+            <enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>
+            <enc:CipherData><enc:CipherReference URI="OEBPS/c1.xhtml"/></enc:CipherData>
+          </enc:EncryptedData>
+        </encryption>
+        """)
+    }
+
+    /// 字体混淆（IDPF / Adobe）：正文是明文，只打乱字体内码，必须能导入
+    static func fontObfuscated(adobe: Bool = false) throws -> URL {
+        let algorithm = adobe
+            ? "http://ns.adobe.com/pdf/enc#RC"
+            : "http://www.idpf.org/2008/embedding"
+        return try encryptedBook(encryption: """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+                    xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+          <enc:EncryptedData>
+            <enc:EncryptionMethod Algorithm="\(algorithm)"/>
+            <enc:CipherData><enc:CipherReference URI="OEBPS/fonts/book.otf"/></enc:CipherData>
+          </enc:EncryptedData>
+        </encryption>
+        """)
+    }
+
+    /// 空加密清单：有清单不等于加密
+    static func emptyEncryptionList() throws -> URL {
+        try encryptedBook(encryption: """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"/>
+        """)
+    }
+
+    /// 坏掉的加密清单：看不懂就保守拒绝（当 DRM）
+    static func brokenEncryption() throws -> URL {
+        try encryptedBook(encryption: "<encryption><EncryptedData>")
+    }
+
+    /// 封面做成「封面页 XHTML 里放一张图」的书（没有 manifest `cover-image`）：
+    /// guide 指向的是版权页（先有一张 logo），spine 里的 cover.xhtml 才是真封面。
+    static func coverPageBook() throws -> URL {
+        let opf = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+          <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>封面页书</dc:title></metadata>
+          <manifest>
+            <item id="front" href="front.xhtml" media-type="application/xhtml+xml"/>
+            <item id="cov" href="cover.xhtml" media-type="application/xhtml+xml"/>
+            <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+            <item id="logo" href="Images/logo.jpg" media-type="image/jpeg"/>
+            <item id="cover-pic" href="Images/cover-pic.jpg" media-type="image/jpeg"/>
+          </manifest>
+          <spine>
+            <itemref idref="front"/>
+            <itemref idref="cov"/>
+            <itemref idref="c1"/>
+          </spine>
+          <guide><reference type="cover" href="front.xhtml"/></guide>
+        </package>
+        """
+        let front = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <div class="logo"><img src="Images/logo.jpg" alt="logo"/></div>
+        </body></html>
+        """
+        let cover = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <div class="cover"><img src="Images/cover-pic.jpg" alt="封面"/></div>
+        </body></html>
+        """
+        return try EpubFixture.epub([
+            "mimetype": Data("application/epub+zip".utf8),
+            "META-INF/container.xml": Data(containerXML.utf8),
+            "OEBPS/content.opf": Data(opf.utf8),
+            "OEBPS/front.xhtml": Data(front.utf8),
+            "OEBPS/cover.xhtml": Data(cover.utf8),
+            "OEBPS/c1.xhtml": Data(chapter1.utf8),
+            "OEBPS/Images/logo.jpg": Data([0xFF, 0xD8, 0xFF, 0xE0]),
+            "OEBPS/Images/cover-pic.jpg": Data([0xFF, 0xD8, 0xFF, 0xE1]),
+        ])
+    }
+
+    /// 扉页 / 版权页这类没有标题的页：章节标题按 href 关键词兜底，不删章节
+    static func frontMatterBook() throws -> URL {
+        let opf = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+          <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>前置页书</dc:title></metadata>
+          <manifest>
+            <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+            <item id="title" href="titlepage.xhtml" media-type="application/xhtml+xml"/>
+            <item id="copy" href="copyright.xhtml" media-type="application/xhtml+xml"/>
+            <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+          </manifest>
+          <spine>
+            <itemref idref="cover"/>
+            <itemref idref="title"/>
+            <itemref idref="copy"/>
+            <itemref idref="c1"/>
+          </spine>
+        </package>
+        """
+        let bare = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml"><body><div><img src="x.jpg"/></div></body></html>
+        """
+        return try EpubFixture.epub([
+            "mimetype": "application/epub+zip",
+            "META-INF/container.xml": containerXML,
+            "OEBPS/content.opf": opf,
+            "OEBPS/cover.xhtml": bare,
+            "OEBPS/titlepage.xhtml": bare,
+            "OEBPS/copyright.xhtml": bare,
             "OEBPS/c1.xhtml": chapter1,
         ])
     }

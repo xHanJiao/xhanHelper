@@ -197,6 +197,8 @@ final class BookReaderController: ObservableObject {
             guard let refreshed else { return }
             LogBuffer.shared.info("书阅读器：结构已按新解析补全（\(refreshed.toc.count) 条目录 / \(refreshed.effectiveSections.count) 节）")
             book = refreshed
+            // 结构重算会把批注按新节号重映射（磁盘已改）：重读一次，否则内存里还是旧节号，划线全画不出
+            if annotationsLoaded { loadAnnotations() }
             sectionIndex = max(0, min(sectionIndex, max(refreshed.effectiveSections.count - 1, 0)))
             // 迁移后的进度可能落在别的节（老进度只记了章内偏移）：跟过去，别让读者回到书首
             if let migrated = refreshed.progress?.sectionIndex,

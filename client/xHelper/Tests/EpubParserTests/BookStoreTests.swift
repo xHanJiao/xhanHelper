@@ -184,4 +184,54 @@ final class BookStoreTests: XCTestCase {
         XCTAssertTrue(listing.books.isEmpty)
         XCTAssertTrue(listing.failures.isEmpty, "根目录还不存在时不该报错")
     }
+    // MARK: - 结构重算后的位置迁移
+
+    func testMigrationMapsChapterOffsetsAcrossBoundaries() {
+        let sections = [
+            BookSection(index: 0, chapterIndex: 0, title: "", fragment: nil,
+                        start: 0, end: 10, charCount: 100),
+            BookSection(index: 1, chapterIndex: 0, title: "", fragment: nil,
+                        start: 10, end: 20, charCount: 100),
+            BookSection(index: 2, chapterIndex: 1, title: "", fragment: nil,
+                        start: 0, end: 10, charCount: 50),
+        ]
+        let at = BookStructureMigration.chapterOffset(sectionIndex: 1, offset: 20, in: sections)
+        XCTAssertEqual(at?.chapter, 0)
+        XCTAssertEqual(at?.offset, 120, "章内偏移 = 前面各节字数 + 节内偏移")
+
+        XCTAssertEqual(BookStructureMigration.locate(chapter: 0, offset: 120, in: sections)?.index, 1)
+        XCTAssertEqual(BookStructureMigration.locate(chapter: 0, offset: 150, in: sections)?.offset, 50)
+        XCTAssertNil(BookStructureMigration.locate(chapter: 9, offset: 0, in: sections))
+        XCTAssertNil(BookStructureMigration.chapterOffset(sectionIndex: 9, offset: 0, in: sections))
+    }
+
+    func testRefreshMigratesAnnotationsAndProgress() throws {
+        let meta = try store.importBook(source: source)
+
+        // 造一份「旧结构」：章 0 被切成两节，进度和批注都在第 2 节
+        var old = meta
+        old.sections = [
+            BookSection(index: 0, chapterIndex: 0, title: "", fragment: nil,
+                        start: 0, end: 5, charCount: 100),
+            BookSection(index: 1, chapterIndex: 0, title: "", fragment: nil,
+                        start: 5, end: 10, charCount: 100),
+            BookSection(index: 2, chapterIndex: 1, title: "", fragment: nil,
+                        start: 0, end: 10, charCount: 100),
+        ]
+        old.progress = BookProgress(chapterIndex: 0, sectionIndex: 1, offset: 30, updatedAt: Date())
+        old.parserVersion = BookStore.currentParserVersion - 1
+        try store.save(old)
+        let annotation = BookAnnotation(id: "a1", chapterIndex: 0, sectionIndex: 1,
+                                        quote: "第一段", prefix: "", suffix: "", note: "",
+                                        createdAt: Date(), updatedAt: Date())
+        try store.saveAnnotations([annotation], bookID: meta.id)
+
+        let refreshed = try store.refreshStructure(id: meta.id)
+        XCTAssertEqual(refreshed?.parserVersion, BookStore.currentParserVersion)
+        // 新结构里章 0 只有一节：旧的「第 2 节」偏移换算回来落在这一节
+        XCTAssertEqual(refreshed?.progress?.sectionIndex, 0, "进度要跟着新节走，不能跳回书首")
+        XCTAssertEqual(try store.annotations(bookID: meta.id).first?.sectionIndex, 0,
+                       "批注不迁移 = 升级后划线全没了")
+    }
+
 }

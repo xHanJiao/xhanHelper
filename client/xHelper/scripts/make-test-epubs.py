@@ -6,8 +6,8 @@
 
 默认输出到 ~/Downloads/xhan-epub-tests/。四本书分别覆盖：
   reader-test-main.epub              脚注 / 链接 / 内联图 / ruby / 宽表 / 隐藏内容
-  reader-test-cover-only.epub        只有 cover.xhtml（无 manifest cover-image）
-  reader-test-font-obfuscation.epub  字体混淆 encryption.xml（当前应被拒，批 17 后放行）
+  reader-test-cover-only.epub        只有 cover.xhtml（无 manifest cover-image，靠封面页抽图）
+  reader-test-font-obfuscation.epub  字体混淆 encryption.xml（应能导入）
   reader-test-parser-edge.epub       nav UTF-16 + 三层 wrapper + 前缀标签 + script
 
 注意：仓库不提交生成的 .epub；这个脚本是唯一来源，改了内容重跑即可。
@@ -558,14 +558,14 @@ def main():
 | 文件 | 看什么 |
 |---|---|
 | `reader-test-main.epub` | 第一章：多看式图片注标、标准 aside、文字注标、跨文件尾注（linear=no）、无类型 sup（不应弹注释）、外链、书内/页内链接；行内图 vs 独占图；破图；ruby；出版社 CSS 隐藏段；audio 空壳。第二章：role 注标、多段注释。第三章：三层 wrapper 大章、同文件跨节注释。附录：10 列宽表、dl。目录：8 个节锚点（批 17 前大章可能只有一节） |
-| `reader-test-cover-only.epub` | 只有 cover.xhtml（SVG image），没有 manifest cover-image。批 17 前书架没封面，批 17 后应该从封面页提取 |
-| `reader-test-font-obfuscation.epub` | encryption.xml 只声明字体混淆。批 17 前会被当成 DRM 拒收；批 17 后应能导入（字体忽略） |
-| `reader-test-parser-edge.epub` | nav 是 UTF-16（声明也写 utf-16）；正文三层 wrapper + `<xhtml:p>` 前缀标签 + 大章切节；script 里故意有裸 `<`（不完全合法的 XHTML，用来压 topLevelRanges）。批 17 前目录为空/大章不切；批 17 后目录出现、按 8 个锚点切节 |
+| `reader-test-cover-only.epub` | 只有 cover.xhtml（SVG image），没有 manifest cover-image：应从封面页提取出书架封面，章节标题为「封面」 |
+| `reader-test-font-obfuscation.epub` | encryption.xml 只声明字体混淆（IDPF）：应能导入（字体忽略，正文是明文） |
+| `reader-test-parser-edge.epub` | nav 是 UTF-16（声明也写 utf-16）；正文三层 wrapper + `<xhtml:p>` 前缀标签；script 里故意有裸 `<`（不完全合法的 XHTML）。目录应出现、大章应按锚点切节（多层 wrapper 也要切开） |
 
 ## 建议顺序
 
 1. 先导 `main`：看正文里注释是否被排成「1. 1. 1.」、注标是否被顶成单独一行、图片是否全变块级。
-2. 再导 `cover-only` / `font-obfuscation` / `parser-edge`，分别确认「没封面 / DRM 拒收 / 目录空」三个基线。
+2. 再导 `cover-only` / `font-obfuscation` / `parser-edge`，确认「有封面 / 能导入 / 目录与切节正常」。
 3. 批 16、17 合并后重新导入（或打开）对照设计文档 §七 的验收清单。
 """
     (out / "README.md").write_text(readme, encoding="utf-8")

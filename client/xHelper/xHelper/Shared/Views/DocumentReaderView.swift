@@ -665,6 +665,7 @@ enum ReaderHTML {
         return template
             .replacingOccurrences(of: "__NONCE__", with: nonce)
             .replacingOccurrences(of: "__MODE__", with: "doc")
+            .replacingOccurrences(of: "__LANG__", with: "zh")
             .replacingOccurrences(of: "__HEADER_HTML__", with: headerHTML)
             .replacingOccurrences(of: "__BOOK_JSON__", with: "null")
             .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", fontSize))
@@ -674,17 +675,29 @@ enum ReaderHTML {
     }
 
     /// 书阅读器的 HTML：同一份模板，书模式不渲染 markdown（正文由 `setChapter` 灌进来）。
-    static func buildBook(typography: BookTypography) -> String {
+    /// `language` 是书的 `dc:language`，只用来定 `<html lang>`（断词/标点/朗读都看它）。
+    static func buildBook(typography: BookTypography, language: String? = nil) -> String {
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         return template
             .replacingOccurrences(of: "__NONCE__", with: nonce)
             .replacingOccurrences(of: "__MODE__", with: "book")
+            .replacingOccurrences(of: "__LANG__", with: sanitizedLanguage(language))
             .replacingOccurrences(of: "__HEADER_HTML__", with: "")
             .replacingOccurrences(of: "__BOOK_JSON__", with: typography.json)
             .replacingOccurrences(of: "__FS__", with: String(format: "%.2f", typography.fontSize))
             .replacingOccurrences(of: "__MARKED_JS__", with: "")
             .replacingOccurrences(of: "__MD_JSON__", with: "null")
             .replacingOccurrences(of: "__IMAGES_JSON__", with: "[]")
+    }
+
+    /// `<html lang>` 白名单：只放行 BCP47 形状（`zh` / `zh-CN` / `en-GB-oxendict`），
+    /// 其它（书里写了奇怪字符串）回退 `zh` —— 它会被拼进 HTML 属性，不能原样塞。
+    private static func sanitizedLanguage(_ raw: String?) -> String {
+        let value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil else {
+            return "zh"
+        }
+        return value
     }
 
     /// mermaid 占位 token（纯字母数字，规避 GFM 强调/链接误判），与 PDF 导出同款。
@@ -806,7 +819,7 @@ struct DocumentImageLightbox: View {
 
 private let template = #"""
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="__LANG__">
 <head>
 <meta charset="utf-8">
 <!-- 内容信任边界：正文可能来自 agent 抓取的网页（含提示注入），markdown 里的 HTML

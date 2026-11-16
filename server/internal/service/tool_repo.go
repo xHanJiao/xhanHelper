@@ -6,8 +6,6 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/google/uuid"
-
 	"xhan-helper/internal/model"
 )
 
@@ -75,46 +73,4 @@ func (r *ToolRepo) DeleteTool(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).
 		Where("id = ? AND user_id = ?", id, userID).
 		Delete(&model.ToolRegistry{}).Error
-}
-
-// —— tool_data (memoization cache) ——
-
-// FindCachedResult 查找可缓存的调用结果
-func (r *ToolRepo) FindCachedResult(ctx context.Context, toolName, funcName, inputHash string) (*model.ToolData, error) {
-	var d model.ToolData
-	err := r.db.WithContext(ctx).
-		Where("tool_name = ? AND func_name = ? AND input_hash = ? AND cached = ?", toolName, funcName, inputHash, true).
-		First(&d).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &d, err
-}
-
-// SaveToolData 保存调用记录
-func (r *ToolRepo) SaveToolData(ctx context.Context, d *model.ToolData) error {
-	return r.db.WithContext(ctx).Create(d).Error
-}
-
-// LookupCache 适配 tool.CacheReader 接口
-func (r *ToolRepo) LookupCache(ctx context.Context, toolName, funcName, inputHash string) (string, bool) {
-	d, err := r.FindCachedResult(ctx, toolName, funcName, inputHash)
-	if err != nil || d == nil {
-		return "", false
-	}
-	return d.OutputJSON, true
-}
-
-// StoreCache 适配 tool.CacheWriter 接口
-func (r *ToolRepo) StoreCache(ctx context.Context, toolName, funcName, inputJSON, inputHash, outputJSON, userID string) error {
-	return r.SaveToolData(ctx, &model.ToolData{
-		ID:         uuid.New().String(),
-		ToolName:   toolName,
-		FuncName:   funcName,
-		InputJSON:  inputJSON,
-		InputHash:  inputHash,
-		OutputJSON: outputJSON,
-		UserID:     userID,
-		Cached:     true,
-	})
 }

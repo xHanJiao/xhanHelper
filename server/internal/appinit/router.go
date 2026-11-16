@@ -21,21 +21,18 @@ import (
 	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
-	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 )
 
 // RegisterMonitorSnapshots 注册监控快照
-func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, convRepo *service.ConversationRepo) {
+func RegisterMonitorSnapshots(vs *agent.VectorStore, convRepo *service.ConversationRepo) {
 	snapshots := &snapshotProvider{
 		vectorStore: vs,
-		mcpManager:  mcpManager,
 		convRepo:    convRepo,
 	}
 	monitor.Register("vector_store", snapshots.VectorStore)
-	monitor.Register("mcp", snapshots.MCP)
 	monitor.Register("active_conversations", snapshots.ActiveConversations)
 }
 
@@ -127,7 +124,7 @@ func EnsureLocalUser(cfg *config.Config, userRepo *service.UserRepo) (string, er
 }
 
 // InitRouter 创建路由、注册所有 handler
-func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service, activityStore *activity.Store) *gin.Engine {
+func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service, activityStore *activity.Store) *gin.Engine {
 	localAuth := middleware.LocalAuth{
 		Enabled: cfg.Server.LocalSingleUser,
 		UserID:  localUserID,
@@ -158,7 +155,6 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
 	reminderHandler := controller.NewReminderHandler(repos.Reminder, repos.Conversation, repos.Message)
 	eventHandler := controller.NewEventHandler(repos.Event, repos.Mem)
-	reflectionAdminHandler := controller.NewReflectionAdminHandler(repos.Trace)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
 	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note)
 	replayHandler := controller.NewReplayHandler(repos.Message, agents.ReplayRunner, infra.Embedder)
@@ -208,17 +204,16 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		},
 	})
 
-	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{
-		R:                      router,
-		UserRepo:               repos.User,
-		ReflectionAdminHandler: reflectionAdminHandler,
-		MessageTraceHandler:    messageTraceHandler,
-		MessageDebugHandler:    messageDebugHandler,
-		ReplayHandler:          replayHandler,
-		EnableReplay:           true, // admin 路由已有 AdminMiddleware 保护，生产环境开放
-		CronRunner:             agents.CronRunner,
-		AuthMiddleware:         authMW,
-		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),
+	controller.RegisterAdminExtraRoutes(&controller.AdminExtraRoutesConfig{
+		R:                   router,
+		UserRepo:            repos.User,
+		MessageTraceHandler: messageTraceHandler,
+		MessageDebugHandler: messageDebugHandler,
+		ReplayHandler:       replayHandler,
+		EnableReplay:        true, // admin 路由已有 AdminMiddleware 保护，生产环境开放
+		CronRunner:          agents.CronRunner,
+		AuthMiddleware:      authMW,
+		AdminMiddleware:     monitor.AdminOnly(cfg.Server.AdminUsers),
 	})
 
 	evalAdminHandler := controller.NewEvalAdminHandler("data/eval", llmClients.Flash, infra.Embedder)
@@ -259,7 +254,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 }
 
 // Serve 启动 HTTP 服务器并处理优雅关闭
-func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, mcpManager *mcp.Manager, mcpIdleCtx context.Context) {
+func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc) {
 	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
 	srv := &http.Server{
 		Addr:    addr,
@@ -285,7 +280,6 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 	log.Println("shutting down...")
 
 	bgCancel()
-	mcpManager.Shutdown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -296,7 +290,6 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 // snapshotProvider 提供监控看板的快照数据
 type snapshotProvider struct {
 	vectorStore *agent.VectorStore
-	mcpManager  *mcp.Manager
 	convRepo    *service.ConversationRepo
 }
 
@@ -305,13 +298,6 @@ func (p *snapshotProvider) VectorStore() any {
 		return nil
 	}
 	return p.vectorStore.Stats()
-}
-
-func (p *snapshotProvider) MCP() any {
-	if p.mcpManager == nil {
-		return nil
-	}
-	return p.mcpManager.Stats()
 }
 
 func (p *snapshotProvider) ActiveConversations() any {

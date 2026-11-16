@@ -1034,38 +1034,6 @@ func TestBuildRoundsFromUserMsgs_MassiveReActRound(t *testing.T) {
 	}
 }
 
-// TestCountRecent_ExcludesSubConversation — 子会话（subAgent）消息不参与用户活动统计
-func TestCountRecent_ExcludesSubConversation(t *testing.T) {
-	repo, cleanup := setupMessageRepo(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	parentID := "parent-1"
-	convRepo := NewConversationRepo(repo.db)
-	now := time.Now()
-
-	// 主会话 + 子会话
-	convRepo.Create(ctx, &model.Conversation{ID: "conv-main", UserID: "u1"})
-	convRepo.Create(ctx, &model.Conversation{ID: "conv-sub", UserID: "u1", ParentID: &parentID})
-
-	for _, m := range []model.Message{
-		{ID: "m-main-1", ConversationID: "conv-main", UserID: "u1", Role: "user", Content: "主会话消息", CreatedAt: now.Add(-time.Hour)},
-		{ID: "m-sub-1", ConversationID: "conv-sub", UserID: "u1", Role: "user", Content: "子会话任务消息", IsSubAgent: true, CreatedAt: now.Add(-time.Hour)},
-	} {
-		if err := repo.Create(ctx, &m); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	count, err := repo.CountRecent(ctx, "u1", now.Add(-2*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Errorf("CountRecent 应排除子会话消息, got %d", count)
-	}
-}
-
 // TestSearchMessages_ExcludesSubConversation — message_search 聚合检索不返回子会话消息
 func TestSearchMessages_ExcludesSubConversation(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)

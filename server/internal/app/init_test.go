@@ -89,7 +89,6 @@ func TestInitRepos(t *testing.T) {
 		"PromptRepo":   repos.Prompt != nil,
 		"ToolRepo":     repos.Tool != nil,
 		"Embedding":    repos.Embedding != nil,
-		"Trace":        repos.Trace != nil,
 		"Chunk":        repos.Chunk != nil,
 		"ConceptEmbed": repos.ConceptEmbed != nil,
 		"DelayedTask":  repos.DelayedTask != nil,

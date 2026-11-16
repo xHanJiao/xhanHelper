@@ -133,9 +133,3 @@ func (r *DocumentAnnotationReplyRepo) DeleteByAnnotation(ctx context.Context, an
 	res := r.db.WithContext(ctx).Delete(&model.DocumentAnnotationReply{}, "annotation_id = ? AND user_id = ?", annotationID, userID)
 	return res.RowsAffected, res.Error
 }
-
-// DeleteByDocument 删除某文档的全部回复（文档物理清理时级联）
-func (r *DocumentAnnotationReplyRepo) DeleteByDocument(ctx context.Context, docID, userID string) (int64, error) {
-	res := r.db.WithContext(ctx).Delete(&model.DocumentAnnotationReply{}, "document_id = ? AND user_id = ?", docID, userID)
-	return res.RowsAffected, res.Error
-}

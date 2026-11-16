@@ -217,16 +217,6 @@ class APIClient {
 
 	// MARK: Notes
 
-	func listNotes(limit: Int = 50, offset: Int = 0, keyword: String = "") async throws -> NoteListResponse {
-		var path = "/api/notes?limit=\(limit)&offset=\(offset)"
-		if !keyword.isEmpty { path += "&keyword=\(keyword.urlQueryEscaped)" }
-		return try await get(path)
-	}
-
-	func batchGetNotes(ids: [String]) async throws -> [Note] {
-		return try await post("/api/notes/batch", body: ["ids": ids])
-	}
-
 	// MARK: Documents
 
 	/// tags 为多标签**交集**筛选（文档须同时含全部标签，空数组=不过滤）；keyword 非空时 fields 决定检索字段。
@@ -489,26 +479,6 @@ class APIClient {
 	}
 
 	// MARK: Prompts
-
-	func listPrompts(type: String = "", status: String = "") async throws -> PromptListResponse {
-		var parts: [String] = []
-		if !type.isEmpty { parts.append("type=\(type)") }
-		if !status.isEmpty { parts.append("status=\(status)") }
-		let qs = parts.isEmpty ? "" : "?\(parts.joined(separator: "&"))"
-		return try await get("/api/prompts\(qs)")
-	}
-
-	func createPrompt(promptType: String, systemPrompt: String) async throws -> UserPrompt {
-		return try await post("/api/prompts", body: ["prompt_type": promptType, "system_prompt": systemPrompt])
-	}
-
-	func rollbackPrompt(id: String) async throws {
-		let _: [String: Bool] = try await post("/api/prompts/\(id)/rollback", body: [:])
-	}
-
-	func deletePrompt(id: String) async throws {
-		try await delete("/api/prompts/\(id)")
-	}
 
 	// MARK: Client Tools（本地 MCP 工具结果回传）
 
@@ -823,11 +793,6 @@ struct CategoriesResponse: Codable {
     }
 }
 
-struct NoteListResponse: Codable {
-    let notes: [Note]
-    let total: Int
-}
-
 struct MemoryListResponse: Codable {
     let memories: [UserMemory]
     let total: Int
@@ -890,11 +855,6 @@ struct InputBarAgentListResponse: Decodable {
         agents = try c.decode([InputBarAgent].self, forKey: .agents)
         pageSize = try c.decodeIfPresent(Int.self, forKey: .pageSize) ?? 10
     }
-}
-
-struct PromptListResponse: Codable {
-    let prompts: [UserPrompt]
-    let total: Int
 }
 
 struct LlmConfig: Codable {
@@ -972,26 +932,6 @@ struct UserMemory: Identifiable, Codable {
 
 // MARK: Agent model
 
-struct Note: Identifiable, Codable {
-    let id: String
-    let userId: String
-    let topic: String
-    let content: String
-    let tags: String?
-    let variables: String?
-    let createdAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userId = "user_id"
-        case topic
-        case content
-        case tags
-        case variables
-        case createdAt = "created_at"
-    }
-}
-
 struct Document: Identifiable, Codable, Equatable {
     let id: String
     let userId: String
@@ -1068,7 +1008,6 @@ struct Agent: Identifiable, Codable {
     }
 }
 
-// MARK: UserPrompt model
 
 /// 执行计划（todo）—— 服务端 GET /api/conversations/:id/plans
 struct ConversationPlan: Codable {
@@ -1129,24 +1068,6 @@ struct ConversationUsage: Codable {
         case subagentWindowCost = "subagent_window_cost"
         case subagentCount = "subagent_count"
         case totalCost = "total_cost"
-    }
-}
-
-struct UserPrompt: Identifiable, Codable {
-    let id: String
-    let userId: String
-    let promptType: String
-    let systemPrompt: String
-    let status: String
-    let createdAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userId = "user_id"
-        case promptType = "prompt_type"
-        case systemPrompt = "system_prompt"
-        case status
-        case createdAt = "created_at"
     }
 }
 

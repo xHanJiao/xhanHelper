@@ -435,9 +435,18 @@ func TestProfileWorker_LegacyMigration_SplitsToFacts(t *testing.T) {
 		t.Fatalf("expected 2 split facts, got %+v", facts)
 	}
 	// 旧表不动（保留审计）
-	p, err := legacyRepo.GetByUserAndField(ctx, "user-1", "职业领域")
-	if err != nil || p == nil {
-		t.Fatalf("legacy row should remain: %v", err)
+	legacyRows, err := legacyRepo.GetByUser(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("legacy rows: %v", err)
+	}
+	legacyKept := false
+	for _, r := range legacyRows {
+		if r.Field == "职业领域" {
+			legacyKept = true
+		}
+	}
+	if !legacyKept {
+		t.Fatal("legacy row should remain")
 	}
 }
 
@@ -768,12 +777,18 @@ func TestUserProfileRepo_UpsertOverwrite(t *testing.T) {
 	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "u1", Field: "籍贯", FieldValue: "郑州", Source: "explicit"}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
-	p, err := legacyRepo.GetByUserAndField(ctx, "u1", "籍贯")
+	rows, err := legacyRepo.GetByUser(ctx, "u1")
 	if err != nil {
-		t.Fatalf("GetByUserAndField: %v", err)
+		t.Fatalf("GetByUser: %v", err)
 	}
-	if p.FieldValue != "郑州" {
-		t.Errorf("expected overwritten value 郑州, got %s", p.FieldValue)
+	var got string
+	for _, r := range rows {
+		if r.Field == "籍贯" {
+			got = r.FieldValue
+		}
+	}
+	if got != "郑州" {
+		t.Errorf("expected overwritten value 郑州, got %s", got)
 	}
 }
 

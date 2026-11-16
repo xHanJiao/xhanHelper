@@ -18,45 +18,6 @@ const error = ref(null)
 const hooks = ref(null)
 let timer = null
 
-// ── 反思 Tab ──
-const traces = ref([])
-const tracesTotal = ref(0)
-const tracesLoading = ref(false)
-const selectedTrace = ref(null)
-const traceDetail = ref(null)
-
-async function fetchTraces() {
-  tracesLoading.value = true
-  try {
-    const res = await api.get('/api/admin/reflection/traces?limit=20')
-    traces.value = res.items || []
-    tracesTotal.value = res.total || 0
-  } catch (e) {
-    console.error('[admin] fetchTraces:', e)
-  } finally {
-    tracesLoading.value = false
-  }
-}
-
-async function fetchTraceDetail(trace) {
-  selectedTrace.value = trace
-  try {
-    traceDetail.value = await api.get(`/api/admin/reflection/traces/${trace.id}`)
-  } catch (e) {
-    console.error('[admin] fetchTraceDetail:', e)
-    traceDetail.value = null
-  }
-}
-
-function traceStatusColor(s) {
-  const map = { completed: 'success', empty: 'warning', error: 'error', running: 'info' }
-  return map[s] || 'default'
-}
-
-function traceStatusLabel(s) {
-  const map = { completed: '已完成', empty: '无发现', error: '异常', running: '运行中' }
-  return map[s] || s
-}
 
 // ── 消息 Trace Tab ──
 const msgTraces = ref([])
@@ -133,7 +94,7 @@ async function fetchHooks() {
   try { hooks.value = await api.get('/api/admin/hooks') } catch (e) { console.error('[admin] request failed:', e) }
 }
 
-onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
+onMounted(() => { fetchHealth(); fetchHooks(); restartTimer() })
 watch(activeTab, (tab) => {
   if (tab === 'msg-trace' && msgTraces.value.length === 0) fetchMsgTraces()
   if (tab === 'cost' && !costLoaded.value) {
@@ -150,15 +111,6 @@ function formatJSON(raw) {
     return JSON.stringify(JSON.parse(raw), null, 2)
   } catch {
     return raw
-  }
-}
-
-async function copyJSON(raw) {
-  if (!raw) return
-  try {
-    await navigator.clipboard.writeText(raw)
-  } catch {
-    // fallback silently
   }
 }
 
@@ -747,12 +699,10 @@ onUnmounted(() => {
     <PageTopBar v-if="!isMacEmbedded()" title="系统监控" :visible="true">
       <template #right>
         <NSelect v-if="activeTab === 'overview'" v-model:value="refreshInterval" :options="refreshOptions" size="small" style="width: 100px;" />
-        <span v-else style="font-size: 12px; color: var(--color-text-muted);">共 {{ tracesTotal }} 条记录</span>
-      </template>
+              </template>
     </PageTopBar>
     <NTabs v-model:value="activeTab" type="line" style="padding: 0 var(--space-lg); background: var(--color-surface); flex-shrink: 0;">
       <NTabPane name="overview" tab="概览" />
-      <!-- <NTabPane name="reflection" tab="反思" /> -->
       <!-- <NTabPane name="msg-trace" tab="消息Trace" /> -->
       <NTabPane name="cost" tab="成本中心" />
       <NTabPane name="llm-io" tab="后处理审计" />
@@ -854,82 +804,6 @@ onUnmounted(() => {
       </div>
 
     </template>
-    </div>
-
-    <!-- ========== 反思 Tab ========== -->
-    <div v-if="activeTab === 'reflection'" style="padding-top: var(--space-sm);">
-      <div v-if="!selectedTrace">
-        <NSpin v-if="tracesLoading && traces.length === 0" />
-        <NEmpty v-else-if="traces.length === 0" description="暂无反思记录" style="margin-top: 80px;" />
-        <div v-else style="display: flex; flex-direction: column; gap: var(--space-sm);">
-          <NCard v-for="t in traces" :key="t.id" size="small" style="cursor: pointer;" @click="fetchTraceDetail(t)" :hoverable="true">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <span style="font-weight: 500;">{{ formatTime(t.started_at) }}</span>
-                <span style="font-size: 12px; color: var(--color-text-muted); margin-left: var(--space-sm);">{{ t.trigger_type === 'cron' ? '⏰ 定时' : '💬 对话后' }}</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: var(--space-sm);">
-                <span style="font-size: 13px; color: var(--color-text-secondary);">{{ t.total_findings }} 发现 · {{ t.delivered_count }} 投递</span>
-                <NTag :type="traceStatusColor(t.status)" size="small">{{ traceStatusLabel(t.status) }}</NTag>
-              </div>
-            </div>
-          </NCard>
-        </div>
-      </div>
-      <div v-else>
-        <div style="display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-md);">
-          <NButton size="small" @click="selectedTrace = null; traceDetail = null;">← 返回</NButton>
-          <span style="font-weight: 500;">Trace {{ selectedTrace.id.slice(0, 8) }}</span>
-          <NTag :type="traceStatusColor(selectedTrace.status)" size="small">{{ traceStatusLabel(selectedTrace.status) }}</NTag>
-        </div>
-        <NSpin v-if="!traceDetail" />
-        <template v-else>
-          <NAlert v-if="traceDetail.trace?.status === 'empty'" type="info" style="margin-bottom: var(--space-md);">
-            此投递窗口内无待处理发现，未触发 LLM 调用与决策记录。
-          </NAlert>
-          <NCard size="small" title="LLM 调用记录" style="margin-bottom: var(--space-md);">
-            <div v-if="traceDetail.llm_calls?.length" style="display: flex; flex-direction: column; gap: var(--space-sm);">
-              <NCard v-for="call in traceDetail.llm_calls" :key="call.id" size="small" :bordered="false" style="background: var(--color-bg);">
-                <div style="font-size: 13px; margin-bottom: var(--space-xs);">
-                  <NTag size="tiny">{{ call.caller }}</NTag>
-                  <span v-if="call.caller_detail" style="margin-left: var(--space-xs); color: var(--color-text-muted);">{{ call.caller_detail }}</span>
-                  <span style="margin-left: var(--space-sm); font-size: 11px; color: var(--color-text-muted);">{{ call.latency_ms }}ms · prompt: {{ call.prompt_tokens }} · completion: {{ call.completion_tokens }}</span>
-                </div>
-                <details v-if="call.response_json" style="font-size: 11px; color: var(--color-text-muted);">
-                  <summary>查看 LLM 输出</summary>
-                  <div style="position: relative;">
-                    <button @click="copyJSON(call.response_json)" title="复制" style="position: absolute; top: 4px; right: 4px; padding: 2px 6px; border: none; background: var(--color-surface-hover); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; color: var(--color-text-muted); line-height: 1;">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                    </button>
-                    <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); background: var(--color-surface); padding: var(--space-sm); border-radius: var(--radius-sm);">{{ formatJSON(call.response_json) }}</pre>
-                  </div>
-                </details>
-              </NCard>
-            </div>
-            <div v-else style="color: var(--color-text-muted);">无记录</div>
-          </NCard>
-          <NCard size="small" title="决策记录">
-            <div v-if="traceDetail.decisions?.length" style="display: flex; flex-direction: column; gap: var(--space-sm);">
-              <div v-for="d in traceDetail.decisions" :key="d.id" style="font-size: 13px; padding: var(--space-xs) 0; border-bottom: 1px solid var(--color-border);">
-                <NTag :type="d.verdict === 'topn' || d.verdict === 'selected' || d.verdict === 'nominated' || d.verdict === 'success' || d.verdict === 'verified' || d.verdict === 'corrected' ? 'success' : d.verdict === 'dropped' || d.verdict === 'rejected' || d.verdict === 'error' ? 'error' : 'warning'" size="tiny">{{ d.verdict }}</NTag>
-                <span style="margin-left: var(--space-sm);">{{ d.stage }} · {{ d.subject }}</span>
-                <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 2px;">{{ d.reason }}</div>
-                <details v-if="d.detail_json" style="font-size: 11px; color: var(--color-text-muted); margin-top: var(--space-xs);">
-                  <summary>查看详情 ({{ d.detail_json.length.toLocaleString() }} 字符)</summary>
-                  <div style="position: relative;">
-                    <button @click="copyJSON(d.detail_json)" title="复制" style="position: absolute; top: 4px; right: 4px; padding: 2px 6px; border: none; background: var(--color-surface-hover); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; color: var(--color-text-muted); line-height: 1;">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                    </button>
-                    <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); background: var(--color-surface); padding: var(--space-sm); border-radius: var(--radius-sm);">{{ formatJSON(d.detail_json) }}</pre>
-                  </div>
-                </details>
-              </div>
-            </div>
-            <div v-else style="color: var(--color-text-muted);">无记录</div>
-          </NCard>
-        </template>
-      </div>
-      <NButton size="small" style="margin-top: var(--space-md);" @click="fetchTraces()" :loading="tracesLoading">刷新列表</NButton>
     </div>
 
     <!-- ========== 消息 Trace Tab ========== -->

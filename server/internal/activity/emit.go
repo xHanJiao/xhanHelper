@@ -231,13 +231,6 @@ func (e *Emitter) resume() {
 	e.flush()
 }
 
-// Dropped 返回累计因队列满被丢弃的条数。
-func (e *Emitter) Dropped() int64 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.dropped
-}
-
 func (e *Emitter) flush() {
 	// 串行化：pause 会拿走 flushMu 以等待在途批次结束。
 	e.flushMu.Lock()

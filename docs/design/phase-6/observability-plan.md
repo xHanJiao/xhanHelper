@@ -243,3 +243,9 @@ GROUP BY reason;
 3. 找到具体主题 → 查 ReflectionLLMCall，看 LLM 的输入（数据够不够）和输出（分析有没有道理）
 4. 找到 prompt 问题 → 调整 prompt → 对比调整前后同主题的 LLMCall 输出
 5. 发现大量候选被拒 → 查 ReflectionDecision (discovery/rejected)，调整 ThemeDiscoverer 的不该提名列表
+
+---
+
+## 后续变更
+
+- **2026-11-15 · 反思可观测性整条链下线**：`ReactLoop`（第二套 ReAct 循环）的最后两个生产调用方（MissionRunner 2026-09-22、StateUpdater 2026-11-05）先后删除后，`NewReactLoop` 已无任何生产调用方，`reflection_traces` / `reflection_llm_calls` / `reflection_decisions` 三张表从此只读不写。本次一次性删除：`agent/react_loop.go`、`service/reflection_trace_repo.go`、`model/reflection_trace.go`、`controller/reflection_admin.go`、`/api/admin/reflection/*` 四条只读路由、`ParseLLMResponse` / `LLMResponse`、`Registry.GeneratePrompt`（prompt-engineering 路径最后一块）以及前端 `AdminView` 的反思 Tab。表不做 DROP（存量数据保留，新装不再 AutoMigrate）。本文档描述的设计仅作历史参考。

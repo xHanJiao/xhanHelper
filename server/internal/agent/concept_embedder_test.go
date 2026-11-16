@@ -11,6 +11,14 @@ import (
 	"xhan-helper/internal/service"
 )
 
+// mockEmbedderForChunk 返回固定向量，单测里不调真实嵌入 API。
+type mockEmbedderForChunk struct{}
+
+func (m *mockEmbedderForChunk) Embed(_ context.Context, _ string) ([]float64, error) {
+	return []float64{0.1, 0.2, 0.3}, nil
+}
+func (m *mockEmbedderForChunk) ModelName() string { return "mock" }
+
 // GetOrEmbed 的自愈：概念行在、向量行缺失时**补嵌并写回**，不再返回空向量。
 // 这是线上 `embed existing topic "房产投资" error: <nil> (skip)` 的根因
 // ——孤儿概念行永久用不了，见 docs/bugs/037。

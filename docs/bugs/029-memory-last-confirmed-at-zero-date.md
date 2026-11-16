@@ -51,3 +51,7 @@ Error 1292 (22007): Incorrect datetime value: '0000-00-00' for column 'last_conf
 - `server/internal/model/user_memory.go`
 - `docs/design/memory-audit/design.md`（后续变更：撤销「避免指针化」决定）
 - `docs/design/return-to-cloud/design.md`（B 行补充：运行时写入路径同样需指针化）
+
+## 后续变更
+
+- 2026-11-15：文中提到的 `MCPServerRecord.SnapshotUpdatedAt` / `UpsertSnapshot` 已随服务端 MCP 整体下线一并删除（`model/mcp_server.go`、`service/mcp_server_repo.go`），本条遗留项关闭。

@@ -477,6 +477,8 @@ type ClientTool struct {
 ### 2.3 工具合并: `mkLlmChatReq`
 
 ```go
+// 注意：GetNativeFCTools 已于 2026-11-15 随死代码清理删除，现主链路走
+// registry.GetLLMToolsFiltered(已排序的暴露集)。以下示例仅保留历史形态。
 var tools []llm.ToolDefinition
 if o.useNativeFC {
     tools = o.registry.GetNativeFCTools()
@@ -730,7 +732,7 @@ Swift 端 MCPManager.callTool 也按同步调用写，一次只执行一个 clie
 | 空闲回收超时 | 300s（和 Go 版一致） | Mac 资源充裕，后续可调 |
 | agent-browser 模式 | agent-browser mcp（自带浏览器管理） | 标准模式，后续可选 --cdp |
 | MCP 安装 | 假定用户已安装 | 分发方案另议 |
-| 服务端旧 MCP | 保留 server/internal/mcp/ 不删 | 纯服务器端 MCP 仍可能有需求
+| 服务端旧 MCP | ~~保留 server/internal/mcp/ 不删~~ | 已于 2026-11-15 整体移除（见文末「后续变更」）
 
 
 ## 七、实施顺序
@@ -744,3 +746,9 @@ Swift 端 MCPManager.callTool 也按同步调用写，一次只执行一个 clie
 | P4 | Swift 对接: `ChatViewModel+ClientTools.swift` + `ToolResultClient.swift` | 小 |
 | P5 | 端到端联调：用 agent-browser 抓一条百度天气 | 小 |
 | P6 | 稳定性：超时重试、进程崩溃恢复、并发安全 | 中 |
+
+---
+
+## 后续变更
+
+- **2026-11-15 · 服务端 MCP 整体下线**：`server/internal/mcp/` 从未有过配置（`conf/*.yaml` 无 `mcp` 段），`CallTool` 无任何调用点，只在启动时构造一次供 monitor 看板展示。删除整包 612 行、`config.MCPConfig`、`service.MCPServerRepo`、`model.MCPServerRecord`、`model.ToolData` 及 appinit 全部接线；`mcp_server_records` / `tool_data` 表不 DROP（存量数据保留，新装不再建）。本文档「二、Go 服务端改动」中涉及服务端 MCP 包的部分仅作历史参考。影响文件：`server/internal/{mcp,config,appinit,service,model,app}`、`server/cmd/xhan-helper/main.go`。客户端 `Shared/MCP/` 不受影响。

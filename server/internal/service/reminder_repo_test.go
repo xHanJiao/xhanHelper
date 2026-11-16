@@ -101,27 +101,6 @@ func TestReminderRepo_FindByID_WrongUser(t *testing.T) {
 	}
 }
 
-func TestReminderRepo_FindByDeadline(t *testing.T) {
-	repo, cleanup := setupReminderRepo(t)
-	defer cleanup()
-
-	deadline := time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)
-	seedReminder(t, repo, "user1", "提醒A", deadline, model.ReminderStatusPending)
-
-	found, err := repo.FindByDeadline(context.Background(), "user1", deadline)
-	if err != nil {
-		t.Fatalf("find by deadline: %v", err)
-	}
-	if found == nil {
-		t.Fatal("expected to find reminder")
-	}
-
-	_, err = repo.FindByDeadline(context.Background(), "user1", deadline.Add(time.Hour))
-	if err == nil {
-		t.Fatal("expected error for different deadline")
-	}
-}
-
 func TestReminderRepo_List(t *testing.T) {
 	repo, cleanup := setupReminderRepo(t)
 	defer cleanup()

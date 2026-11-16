@@ -31,7 +31,7 @@ type IOAudit struct {
 }
 
 // auditWhitelist — 审计场景白名单（category → sub_category）。
-// reflection 不进入（已有 ReflectionLLMCall 追溯），main_chat 不进入（已有 request_json）。
+// reflection 不进入（该分类自 2026-11-15 起已无产出，仅存量成本数据），main_chat 不进入（已有 request_json）。
 var auditWhitelist = map[string]map[string]bool{
 	CategoryPostChat: {
 		SubMemoryExtract:    true,

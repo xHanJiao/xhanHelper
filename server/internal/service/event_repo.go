@@ -212,13 +212,6 @@ func (r *EventRepo) updateSummary(ctx context.Context, userID, id, name, summary
 	return nil
 }
 
-// SetLastMemoryAt 把事件的「最后记忆时间」推进到 t（只增不减，避免乱序写入把它拉回去）。
-func (r *EventRepo) SetLastMemoryAt(ctx context.Context, userID, id string, t time.Time) error {
-	return r.db.WithContext(ctx).Model(&model.Event{ID: id}).
-		Where("user_id = ? AND (last_memory_at IS NULL OR last_memory_at < ?)", userID, t).
-		Update("last_memory_at", t).Error
-}
-
 // AssignMemories 把一批记忆挂到事件上（覆盖式：允许从别的条目改挂过来）。
 //
 // 目标事件必须是「本人 + 未删除」，否则记忆会挂到一个永远注入不到的事件上（隐形数据）。

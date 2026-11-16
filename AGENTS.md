@@ -29,9 +29,9 @@ xhanHelper/
 │       ├── config/      # YAML 加载 + APP_ENV 覆盖合并 + ${VAR} 展开 + 校验
 │       ├── model/       # GORM 结构体 + 常量（只放结构体，不写 DB 操作）
 │       ├── service/     # DB Repo 层（每个模型一个 *_repo.go）
-│       ├── controller/  # Gin handler + 路由（router.go 为主，另有 reflection/eval/cost/llm_io/subagent 分组注册器）
+│       ├── controller/  # Gin handler + 路由（router.go 为主，另有 admin_extra/eval/cost/llm_io/subagent 分组注册器）
 │       ├── middleware/   # Bearer 认证 + 请求日志
-│       ├── agent/       # 核心：orchestrator、三套 ReAct 循环、后台 worker、检索源、prompt 构建
+│       ├── agent/       # 核心：orchestrator、两套 ReAct 循环、后台 worker、检索源、prompt 构建
 │       │   ├── pipeline/       # 预处理管线（短输入检测/日期规范化）
 │       │   ├── promptbuilder/  # System Prompt 分层构建
 │       │   ├── ctxflow/        # 上下文检索 + XML 格式化
@@ -45,7 +45,7 @@ xhanHelper/
 │       ├── eval/        # 检索评测框架（数据集/标注/指标）
 │       ├── profilefield/# 用户画像白名单字段定义（字段即代码，人工放行）
 │       ├── monitor/     # 监控看板 + Admin 中间件 + WrapLLMClient
-│       ├── mcp/ async/ idgen/ util/ view/
+│       ├── async/ idgen/ util/ view/
 ├── front-end/                          # Vue 3
 │   └── src/{views,components,composables,stores,api,router,utils}
 ├── client/xHelper/
@@ -76,12 +76,11 @@ POST /api/chat
 硬约束：**进入请求体的动态内容必须字节稳定**（工具定义/目录按工具名排序），否则破坏 DeepSeek 前缀缓存。
 动态内容（检索上下文/画像/摘要）一律注入当前 user 消息，**不放进 system prompt**。
 
-## 三套 ReAct 循环（改循环前先确认改的是哪一套）
+## 两套 ReAct 循环（改循环前先确认改的是哪一套）
 
 | 循环 | 文件 | 调用方式 | 用在哪 |
 |------|------|----------|--------|
 | 主编排循环 | `agent/orchestrator.go` | 流式 `Chat`，原生 FC 优先，最终轮强制收敛 | `POST /api/chat` 用户主对话 |
-| `ReactLoop` | `agent/react_loop.go` | `ChatSync` + prompt engineering，工具结果以 `role=user` 回填 | 反思子系统（MissionRunner），写 `ReflectionTrace` |
 | `MiniReAct` | `agent/mini_react.go` | `ChatSync` + 原生 FC，结果以 `role=tool` 回填，主循环耗尽后强制收敛轮 | 后台 worker 与 subagent（`task` 工具），事件前缀 `mini_react:*` |
 
 ## 数据模型（`server/internal/model/`，按域分组）
@@ -90,9 +89,9 @@ POST /api/chat
 - 对话：`Conversation`（含 parent_id 子会话、mode `work|plan`）、`Message`（reasoning_content / tool_calls_json / request_json / response_json / Embedding / Status）、`ConversationSummary`、`ConversationPlan` + `PlanStep`、`ContentVersion`
 - 内容：`Bill`、`Note`、`Document`、`DocumentShare`、`MessageShare`、`Reminder`、`Agent`
 - 用户层：`UserMemory`、`UserProfile`、`UserProfileFact`、`UserPrompt`、`ImageAsset`
-- 反思：`ThemeState`、`Mission`、`PendingFinding`、`MailboxItem`、`DelayedTask`、`ScheduledTask`、`ReflectionTrace` / `ReflectionLLMCall` / `ReflectionDecision`
+- 反思：`ThemeState`、`Mission`、`PendingFinding`、`MailboxItem`、`DelayedTask`、`ScheduledTask`
 - 向量：`Embedding`、`EmbeddingChunk`、`ConceptEmbedding`
-- 基建：`ToolRegistry`、`MCPServerRecord`、`SearchUsage`、`LlmCostDetail`、`LlmModelPrice`、`LLMCallIO`
+- 基建：`ToolRegistry`、`SearchUsage`、`LlmCostDetail`、`LlmModelPrice`、`LLMCallIO`
 
 ## LLM 调用
 
@@ -101,7 +100,7 @@ POST /api/chat
 - **服务端是 LLM 参数的唯一事实来源**：`/api/chat` 请求体里的 `temperature` / `max_tokens` / `thinking` 会被解析但**有意不传进 `RunRequest`**（`controller/chat.go`），一律用服务端配置默认。客户端 UI 上那几个旋钮当前不生效 —— 这是设计，不是 bug，别去"修"
 - 同理：全链路**没有 `finish_reason == "length"` 处理**，`max_tokens` 触顶是静默硬截断。要限制回答长度请用 prompt（如 `brief_answer` 注入 system prompt 的输出约束），不要靠调 `max_tokens`
 - 装饰器链：`llmcost.CostTracker`（token 记账）+ `IOAuditWrapper`（ChatSync I/O 审计，保留 7 天）
-- 主聊天工具调用只走**原生 function calling**（工具定义内置在请求体 `tools`，读 `msg.ToolCalls`）。从前的 prompt engineering 路径（工具定义注入 system prompt → 解析文本 JSON）已从主链路移除；`ParseLLMResponse` 仅保留给反思子系统的 `ReactLoop`
+- 主聊天工具调用只走**原生 function calling**（工具定义内置在请求体 `tools`，读 `msg.ToolCalls`）。从前的 prompt engineering 路径（工具定义注入 system prompt → 解析文本 JSON）已彻底移除（`ParseLLMResponse` / `Registry.GeneratePrompt` / `ReactLoop` 于 2026-11-15 删除）
 
 ### SSE 事件（`controller/chat.go` 分发）
 
@@ -170,7 +169,7 @@ type Tool interface {
   - `~/Library/Application Support/xhanHelper-dev/xhan_helper.db` = **dev 沙盒库**（`make local-dev` / `APP_ENV=local.dev`，端口 18924）。测试、试验、清洗演练用这个。
   - 判据：**路径里带 `-dev` 的才是 dev**。不确定时先 `sqlite3 -readonly <db> "SELECT count(*) FROM user_memories"` 只读确认，绝不写 prod。
 - 敏感变量：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`XHAN_HELPER_DB_PASSWORD`、`ALLOWED_USER`、`XHAN_HELPER_ADMIN`。本地放 `server/.env`（已 gitignore，`make dev` 会加载）
-- 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`web_tools`、`storage`、`share`、`archive`、`mcp`、`snowflake`、`global_default_role`
+- 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`web_tools`、`storage`、`share`、`archive`、`snowflake`、`global_default_role`
 - 后台任务总开关 `server.disable_background_tasks`，关闭后不启 `CronRunner`、不跑 profile 迁移、`onChatEnd` 短路
 
 ## 常用命令
@@ -208,9 +207,9 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 | 事件（只读） | `event.go` | `/api/event-threads` 列表与详情（写操作走聊天里的 `event` 工具） |
 | 智能体 / 工具 / Prompt | `agents.go` `tools.go` `prompts.go` | CRUD + `agents-for-input-bar` + prompt 版本回滚 |
 | 文档 / 图片 / 提醒 | `documents.go` `images.go` `reminders.go` | 文档 CRUD + tags + 分享；图片上传/读取；提醒 ack/cancel |
-| 信箱 / Mission | `reflection_routes.go` | mailbox 读/归档/发起对话、missions |
+| 信箱 / Mission | `admin_extra_routes.go` | mailbox 读/归档/发起对话、missions |
 | 公开（无认证） | `router.go` | `/api/share/:token`、`/api/share/messages/:token`、`/images/:file`（仅 public） |
-| Admin | `reflection_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、reflection traces、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
+| Admin | `admin_extra_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
 
 ## 分支约定
 
@@ -251,7 +250,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 - 派生层（`interval_closed`/`sessions`/`event_session`/`day_stats`/`day_health`/`event_refs`(source≠explicit)/`event_resources`）**只清重建、不做增量补丁**；`Recompute()` 全量跑。
 - `event_refs` 只产 `source='resource'`（explicit 不落 refs，直接关系由 `events` 列承载；time_window/semantic 不启用）。
 - `type` 契约写入端强制（`validEventType`）：违契约的事件 `Emit` 丢弃、上传接口 400。
-- 明细保留 90 天硬删（`CleanupBefore`/`CleanupExpired`，每日节拍**独立于重算判定**执行）；按资源手动清走 `CleanupResource`（只清资源映射、不动事实层；**下次 `Recompute` 会从事件重建，非永久遗忘**）。
+- 明细保留 90 天硬删（`CleanupBefore`/`CleanupExpired`，每日节拍**独立于重算判定**执行）。~~按资源手动清走 `CleanupResource`~~：该入口因生产零调用已于 2026-11-15 随死代码清理删除。注意 `CleanupExpired` 是**按时间的全局硬删**，不能代替「按资源遗忘」；确有按资源遗忘需求时，重新引入该口子（实现见 git 历史 `activity/cleanup.go`）。
 
 ## UI 预览与设计 token
 
@@ -348,7 +347,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 ## 已知过时/废弃（不要照着做）
 
 - `server/Makefile` 的 `build-topic-fix` / `build-backfill` / `build-rebuild` 指向的 `cmd/` 子目录已不存在
-- `tool.DynamicToolLoader` 接口是死代码（无实现无调用）；"每 30s 从 DB 加载动态工具 + sidecar 转发"不成立。MCP proxy 工具已下掉，`mcp.Manager` 仅剩监控统计用途
+- `tool.DynamicToolLoader` 接口是死代码（无实现无调用）；"每 30s 从 DB 加载动态工具 + sidecar 转发"不成立。**服务端 MCP 已于 2026-11-15 整体移除**（`server/internal/mcp/`、`config.mcp`、`MCPServerRecord`、`ToolData`）；MCP 只存在于 Mac 客户端（`client/xHelper/Shared/MCP/`，见 `docs/design/mac-apps/client-side-mcp.md`）
 - `docs/agents/*.md`、`docs/backend-reference.md` 是历史脚手架（引用的 `CONTEXT-MAP.md`、`docs/adr/`、`/api/devices/register` 都不存在）
 - **主题/状态子系统已于 2026-11-05 整体删除**（`agent/theme_*.go`、`agent/state_*.go`、`service/theme_state_repo.go`、`model/theme_state.go`、`reflection` 配置段）。历史设计文档（`docs/design/phase-6/`、`phase-13/`、`phase-15/`）只作考古，别再照着接线。存量库的 `theme_states` / theme 向量可用 `cmd/entity-gc --purge-legacy-themes --write` 清理
 - 根 `scripts/*.sh` 是 device-token 时代脚本，已不适用；服务端脚本在 `server/scripts/`。**例外**：根 `scripts/dev-stats.py` 是仓库级统计工具（见「常用命令」），不是遗留脚本

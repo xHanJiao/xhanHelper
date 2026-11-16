@@ -65,11 +65,6 @@ func (r *NoteRepo) SoftDelete(ctx context.Context, id, userID string) error {
 		Update("status", model.NoteStatusCancelled).Error
 }
 
-// HardDelete 硬删除笔记
-func (r *NoteRepo) HardDelete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
-}
-
 // DeleteByIDs 批量硬删除笔记（批量清理场景）。
 func (r *NoteRepo) DeleteByIDs(ctx context.Context, ids []string) (int64, error) {
 	if len(ids) == 0 {
@@ -133,15 +128,6 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limi
 	var list []model.Note
 	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
-}
-
-// CountRecent 统计用户最近的正常状态笔记数
-func (r *NoteRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Note{}).
-		Where("user_id = ? AND status = ? AND created_at >= ?", userID, model.NoteStatusNormal, since).
-		Count(&count).Error
-	return count, err
 }
 
 // DistinctUserIDs 返回有笔记的所有 user_id（供存量清洗工具枚举用户）。

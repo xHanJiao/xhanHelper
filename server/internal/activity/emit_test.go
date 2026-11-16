@@ -166,7 +166,7 @@ func TestEmitDropOldestWhenFull(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		e.Emit(Event{Type: "test.marker", EventID: fmt.Sprintf("e%d", i)})
 	}
-	if got := e.Dropped(); got != 2 {
+	if got := e.dropped; got != 2 {
 		t.Errorf("dropped = %d, want 2", got)
 	}
 	e.mu.Lock()

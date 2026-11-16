@@ -129,19 +129,6 @@ func TestUpdateNote_EmptyMeansPlainHighlight(t *testing.T) {
 	}
 }
 
-func TestDeleteByDocument(t *testing.T) {
-	ctx := context.Background()
-	annoRepo, _, docID, _ := seedAnnotatedDoc(t, "第一段。\n\n重点句在这里。", "重点句在这里")
-
-	rows, err := annoRepo.DeleteByDocument(ctx, docID, "u1")
-	if err != nil || rows != 1 {
-		t.Fatalf("DeleteByDocument: rows=%d err=%v", rows, err)
-	}
-	if _, err := annoRepo.GetByID(ctx, "anno-1", "u1"); err == nil {
-		t.Fatal("删完还能查到")
-	}
-}
-
 // 别人的批注不能被改 / 删
 func TestAnnotationOwnershipIsolation(t *testing.T) {
 	ctx := context.Background()

@@ -61,15 +61,6 @@ func (r *ConceptEmbeddingRepo) ListByTypeAll(ctx context.Context, conceptType st
 	return list, err
 }
 
-// ListAllByUser 列出某用户所有类型的概念（topic + tag，用于聚类）
-func (r *ConceptEmbeddingRepo) ListAllByUser(ctx context.Context, userID string) ([]model.ConceptEmbedding, error) {
-	var list []model.ConceptEmbedding
-	err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Find(&list).Error
-	return list, err
-}
-
 // DeleteByType 删除某类概念并返回被删 ID（供同步清理对应 embedding 行）
 func (r *ConceptEmbeddingRepo) DeleteByType(ctx context.Context, conceptType string) ([]string, error) {
 	var ids []string

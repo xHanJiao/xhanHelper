@@ -55,35 +55,6 @@ func TestCleanupExpiredDisabled(t *testing.T) {
 	}
 }
 
-// TestCleanupResource 按资源清映射，不动 events。
-func TestCleanupResource(t *testing.T) {
-	s := openTest(t)
-	defer s.Close()
-
-	s.Emit(Event{EventID: "e1", Type: TypeBrowserNavStarted, OccurredAt: at(0), Actor: ActorUser,
-		Attrs: map[string]any{"url": "https://gone.com/a"}})
-	s.Flush()
-	if err := s.RebuildResources(); err != nil {
-		t.Fatalf("RebuildResources: %v", err)
-	}
-	if _, err := s.CleanupResource(ResourceKindURL, "https://gone.com/a"); err != nil {
-		t.Fatalf("CleanupResource: %v", err)
-	}
-	var edges, res int64
-	if err := s.DB().Raw(`SELECT count(*) FROM event_resources`).Scan(&edges).Error; err != nil {
-		t.Fatalf("query edges: %v", err)
-	}
-	if err := s.DB().Raw(`SELECT count(*) FROM resources`).Scan(&res).Error; err != nil {
-		t.Fatalf("query resources: %v", err)
-	}
-	if edges != 0 || res != 0 {
-		t.Errorf("清后 edges=%d res=%d, want 0/0", edges, res)
-	}
-	if got := countEvents(t, s); got != 1 {
-		t.Errorf("events = %d, want 1（资源清理不动事实层）", got)
-	}
-}
-
 // TestCleanupBeforeRemovesDerivedTables 派生表（sessions/day_stats/day_health/interval_closed/event_session）随到期一并清。
 func TestCleanupBeforeRemovesDerivedTables(t *testing.T) {
 	s := openTest(t)

@@ -177,3 +177,6 @@ func TestBuildMessagesForFlash_UnmappedHTMLGetFallsBackToGenericStub(t *testing.
 		t.Fatalf("超预算且无映射应换通用 stub: %.120s", msgs[0].Content)
 	}
 }
+
+// strPtr 测试用字符串指针。
+func strPtr(s string) *string { return &s }

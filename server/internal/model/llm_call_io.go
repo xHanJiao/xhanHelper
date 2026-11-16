@@ -4,7 +4,7 @@ import "time"
 
 // LLMCallIO — 单次 LLM 调用审计（I/O 内容）。
 // 覆盖 post_chat（memory/profile/summary）+ admin/agent_summary + tool/reminder_gen，
-// 不含主聊天（已有 request_json）与 reflection（已有 ReflectionLLMCall）。
+// 不含主聊天（已有 request_json）与 reflection（该分类自 2026-11-15 起无产出）。
 // 保留 7 天，超期由清理任务删除。
 type LLMCallIO struct {
 	ID               string    `gorm:"primaryKey;size:36" json:"id"`

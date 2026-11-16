@@ -355,3 +355,15 @@ SSE 中 `subagent` / `client_tool_call` / `reminders_changed` 及裸 `thought` /
 - CGO：`server/Makefile:327`、`go.mod`（mattn v1.14.22）
 - 云端 schema：`server/data/mysqldumps/xhan_helper-20260924-224816.sql.gz`（collation `utf8mb4_0900_ai_ci`）
 - 设计文档：`docs/design/local-sqlite/design.md`、`docs/design/activity-events/*`
+
+---
+
+## 后续变更
+
+- **2026-11-16 · 回退点已不存在**：旧库 `xhan_helper` 已整库删除（`DROP DATABASE`，37 张表），且**删除前未做 mysqldump**。因此本文档中以下结论**全部失效**，不要再照着操作：
+  - 「回退＝改回旧库名重启」（第 79 行、第 246 行）
+  - 「旧库原样保留即回退点」（第 105 行、第 128 行）
+  - 「旧库不参与，天然是回退点，故**无需 mysqldump**」（第 268 行）
+
+  现状：生产只读 `xhan_helper_cloud`；`conf/config.yaml` 里的 `database: xhan_helper` 是**故意保留的不存在库**（缺 `APP_ENV` 启动时直接 `Unknown database` 失败，避免误连别的库）。今后任何「切库/迁移」前必须先 `mysqldump`，不再有顺手可回退的旧库。
+  连带：`xhan_helper_test`（本机 dev）与 `xhan_helper_cloud`（prod）均未受影响。

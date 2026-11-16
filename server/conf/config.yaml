@@ -23,6 +23,9 @@ db:
   driver: mysql # mysql | sqlite
   host: 127.0.0.1
   port: 3306
+  # 历史库名，该库已于 2026-11-16 删除。这里故意保留一个不存在的库：
+  # 缺 APP_ENV 启动时（默认按 dev 找 config.dev.yaml，远端没有该文件 → 回落 base）
+  # 会直接报 Unknown database 而不是误连别的库。正常环境由 config.<APP_ENV>.yaml 覆盖。
   database: xhan_helper
   user: xhan_helper_user
   password: ${XHAN_HELPER_DB_PASSWORD}

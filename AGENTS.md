@@ -233,6 +233,22 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 - 遇到相似功能，抽取公共组件
 - **禁止对必要依赖做 nil 检查后静默返回**：通过依赖注入传入的必需组件（repo、client、worker 等）为 nil 意味着接线 bug，让它 panic，炸在明处。可选依赖（如回调）才用 nil 检查
 
+## 密钥与敏感信息（硬规则）
+
+**永远不把密钥提交进 git。** 历史推上去就抹不干净（force push 也不够），唯一有效的防线是提交前拦住。
+
+- **密钥只放两处**：`server/.env`（已 gitignore）或客户端 Keychain。配置文件里一律写 `${VAR}`，真实值走环境变量；新增配置项时默认就写占位符，别先写死再回头改
+- **`.env.example` 只放占位符**：IP、用户名、部署路径这类「不是密码但能定位机器」的信息也算敏感
+- **机器相关的值不进仓库**：部署路径走 `.env` 的 `DEPLOY_PATH`；脚本里的项目根用 `"$(cd "$(dirname "$0")/.." && pwd)"` 推导；代码和文档里不写 `/Users/<name>` 这类绝对路径
+- **数据文件不进仓库**：数据库 dump、日志、导出、`.db`、含真实对话的评测集（都落在 `server/data/`，已 gitignore）；仓库里只留 schema 和迁移 SQL
+- **`.gitignore` 不会让已跟踪的文件脱管**：想让某个文件退出跟踪必须 `git rm --cached <file>`，否则规则加了它照样被提交（`xcschememanagement.plist` 踩过：ignore 规则写了，文件还跟踪着）
+- **提交前自查**（秒级，养成习惯）：
+  ```bash
+  gitleaks git --pre-commit          # 只扫暂存区
+  gitleaks git --log-opts="--all"    # 全历史，开源/推公开仓库前必跑
+  ```
+- **发现泄漏先轮换，再清代码**：改代码只是止血；密钥已经进过别人的 clone / 缓存 / 备份，唯一可靠的补救是换掉它
+
 ## 活动埋点纪律（`events.db`）
 
 详见 `docs/design/activity-events/`（实施技术方案第九节是唯一版本）。改活动埋点相关代码前必读，硬规则：

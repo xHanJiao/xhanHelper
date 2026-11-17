@@ -6,7 +6,8 @@ for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do
 done
 
 APP_NAME="xhan-helper"
-APP_PATH="/srv/xhan-helper"
+# 项目根从脚本自身位置推导（脚本位于 <项目根>/scripts/），换机器/换路径无需改配置
+APP_PATH="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$APP_PATH/logs"
 LOG_FILE="$LOG_DIR/xhan-helper-$(date +%Y-%m-%d).log"
 ENV="prod"

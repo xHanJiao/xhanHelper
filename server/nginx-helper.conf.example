@@ -1,0 +1,109 @@
+# helper.example.com — xhanHelper
+#
+# 【模板】仓库里的这份是脱敏示例（域名/路径/证书路径已替换）。
+# 真实的线上副本是 server/nginx-helper.conf，已在 .gitignore 中、不入库；
+# make deploy 时本地若存在该文件会一并归档到服务器项目根目录。
+# 本文件不会被 make deploy 自动安装（安装需 root）：改动后需手动覆盖到服务器对应路径，
+# 再执行 `sudo nginx -t && sudo systemctl reload nginx`。
+# 为什么必须留档：以前它是残缺副本（缺 root/location /），且部署流程从不上传它，
+# 导致线上配置长期漂移、缺 /images/ 反代。详见 docs/bugs/031。
+#
+# 上游连接池：REST 请求复用 loopback 连接，避免每请求新建/关闭在 127.0.0.1:8088 上堆 TIME_WAIT
+# （云监控 NON_ESTABLISHED 告警的根因）。详见 docs/bugs/035。
+# keepalive 是每个 worker 各自的空闲连接缓存上限，不是连接数上限。
+upstream xhan_helper_backend {
+    server 127.0.0.1:8088;
+    keepalive 32;
+    keepalive_timeout 60s;
+}
+
+server {
+    listen 443 ssl;
+    server_name helper.example.com;
+
+    # SSL 证书（Certbot 管理）
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # 日志
+    access_log /var/log/nginx/helper-access.log;
+    error_log /var/log/nginx/helper-error.log;
+
+    # 安全头
+    server_tokens off;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    root /srv/xhan-helper/front-end/dist;
+    index index.html;
+
+    # 反向代理 API 到 xhan-helper (8088 端口)
+    # 语音 ASR：WebSocket 升级（精确匹配，优先级高于前缀 /api/）
+    location = /api/voice/asr {
+        proxy_pass http://xhan_helper_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
+    location /api/ {
+        proxy_pass http://xhan_helper_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection ""; # 必须为空，否则上游连接不会复用（keepalive 的前提）
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+
+        # SSE 必须配置
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        chunked_transfer_encoding on;
+    }
+
+    # 图床公开读（文档配图）：反代到 Go，别走 SPA fallback。
+    # 缓存头由 Go 的 serve() 下发（public, max-age=31536000, immutable），
+    # nginx 不再写 expires/add_header，避免出现两条 Cache-Control。
+    location /images/ {
+        proxy_pass http://xhan_helper_backend;
+        proxy_set_header Host $host;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 入口页必须每次回源校验：iOS 主屏 PWA 会长期缓存 index.html，
+    # 部署后不刷新就一直是旧包（前端资源带 hash，长缓存不受影响）。
+    # 用 expires -1（等价 Cache-Control: no-cache）而不是 add_header：
+    # location 里只要出现 add_header，server 级的三条安全头就不再继承。
+    location = /index.html {
+        expires -1;
+    }
+
+    # 请求体大小：单图上限 32 MiB（storage.max_image_bytes），留余量；默认 1M 会让上传的大图 413
+    client_max_body_size 40M;
+}
+
+# HTTP 重定向到 HTTPS
+server {
+    if ($host = helper.example.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+    listen 80;
+    server_name helper.example.com;
+    return 301 https://$host$request_uri;
+}

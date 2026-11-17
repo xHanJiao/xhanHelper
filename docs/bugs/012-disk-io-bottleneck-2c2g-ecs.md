@@ -190,7 +190,7 @@ PURGE BINARY LOGS BEFORE NOW() - INTERVAL 7 DAY;
 
 ### 5.4 附加修复：dump 脚本自动清理
 
-**问题**：`dump-db.sh` 每天 03:00 cron 执行 + 每次部署也执行，从不清理旧备份。`/srv/xhan-helper/mysqldumps/` 堆积了 16 份备份 = 6.1GB。
+**问题**：`dump-db.sh` 每天 03:00 cron 执行 + 每次部署也执行，从不清理旧备份。`/path/to/xhan-helper/mysqldumps/` 堆积了 16 份备份 = 6.1GB。
 
 **修复**：`scripts/dump-db.sh` 新增 `[keep_count]` 参数（默认 3），dump 完成后自动删除旧于最近 N 份的备份。
 

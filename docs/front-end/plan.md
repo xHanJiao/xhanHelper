@@ -128,7 +128,7 @@ Phase 3 (实体管理页面)    Phase 4 (高级定制)
 
 ```
 浏览器 → :443 (nginx)
-            /        → /srv/xhan-helper/front-end/dist/  (静态文件, SPA fallback)
+            /        → /path/to/xhan-helper/front-end/dist/  (静态文件, SPA fallback)
             /api/*   → localhost:8088                           (Go 后端, proxy_pass)
             /images/*→ localhost:8088                           (图床公开读, proxy_pass)
 ```
@@ -152,7 +152,7 @@ server {
     listen 443 ssl;
     server_name helper.xhanx.cn;
 
-    root /srv/xhan-helper/front-end/dist;
+    root /path/to/xhan-helper/front-end/dist;
     index index.html;
 
     location /api/ {
@@ -858,7 +858,7 @@ export default defineConfig({
 
 ```bash
 npm run build
-scp -r dist/ user@server:/srv/xhan-helper/web/
+scp -r dist/ user@server:/path/to/xhan-helper/web/
 ```
 
 `make deploy` 增加一行 `scp -r web/dist/`。

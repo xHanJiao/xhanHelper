@@ -382,8 +382,9 @@ location = /api/voice/asr {
 }
 ```
 
-仓库模板已更新 `server/nginx-helper.conf` 与 `docs/front-end/plan.md`；上线前需同步到
-`/etc/nginx/sites-enabled/` 并 reload。
+仓库里的模板是 `server/nginx-helper.conf.example`（脱敏）；线上真实副本 `server/nginx-helper.conf`
+含域名/路径，已 `.gitignore` 不入库。仓库模板与 `docs/front-end/plan.md` 同步；上线前需把真实副本
+覆盖到 `/etc/nginx/sites-enabled/` 并 reload。
 
 ## 后续变更
 

@@ -8,7 +8,12 @@ REMOTE_ENV_DQ = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do . \"
 # 服务器配置
 SERVER_USER=${DEPLOY_USER}
 SERVER_HOST=${DEPLOY_HOST}
-SERVER_PATH=/srv/xhan-helper
+# 部署路径写在 .env（DEPLOY_PATH），不入库。未设置时任何用到它的目标直接报错，
+# 避免路径为空导致 scp 传到服务器根目录。
+DEPLOY_PATH := $(shell [ -f .env ] && . ./.env >/dev/null 2>&1; printf '%s' "$$DEPLOY_PATH")
+SERVER_PATH = $(if $(DEPLOY_PATH),$(DEPLOY_PATH),$(error 请在 server/.env 设置 DEPLOY_PATH=/服务器上的项目路径))
+# 线上 nginx 配置副本不入库（含域名/路径），本地有才归档
+NGINX_CONF ?= nginx-helper.conf
 BINARY=xhan-helper
 OUTPUT_DIR=dist
 FRONTEND_DIR=../front-end
@@ -179,14 +184,14 @@ db-pull:
 	ssh $$U@$$H "chmod +x $$P/scripts/dump-db.sh && cd $$P && bash scripts/dump-db.sh /tmp/xhan-helper-dump 1"; \
 	echo ""; \
 	echo "2/2 拉取最新 dump 到本地..."; \
-	bash ../../mysh/pull-mysqldump.sh
+	bash scripts/pull-mysqldump.sh
 
 # 仅导入本地最新 dump（不联网）
 db-import:
 	@echo "========================================"
 	@echo "       仅导入本地最新 dump（不联网）"
 	@echo "========================================"
-	@LOCAL_ONLY=1 bash ../../mysh/pull-mysqldump.sh
+	@LOCAL_ONLY=1 bash scripts/pull-mysqldump.sh
 
 # 编译并上传 entity-gc 工具
 build-entity-gc:
@@ -368,7 +373,7 @@ deploy: build-frontend build-linux
 	echo "3/5 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
 	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/scripts/; \
-	scp nginx-helper.conf $$U@$$H:$$P/; \
+	if [ -f $(NGINX_CONF) ]; then scp $(NGINX_CONF) $$U@$$H:$$P/; else echo "⚠️  本地无 $(NGINX_CONF)，跳过 nginx 配置归档"; fi; \
 	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "5/5 替换二进制并重启..."; \
@@ -380,7 +385,7 @@ deploy: build-frontend build-linux
 		echo "========================================"; \
 		exit 1; }; \
 	echo ""; \
-	echo "提示：nginx 配置已留档至 $$P/nginx-helper.conf；若本次有变更，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
+	echo "提示：若本次更新过 nginx 配置，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
 	echo "✅ 部署完成！"
 
 # 仅部署后端
@@ -401,7 +406,7 @@ deploy-backend: build-linux
 	echo "2/4 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
 	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/scripts/; \
-	scp nginx-helper.conf $$U@$$H:$$P/; \
+	if [ -f $(NGINX_CONF) ]; then scp $(NGINX_CONF) $$U@$$H:$$P/; else echo "⚠️  本地无 $(NGINX_CONF)，跳过 nginx 配置归档"; fi; \
 	echo "3/4 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "4/4 替换二进制并重启..."; \
@@ -413,7 +418,7 @@ deploy-backend: build-linux
 		echo "========================================"; \
 		exit 1; }; \
 	echo ""; \
-	echo "提示：nginx 配置已留档至 $$P/nginx-helper.conf；若本次有变更，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
+	echo "提示：若本次更新过 nginx 配置，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
 	echo "✅ 部署完成！"
 
 # 仅部署前端
@@ -450,7 +455,7 @@ deploy-only:
 	echo "2/4 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
 	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/scripts/; \
-	scp nginx-helper.conf $$U@$$H:$$P/; \
+	if [ -f $(NGINX_CONF) ]; then scp $(NGINX_CONF) $$U@$$H:$$P/; else echo "⚠️  本地无 $(NGINX_CONF)，跳过 nginx 配置归档"; fi; \
 	echo "3/4 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "4/4 替换二进制并重启..."; \
@@ -462,7 +467,7 @@ deploy-only:
 		echo "========================================"; \
 		exit 1; }; \
 	echo ""; \
-	echo "提示：nginx 配置已留档至 $$P/nginx-helper.conf；若本次有变更，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
+	echo "提示：若本次更新过 nginx 配置，需手动覆盖到 /etc/nginx/sites-enabled/ 后执行 sudo nginx -t && sudo systemctl reload nginx"; \
 	echo "✅ 部署完成！"
 
 # 实时查看远程日志

@@ -13,7 +13,8 @@ for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do
     source "$f" 2>/dev/null || true
 done
 
-APP_PATH="/srv/xhan-helper"
+# 项目根从脚本自身位置推导（脚本位于 <项目根>/scripts/）
+APP_PATH="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$APP_PATH" || { echo "无法进入 $APP_PATH"; exit 1; }
 export APP_ENV=prod
 

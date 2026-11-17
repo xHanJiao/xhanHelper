@@ -37,6 +37,8 @@ xcschememanagement.plist
 
 # Nginx 配置（部署用，用完删）
 nginx.conf
+# 线上 nginx 副本含真实域名/路径，只留本地；仓库里放 nginx-helper.conf.example
+nginx-helper.conf
 
 .claude
 

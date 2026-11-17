@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dump-db.sh — 导出线上 MySQL 数据库
 # 用法: bash scripts/dump-db.sh [output_dir] [keep_count]
-#   output_dir 默认: /srv/xhan-helper/mysqldumps
+#   output_dir 默认: <项目根>/mysqldumps
 #   keep_count 默认: 3（保留最近 N 份，自动清理旧备份）
 # 需要环境变量: XHAN_HELPER_DB_PASSWORD（通常从 ~/.bashrc / ~/.zshrc 加载）
 

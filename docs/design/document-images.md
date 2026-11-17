@@ -193,7 +193,8 @@ client_max_body_size 40M;
 
 - 缓存头由 Go 的 `serve()` 下发（`public, max-age=31536000, immutable`），nginx 不重复写，
   否则会出现两条 `Cache-Control`。
-- `make deploy*` 会把 `nginx-helper.conf` 留档到服务器 `$P/`，但**不会自动安装**（安装需 root）；
+- `make deploy*` 会把本地 `nginx-helper.conf` 留档到服务器 `$P/`（**该文件含真实域名/路径，不入库**；
+  仓库里是 `server/nginx-helper.conf.example`，本地没有真实文件时 deploy 会打印跳过），但**不会自动安装**（安装需 root）；
   改动后需手动覆盖到 `/etc/nginx` 并 `sudo nginx -t && sudo systemctl reload nginx`。
 - Go 是唯一事实来源：dev 直连 `localhost:8088` 即可用，prod 经 nginx 转发。
 

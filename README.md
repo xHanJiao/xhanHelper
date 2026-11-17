@@ -96,4 +96,4 @@ cd front-end && npm install && npm run dev
 
 ## License
 
-待定（见 `LICENSE`）。
+[MIT](LICENSE)

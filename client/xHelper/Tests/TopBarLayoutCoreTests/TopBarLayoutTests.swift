@@ -3,7 +3,7 @@ import XCTest
 
 /// 顶栏自适应降级：按可用宽选档 + 各档内在宽。
 ///
-/// 断言的目标是**行为而非数字**：装得下的最不降级档、窗口底线（双栏 778 / PiP 750）下中心槽组必须
+/// 断言的目标是**行为而非数字**：装得下的最不降级档、窗口底线（双栏 822 / PiP 750）下中心槽组必须
 /// 让位、档位随可用宽单调不增、dev 徽标永不收起。数字只在第一条里钉住量级，防止常量漂移后静默走偏。
 final class TopBarLayoutTests: XCTestCase {
     /// 右栏开时的窗口底线（= `Layout.rightSidebarOpenMinContentWidth`）。
@@ -16,17 +16,18 @@ final class TopBarLayoutTests: XCTestCase {
         TopBarCenterGroup(buttons: buttons, autoOverflow: autoOverflow)
     }
 
-    /// 右栏开着浏览器（中心槽 7 键）+ 导航组 5 键 + 工具组 4 键（侧栏已开，最大化按钮可见）。
+    /// 右栏开着浏览器（中心槽 7 键）+ 导航组 6 键 + 工具组 4 键（侧栏已开，最大化按钮可见）。
+    /// 导航组 6 键 = 与右栏首页入口一一对应（浏览器/账单/书架/灵阅/文档/事件，⌘1–6）。
     private var browserModel: TopBarWidthModel {
-        TopBarWidthModel(centerGroups: [center(7)], navGroupButtons: 5, utilityButtons: 4)
+        TopBarWidthModel(centerGroups: [center(7)], navGroupButtons: 6, utilityButtons: 4)
     }
     /// 右栏开着文档详情（中心槽 3 键）。
     private var documentModel: TopBarWidthModel {
-        TopBarWidthModel(centerGroups: [center(3)], navGroupButtons: 5, utilityButtons: 4)
+        TopBarWidthModel(centerGroups: [center(3)], navGroupButtons: 6, utilityButtons: 4)
     }
     /// 右栏开着非浏览器/文档面板（中心槽空）。
     private var plainPanelModel: TopBarWidthModel {
-        TopBarWidthModel(centerGroups: [], navGroupButtons: 5, utilityButtons: 4)
+        TopBarWidthModel(centerGroups: [], navGroupButtons: 6, utilityButtons: 4)
     }
 
     func testWideWindowKeepsEverything() {
@@ -37,21 +38,28 @@ final class TopBarLayoutTests: XCTestCase {
         XCTAssertFalse(plan.showsOverflow)
     }
 
-    /// 全量内在宽 ≈ 1022（浏览器态）：窗口宽 1200 时当然装得下，778 时必须让位。
+    /// 全量内在宽 ≈ 1063（浏览器态）：窗口宽 1200 时当然装得下，822 时必须让位。
     func testFullWidthMagnitude() {
         let full = TopBarLayout.width(level: .full, model: browserModel)
         XCTAssertGreaterThan(full, 950)
         XCTAssertLessThan(full, 1100)
-        // 无浏览器时顶栏本来就装得进双栏底线
-        XCTAssertLessThanOrEqual(TopBarLayout.width(level: .full, model: plainPanelModel), twoColumnFloor)
+        // 无浏览器时收窄标签后也装得进双栏底线（6 颗导航组下全量 794 ≤ 814，其实全量就够）
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.width(level: .compactSwitcher, model: plainPanelModel),
+            twoColumnFloor
+        )
     }
 
     /// 双栏底线：中心槽组（浏览器/文档）必须收进 ⋯，且选出的档必须真装得进底线。
-    /// 注：收掉中心槽后仍有 800（240 标签 + 三组）—— 778 装不下，所以会一路落到末档（标签也收到 160）。
+    /// 注：收掉中心槽后仍有 841（240 标签 + 三组 + 独立 `⋯`）—— 822 装不下（814），所以落到末档（标签也收到 160）。
+    /// 右栏开着时还得过「卡片右侧那段」这道闸（`cardTrailingLimit` = 420）：所以一个都留不下。
     func testCenterGroupFoldsAtTwoColumnFloor() {
         for model in [browserModel, documentModel] {
-            let plan = TopBarLayout.plan(available: twoColumnFloor, model: model)
-            XCTAssertFalse(plan.showsCenter, "778 下中心槽组应让位")
+            let plan = TopBarLayout.plan(
+                available: twoColumnFloor, trailingLimit: cardTrailingLimit, model: model
+            )
+            XCTAssertEqual(plan.level, .compactSwitcher)
+            XCTAssertFalse(plan.showsCenter, "822 下中心槽组应让位")
             XCTAssertTrue(plan.showsOverflow)
             XCTAssertLessThanOrEqual(
                 TopBarLayout.width(level: plan.level, model: model),
@@ -60,23 +68,31 @@ final class TopBarLayoutTests: XCTestCase {
         }
     }
 
-    /// 中心槽空时双栏底线不触发射降级（顶栏本来就装得下），标签上限保持 240。
+    /// 中心槽空时双栏底线回到全量：822 下全量 794 ≤ 814，标签保持 240。
+    /// （右栏最小宽 424 把底线抬到 822 后，6 颗导航组也不再挤掉标签。）
     func testNoCenterGroupAtFloorStaysFull() {
         let plan = TopBarLayout.plan(available: twoColumnFloor, model: plainPanelModel)
         XCTAssertEqual(plan.level, .full)
         XCTAssertEqual(plan.switcherLabelCap, Layout.topBarSwitcherLabelCap)
         XCTAssertFalse(plan.showsOverflow)
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.width(level: plan.level, model: plainPanelModel),
+            twoColumnFloor - Layout.topBarDegradeMargin
+        )
     }
 
-    /// PiP（750）：浏览器态要收中心槽组 + 收标签，且必须真装得进。
-    /// 中心槽空时也装不下 240 的标签（全量 753 > 742），所以照样落末档 —— 只收标签。
+    /// PiP（750）：浏览器态要收中心槽组 + 收标签。6 颗导航组下末档内在宽 761 > 742，
+    /// 由隐藏探针把窗口顶到 **761**（+11pt，Release 也如此 —— PiP 下 `isOpen` 仍为 true，
+    /// 网页 tab 的浏览器中心组照常可见，这个组合**真实可达**）。
+    /// 中心槽空时也装不下 240 的标签（全量 ≈794），所以照样落末档 —— 只收标签。
     func testPipFloorFoldsCenterAndCompactsSwitcher() {
         let plan = TopBarLayout.plan(available: singleColumnFloor, model: browserModel)
         XCTAssertEqual(plan.level, .compactSwitcher)
         XCTAssertEqual(plan.switcherLabelCap, Layout.topBarSwitcherCompactLabelCap)
-        XCTAssertLessThanOrEqual(
+        XCTAssertGreaterThan(
             TopBarLayout.width(level: plan.level, model: browserModel),
-            singleColumnFloor - Layout.topBarDegradeMargin
+            singleColumnFloor - Layout.topBarDegradeMargin,
+            "浏览器态收全中心槽后仍超底线 → 靠隐藏探针撑宽窗口"
         )
         let plain = TopBarLayout.plan(available: singleColumnFloor, model: plainPanelModel)
         XCTAssertEqual(plain.level, .compactSwitcher)
@@ -87,7 +103,7 @@ final class TopBarLayoutTests: XCTestCase {
         )
     }
 
-    /// dev 构建的 DEV 徽标**降级不收**：任何可用宽（含双栏底线 778 / PiP 750）下都在栏上，
+    /// dev 构建的 DEV 徽标**降级不收**：任何可用宽（含双栏底线 822 / PiP 750）下都在栏上，
     /// 于是 dev 各档内在宽恒比 release 多一个徽标宽。
     func testDevChipIsAlwaysShown() {
         var model = browserModel
@@ -152,10 +168,20 @@ final class TopBarLayoutTests: XCTestCase {
 
     // MARK: - 右簇必须落进「中栏卡片右侧那段」（docs/bugs/034）
 
-    /// 右栏开着（默认宽 380）时右簇可用的宽 = cardGap 6 + seam 6 + 右栏 380 − 顶栏右内边距 16
+    /// 右栏开着（最小宽 424）时右簇可用的宽 = cardGap 6 + seam 6 + 右栏 424 − 顶栏右内边距 16 = **420**
     /// （与 `ContentView.topBarTrailingLimit` 同式；那里取真实右栏宽）。
     private let cardTrailingLimit: CGFloat =
-        Layout.cardGap + Layout.seamHalfGap * 2 + Layout.seamWidth + 380 - Layout.toolbarHorizontalPadding
+        Layout.cardGap + Layout.seamHalfGap * 2 + Layout.seamWidth + Layout.rightSidebarMinWidth
+        - Layout.toolbarHorizontalPadding
+
+    /// 本条的验收：右栏**最小宽**下，折叠态右簇必须装得进「中栏卡片右侧那段」（导航组 6 颗后曾越界 36pt，
+    /// 右栏最小宽 380 → 424 就是为它）。装得下 = 少 8pt 余量都不行。
+    func testFoldedClusterFitsCardSegmentAtMinSidebarWidth() {
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.trailingWidth(level: .compactSwitcher, model: browserModel),
+            cardTrailingLimit - Layout.topBarDegradeMargin
+        )
+    }
 
     /// 右栏开着：中心槽组在任何窗口宽度下都不许显形 —— 它显形就把整簇往左推、压在中栏卡片上。
     /// （窗口越宽中栏卡片越宽，所以「窗口够宽就显形」这条老判据永远会踩中。）
@@ -215,20 +241,20 @@ final class TopBarLayoutTests: XCTestCase {
         XCTAssertFalse(
             TopBarLayout.plan(available: 1200, trailingLimit: cardTrailingLimit, model: browserModel).showsCenter
         )
-        // 折叠态的右簇口径：导航组 178 + 线 9 + ⋯ 38 + 线 9 + 工具组 143
-        XCTAssertEqual(TopBarLayout.trailingWidth(level: .foldCenter, model: browserModel), 377, accuracy: 0.001)
+        // 折叠态的右簇口径：导航组 213 + 线 9 + ⋯ 38 + 线 9 + 工具组 143
+        XCTAssertEqual(TopBarLayout.trailingWidth(level: .foldCenter, model: browserModel), 412, accuracy: 0.001)
     }
 
     // MARK: - 中心槽「部分收」（docs/design/overflow-collapse）
 
     /// 用户实拍那一屏：窗口 ≈995、右栏拖到 ≈600（卡片右侧那段 = 600 + cardGap 6 + seam 6 − 顶栏右内边距 16 = 596）。
-    /// 7 键整组放不进（1028 > 987），但白给的空间够放 4 个 —— 不该整组进 ⋯。
+    /// 7 键整组放不进，但白给的空间够放 3 个 —— 不该整组进 ⋯（6 颗导航组比原来多吃 35pt，所以是 3 不是 4）。
     func testPartialCenterKeepsWhatFits() {
         let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: browserModel)
-        XCTAssertEqual(plan.centerVisible, [4])
+        XCTAssertEqual(plan.centerVisible, [3])
         XCTAssertTrue(plan.showsCenter)
         XCTAssertTrue(plan.showsOverflow)
-        XCTAssertEqual(plan.hiddenCenterButtons, 3)
+        XCTAssertEqual(plan.hiddenCenterButtons, 4)
         XCTAssertLessThanOrEqual(
             TopBarLayout.width(level: plan.level, model: browserModel, centerVisible: plan.centerVisible),
             995 - Layout.topBarDegradeMargin
@@ -253,7 +279,7 @@ final class TopBarLayoutTests: XCTestCase {
         )
     }
 
-    /// 空间不够就一路收到 0（= 整组进 ⋯，与加这层之前一致）：双栏底线 778 + 右栏最小 380。
+    /// 空间不够就一路收到 0（= 整组进 ⋯，与加这层之前一致）：双栏底线 822 + 右栏最小 424。
     func testPartialCenterFallsBackToZeroAtFloor() {
         let plan = TopBarLayout.plan(available: twoColumnFloor, trailingLimit: cardTrailingLimit, model: browserModel)
         XCTAssertEqual(plan.centerVisible, [0])
@@ -265,7 +291,7 @@ final class TopBarLayoutTests: XCTestCase {
     /// 多中心组同时可见时按注册顺序先到先得（今天实际不会出现，钉住口径免得将来走偏）：
     /// 每个宽度下第 0 组留的不少于第 1 组，且确实存在"第 0 组多留、第 1 组少留"的宽度。
     func testPartialCenterIsGreedyByGroupOrder() {
-        let model = TopBarWidthModel(centerGroups: [center(2), center(2)], navGroupButtons: 5, utilityButtons: 4)
+        let model = TopBarWidthModel(centerGroups: [center(2), center(2)], navGroupButtons: 6, utilityButtons: 4)
         var sawSplit = false
         for available in stride(from: CGFloat(800), through: 1400, by: 2) {
             let plan = TopBarLayout.plan(available: available, model: model)
@@ -280,19 +306,19 @@ final class TopBarLayoutTests: XCTestCase {
     /// `⋯` 长在组内：那一组多算一项（图标 26 + 组内线 9），不是旁边单开一颗胶囊。
     func testOverflowRidesInsideTheGroup() {
         let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: browserModel)
-        XCTAssertEqual(plan.centerVisible, [4])
+        XCTAssertEqual(plan.centerVisible, [3])
         XCTAssertTrue(plan.overflowInline)
         XCTAssertFalse(plan.overflowStandalone)
-        // 中心槽 = 4 个真按钮 + 末尾 ⋯ = groupWidth(5)
+        // 中心槽 = 3 个真按钮 + 末尾 ⋯ = groupWidth(4)
         XCTAssertEqual(
-            TopBarLayout.centerSlotWidth(level: plan.level, model: browserModel, centerVisible: [4]),
-            TopBarLayout.groupWidth(5),
+            TopBarLayout.centerSlotWidth(level: plan.level, model: browserModel, centerVisible: [3]),
+            TopBarLayout.groupWidth(4),
             accuracy: 0.001
         )
-        // 右槽不再挂 ⋯（导航组 178 + 线 9 + 工具组 143）：nav / util 组一颗都没少
+        // 右槽不再挂 ⋯（导航组 213 + 线 9 + 工具组 143）：nav / util 组一颗都没少
         XCTAssertEqual(
             TopBarLayout.rightSlotWidth(level: plan.level, model: browserModel, centerVisible: [4]),
-            330,
+            365,
             accuracy: 0.001
         )
     }
@@ -303,10 +329,10 @@ final class TopBarLayoutTests: XCTestCase {
         XCTAssertEqual(plan.centerVisible, [0])
         XCTAssertFalse(plan.overflowInline)
         XCTAssertTrue(plan.overflowStandalone)
-        // 右槽多一颗 ⋯ 组：178 + 线 9 + ⋯ 38 + 线 9 + 143
+        // 右槽多一颗 ⋯ 组：213 + 线 9 + ⋯ 38 + 线 9 + 143
         XCTAssertEqual(
             TopBarLayout.rightSlotWidth(level: plan.level, model: browserModel, centerVisible: [0]),
-            377,
+            412,
             accuracy: 0.001
         )
     }
@@ -325,7 +351,7 @@ final class TopBarLayoutTests: XCTestCase {
     /// 组没开 `autoOverflow`（默认）→ 永不部分收：这一档整组不进栏（按钮进独立 ⋯）。
     func testOptOutGroupNeverPartiallyFolds() {
         let pinned = TopBarWidthModel(
-            centerGroups: [center(7, autoOverflow: false)], navGroupButtons: 5, utilityButtons: 4
+            centerGroups: [center(7, autoOverflow: false)], navGroupButtons: 6, utilityButtons: 4
         )
         let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: pinned)
         XCTAssertEqual(plan.centerVisible, [0])
@@ -335,5 +361,71 @@ final class TopBarLayoutTests: XCTestCase {
         let wide = TopBarLayout.plan(available: 1400, model: pinned)
         XCTAssertEqual(wide.level, .full)
         XCTAssertEqual(wide.centerVisible, [7])
+    }
+
+    // MARK: - 导航组 = 右栏首页入口（⌘1–6）
+
+    /// 多一个入口只多「图标 26 + 组内 Divider 9」，没有额外内边距/间距 —— 宽度账靠这条钉住。
+    func testNavGroupGrowsByOneIconAndDivider() {
+        let five = TopBarWidthModel(centerGroups: [], navGroupButtons: 5, utilityButtons: 4)
+        let six = TopBarWidthModel(centerGroups: [], navGroupButtons: 6, utilityButtons: 4)
+        for level in TopBarLevel.allCases {
+            XCTAssertEqual(
+                TopBarLayout.width(level: level, model: six) - TopBarLayout.width(level: level, model: five),
+                Layout.topBarIconSize + Layout.topBarDividerWidth,
+                accuracy: 0.001,
+                "level=\(level)"
+            )
+        }
+    }
+
+    /// 6 颗导航组 × 真实窗口宽 × 中心槽 0/3/7 × dev / 无痕：选出的档一定装得进
+    /// （装不进只剩末档一条路，那时由隐藏探针撑宽窗口，见下一条）。
+    func testSixNavGroupAlwaysFitsOrIsDeepest() {
+        let deepest = TopBarLevel.allCases[TopBarLevel.allCases.count - 1]
+        let models: [TopBarWidthModel] = [plainPanelModel, documentModel, browserModel].flatMap { base -> [TopBarWidthModel] in
+            var dev = base; dev.isDev = true
+            var ephemeral = base; ephemeral.hasEphemeralBadge = true
+            return [base, dev, ephemeral]
+        }
+        for model in models {
+            for available in stride(from: CGFloat(700), through: 1400, by: 3) {
+                let plan = TopBarLayout.plan(available: available, model: model)
+                let width = TopBarLayout.width(level: plan.level, model: model)
+                if plan.level != deepest {
+                    XCTAssertLessThanOrEqual(width, available - Layout.topBarDegradeMargin,
+                                             "available=\(available) level=\(plan.level) width=\(width)")
+                }
+            }
+        }
+    }
+
+    /// Debug 构建（DEV 徽标）+ 单栏底线 750：6 颗导航组在末档也差十几 pt，由隐藏探针把窗口顶宽
+    /// —— 宁可撑窗，不让顶栏压中栏卡片（`docs/bugs/034`）。Release 同一档装得下。
+    func testSixNavGroupDevBuildNeedsProbeAtSingleColumnFloor() {
+        var dev = plainPanelModel
+        dev.isDev = true
+        let devPlan = TopBarLayout.plan(available: singleColumnFloor, model: dev)
+        XCTAssertEqual(devPlan.level, .compactSwitcher)
+        XCTAssertGreaterThan(
+            TopBarLayout.width(level: devPlan.level, model: dev),
+            singleColumnFloor - Layout.topBarDegradeMargin,
+            "6 颗导航组 + DEV 徽标在 750 下应放不下（探针负责撑宽），若这条挂了说明宽度账变了"
+        )
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.width(level: devPlan.level, model: dev),
+            singleColumnFloor + 40,
+            "撑宽幅度失控（预期十几 pt）"
+        )
+        // 双栏底线 822 仍装得下（dev 亦同）
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.width(level: .compactSwitcher, model: dev),
+            twoColumnFloor - Layout.topBarDegradeMargin
+        )
+        // Release 单栏底线装得下
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.width(level: .compactSwitcher, model: plainPanelModel),
+            singleColumnFloor - Layout.topBarDegradeMargin
+        )
     }
 }

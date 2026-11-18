@@ -57,7 +57,7 @@ struct ButtonDef {
 | 槽位 | 按钮 | priority |
 |------|------|----------|
 | 中 | 空 | — |
-| 右 | `default-right`：文档/记忆等（`⌘1/2/3/5`）；`default-utility`（仅 macOS）：`[⤢最大化][侧栏][🌓][⚙]` | 5（两组同优先共存） |
+| 右 | `default-right`：右侧栏首页入口（浏览器/账单/书架/灵阅/文档/事件，`⌘1–6`，与首页网格同源 `SidebarQuickEntry.all`）；`default-utility`（仅 macOS）：`[⤢最大化][侧栏][🌓][⚙]` | 5（两组同优先共存） |
 
 ⚠️ 右槽**不含刷新**（用户确认默认 `< >` 刷新无意义，去掉）。
 
@@ -110,7 +110,7 @@ HStack(spacing: Layout.topBarGroupSpacing) {
 ### 五之二、降级档 + `⋯` 溢出（2026-10-11）
 
 顶栏**不再决定窗口最小宽**，改为按可用宽（`TopBarView.availableWidth` = 窗口内容宽）自适应降级：
-档位 = DEV 徽标 → 中心槽组 → 下拉标签收窄，被收的按钮进右槽最左的 `⋯`（原生 `Menu`，贴在 ⌘1–5 导航组左侧）。
+档位 = DEV 徽标 → 中心槽组 → 下拉标签收窄，被收的按钮进右槽最左的 `⋯`（原生 `Menu`，贴在 ⌘1–6 导航组左侧）。
 判定是**纯函数**（`Shared/Views/TopBarLayout.swift`，按钮统一 26pt icon 故可算不必量），
 真实栏与隐藏探针必然同档；探针（`TopBarMinWidthKey`）降级为安全网。
 完整宽度账、档位阈值、验收项见 `../mac-topbar-degrade/design.md`。
@@ -118,7 +118,7 @@ HStack(spacing: Layout.topBarGroupSpacing) {
 **`⋯` 落位（2026-10-12 起）**：中心组**留了一部分**时它长在那一组的**末尾**（同一颗胶囊、组内分隔线），
 只有**一个都没留下**时才退回右槽最左那颗独立胶囊。
 它是**可选行为**：组自己声明 `TopBarGroup.autoOverflow`（默认关），今天只有两个中心组开着；
-右槽导航 / 工具组不开 → 永不变形（`⌘1–5` 与设置始终在栏上）。
+右槽导航 / 工具组不开 → 永不变形（`⌘1–6` 与设置始终在栏上）。
 细节：`../mac-topbar-degrade/design.md` §3.3 要点 5、`../overflow-collapse/design.md`（人话版）。
 
 **按钮 enabled/icon/help 实时更新**：TopBarView `@ObservedObject registry, rightSidebar, chatTabManager, router`，任一 publish → re-render → `ButtonDef` 的 closure 重新求值。

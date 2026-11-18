@@ -150,11 +150,12 @@ sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift
 
 ```
 无右栏：  max(cardGap*2 + middleMinWidth, minWindowContentWidth)          ≈ 750
-右栏开：  cardGap*2 + middleMinWidth + seam(6) + rightSidebarMinWidth     ≈ 778
+右栏开：  cardGap*2 + middleMinWidth + seam(6) + rightSidebarMinWidth     ≈ 822
 PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 750
 ```
 
-数值（实测）：`middleMinWidth = rightSidebarMinWidth = 380`，`minWindowContentWidth = 750`。
+数值（实测）：`middleMinWidth = 380`、`rightSidebarMinWidth = 424`（2026-11-18 从 380 抬高，见
+`mac-topbar-degrade/design.md` 同日条目）、`minWindowContentWidth = 750`。
 
 - **顶栏兜底**：窗口最小宽再取 `max(…, 顶栏内在宽)`——顶栏是 VStack 最宽子项，短于它就会溢出居中、红绿灯压住下拉框（`TopBarView.intrinsicWidthProbe` 经 `TopBarMinWidthKey` 上报，`updateWindowMinWidth` 主动放大窗口）。
 - 删除所有「靠收窄左栏降底线」的分支：自动收窄/恢复（`:571-577`）、PiP 缩窗收窄（`:594-598`）、开右栏收左栏腾位（`:176-178`）、`pipExpandedFloor`（`App.swift:251-253` 及其读写）。
@@ -333,7 +334,7 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
     必须同批做降级。
   - 影响文件：新增 `Shared/Views/TopBarLayout.swift`（纯逻辑 + SwiftPM 单测）、`TopBarView.swift`、`LayoutConstants.swift`、
     `ContentView.swift`（传 `availableWidth`）。
-  - D5（trigger 上限 240）不变，降级末档临时收到 160；**不收导航组**（其 ⌘1–5 挂在被渲染的按钮上，收了会丢快捷键）。
+  - D5（trigger 上限 240）不变，降级末档临时收到 160；**不收导航组**（其 ⌘1–6 挂在被渲染的按钮上，收了会丢快捷键）。
 - **2026-10-11 · 中栏卡片吸顶（包住顶栏按钮）+ 右栏去描边**（`../mac-card-top-wrap/design.md`）。
   - 决定：中栏（唯一左列）做成**有底色的完整卡片**（**白霜提亮 6%**，第一版 `assistantText` 6% 真机偏暗沉已撤）
     + **只在卡片外的投影**（`CardElevationShadow`，浅色黑 / 深色白 —— 半透明卡片直接 `.shadow` 会渗内），上边停在窗口内 6pt（与左/右/下对称），向上溢出 `cardTopRise`
@@ -346,7 +347,7 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
     `xHelperMac/App.swift`（`trafficLightNudge.y = −10`）、`xHelperMac/TwoColumnLayoutPreview.swift`（2 个吸顶形态预览）。
   - 曾试过自绘 `CardOutline`（上边压在窗顶、无底色），两版都被否 → 该 Shape 已删，回到 `RoundedRectangle`（见该文档 §七）。
 - **2026-10-11 · 右侧栏默认打开**（`Shared/Views/RightSidebarManager.swift` 一行）：`isOpen` 初值 `false → true`，
-  **不持久化**（手动关掉后下次启动仍会开）。默认窗口内容宽 1180 > 双栏底线 778，不需要额外调窗口尺寸；
+  **不持久化**（手动关掉后下次启动仍会开）。默认窗口内容宽 1180 > 双栏底线 822，不需要额外调窗口尺寸；
   启动时 `onChange(of: isOpen)` 不触发，但 `.onAppear → updateWindowMinWidth()` 与 geo 首帧的 `clampRightSidebarWidth()` 已覆盖最小宽/夹宽。
   副作用：存着的右栏宽（默认 840）会被夹到 ~782 并**写回**持久化。
 - **2026-10-12 · 顶栏胶囊 36 → 28**（`Shared/Views/LayoutConstants.swift` 一行：`topBarCapsuleVPadding` 5 → 1）。

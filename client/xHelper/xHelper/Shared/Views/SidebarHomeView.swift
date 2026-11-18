@@ -36,9 +36,14 @@ struct SidebarHomeView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     greeting
                     LazyVGrid(columns: homeColumns(metrics.columns), spacing: 12) {
-                        browserCard(metrics: metrics)
-                        ForEach(BrowsePanel.homePanels) { panel in
-                            entryCard(panel, metrics: metrics)
+                        // 顺序与顶栏 ⌘1–N 导航组同源（`SidebarQuickEntry.all`）
+                        ForEach(SidebarQuickEntry.all) { entry in
+                            switch entry {
+                            case .browser:
+                                browserCard(metrics: metrics)
+                            case .panel(let panel):
+                                entryCard(panel, metrics: metrics)
+                            }
                         }
                     }
                     .padding(.top, 16)

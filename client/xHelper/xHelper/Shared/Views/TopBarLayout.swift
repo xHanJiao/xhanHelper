@@ -2,7 +2,7 @@ import Foundation
 
 /// 顶栏自适应降级的档位（按序递进：越靠后越降级；高档位包含低档位的取舍）。
 ///
-/// 顶栏**不再决定窗口最小宽**——窗口底线由两栏公式给（右栏开 778 / 无右栏与 PiP 750），
+/// 顶栏**不再决定窗口最小宽**——窗口底线由两栏公式给（右栏开 822 / 无右栏与 PiP 750），
 /// 顶栏按可用宽自己降级。背景见 `docs/design/mac-topbar-degrade/design.md`
 /// （来源：`docs/bugs/033` §5 的遗留项「顶栏降级 + 会话下拉常驻」）。
 enum TopBarLevel: Int, CaseIterable, Comparable {
@@ -12,7 +12,7 @@ enum TopBarLevel: Int, CaseIterable, Comparable {
     case foldCenter = 1
     /// 下拉标签收窄（240 → 160）。
     ///
-    /// 为什么最后才动标签而不是收导航组：导航组（文档/灵阅/监控/浏览器/记忆）的 ⌘1–5
+    /// 为什么最后才动标签而不是收导航组：导航组（浏览器/账单/书架/灵阅/文档/事件）的 ⌘1–6
     /// 挂在**被渲染的按钮**上（`TopBarButton.keyEquivalent` → `keyboardShortcut`），
     /// 整组收进 `⋯` 会把快捷键一起丢掉；收标题只是截断文字。
     case compactSwitcher = 2
@@ -145,7 +145,7 @@ enum TopBarLayout {
             return visible
         }
         // 兜底 0（= 整组进独立 `⋯`）：`fits(0)` **也可能**为 false —— `plan` 只在 `foldCenter` 之前过卡片闸，
-        // 到这一档右槽那颗独立 `⋯` 仍可能越卡片右缘（右栏最小 380 那档差 1pt）。
+        // 右栏最小 424 → 可用 420 vs 折叠态右簇 412，留 8pt；更窄的话那颗独立 `⋯` 会越卡片右缘。
         // 旧版同样如此、已在 `docs/bugs/034` §已知边角接受，**别当 bug 去"修"**。
         return 0
     }

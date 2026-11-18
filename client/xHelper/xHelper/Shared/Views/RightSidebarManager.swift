@@ -233,7 +233,7 @@ final class RightSidebarManager: ObservableObject {
 
     static func bookTabID(_ id: String) -> String { "book:\(id)" }
 
-    /// 打开/激活列表 tab（幂等）。首页卡片、⌘1–5、设置、深链都走这里。
+    /// 打开/激活列表 tab（幂等）。首页卡片、⌘1–6 导航组、设置、深链都走这里。
     func openPanel(_ panel: BrowsePanel) {
         let id = Self.panelTabID(panel)
         if tabs.contains(where: { $0.id == id }) {

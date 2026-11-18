@@ -1842,7 +1842,7 @@ function handleContainerClick(e) {
               <NTooltip :disabled="isMobile" placement="top">
                 <template #trigger>
                   <button class="icon-pill" type="button" aria-label="添加图片" @click="pickImages">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.6 17.4l4.3-4.3a1.6 1.6 0 0 1 2.3 0l5.5 5.5"/></svg>
                   </button>
                 </template>
                 添加图片

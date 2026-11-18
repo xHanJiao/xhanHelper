@@ -452,3 +452,20 @@
   - 现在两个失败出口置 `cancelled = true`（一次按下最多响一声，松手时照旧重置）；
     `verifyToken()` 只在 401 才清会话，网络错误保留登录。
   - 影响文件：`Services/VoiceHotKeyController.swift`、`Services/DeviceManager.swift`。
+- 2026-11-18（全局语音加「新会话」档：`⌥` + 双 ⌘）：
+  - 用户需求：保留双 ⌘ 按住说话，另加一个「同样全局、但另开新会话」的快捷档。
+  - 检测：`hasOtherModifier` 不再把 `⌥` 当「组合键 → 本次作废」；arm 那一刻读
+    `CGEventSource.flagsState` 的 `.maskAlternate`，经 `begin(newConversation:)` 定档
+    （`⌃⌥V` 备用热键固定普通档）。每次**真正开录**的按下都会重设档位（录音尾巴 /
+    识别中的按下会被 ptt 忽略，不覆盖上一轮还没提交的档位）。
+  - 路由：新会话档**强制走控制器自己的一次性 ptt**，不进「语音条开着交给视图」的分支
+    —— 视图那套的 `onHoldSentence` 固定提交给旧 VM，换不了会话。
+  - 提交：`AppShortcutBridge` 新增 `newChatViewModel`（由 ContentView 注册，**强持**
+    `ChatTabManager`，关窗后 ContentView 销毁也能建会话）：`tabs.newChat()` 后交出当前 tab 的 VM。
+    窗口开着时等同 Cmd+N（新 tab 可见）；关窗/PiP 收起时照旧由控制器接管 TTS。
+    建不出新会话（没凭据/桥没注册）→ 日志 + beep，**不退回当前会话**。
+  - 已知限制（用户拍板先这样）：连续语音条正在录音时按 `⌥` + 双 ⌘，ptt 会被单引擎
+    采集租约拒绝（`busy` → toast + beep，本轮作废），不自动退出连续对话。
+  - 影响文件：`Services/VoiceHotKeyController.swift`、`Services/AppShortcutBridge.swift`、
+    `ViewModels/ChatTabManager.swift`、`Views/ContentView.swift`、`xHelperMac/ShortcutGuideView.swift`、
+    `docs/design/voice-audio-engine/design.md`（四、四种交叠情形加一行）。

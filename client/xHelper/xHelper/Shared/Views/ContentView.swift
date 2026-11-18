@@ -388,6 +388,11 @@ struct ContentView: View {
         }
         // 全局语音热键（app 级常驻）：窗口关着 / PiP 收起时也要能拿到当前会话和后端凭据
         let tabs = chatTabManager
+        // 强持有 tabs：关窗后 ContentView 会销毁，新会话档仍要能建会话（见 VoiceHotKeyController.submit）
+        AppShortcutBridge.shared.newChatViewModel = { [tabs] in
+            tabs.newChat()
+            return tabs.currentTab?.viewModel
+        }
         AppShortcutBridge.shared.currentChatViewModel = { [weak tabs] in
             tabs?.currentTab?.viewModel
         }

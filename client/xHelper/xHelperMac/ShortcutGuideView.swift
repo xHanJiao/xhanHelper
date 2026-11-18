@@ -27,6 +27,7 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["⌘", "="], desc: "增大字体（浏览器未聚焦时）"),
             ShortcutItem(keys: ["⌘", "-"], desc: "减小字体（浏览器未聚焦时）"),
             ShortcutItem(keys: ["⌘", "⌘"], desc: "按住左右两个 ⌘ 说话，松手发送（全局，关窗也能用）"),
+            ShortcutItem(keys: ["⌥", "⌘", "⌘"], desc: "按住 ⌥ + 左右两个 ⌘ 说话，另开一个新会话（全局）"),
             ShortcutItem(keys: ["⌃", "⌥", "V"], desc: "同上（备用键）"),
         ]),
         ShortcutSection(icon: "menubar.rectangle", title: "面板导航", hint: "顶部工具栏", items: [

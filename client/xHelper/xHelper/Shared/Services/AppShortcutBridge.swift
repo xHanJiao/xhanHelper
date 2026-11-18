@@ -11,12 +11,17 @@ import Carbon.HIToolbox
 /// - Cmd+Shift+↑ / ↓     会话列表上/下切换（焦点无关，delta -1/+1）
 /// - Tab / Esc           有 L3 工具确认待处理时：Tab=允许，Esc=拒绝（无需 Command）
 /// - Ctrl+Option+V       全局按住说话（Carbon 热键，按住/松开各回调一次）
+/// - 双 ⌘ / ⌥ + 双 ⌘     全局按住说话（`VoiceHotKeyController` 轮询；加 `⌥` 表示另开新会话）
 @MainActor
 final class AppShortcutBridge {
     static let shared = AppShortcutBridge()
 
     /// 新建对话（由 ContentView 注册，走 chatTabManager.newChat）
     var onNewChat: (() -> Void)?
+
+    /// 全局语音「新会话」档：新建会话并交出它的 VM（关窗时 ContentView 已销毁，
+    /// 所以这里强持有 tab manager，不跟着视图生命周期走）
+    var newChatViewModel: (() -> ChatViewModel?)?
 
     /// 会话列表上/下切换（由 ContentView 注册，delta：-1 上移，+1 下移）
     var onSwitchConversation: ((Int) -> Void)?

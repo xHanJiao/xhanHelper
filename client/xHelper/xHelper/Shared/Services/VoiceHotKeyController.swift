@@ -4,6 +4,7 @@ import CoreGraphics
 import SwiftUI
 
 /// 全局「按住左右 ⌘ 说话」：检测 + 路由 + 浮层。
+/// 多按一个 `⌥`（`⌥` + 双 ⌘）走「新会话」档：识别结果进一个新会话，不复用当前会话。
 ///
 /// 为什么不用 Carbon `RegisterEventHotKey`：它注册不了裸修饰键（必须有主键）。
 /// 为什么不用 `NSEvent.addGlobalMonitorForEvents`：要辅助功能授权，而且我们不需要吞键。
@@ -34,6 +35,9 @@ final class VoiceHotKeyController {
     private var route: Route?
     /// 本轮已经真的开始录了（按下到开录之间还有权限弹窗/建连，中间松手要能作废）
     private var armed = false
+    /// 本轮是「新会话」档（⌥ + 双 ⌘）：提交时不进当前会话，另开一个。
+    /// 每次真正开录的按下都会重设（尾巴/识别中的按下不算，见 `begin`）
+    private var newConversation = false
     private var chordDownAt: Date?
     /// 本轮已作废（按下的瞬间旁边还有别的键/鼠标动作 → 不是想说话）
     private var cancelled = false
@@ -48,6 +52,8 @@ final class VoiceHotKeyController {
     /// 后端地址 + token：窗口关着时也要能建连，所以缓存最后一份
     private var credentials: (baseURL: String, token: String)?
     private var lastViewModel: ChatViewModel?
+    /// 上一次由控制器接管朗读的 VM（换会话前要摘 hook，见 `wireHeadlessSpeech`）
+    private weak var headlessWiredVM: ChatViewModel?
     /// 浮层要不要跟着这一轮的 听/想/说 走（连续档松手就收，不跟会话）
     private var followTurn = false
 
@@ -111,7 +117,8 @@ final class VoiceHotKeyController {
                     cancelled = true
                 } else {
                     armed = true
-                    begin()
+                    // ⌥ 在按下瞬间前后几帧内到位都算数（arm 与双 ⌘ 按下只差一个 30Hz tick）
+                    begin(newConversation: optionHeld)
                 }
             }
         } else if chordDownAt != nil {
@@ -126,10 +133,16 @@ final class VoiceHotKeyController {
         updateHUD(now: now)
     }
 
-    /// 除 ⌘ 以外还按着 Shift / Control / Option（组合键，不是我们的 chord）
+    /// 除 ⌘ 以外还按着 Shift / Control（组合键，不是我们的 chord）。
+    /// `⌥` 不算：它是有意的「新会话」档（见 `optionHeld`）
     private var hasOtherModifier: Bool {
         !CGEventSource.flagsState(.combinedSessionState)
-            .intersection([.maskShift, .maskControl, .maskAlternate]).isEmpty
+            .intersection([.maskShift, .maskControl]).isEmpty
+    }
+
+    /// `⌥` 也按着 = 「新会话」档
+    private var optionHeld: Bool {
+        CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate)
     }
 
     /// 从 `start` 之后有没有发生过按键/鼠标按下/滚轮（`CGEventSource` 的整机计数，免授权）
@@ -143,16 +156,25 @@ final class VoiceHotKeyController {
 
     // MARK: - 一轮的开合
 
-    private func begin() {
+    private func begin(newConversation: Bool = false) {
+        // 上一轮还在录音尾巴（松手后 300ms）或识别中时，这一下会被 ptt 忽略（`.ignored`），
+        // 不能用它覆盖上一轮还没提交的档位
+        if route == nil, !ptt.isHoldRecording, !ptt.isHoldTranscribing {
+            self.newConversation = newConversation
+        }
         // 本轮按下的序号：异步失败回来时用它判断「这一轮是不是已经被下一次按下接管」
         pressGen += 1
         let gen = pressGen
         // 正在念上一轮回复：先停，否则录进去的是 TTS
         AppShortcutBridge.shared.stopVoicePlayback?()
+        // 旧 VM 的朗读 hook 也要在这一刻摘：录制期间到达的 delta 会重新开口念，
+        // 被 AEC 漏进本轮录音，或拼进上一轮的 speech 缓冲
+        detachHeadlessSpeech()
 
         // 语音条开着：交给视图那套（按住暂存、松手整段提交，行为与以前一致）
         // Tink 由视图侧自己播（`.started` 时），这里不重复
-        if AppShortcutBridge.shared.voiceBarActive?() == true {
+        // 「新会话」档不路由：视图那套提交固定落旧 VM，换不了会话
+        if !newConversation, AppShortcutBridge.shared.voiceBarActive?() == true {
             route = .continuous
             followTurn = false
             hud.show(phase: .listening)
@@ -214,16 +236,26 @@ final class VoiceHotKeyController {
     // MARK: - 提交
 
     private func submit(_ text: String, speakReply: Bool) {
-        let vm = AppShortcutBridge.shared.currentChatViewModel?() ?? lastViewModel
+        // 这一轮按下时定的档；消费完立刻清，别漏给下一次识别
+        let wantsNew = newConversation
+        newConversation = false
+        let vm: ChatViewModel?
+        if wantsNew {
+            // 新会话档：新建 tab 并把结果发到它上面（关窗时桥也能建，见 ChatTabManager）
+            vm = AppShortcutBridge.shared.newChatViewModel?()
+        } else {
+            vm = AppShortcutBridge.shared.currentChatViewModel?() ?? lastViewModel
+        }
         guard let vm, let creds = credentials else {
-            LogBuffer.shared.warning("[hotkey] 识别到 \(text.count) 字，但没有会话/凭据可发")
+            LogBuffer.shared.warning("[hotkey] 识别到 \(text.count) 字，但\(wantsNew ? "开不了新会话" : "没有会话")/没有凭据，这次不发")
             NSSound.beep()
             followTurn = false
             hud.idle(now: Date())
             return
         }
         lastViewModel = vm
-        if vm.isStreaming {
+        // 新会话的 VM 刚建出来，没有在跑的轮次
+        if !wantsNew, vm.isStreaming {
             // 不发 /api/chat/stop：服务端 Register 会取消旧 loop，迟到的 stop 会误杀新轮
             // 这是「立刻接一轮语音」，不是用户停止：保留排队消息
             vm.stopStreaming(notifyServer: false, clearPending: false)
@@ -237,6 +269,9 @@ final class VoiceHotKeyController {
 
     /// 无视图时把这一轮回复接到自己的 TTS 上（听完就能听到答案，不用开窗）
     private func wireHeadlessSpeech(vm: ChatViewModel, baseURL: String, token: String) {
+        // 上一轮的 hook 还挂在别的 VM 上时先摘掉（见 `detachHeadlessSpeech`）
+        detachHeadlessSpeech()
+        headlessWiredVM = vm
         vm.onAssistantReplyDelta = { [weak self] text in
             self?.ptt.appendReplyDelta(text, baseURL: baseURL, token: token)
         }
@@ -247,6 +282,17 @@ final class VoiceHotKeyController {
             self?.ptt.stopSpeaking()
         }
         vm.replyOwner = ObjectIdentifier(ptt)
+    }
+
+    /// 摘掉控制器自己挂在 VM 上的朗读 hook（视图接过 `replyOwner` 的不动）
+    private func detachHeadlessSpeech() {
+        guard let old = headlessWiredVM else { return }
+        headlessWiredVM = nil
+        guard old.replyOwner == ObjectIdentifier(ptt) else { return }
+        old.onAssistantReplyDelta = nil
+        old.onAssistantReplyDone = nil
+        old.onAssistantReplyAborted = nil
+        old.replyOwner = nil
     }
 
     private func currentCredentials() -> (baseURL: String, token: String)? {

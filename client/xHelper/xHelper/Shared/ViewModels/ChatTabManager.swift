@@ -117,6 +117,9 @@ final class ChatTabManager: ObservableObject {
         tabs.append(tab)
         activate(tab)
         resetBlank(tab)
+        // 全局语音「新会话」档可以在关窗状态下反复建 tab（没有 UI 去触发 openConversation），
+        // 这里必须和 openConversation 一样收口，否则 tab/VM 无界累积
+        enforceCacheLimit()
     }
 
     /// 会话接力：新建会话并把「接力文档」作为首条消息发出，UI 切到新会话。

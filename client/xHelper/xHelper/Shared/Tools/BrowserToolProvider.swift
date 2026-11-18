@@ -1806,16 +1806,26 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 关闭全部标签页：取消下载 + teardown + 移除。
-    private func performCloseAll() {
+    /// `skipAgentTabs`：右栏「全部关闭」用 —— Agent 工作区标签是别人正在跑任务的页面，不跟着关。
+    private func performCloseAll(skipAgentTabs: Bool = false) {
         for (id, session) in tabs {
+            if skipAgentTabs && session.isAgentTab { continue }
             session.cancelLoadWait()
             session.forceCancelDownloads()
             tearDownWebView(session) // 停止加载与媒体播放（如 bilibili 视频声音）
             rightSidebar?.closeTab(id)
         }
-        tabs.removeAll()
-        pendingHandoff.removeAll()
-        lastAgentTabByOwner.removeAll()
+        if skipAgentTabs {
+            // 只留 agent 标签，连带把它们的交接/归属表收窄
+            tabs = tabs.filter { $0.value.isAgentTab }
+            let keep = Set(tabs.keys)
+            pendingHandoff = pendingHandoff.filter { keep.contains($0.value.tabId) }
+            lastAgentTabByOwner = lastAgentTabByOwner.filter { keep.contains($0.value) }
+        } else {
+            tabs.removeAll()
+            pendingHandoff.removeAll()
+            lastAgentTabByOwner.removeAll()
+        }
         closedStack.removeAll()
         activeTabId = nil
         // 灵阅与工具页（下载/收藏/历史/配置/本页资源）只在侧栏 tabs 里、没有浏览器 session，
@@ -2193,6 +2203,32 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 顶栏「退出」按钮调用；区别于「返回」（仅切浏览面板、保留标签与页面状态）。
     func exitBrowser() {
         _ = handleClose(owner: nil)
+    }
+
+    /// 右栏「全部关闭」：只关用户自己的标签（网页 / 灵阅 / 工具页），跳过 Agent 工作区标签。
+    /// 有下载进行中时先弹一次确认条，确认后才真正关闭并回调；用户取消则什么都不做（不回调），
+    /// 调用方（`RightSidebarManager.closeAllTabs`）必须把后续收尾放进 completion。
+    func closeAllUserTabs(completion: @escaping () -> Void) {
+        let userIDs = tabs.filter { !$0.value.isAgentTab }.map(\.key)
+        let downloading = userIDs.filter { tabs[$0]?.hasActiveDownloads == true }
+        let closeNow: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.performCloseAll(skipAgentTabs: true)
+            completion()
+        }
+        #if os(macOS)
+        if !downloading.isEmpty {
+            presentCloseConfirmation(
+                title: "全部关闭",
+                message: "有 \(downloading.count) 个下载进行中，关闭将取消下载。确认关闭？"
+            ) { allow in
+                guard allow else { return }
+                closeNow()
+            }
+            return
+        }
+        #endif
+        closeNow()
     }
 
     /// 清除浏览数据（顶栏/浏览器清数据按钮共用；sheet 确认，非阻塞）

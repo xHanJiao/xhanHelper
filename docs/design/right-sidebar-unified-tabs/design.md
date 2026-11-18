@@ -89,7 +89,8 @@ macOS 右栏有两套壳并存：
   3. `tab-actions` 的多选按钮按面板补回 `disabled`（空列表不可点），书架导入中显示沙漏并禁用。
      （顶栏按钮状态随注册表刷新，导入中的图标切换可能有几十 ms 延迟。）
   4. **tab 条加「全部关闭」**（首页 chip 右边，无 tab 时不显示）：关掉网页/灵阅/工具/列表/文档/书并回首页。
-     有意不做两件事——不保留 ⌘⇧T 恢复栈（重置语义）；不碰 Agent 工作区标签。
-     边界：下载进行中且「下载」tab 是最后一个非首页 tab 时，`closeTab` 的保护会拒关它，会剩这一个 tab。
+     有意不做两件事——不保留 ⌘⇧T 恢复栈（重置语义）；不碰 Agent 工作区标签
+     （走 `BrowserToolProvider.closeAllUserTabs`，`performCloseAll(skipAgentTabs:)` 过滤 agent session）。
+     有下载进行中时先弹一次确认条：确认后才关并回首页，取消则什么都不关（收尾都在 completion 里）。
 - 已知遗留：`manager → tabs → AnyView → 视图 → manager` 存在强引用环（manager 生命周期 = 登录会话，
   登出时少回收一次，量级几 MB）；删除文档时其详情 tab 不会自动关（再激活会拉到 404）。

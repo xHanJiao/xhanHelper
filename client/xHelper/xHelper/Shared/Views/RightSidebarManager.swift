@@ -317,14 +317,18 @@ final class RightSidebarManager: ObservableObject {
     /// 不碰 Agent 工作区标签（那是 agent 正在跑任务的页面，工作区自带「全部关闭」）。
     func closeAllTabs() {
         guard hasTabs else { return }
-        BrowserToolProvider.shared.exitBrowser()
-        for tab in tabs {
-            switch tab.kind {
-            case .panel, .document, .book: closeTab(tab.id)
-            case .home, .artifact, .web, .tool: break  // 后三类已由 exitBrowser 收掉
+        // 有下载时 provider 会先弹确认条、异步回调：后续收尾必须放进 completion，
+        // 否则用户取消后会出现「网页还在、别的 tab 已没了」的半关状态。
+        BrowserToolProvider.shared.closeAllUserTabs { [weak self] in
+            guard let self else { return }
+            for tab in self.tabs {
+                switch tab.kind {
+                case .panel, .document, .book: self.closeTab(tab.id)
+                case .home, .artifact, .web, .tool: break  // 后三类已由 provider 收掉
+                }
             }
+            self.goHome()
         }
-        goHome()
     }
 
     func activateTab(id: String) {

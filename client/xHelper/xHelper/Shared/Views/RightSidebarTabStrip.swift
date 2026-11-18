@@ -65,7 +65,8 @@ struct RightSidebarTabStrip: View {
         Button {
             manager.closeAllTabs()
         } label: {
-            Image(systemName: "xmark.circle")
+            // 别用 xmark.circle：圆底胶囊里再套一个圆 = 同心双圈，像"关闭这个圆"
+            Image(systemName: "rectangle.stack.badge.minus")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 26, height: 26)

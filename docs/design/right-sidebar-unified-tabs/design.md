@@ -37,11 +37,11 @@ macOS 右栏有两套壳并存：
   列表（退出多选/搜索态）、工具页（无）、网页（provider session teardown，沿用原路径）。
 - 顶栏：
   - `document-actions` 补「划线与批注」「查找」（读写 `@AppStorage` 同两个 key）；
-  - 新增 `tab-actions`（priority 7，低于浏览器 10 / 详情 8）承载列表页动作：刷新、多选、导入、导出、回收站批量。
+  - 新增 `tab-actions`（priority 7，低于浏览器 10 / 详情 8）承载列表页动作：刷新、多选、导入、导出（回收站批量留在模式行，稀有且有二次确认）。
 - 模式控件（列表/词云/回收站 + 读者层级 + 搜索图标）留在内容区一条 40pt 细行：
   搜索是「就地展开输入框」的视图内状态，塞进顶栏需要额外共享状态，V1 不动。
 - 书中阅读页（`BookReaderView`）自带常驻 chrome（章号/目录/Aa）**本轮不动**，其「返回书架」= 激活书架 tab。
-- 首页 chip 常驻 tab 条最左（`house` 图标），点它回首页；`+` = 新空白网页 tab。
+- 首页 chip 常驻 tab 条最左（`house` 图标），点它回首页。新空白页走 ⌘T / 首页「浏览器」卡 / 顶栏浏览器组 `+`。
 
 ## 4. 入口映射
 
@@ -71,13 +71,20 @@ macOS 右栏有两套壳并存：
      （搜索是视图内状态，塞顶栏要额外共享状态，V1 不动）。刷新/多选/导入/导出已上顶栏 `tab-actions`。
   2. **书阅读页 chrome 不动**：`BookReaderView` 自带常驻 chrome（章号/目录/Aa/查找）仍留在页内；
      其「返回书架」= 激活书架 tab。动作上顶栏留作后续。
-  3. **tab 条用横向滚动**，没有 `⋯` 溢出菜单（省掉测量与变宽计算）；首页 chip 与 `+` 固定在两端。
-  4. **⌘1–5 在列表 tab 内不可用**：它们挂在顶栏导航组按钮上，列表 tab 激活时该组被 `tab-actions`（priority 7）顶上
-     ——与浏览器 tab / 文档详情 tab 的既有行为一致。回首页（house chip）后可用。
+  3. **tab 条用横向滚动**，没有 `⋯` 溢出菜单（省掉测量与变宽计算）；首页 chip 固定在左端。
+  4. **⌘1–5 的空间关系未变**：导航组在顶栏 `right` 槽（priority 5），`tab-actions` 在 `center` 槽（priority 7），
+     两槽互不挤占，`TopBarLayout` 只降级 `center`。所以列表 tab 里 ⌘1–5 理论上仍可用（真机未复核）。
   5. 首页 tab 在最左常驻（`house` chip，不可关），用来兜底"tab 条打开着怎么回入口网格"。
   影响：`RightSidebarManager` / `RightSidebarView` / `RightSidebarTabStrip`(新) / `SidebarHomeView`(新) /
   `BrowsePanelView`（改为 `PanelTabView`）/ `DocumentTabView`(新) / `RightSidebarTabActions`(新) /
   `DocumentListView` / `BookshelfView` / `PageHolders` / `DocumentSelectionCoordinator` / `ArtifactOpenCoordinator` /
   `BrowserToolProvider` / `BrowserFocus` / `TopBarView` / `ContentView` / `xHelperMac/App.swift`
+- 2026-11-18 修补（评审后 + 真机反馈）：
+  1. **tab 条尾部 `+` 删除**：新空白页仍有三个入口（⌘T / 首页「浏览器」卡 / 顶栏 `browser-actions` 的 `+`）；
+     分屏右窗格那颗 `+` 保留（窗格内唯一入口）。
+  2. **`PanelTabView` / `SidebarHomeView` 不再持有 `baseURL`/`token` 字符串**：tab 内容只建一次，
+     本地后端重启会换 token（`DeviceManager.token` 是 `@Published`），改成持 `DeviceManager` 并实时取。
+  3. `tab-actions` 的多选按钮按面板补回 `disabled`（空列表不可点），书架导入中显示沙漏并禁用。
+     （顶栏按钮状态随注册表刷新，导入中的图标切换可能有几十 ms 延迟。）
 - 已知遗留：`manager → tabs → AnyView → 视图 → manager` 存在强引用环（manager 生命周期 = 登录会话，
   登出时少回收一次，量级几 MB）；删除文档时其详情 tab 不会自动关（再激活会拉到 404）。

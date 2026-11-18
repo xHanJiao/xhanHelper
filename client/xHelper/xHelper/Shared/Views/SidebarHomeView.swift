@@ -10,8 +10,12 @@ import AppKit
 struct SidebarHomeView: View {
     @ObservedObject var manager: RightSidebarManager
     @ObservedObject var homeVM: SidebarHomeViewModel
-    let baseURL: String
-    let token: String
+    /// tab 内容只建一次，token/baseURL 实时取（本地后端重启会换 token）
+    @ObservedObject var deviceManager: DeviceManager
+
+    private var baseURL: String { deviceManager.baseURL }
+
+    private var token: String { deviceManager.token ?? "" }
 
     #if os(macOS)
     @ObservedObject private var bookVM = BookViewModel.shared

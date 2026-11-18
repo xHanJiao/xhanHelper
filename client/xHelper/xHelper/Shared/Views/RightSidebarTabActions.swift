@@ -27,7 +27,8 @@ enum RightSidebarTabActions {
     static func register(
         manager: RightSidebarManager,
         documentVM: DocumentViewModel,
-        artifactVM: ArtifactViewModel
+        artifactVM: ArtifactViewModel,
+        imageVM: ImageViewModel
     ) {
         func post(_ action: SidebarPanelAction) {
             guard let panel = manager.activePanel else { return }
@@ -39,25 +40,26 @@ enum RightSidebarTabActions {
 
         var buttons: [TopBarButton] = [
             TopBarButton(id: "tab-refresh",
-                             icon: { "arrow.clockwise" },
-                             enabled: { true },
-                             action: { post(.refresh) },
-                             help: { "刷新" },
-                             isRefresh: true),
-                TopBarButton(id: "tab-multiselect",
-                             icon: { "checkmark.circle" },
-                             enabled: { true },
-                             action: { post(.multiselect) },
-                             help: { "多选管理" },
-                             visible: {
-                                 if manager.activePanel == .documents {
-                                     return documentVM.mode == .list
-                                 }
-                                 if manager.activePanel == .artifacts {
-                                     return artifactVM.mode == .list
-                                 }
-                                 return manager.activePanel == .images
-                             }),
+                         icon: { "arrow.clockwise" },
+                         enabled: { true },
+                         action: { post(.refresh) },
+                         help: { "刷新" },
+                         isRefresh: true),
+            TopBarButton(id: "tab-multiselect",
+                         icon: { "checkmark.circle" },
+                         // 空列表不进多选（原来这三处页头各自 disable）
+                         enabled: { !isListEmpty() },
+                         action: { post(.multiselect) },
+                         help: { "多选管理" },
+                         visible: {
+                             if manager.activePanel == .documents {
+                                 return documentVM.mode == .list
+                             }
+                             if manager.activePanel == .artifacts {
+                                 return artifactVM.mode == .list
+                             }
+                             return manager.activePanel == .images
+                         }),
             TopBarButton(id: "tab-export-csv",
                          icon: { "tray.and.arrow.up" },
                          enabled: { true },
@@ -65,12 +67,22 @@ enum RightSidebarTabActions {
                          help: { "导出 CSV" },
                          visible: { manager.activePanel == .bills }),
         ]
+
+        func isListEmpty() -> Bool {
+            switch manager.activePanel {
+            case .documents: return documentVM.documents.isEmpty
+            case .artifacts: return artifactVM.items.isEmpty
+            case .images:    return imageVM.items.isEmpty
+            default:         return true
+            }
+        }
+
         #if os(macOS)
         buttons.insert(TopBarButton(id: "tab-import-book",
-                                    icon: { "tray.and.arrow.down" },
-                                    enabled: { true },
+                                    icon: { BookViewModel.shared.isImporting ? "hourglass" : "tray.and.arrow.down" },
+                                    enabled: { !BookViewModel.shared.isImporting },
                                     action: { post(.importBook) },
-                                    help: { "导入 EPUB" },
+                                    help: { BookViewModel.shared.isImporting ? "正在导入…" : "导入 EPUB" },
                                     visible: { manager.activePanel == .books }),
                        at: buttons.count - 1)
         #endif

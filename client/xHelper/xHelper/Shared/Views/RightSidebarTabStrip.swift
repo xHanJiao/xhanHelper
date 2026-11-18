@@ -8,7 +8,7 @@ typealias SidebarFavicon = NSImage
 typealias SidebarFavicon = AnyObject
 #endif
 
-/// 右栏顶部统一的胶囊 tab 条：首页 chip + 各 tab + `+`。
+/// 右栏顶部统一的胶囊 tab 条：首页 chip + 各 tab。
 /// 列表/详情/网页/工具页在这里只有"一个 tab"这一种身份（见 docs/design/right-sidebar-unified-tabs）。
 struct RightSidebarTabStrip: View {
     @ObservedObject var manager: RightSidebarManager
@@ -31,8 +31,6 @@ struct RightSidebarTabStrip: View {
                 .padding(.vertical, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            plusButton
         }
         .padding(.horizontal, 12)
         .padding(.top, 2)
@@ -55,21 +53,6 @@ struct RightSidebarTabStrip: View {
         }
         .buttonStyle(.plain)
         .help("首页")
-    }
-
-    private var plusButton: some View {
-        Button {
-            BrowserToolProvider.shared.openBlankTab()
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
-                .background(chipBackground(active: false), in: Capsule())
-                .overlay(Capsule().stroke(chipStroke(active: false), lineWidth: 0.5))
-        }
-        .buttonStyle(.plain)
-        .help("新标签页")
     }
 
     // MARK: - 单个 tab

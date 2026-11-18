@@ -128,8 +128,8 @@ struct PanelTabView: View {
     @ObservedObject var agentVM: AgentViewModel
     @ObservedObject var imageVM: ImageViewModel
     @ObservedObject var homeVM: SidebarHomeViewModel
-    let baseURL: String
-    let token: String
+    /// tab 内容只建一次，所以 token/baseURL 必须实时从 manager 取（本地后端重启会换 token）
+    @ObservedObject var deviceManager: DeviceManager
     /// 卡片点开详情：交给 manager 开独立 tab
     let onOpenDocument: (Document) -> Void
     #if os(macOS)
@@ -155,6 +155,10 @@ struct PanelTabView: View {
     @State private var isConfirmingImageBatchDelete = false
     @State private var isConfirmingArtifactBatchDelete = false
     @State private var trashBulkAction: TrashBulkAction?
+
+    private var baseURL: String { deviceManager.baseURL }
+
+    private var token: String { deviceManager.token ?? "" }
 
     private var dashboardURL: URL? {
         URL(string: DeviceManager.webBaseURL + "/admin?t=\(dashboardBust)")

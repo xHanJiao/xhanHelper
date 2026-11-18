@@ -605,8 +605,7 @@ struct ContentView: View {
                     rightSidebar.configure(factory: RightSidebarContentFactory(
                         home: {
                             AnyView(SidebarHomeView(
-                                manager: rightSidebar, homeVM: homeVM,
-                                baseURL: deviceManager.baseURL, token: deviceManager.token ?? ""
+                                manager: rightSidebar, homeVM: homeVM, deviceManager: deviceManager
                             ))
                         },
                         panel: { panel in
@@ -614,8 +613,7 @@ struct ContentView: View {
                                 panel: panel,
                                 billVM: billVM, memoryVM: memoryVM, artifactVM: artifactVM,
                                 documentVM: documentVM, eventVM: eventVM, agentVM: agentVM,
-                                imageVM: imageVM, homeVM: homeVM,
-                                baseURL: deviceManager.baseURL, token: deviceManager.token ?? "",
+                                imageVM: imageVM, homeVM: homeVM, deviceManager: deviceManager,
                                 onOpenDocument: { rightSidebar.openDocumentTab($0) },
                                 onOpenBook: { rightSidebar.openBookTab($0) }
                             ))
@@ -634,7 +632,8 @@ struct ContentView: View {
                         }
                     ))
                     RightSidebarTabActions.register(
-                        manager: rightSidebar, documentVM: documentVM, artifactVM: artifactVM
+                        manager: rightSidebar, documentVM: documentVM,
+                        artifactVM: artifactVM, imageVM: imageVM
                     )
                     registerAppShortcutBridge()
                 }

@@ -53,8 +53,9 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(repos.Note, repos.Version, infra.VectorStore, infra.Embedder, repos.Embedding, chunkBuilder, conceptEmbedService, entityPurger), log.Default()))
 
-	// 主循环写入工具 record_memory。runner（决策循环）在 InitAgents 建好后回填。
-	recordMemoryTool := tool.NewRecordMemoryTool(nil)
+	// 主循环写入工具 record_memory。runner（决策循环）在 InitAgents 建好后回填；
+	// ephemeralCheck 必须在这里给（无痕会话不写记忆，见 docs/design/ephemeral-conversation.md）。
+	recordMemoryTool := tool.NewRecordMemoryTool(nil, repos.Conversation.IsEphemeral)
 	reg.Register(tool.NewLoggingWrapper(recordMemoryTool, log.Default()))
 
 	// --- 内存提取器 ---

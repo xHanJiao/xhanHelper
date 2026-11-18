@@ -378,3 +378,16 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
   - **历史对照**：第四轮 A 档（10-28–10-31）只留 inline 的 4 天仅产出 7 条记忆，且漏记「手账偏好手作风」、
     记错社保生效日期，当时因此回退。本轮接受同样的捕获量下降，若两周内聊天出现 ≥2 次
     「之前说过 / 不记得了」，回滚 `memory_auto_extract: true` 并转收窄方案。
+- **2026-11-18（第六轮：无痕会话泄漏记忆）**：用户放无痕会话的诉求就是「不落记忆」，但实现只挡住了
+  post_chat（`MemoryWorker`），主循环 inline `record_memory` 完全没判断。数据面证据：
+
+  | 项 | 结果 |
+  |---|---|
+  | 泄漏窗口 | `ephemeral_purge` 24 次中，最近两次 11-16 22:38、11-17 20:22 |
+  | 泄漏量 | 两个窗口各留下 3 / 6 条记忆，源消息已被物理销毁（facts 无法回溯） |
+  | 敏感项 | 「父亲微信 / 恨他们」「会把别人往坏处想」 |
+  | 扩散 | 9 条中 5 条已挂进事件（驾照考取、小安泽来京看病），会随事件注入后续每轮对话 |
+
+  修法（见 `docs/design/ephemeral-conversation.md` §8）：请求层隐藏 `record_memory`，
+  执行层 `RecordMemoryTool` 用 `EphemeralChecker` 兜底拒写（fail-closed）。存量 9 条已人工核对后删除
+  （连带 embeddings）。`MemoryDefinition`、抽取段、事件拼装均不变。

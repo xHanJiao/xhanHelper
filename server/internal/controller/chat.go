@@ -375,6 +375,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			VoiceMode:          req.VoiceMode,
 			VerifyEnabled:      req.VerifyEnabled,
 			HiddenRound:        req.HiddenRound,
+			Ephemeral:          convExtraEphemeral(conv),
 			UserImages:         userImages,
 			UserImageIDs:       userImageIDs,
 			PinnedEventIDs:     pinnedEventIDs,

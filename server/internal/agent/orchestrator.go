@@ -107,6 +107,11 @@ type RunRequest struct {
 	// 不进对话记录/LLM 上下文/检索/后处理。接力等控制轮用。
 	HiddenRound bool
 
+	// Ephemeral 无痕会话：不向模型提供写记忆能力（record_memory）。
+	// 无痕销毁只清会话域痕迹（消息/摘要/计划/分享），写进 user_memories 的行会永留——
+	// 见 docs/design/ephemeral-conversation.md。执行层另有一道闸（record_memory 的 EphemeralChecker）。
+	Ephemeral bool
+
 	// TurnID 本轮 turn 的 id（agent 层 StartTurn 生成后回填），供客户端工具 payload 归组。
 	TurnID string
 }
@@ -130,6 +135,10 @@ type reactState struct {
 	// key = "组名.函数名"（如 "note.search"）。
 	exposedTools map[string]bool
 	expMutex     sync.Mutex // 并发工具调用写 exposedTools 用
+
+	// extraExcludes — 本轮追加隐藏的工具（无痕会话隐藏 record_memory）。
+	// 与全局 chat.tool_excludes 合并后生效，不写回 Orchestrator，避免污染其他会话。
+	extraExcludes []string
 }
 
 // msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
@@ -570,12 +579,7 @@ func (o *Orchestrator) runReActLoop(
 		defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
 	}
 
-	state = &reactState{
-		msgs:         append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
-		userMsgID:    userMsg.ID,
-		userImageIDs: req.UserImageIDs,
-		outcome:      activity.OutcomeCompleted,
-	}
+	state = newReActState(req, userMsg)
 	// HTML 产物引用挂到本轮最后一条 assistant 消息上（正文在 artifacts 表，消息只存 id）。
 	// 用 WithoutCancel：用户点停止/断线不该让卡片丢失。
 	defer func() {
@@ -1199,10 +1203,11 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		thinking = &t
 	}
 	var tools []llm.ToolDefinition
+	excludes := o.runExcludes(state)
 	// plan：服务端只读函数 + 客户端 fs 只读三函数（写操作执行级仍被拦截）；work：渐进式暴露。
 	if !state.finalRound && req.Mode == model.ConvModePlan {
-		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), o.toolExcludes)
-		tools = append(tools, filterToolDefs(buildClientToolDefs(planAllowedClientTools(req.ClientTools), o.registry), o.toolExcludes)...)
+		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), excludes)
+		tools = append(tools, filterToolDefs(buildClientToolDefs(planAllowedClientTools(req.ClientTools), o.registry), excludes)...)
 	} else if !state.finalRound {
 		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
 		state.expMutex.Lock()
@@ -1216,7 +1221,7 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		exposedDefs := o.registry.GetLLMToolsFiltered(exposedFuncTools(exposed))
 		tools = append(tools, filterExposedFuncDefs(exposedDefs, exposed)...)
 		tools = append(tools, filterExposedFuncDefs(buildClientToolDefs(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), exposed)...)
-		tools = filterToolDefs(tools, o.toolExcludes)
+		tools = filterToolDefs(tools, excludes)
 	}
 	// 语音轮：最后一次工具返回后补一句「只回结论」。只改本次请求的副本，
 	// state.msgs 与落库内容都不动；消息序列仍是 assistant(tool_calls) → tool，不插 user 消息。
@@ -1827,18 +1832,60 @@ type toolExecResult struct {
 	result *tool.Result
 }
 
+// ephemeralToolExcludes — 无痕会话对模型隐藏的写记忆工具。
+// 无痕只销毁会话域痕迹，记忆行会永留（见 docs/design/ephemeral-conversation.md）；
+// 这里只是不给模型机会（省一轮），真正的闸口是 record_memory 的 EphemeralChecker。
+func ephemeralToolExcludes(req *RunRequest) []string {
+	if req == nil || !req.Ephemeral {
+		return nil
+	}
+	return []string{"record_memory"}
+}
+
+// newReActState 构造本轮循环状态。单独提出来是为了让「req.Ephemeral → extraExcludes」
+// 这条接线可测：测试从 RunRequest 走到 state，而不是手工往 state 里塞字段。
+func newReActState(req *RunRequest, userMsg *model.Message) *reactState {
+	return &reactState{
+		msgs:          append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
+		userMsgID:     userMsg.ID,
+		userImageIDs:  req.UserImageIDs,
+		outcome:       activity.OutcomeCompleted,
+		extraExcludes: ephemeralToolExcludes(req),
+	}
+}
+
+// runExcludes — 本轮生效的隐藏工具：全局 chat.tool_excludes + 本轮追加。
+// 有追加时返回新切片，绝不原地 append o.toolExcludes（会污染全局配置的底层数组）。
+func (o *Orchestrator) runExcludes(state *reactState) []string {
+	if state == nil || len(state.extraExcludes) == 0 {
+		return o.toolExcludes
+	}
+	out := make([]string, 0, len(o.toolExcludes)+len(state.extraExcludes))
+	out = append(out, o.toolExcludes...)
+	return append(out, state.extraExcludes...)
+}
+
 // makeExposeFn 构造 expose_tools 的回调：组级校验（存在/未隐藏/未排除/非 expose_tools 自身，
 // 客户端工具组按上报的 server_name 识别）+ 函数级校验（函数名存在于该组 Functions()），
 // 合法函数写入 state.exposedTools（并发安全）。
 // 组级失败以组名入 Rejected，函数级失败以 "组名.函数名" 入 Rejected。返回结果含可用组全集，供 LLM 纠正。
 func (o *Orchestrator) makeExposeFn(state *reactState, clientGroups map[string]map[string]bool) func(specs []tool.ExposeSpec) *tool.ExposeResult {
-	excluded := make(map[string]bool, len(o.toolExcludes))
-	for _, n := range o.toolExcludes {
+	excludes := o.runExcludes(state)
+	excluded := make(map[string]bool, len(excludes))
+	for _, n := range excludes {
 		excluded[n] = true
 	}
-	available := append([]string{}, o.registry.VisibleToolNames()...)
+	// 已隐藏/本轮排除的组不进 available：否则模型看到一个「可启用」却永远被拒的组，白费一轮。
+	available := make([]string, 0, len(o.registry.VisibleToolNames())+len(clientGroups))
+	for _, n := range o.registry.VisibleToolNames() {
+		if !excluded[n] {
+			available = append(available, n)
+		}
+	}
 	for g := range clientGroups {
-		available = append(available, g)
+		if !excluded[g] {
+			available = append(available, g)
+		}
 	}
 	sort.Strings(available)
 	return func(specs []tool.ExposeSpec) *tool.ExposeResult {

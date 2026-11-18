@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 // RecordMemoryRunner — 主循环 record_memory 工具的执行接口，由 agent 层实现。
@@ -24,11 +25,20 @@ type RecordMemoryInstaller interface {
 // RecordMemoryTool — 主循环的写入工具：把「当场记一条」交给决策循环。
 // 取代退役的 note.record_note：主 LLM 只表达「我要记这条」，去重/改删由循环判。
 type RecordMemoryTool struct {
-	runner RecordMemoryRunner
+	runner         RecordMemoryRunner
+	ephemeralCheck EphemeralChecker
 }
 
-func NewRecordMemoryTool(runner RecordMemoryRunner) *RecordMemoryTool {
-	return &RecordMemoryTool{runner: runner}
+// EphemeralChecker 判定会话是否为无痕。无痕会话不写记忆——会话销毁只清会话域痕迹
+// （消息/摘要/计划/分享），写进 user_memories 的行会永留（见 docs/design/ephemeral-conversation.md）。
+type EphemeralChecker func(ctx context.Context, convID string) (bool, error)
+
+func NewRecordMemoryTool(runner RecordMemoryRunner, ephemeralCheck EphemeralChecker) *RecordMemoryTool {
+	if ephemeralCheck == nil {
+		// 必需依赖：漏接线就意味着无痕会话继续落记忆，炸在明处。
+		panic("record_memory: ephemeralCheck is nil (wiring bug)")
+	}
+	return &RecordMemoryTool{runner: runner, ephemeralCheck: ephemeralCheck}
 }
 
 // SetRunner 回填决策循环（InitAgents 时调用）。
@@ -72,6 +82,21 @@ func (t *RecordMemoryTool) ReadOnlyFuncs() map[string]bool { return nil }
 func (t *RecordMemoryTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	if funcName != "record_memory" {
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
+	}
+	// 无痕会话不写记忆（请求体已隐藏本工具，这里是真正闸口）。
+	// shortcut: convID 为空（replay/eval 无会话上下文）时不查，按非无痕处理。
+	if ec.ConvID != "" {
+		eph, err := t.ephemeralCheck(ec.Ctx, ec.ConvID)
+		if err != nil {
+			// 查询报错就拒写：隐私侧宁可不记，也不能写进一个可能是无痕的会话。
+			// （会话行不存在时 IsEphemeral 返回 (false,nil)，按非无痕放行——不存在的会话也没有 chat 入口。）
+			log.Printf("[record_memory] ephemeral check failed: conv=%s err=%v", ec.ConvID, err)
+			return &Result{Success: false, Error: "无法确认会话类型，已跳过记录"}
+		}
+		if eph {
+			log.Printf("[record_memory] blocked: ephemeral conv=%s", ec.ConvID)
+			return &Result{Success: false, Error: "无痕会话不写记忆"}
+		}
 	}
 	var a struct {
 		Topic   string   `json:"topic"`

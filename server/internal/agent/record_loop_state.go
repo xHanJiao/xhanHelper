@@ -24,9 +24,12 @@ type recordLoopState struct {
 	// candFacts 入口已校验过的候选原话。它是**写入侧过滤的唯一基准**：决策循环是第二次
 	// 独立采样的 LLM，没有这道它在 tool call 里写什么就落什么（见 filterWrittenFacts）。
 	candFacts []string
-	idSet     map[string]bool
-	idType    map[string]string
-	saved     bool // 一条候选最多新增 1 条记忆
+	// sourceConvID 写下这条记忆的会话（无痕销毁时按它回溯清理，见 docs/design/ephemeral-conversation.md）。
+	// 只用于新建行；update 改的是别人的行，不覆盖出处。
+	sourceConvID string
+	idSet        map[string]bool
+	idType       map[string]string
+	saved        bool // 一条候选最多新增 1 条记忆
 }
 
 func (s *recordLoopState) Name() string { return recordToolMemory }

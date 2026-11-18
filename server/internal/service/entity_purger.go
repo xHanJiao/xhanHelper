@@ -54,8 +54,51 @@ func (p *EntityPurger) Purge(ctx context.Context, entityType, entityID string) e
 	return nil
 }
 
-// PurgeChunks 只清理句级 chunk（内存 chunk 向量 + chunk 向量行 + chunk 行）。
-// 用于「更新后重建 chunk」这类只替换 chunk 的场景，不动全文向量与版本快照。
+// PurgeMany 批量清理多个同类实体的派生数据（批量场景一次往返，不逐条 Purge）。
+// entityType ∈ {note, memory}；空列表 = no-op。失败向上抛，保留错误链。
+func (p *EntityPurger) PurgeMany(ctx context.Context, entityType string, entityIDs []string) error {
+	if len(entityIDs) == 0 {
+		return nil
+	}
+	prefix, ok := model.FullVectorPrefix(entityType)
+	if !ok {
+		return fmt.Errorf("entity purger: unsupported entity type %q", entityType)
+	}
+
+	chunks, err := p.chunkRepo.BatchGetByParentIDs(ctx, entityType, entityIDs)
+	if err != nil {
+		return fmt.Errorf("list chunks %s: %w", entityType, err)
+	}
+	chunkKeys := make([]string, 0, len(chunks))
+	vectorIDs := make([]string, 0, len(entityIDs)+len(chunks))
+	for _, id := range entityIDs {
+		vectorIDs = append(vectorIDs, prefix+id)
+	}
+	for _, c := range chunks {
+		key := model.ChunkVectorKey(entityType, c.ParentID, c.ChunkIndex)
+		chunkKeys = append(chunkKeys, key)
+		vectorIDs = append(vectorIDs, key)
+	}
+	for _, id := range vectorIDs {
+		p.vectorStore.Delete(id)
+	}
+
+	if _, err := p.embeddingRepo.DeleteByEntities(ctx, entityType, entityIDs); err != nil {
+		return fmt.Errorf("delete full embeddings %s: %w", entityType, err)
+	}
+	if _, err := p.embeddingRepo.DeleteByEntities(ctx, model.EntityTypeChunk, chunkKeys); err != nil {
+		return fmt.Errorf("delete chunk embeddings %s: %w", entityType, err)
+	}
+	if _, err := p.chunkRepo.DeleteByParents(ctx, entityType, entityIDs); err != nil {
+		return fmt.Errorf("delete chunks %s: %w", entityType, err)
+	}
+	if _, err := p.versionRepo.DeleteByEntities(ctx, entityType, entityIDs); err != nil {
+		return fmt.Errorf("delete versions %s: %w", entityType, err)
+	}
+	return nil
+}
+
+// PurgeChunks 只清理句级 chunk（内存 chunk 向量 + chunk 向量行 + chunk 行）。// 用于「更新后重建 chunk」这类只替换 chunk 的场景，不动全文向量与版本快照。
 func (p *EntityPurger) PurgeChunks(ctx context.Context, entityType, entityID string) error {
 	chunks, err := p.chunkRepo.ListByParent(ctx, entityType, entityID)
 	if err != nil {

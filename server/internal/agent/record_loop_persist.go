@@ -19,7 +19,7 @@ import (
 // newMemory 组装一条待写记忆。topic 复用是确定性逻辑，留在这里，不交给 LLM。
 func (s *recordLoopState) newMemory(topic, summary string, facts []string) *model.UserMemory {
 	topic = s.reuseTopic(context.Background(), topic)
-	return &model.UserMemory{
+	m := &model.UserMemory{
 		ID:          uuid.New().String(),
 		UserID:      s.userID,
 		MemoryKey:   topic,
@@ -29,6 +29,11 @@ func (s *recordLoopState) newMemory(topic, summary string, facts []string) *mode
 		Source:      s.source,
 		ContentHash: util.MD5Hex(summary),
 	}
+	if s.sourceConvID != "" {
+		convID := s.sourceConvID
+		m.SourceConvID = &convID
+	}
+	return m
 }
 
 // persist 落库并同步向量/概念/分块。isNew=false 表示 update（走 Update + 重嵌入）。

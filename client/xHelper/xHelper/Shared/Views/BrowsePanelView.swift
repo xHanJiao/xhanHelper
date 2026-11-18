@@ -156,6 +156,15 @@ struct PanelTabView: View {
     @State private var isConfirmingArtifactBatchDelete = false
     @State private var trashBulkAction: TrashBulkAction?
 
+    /// 影响顶栏 `tab-actions` 状态的信号（列表长度 + 书架导入中）
+    private var tabActionTick: Int {
+        var tick = documentVM.documents.count &+ artifactVM.items.count &+ imageVM.items.count
+        #if os(macOS)
+        if bookVM.isImporting { tick &+= 1 }
+        #endif
+        return tick
+    }
+
     private var baseURL: String { deviceManager.baseURL }
 
     private var token: String { deviceManager.token ?? "" }
@@ -238,6 +247,9 @@ struct PanelTabView: View {
                 Task { await memoryVM.loadTopics() }
             }
         }
+        // 顶栏 `tab-actions` 的 enabled/图标是闭包，注册表不观察 VM → 列表长度/导入态变了主动刷一次。
+        // 汇成一个 tick：逐个加 onChange 会把 body 的表达式撑到类型检查超时。
+        .onChange(of: tabActionTick) { _, _ in TopBarRegistry.shared.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .sidebarPanelAction)) { note in
             guard let event = note.object as? SidebarPanelActionEvent, event.panel == panel else { return }
             handle(event.action)

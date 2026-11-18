@@ -95,8 +95,8 @@
    失败关 tab、分享 / 下载 / 导出 PDF 全部不动。
 4. **`ContentView.onAppear`**：`ArtifactOpenCoordinator.shared.artifactVM = artifactVM` 一行。
 5. **`ArtifactViewModel`**：`total` 由 `private` 改 `private(set)`（「· N 篇」用）。
-6. **`Layout`**：加 `artifactNavHardFloor = docTocExpandedWidth + rightSidebarMinWidth`（= 600；
-   与右栏最小宽同源，别写死 380）。
+6. **`Layout`**：加 `artifactNavHardFloor = docTocExpandedWidth + rightSidebarMinWidth`（右栏最小宽 424 后 = **644**；
+   与右栏最小宽同源，别写死数字 —— 2026-11-18 右栏最小宽从 380 抬到 424，见 `../mac-topbar-degrade/design.md`）。
 7. **`HTMLArtifactView` / `ArtifactLoadingView`**：删掉各自的 `.ignoresSafeArea()`，改由调用方负责
    （macOS 在页面列、iOS 在 `ChatView` 的 sheet 补一个），行为不变。
 

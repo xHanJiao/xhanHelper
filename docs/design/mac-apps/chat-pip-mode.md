@@ -73,7 +73,8 @@ private var middleSpan: Double {
   （2026-10-11 起写的是 `WindowMinWidthStore`，由根视图 `.frame(minWidth:)` 落到 AppKit `contentMinSize`；
   详见 `docs/bugs/033`。`rightSidebarMaxAvailable` 同时改为按**窗口真实内容宽**算，不再用会溢出失真的 `geo.size.width`。）
 
-PiP 内容最小宽 ≈ `sidebarMinWidth + sidebarOuterPadding + seam + rightSidebarMinWidth + rightSidebarOuterPadding` ≈ 453。
+PiP 内容最小宽 ≈ `sidebarMinWidth + sidebarOuterPadding + seam + rightSidebarMinWidth + rightSidebarOuterPadding` ≈ 497
+（右栏最小宽 2026-11-18 从 380 抬到 424；PiP 仍取 `max(…, minWindowContentWidth 750)`，所以底线仍是 750）。
 
 ### 4.3 中间区与面板
 
@@ -108,7 +109,7 @@ panelH = max(Layout.floatingPanelMinHeight, min(Layout.floatingPanelHeight, cont
 
 - 窗口够大：固定 400×560。
 - 窗口小于面板：收敛到容器内（高度优先压缩），**永不出界**。
-- 地板：`floatingPanelMinWidth=240`、`floatingPanelMinHeight=200`，被窗口既有最小值天然保证（宽 ~453、高内容区 ~360）。
+- 地板：`floatingPanelMinWidth=240`、`floatingPanelMinHeight=200`，被窗口既有最小值天然保证（宽 ~497、高内容区 ~360）。
 - **重要**：拖动钳制与边缘吸附必须用"当前计算出的面板尺寸"，不能写死标准尺寸。
 
 ### 5.3 拖动 + 边缘吸附

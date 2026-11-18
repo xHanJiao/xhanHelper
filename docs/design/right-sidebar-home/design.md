@@ -131,7 +131,9 @@
 
 ## 7. 面板搬进设置
 
-`BrowsePanel` 枚举**保留全部 case**（`DocumentSelectionCoordinator`、顶栏 ⌘1/⌘2/⌘3 深链都依赖），只新增 `static let homePanels: [BrowsePanel]` 供首页渲染，记忆 / 图片 / 智能体 / 监控看板四项从首页移除。
+`BrowsePanel` 枚举**保留全部 case**（`DocumentSelectionCoordinator`、设置「内容与工具」、深链都依赖），只新增 `static let homePanels: [BrowsePanel]` 供首页渲染，记忆 / 图片 / 智能体 / 监控看板四项从首页移除。
+
+2026-11-18 起 `homePanels` 同时决定**顶栏 ⌘1–N 导航组**（经 `SidebarQuickEntry.all`，浏览器在首），两处一键对齐；见本文末「后续变更」。
 
 设置窗（`MacSettingsView`）新增一节「内容与工具」，四行按钮：
 
@@ -145,7 +147,8 @@
 
 动作：`BrowserToolProvider.shared.rightSidebar` 已是全局可取（`ContentView.onAppear` 注入，见 `Services/ArtifactOpenCoordinator.swift` 同款用法）→ `isOpen = true` + `showBrowsePanel()` + `browsePanelSelection = .memories/.images/.agents/.dashboard`，再 `AppDelegate.primaryWindow?.makeKeyAndOrderFront(nil)` 把主窗带到前面；设置窗不关。
 
-顶栏的 ⌘3 监控按钮**保留**（它是深链入口，不是首页入口）。
+~~顶栏的 ⌘3 监控按钮**保留**（它是深链入口，不是首页入口）。~~ 2026-11-18 起顶栏导航组改为与首页入口 1:1，
+监控按钮已从顶栏移除（设置「内容与工具 → 监控看板」是它的唯一入口）。
 
 ## 8. 代码改动
 
@@ -175,7 +178,7 @@
 真机（Xcode 构建后，`swiftc -typecheck` 只算编译自检）：
 
 1. 840 宽：2 列卡片、无底部「最近」区，滚动条不出现；
-2. 拖到 560 / 380 宽：降成 1 列，不横向溢出；
+2. 拖到 560 / 424 宽（424 是右栏最小宽，内容宽 372）：降成 1 列，不横向溢出；
 3. 深色：卡片描边/阴影、插画白纸亮度是否可接受；
 4. 断网（关本地后端或改错 token）：各数字显示 `—`，页面不报错、不弹窗；备忘面板显示「加载失败，点刷新重试」而不是空列表；
 5. 点「设置 → 图片库」：主窗前置并展开右栏到图片面板；
@@ -240,3 +243,14 @@
   聊天写入后主动失效缓存暂不做（客户端拿不到「其它会话写了一笔」的信号，除非加推送）。
   首页的 60s 缓存（`SidebarHomeViewModel`）保持原样。
   影响：`ArtifactViewModel.swift`、`BillViewModel.swift`、`DocumentViewModel.swift`、`ArtifactListView.swift`、`BillListView.swift`、`BrowsePanelView.swift`。
+
+## 后续变更
+
+### 2026-11-18 · 顶栏导航组 = 首页入口（1:1）
+
+- **决定**：首页网格与顶栏 `⌘1–N` 导航组共用 `SidebarQuickEntry.all`（= 浏览器 + `homePanels`），
+  顺序/图标/文案只有一份；`⌘1` 浏览器 / `⌘2` 账单 / `⌘3` 书架 / `⌘4` 灵阅 / `⌘5` 文档 / `⌘6` 事件。
+  快捷说明页同源生成。原先「顶栏保留 ⌘3 监控」的取舍作废（§7 已就地标注）。
+- **代价**：顶栏不再有监控 / 记忆入口（设置「内容与工具」仍在）；导航组多一颗，宽度账与窗口底线见
+  `../mac-topbar-degrade/design.md` 同日条目。
+- **影响文件**：`Shared/Views/{BrowsePanelView,SidebarHomeView,TopBarView}.swift`、`xHelperMac/ShortcutGuideView.swift`。

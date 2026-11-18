@@ -69,6 +69,44 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     }()
 }
 
+/// 右栏首页入口（浏览器在首）与顶栏 ⌘1–N 导航组**共用这一份顺序**：
+/// 改这里，首页卡与顶栏按钮一起变，不再有第二份清单可漂。
+/// 打开动作留给消费方（首页卡是"新开标签页"，顶栏是"进入浏览器"，语义本就不同）。
+enum SidebarQuickEntry: Identifiable {
+    case browser
+    case panel(BrowsePanel)
+
+    static let all: [SidebarQuickEntry] = [.browser] + BrowsePanel.homePanels.map(SidebarQuickEntry.panel)
+
+    var id: String {
+        switch self {
+        case .browser: return "browser"
+        case .panel(let panel): return panel.id
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .browser: return "globe"
+        case .panel(let panel): return panel.icon
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .browser: return "浏览器"
+        case .panel(let panel): return panel.rawValue
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .browser: return "进入浏览器"
+        case .panel(let panel): return panel.help
+        }
+    }
+}
+
 /// 回收站批量操作（页头按钮 → 二次确认）
 private enum TrashBulkAction {
     case restoreAll

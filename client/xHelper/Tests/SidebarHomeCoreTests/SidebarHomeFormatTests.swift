@@ -161,7 +161,7 @@ final class SidebarHomeFormatTests: XCTestCase {
     }
 
     func testHomeMetricsNarrowestBecomesTwoColumnsOfIcons() {
-        let m = SidebarHomeFormat.homeMetrics(contentWidth: 328)            // 右栏 380（最小宽）
+        let m = SidebarHomeFormat.homeMetrics(contentWidth: 328)            // 窄于最小右栏 424（内容宽 372）
         XCTAssertEqual(m.columns, 2)
         XCTAssertEqual(m.layout, .iconOnly)
         XCTAssertEqual(m.cardWidth, 158)

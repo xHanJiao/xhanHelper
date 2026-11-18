@@ -366,48 +366,25 @@ struct TopBarView: View {
     // MARK: - 默认组（永不注销；同 id 覆盖幂等）
 
     private func registerDefaultGroups() {
-        // 默认左槽为空：无浏览器时左侧不放按钮（浏览器态由浏览器组 priority 10 填充）
-        // 右槽位 priority 5：导航组（文档/灵阅/监控/浏览器/记忆）+ 工具组（侧栏/深浅色/设置），防被普通组覆盖。
+        // 右槽位 priority 5：导航组（与右栏首页入口逐项对应，⌘1–N）+ 工具组（侧栏/深浅色/设置），防被普通组覆盖。
         // 两组合并进同一优先级，注册顺序决定渲染顺序：导航组在左、工具组在右，组间自动分隔线。
-        var buttons: [TopBarButton] = [
-            TopBarButton(id: "enter-browser", icon: { "globe" },
+        //
+        // 导航组**不再手写**：顺序/图标/文案都来自 `SidebarQuickEntry.all`（右栏首页网格共用同一份），
+        // 未来加/换入口只改那一处，顶栏、快捷键、快捷键说明一起变。
+        Self.checkQuickEntries()
+        let navButtons = SidebarQuickEntry.all.enumerated().map { index, entry in
+            TopBarButton(id: "open-\(entry.id)",
+                         icon: { entry.icon },
                          enabled: { true },
-                         action: {
-                             BrowserToolProvider.shared.enterBrowser()
-                         },
-                         help: { "一键进入浏览器" },
-                         keyEquivalent: ("4", .command)),
-        ]
-        #if os(macOS)
-        buttons.insert(contentsOf: [
-            TopBarButton(id: "open-documents", icon: { "doc.text" },
-                         enabled: { true },
-                         action: { openBrowsePanel(.documents) },
-                         help: { "打开文档" },
-                         keyEquivalent: ("1", .command)),
-            TopBarButton(id: "open-artifacts", icon: { "doc.richtext" },
-                         enabled: { true },
-                         action: { openBrowsePanel(.artifacts) },
-                         help: { "打开灵阅" },
-                         keyEquivalent: ("2", .command)),
-            TopBarButton(id: "open-monitor", icon: { "chart.bar.xaxis" },
-                         enabled: { true },
-                         action: { openBrowsePanel(.dashboard) },
-                         help: { "打开监控" },
-                         keyEquivalent: ("3", .command)),
-        ], at: 0)
-        // 记忆按钮排在浏览之后
-        buttons.append(TopBarButton(id: "open-memories", icon: { "brain.head.profile" },
-                         enabled: { true },
-                         action: { openBrowsePanel(.memories) },
-                         help: { "打开记忆" },
-                         keyEquivalent: ("5", .command)))
-        #endif
+                         action: { openQuickEntry(entry) },
+                         help: { entry.help },
+                         keyEquivalent: Self.quickEntryShortcut(index))
+        }
         TopBarRegistry.shared.register(TopBarGroup(
             id: "default-right",
             slot: .right,
             priority: 5,
-            buttons: buttons
+            buttons: navButtons
         ))
 
         #if os(macOS)
@@ -442,10 +419,37 @@ struct TopBarView: View {
         #endif
     }
 
-    /// 打开右侧栏列表 tab（文档/灵阅/监控/记忆…），幂等
+    /// 打开右侧栏列表 tab（浏览器之外的首页入口都在这里），幂等
     private func openBrowsePanel(_ panel: BrowsePanel) {
         rightSidebar.isOpen = true
         rightSidebar.openPanel(panel)
+    }
+
+    /// 顶栏快捷入口的动作：浏览器走"进入"语义（已有网页 tab 就切过去，没有才开），面板走打开 tab。
+    private func openQuickEntry(_ entry: SidebarQuickEntry) {
+        switch entry {
+        case .browser: BrowserToolProvider.shared.enterBrowser()
+        case .panel(let panel): openBrowsePanel(panel)
+        }
+    }
+
+    /// ⌘1–⌘9：`KeyEquivalent` 只吃单字符，第 10 项起不给键（iOS 无键盘快捷键）。
+    private static func quickEntryShortcut(_ index: Int) -> (key: KeyEquivalent, modifiers: EventModifiers)? {
+        #if os(macOS)
+        guard index < 9 else { return nil }
+        return (KeyEquivalent(Character("\(index + 1)")), .command)
+        #else
+        return nil
+        #endif
+    }
+
+    /// 条目数与 id 唯一性：超过 9 项没键、id 撞了 `ForEach` 会错位，都在注册时炸在明处。
+    private static func checkQuickEntries() {
+        assert(SidebarQuickEntry.all.count <= 9, "快捷入口超过 9 项：⌘ 数字键只有 1–9")
+        assert(
+            Set(SidebarQuickEntry.all.map(\.id)).count == SidebarQuickEntry.all.count,
+            "快捷入口 id 重复：顶栏 ForEach / 快捷键会错位"
+        )
     }
 
     /// 深浅色切换：light ↔ dark 互切；跟随系统时先落到与当前实际配色相反的模式。
@@ -564,7 +568,7 @@ struct TopBarView: View {
         }
     }
 
-    /// 单元顺序：`⋯` 在最左（= ⌘1–5 导航组的左侧 —— 它替的就是原本在左边的中心槽组），
+    /// 单元顺序：`⋯` 在最左（= ⌘1–6 导航组的左侧 —— 它替的就是原本在左边的中心槽组），
     /// 其后按注册顺序排可见组。
     private func rightSlotUnits(_ groups: [TopBarGroup], plan: TopBarPlan) -> [RightSlotUnit] {
         // 只有"中心组整组进了 ⋯"时才在右槽单开一颗；留了一部分的话 ⋯ 长在组内（见 renderCenterSlot）

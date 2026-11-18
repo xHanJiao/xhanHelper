@@ -96,7 +96,9 @@ enum Layout {
     /// 中间聊天区最小宽。
     static let middleMinWidth: CGFloat = 380
     /// 右栏最小宽。
-    static let rightSidebarMinWidth: CGFloat = 380
+    /// 424 = 顶栏折叠态右簇 412 + 选档余量 8 + 4：低于它，最左那颗导航按钮就会压进中栏卡片右上角
+    /// （`docs/design/mac-topbar-degrade` §7 2026-11-18）。窗口底线随之从 778 变 822。
+    static let rightSidebarMinWidth: CGFloat = 424
     /// 窗口最小内容宽下限（底栏公式之外的兜底；实测 <750 观感变差）。
     static let minWindowContentWidth: CGFloat = 750
     /// 分隔线（SeamMarker）宽度。
@@ -127,7 +129,7 @@ enum Layout {
     // MARK: - 灵阅详情（左侧换篇列表 / 页面）
 
     /// 灵阅侧栏兜底收起阈值：侧栏展开宽 + 右栏最小宽（页面可读的底线）。
-    /// 右栏最窄 380 时会自动收成窄条；默认 840 时正文还剩 620。
+    /// 右栏最窄 424 时会自动收成窄条；默认 840 时正文还剩 620。
     static let artifactNavHardFloor: CGFloat = docTocExpandedWidth + rightSidebarMinWidth
 
     // MARK: - 聊天画中画面板（PiP）

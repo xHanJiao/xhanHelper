@@ -50,7 +50,7 @@ macOS 右栏有两套壳并存：
 | 入口 | 行为 |
 |---|---|
 | 首页卡片 / 问候行 | `openPanel(...)`（不存在则建，存在则激活） |
-| ⌘1–5（顶栏导航组） | 同上 |
+| ⌘1–6（顶栏导航组，与右栏首页入口 1:1） | 同上 |
 | 设置「内容与工具」 | 同上 |
 | 聊天文档卡片 / `xhanhelper://document/<id>` | `openDocument(id:)` → 文档详情 tab |
 | 灵阅卡片 / 抽屉 | 已有 `artifact:<id>` tab，不变 |
@@ -63,7 +63,7 @@ macOS 右栏有两套壳并存：
 1. 右栏所有内容只在 tab 里出现，没有「返回｜面板名」页头；
 2. 首页 ↔ 各 tab、文档列表 ↔ 文档详情、书架 ↔ 书详情都能来回；
 3. 关 tab 收尾正确（书进度落盘、文档选中清掉、多选退出、网页 session 释放）；
-4. 深色/浅色、840 / 380 宽下 tab 条可横向滚动、不撑破布局；
+4. 深色/浅色、840 / 424 宽下 tab 条可横向滚动、不撑破布局；
 5. `swiftc -typecheck` 两个 target 通过；真机点一遍不崩。
 
 ## 6. 后续变更
@@ -74,8 +74,8 @@ macOS 右栏有两套壳并存：
   2. **书阅读页 chrome 不动**：`BookReaderView` 自带常驻 chrome（章号/目录/Aa/查找）仍留在页内；
      其「返回书架」= 激活书架 tab。动作上顶栏留作后续。
   3. **tab 条用横向滚动**，没有 `⋯` 溢出菜单（省掉测量与变宽计算）；首页 chip 固定在左端。
-  4. **⌘1–5 的空间关系未变**：导航组在顶栏 `right` 槽（priority 5），`tab-actions` 在 `center` 槽（priority 7），
-     两槽互不挤占，`TopBarLayout` 只降级 `center`。所以列表 tab 里 ⌘1–5 理论上仍可用（真机未复核）。
+  4. **⌘1–6 的空间关系未变**：导航组在顶栏 `right` 槽（priority 5），`tab-actions` 在 `center` 槽（priority 7），
+     两槽互不挤占，`TopBarLayout` 只降级 `center`。所以列表 tab 里 ⌘1–6 理论上仍可用（真机未复核）。
   5. 首页 tab 在最左常驻（`house` chip，不可关），用来兜底"tab 条打开着怎么回入口网格"。
   影响：`RightSidebarManager` / `RightSidebarView` / `RightSidebarTabStrip`(新) / `SidebarHomeView`(新) /
   `BrowsePanelView`（改为 `PanelTabView`）/ `DocumentTabView`(新) / `RightSidebarTabActions`(新) /

@@ -30,13 +30,13 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["⌥", "⌘", "⌘"], desc: "按住 ⌥ + 左右两个 ⌘ 说话，另开一个新会话（全局）"),
             ShortcutItem(keys: ["⌃", "⌥", "V"], desc: "同上（备用键）"),
         ]),
-        ShortcutSection(icon: "menubar.rectangle", title: "面板导航", hint: "顶部工具栏", items: [
-            ShortcutItem(keys: ["⌘", "1"], desc: "文档"),
-            ShortcutItem(keys: ["⌘", "2"], desc: "灵阅"),
-            ShortcutItem(keys: ["⌘", "3"], desc: "监控面板"),
-            ShortcutItem(keys: ["⌘", "4"], desc: "浏览器"),
-            ShortcutItem(keys: ["⌘", "5"], desc: "记忆"),
-        ]),
+        ShortcutSection(icon: "menubar.rectangle", title: "面板导航", hint: "顶部工具栏", items:
+            // 与顶栏导航组同源（`SidebarQuickEntry.all`），改入口不用再来改这张表
+            SidebarQuickEntry.all.enumerated().compactMap { index, entry in
+                guard index < 9 else { return nil }
+                return ShortcutItem(keys: ["⌘", "\(index + 1)"], desc: entry.title)
+            }
+        ),
         ShortcutSection(icon: "globe", title: "浏览器", hint: "浏览器聚焦时", items: [
             ShortcutItem(keys: ["⌘", "T"], desc: "新建标签页"),
             ShortcutItem(keys: ["⌘", "⇧", "T"], desc: "恢复最近关闭的标签页"),

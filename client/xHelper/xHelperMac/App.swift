@@ -678,7 +678,7 @@ struct xhanHelperMacApp: App {
     var body: some Scene {
         // 单窗口场景（`Window`，不是 `WindowGroup`）：本 app 是「关窗驻留 + 点 Dock 唤回」的用法，
         // 而 `WindowGroup` 允许多窗口 —— 关窗后重新激活时 SwiftUI 会**再建一个**，旧窗口有时还活着
-        // （例如被放到已断开的外接屏/iPad 那块屏的空间里），于是同时存在两份顶栏，`⌘1–5` 会落到
+        // （例如被放到已断开的外接屏/iPad 那块屏的空间里），于是同时存在两份顶栏，`⌘1–6` 会落到
         // 看不见的那个窗口上（见 docs/bugs/038）。`Window` 只有一份，从根上消掉这类双窗口问题。
         Window("xhanHelper", id: "main") {
             Group {

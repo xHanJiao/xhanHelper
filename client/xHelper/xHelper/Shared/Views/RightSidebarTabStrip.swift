@@ -65,9 +65,10 @@ struct RightSidebarTabStrip: View {
         Button {
             manager.closeAllTabs()
         } label: {
-            // 别用 xmark.circle：圆底胶囊里再套一个圆 = 同心双圈，像"关闭这个圆"
-            Image(systemName: "rectangle.stack.badge.minus")
-                .font(.system(size: 11, weight: .medium))
+            // 纯叉不套圈（xmark.circle 在圆底胶囊里 = 同心双圈，像"关闭这个圆"）；
+            // 叉本身笔画少，字号要比邻居图标大一档才不显小
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 26, height: 26)
                 .background(chipBackground(active: false), in: Capsule())

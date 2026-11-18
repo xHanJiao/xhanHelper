@@ -41,6 +41,7 @@ macOS 右栏有两套壳并存：
 - 模式控件（列表/词云/回收站 + 读者层级 + 搜索图标）留在内容区一条 40pt 细行：
   搜索是「就地展开输入框」的视图内状态，塞进顶栏需要额外共享状态，V1 不动。
 - 书中阅读页（`BookReaderView`）自带常驻 chrome（章号/目录/Aa）**本轮不动**，其「返回书架」= 激活书架 tab。
+  （2026-11-18 已按后续项上移应用顶栏，见 §6 最后一条。）
 - 首页 chip 常驻 tab 条最左（`house` 图标），点它回首页。新空白页走 ⌘T / 首页「浏览器」卡 / 顶栏浏览器组 `+`。
 - 首页 chip 右边一颗「全部关闭」（圆底 + 纯叉 `xmark` 13pt，没有 tab 时不显示）：网页/灵阅/工具页走 `exitBrowser()`，
   列表/文档/书走各自 `onClose`，然后回首页。**不保留 ⌘⇧T 恢复栈**，**不关 Agent 工作区标签**。
@@ -72,7 +73,7 @@ macOS 右栏有两套壳并存：
   1. **模式/搜索控件留在内容区**：列表/词云/回收站分段、读者层级、搜索图标与就地展开的输入框仍是内容区一条 40pt 细行
      （搜索是视图内状态，塞顶栏要额外共享状态，V1 不动）。刷新/多选/导入/导出已上顶栏 `tab-actions`。
   2. **书阅读页 chrome 不动**：`BookReaderView` 自带常驻 chrome（章号/目录/Aa/查找）仍留在页内；
-     其「返回书架」= 激活书架 tab。动作上顶栏留作后续。
+     其「返回书架」= 激活书架 tab。动作上顶栏留作后续（→ 见下面 2026-11-18 那条）。
   3. **tab 条用横向滚动**，没有 `⋯` 溢出菜单（省掉测量与变宽计算）；首页 chip 固定在左端。
   4. **⌘1–6 的空间关系未变**：导航组在顶栏 `right` 槽（priority 5），`tab-actions` 在 `center` 槽（priority 7），
      两槽互不挤占，`TopBarLayout` 只降级 `center`。所以列表 tab 里 ⌘1–6 理论上仍可用（真机未复核）。
@@ -98,6 +99,15 @@ macOS 右栏有两套壳并存：
   一个请求都不发（内容里的 `.task` 根本不跑）。快速连点面板不再把每个中间面板的列表/标签/统计请求打到服务器；
   代价是单进面板首屏多等 ≤210ms（期间显示小转圈）。数据还在 30s 缓存期内的面板（灵阅/文档/账单）直接放行，不等闸门。
   `.onReceive(.sidebarPanelAction)` 挂在闸门外面：闸门窗口里点顶栏刷新/多选不能把事件丢掉。首页/其它 tab 不受影响。
+- 2026-11-18 书阅读页动作上移顶栏（上面第 2 条偏离的后续）：
+  `BookReaderView` 删掉内容区页头行（`‹书架 / 书名·节标题`），回书架 = 点 tab 条上的「书架」tab；
+  上一节/下一节/目录/书签/查找/批注/设置注册成 `book-actions-<bookId>` 组（`center` 槽，priority 8，
+  `visible` = 右栏前台正停在这本书的 tab，保活的其它书 tab 不露按钮），排不下自动进 `⋯`。
+  内容区只留界面本身：查找栏、Aa 弹层仍画在内容区，开关改成 `BookReaderController.findOpen` / `settingsOpen`。
+  ⌘D / ⌘F / ⌘⇧A / ⌥⌘←→↑↓ 全部挂内容区隐形按钮（只有本书 tab 前台时挂载）——
+  顶栏按钮上的快捷键在窄窗降级进 `⋯` 时会丢，且保活的多本书 tab 会重复注册同一组键。
+  影响：`Shared/Views/Books/BookReaderView.swift` / `Shared/ViewModels/BookReaderController.swift` /
+  `Shared/Views/ContentView.swift`（内容工厂传 `manager`、去掉 `onBack`）。
   影响：`BrowsePanelView.swift`（`PanelTabView`）、`PageHolders.swift`（去掉与子列表重复的入口 `.task`）、
   `ArtifactListView.swift` / `BillListView.swift`（入口改 `loadIfStale()`）、
   `ArtifactViewModel.swift` / `BillViewModel.swift` / `DocumentViewModel.swift`（30s 面板缓存，见 `right-sidebar-home` 同日条目）。

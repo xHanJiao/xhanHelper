@@ -8,14 +8,15 @@ import WebKit
 /// 划线与批注也复用那套选区/浮层逻辑，只是数据落本地。
 struct BookReaderView: View {
     let book: BookMeta
-    let onBack: () -> Void
+    /// 顶栏组只在该书的 tab 在前台时出现（`visible` 闭包读它）；`isActive` 也跟着它变
+    @ObservedObject var manager: RightSidebarManager
 
     @StateObject private var controller: BookReaderController
     @State private var settings: BookReadingSettings
-    @State private var showSettings = false
-    @State private var showFind = false
     @State private var findQuery = ""
     @FocusState private var findFieldFocused: Bool
+    /// 本 tab 是否前台：只有前台才挂快捷键（保活的其它书 tab 仍在层级里，快捷键不能重复注册）
+    @State private var isActive = false
     /// 侧栏 tab（目录 / 书签）：不持久化，每次进来先看目录
     @State private var sidebarTab: SidebarTab = .toc
     /// 折叠了哪些目录条（key = `BookTOCItem.key`）：只记得本次会话
@@ -25,10 +26,10 @@ struct BookReaderView: View {
     @AppStorage("xhan_book_toc_open") private var tocOpenStored = false
     @AppStorage("xhan_book_annot_open") private var annotOpenStored = false
 
-    init(book: BookMeta, onBack: @escaping () -> Void) {
+    init(book: BookMeta, manager: RightSidebarManager) {
         let loaded = BookReadingSettings.load()
         self.book = book
-        self.onBack = onBack
+        self.manager = manager
         _settings = State(initialValue: loaded)
         _controller = StateObject(wrappedValue: BookReaderController(book: book, settings: loaded))
     }
@@ -36,9 +37,7 @@ struct BookReaderView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
-                header
-                Divider()
-                if showFind {
+                if controller.findOpen {
                     findBar
                 }
                 HStack(spacing: 0) {
@@ -67,13 +66,15 @@ struct BookReaderView: View {
                 .frame(maxHeight: .infinity)
             }
 
-            // Aa 弹层：贴顶栏右下方，不遮正文列
-            if showSettings {
+            // Aa 弹层：开关在顶栏，弹层仍贴内容区右上方（顶栏胶囊按钮挂不了原生 popover），不遮正文列
+            if controller.settingsOpen {
                 settingsPopover
                     .padding(.trailing, 12)
-                    .padding(.top, 44)
+                    .padding(.top, 8)
             }
         }
+        // 页头已上移顶栏，这里只留快捷键用的隐形按钮（只有前台 tab 才挂，见 `shortcutButtons`）
+        .background { shortcutButtons }
         .onChange(of: settings) { _, new in
             new.save()
             controller.applyTypo(new)
@@ -82,13 +83,32 @@ struct BookReaderView: View {
             controller.applyReadingMode(settings)
         }
         .onChange(of: findQuery) { _, q in controller.find(q) }
+        .onChange(of: controller.findOpen) { _, open in
+            if open {
+                findFieldFocused = true
+            } else {
+                findQuery = ""
+                controller.clearFind()
+            }
+        }
+        // 顶栏图标/置灰跟着阅读位置走（registry 只观察自己的 version，得主动 bump）
+        .onChange(of: controller.sectionIndex) { _, _ in TopBarRegistry.shared.refresh() }
+        .onChange(of: controller.bookmarkedHere) { _, _ in TopBarRegistry.shared.refresh() }
         .onChange(of: controller.tocOpen) { _, open in tocOpenStored = open }
         .onChange(of: controller.annotOpen) { _, open in annotOpenStored = open }
+        .onChange(of: manager.activeTabId, initial: true) { _, active in
+            let mine = active == tabID
+            if mine != isActive { isActive = mine }
+        }
         .onAppear {
             controller.tocOpen = tocOpenStored
             controller.annotOpen = annotOpenStored
+            registerTopBarGroup()
         }
-        .onDisappear { controller.leave() }
+        .onDisappear {
+            TopBarRegistry.shared.unregister(id: topBarGroupID)
+            controller.leave()
+        }
         // 失焦就收阅读区间、回来重开（设计 §八：区间只在「真的在看」时算）
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             controller.pauseReading()
@@ -98,117 +118,96 @@ struct BookReaderView: View {
         }
     }
 
-    // MARK: - 顶部（常驻）
+    // MARK: - 顶栏按钮组
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Button(action: onBack) {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("书架")
-                        .font(.system(size: 12))
-                }
-                .foregroundColor(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("返回书架")
+    private var tabID: String { RightSidebarManager.bookTabID(book.id) }
 
-            Divider().frame(height: 14)
+    private var topBarGroupID: String { "book-actions-\(book.id)" }
 
-            // 书名 · 节标题拼成一行，超长整行一起截断（不会出现书名截一半、节标题还在）
-            headerTitle
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help("\(headerTitleText) · 全书 \(bookPercent)%")
+    /// 阅读页动作注册进顶栏中心槽（priority 8，与文档/灵阅详情同档）；
+    /// 组的 `visible` 判「右栏前台正停在这本书的 tab」——保活的其它书 tab 不会露按钮。
+    /// 快捷键**不挂在这里**：降级时按钮会进 `⋯`，挂在按钮上的键会一起丢（见 `shortcutButtons`）。
+    private func registerTopBarGroup() {
+        let controller = self.controller
+        let manager = self.manager
+        let tabID = self.tabID
+        TopBarRegistry.shared.register(TopBarGroup(
+            id: topBarGroupID,
+            slot: .center,
+            priority: 8,
+            buttons: [
+                TopBarButton(id: "book-prev-section",
+                             icon: { "chevron.left" },
+                             enabled: { controller.canGoPreviousSection },
+                             action: { controller.jumpSection(-1) },
+                             help: { "上一节（⌥⌘← / ⌥⌘↑）" },
+                             visible: { controller.hasChapterNavigation }),
+                TopBarButton(id: "book-next-section",
+                             icon: { "chevron.right" },
+                             enabled: { controller.canGoNextSection },
+                             action: { controller.jumpSection(1) },
+                             help: { "下一节（⌥⌘→ / ⌥⌘↓）" },
+                             visible: { controller.hasChapterNavigation }),
+                TopBarButton(id: "book-toc",
+                             icon: { "sidebar.leading" },
+                             enabled: { true },
+                             action: { withAnimation { controller.tocOpen.toggle() } },
+                             help: { controller.tocOpen ? "收起目录与书签" : "展开目录与书签" },
+                             visible: { controller.hasChapterNavigation }),
+                TopBarButton(id: "book-bookmark",
+                             icon: { controller.bookmarkedHere ? "bookmark.fill" : "bookmark" },
+                             enabled: { true },
+                             action: { controller.toggleBookmark() },
+                             help: { controller.bookmarkedHere ? "取消书签（⌘D）" : "记住这一页（⌘D）" }),
+                TopBarButton(id: "book-find",
+                             icon: { "magnifyingglass" },
+                             enabled: { true },
+                             action: { controller.findOpen.toggle() },
+                             help: { "在本节查找（⌘F）" }),
+                TopBarButton(id: "book-annot",
+                             icon: { "list.bullet.rectangle" },
+                             enabled: { true },
+                             action: { withAnimation { controller.annotOpen.toggle() } },
+                             help: { controller.annotOpen ? "收起划线与批注（⌘⇧A）" : "展开划线与批注（⌘⇧A）" }),
+                TopBarButton(id: "book-settings",
+                             icon: { "gearshape" },
+                             enabled: { true },
+                             action: { controller.settingsOpen.toggle() },
+                             help: { "阅读设置（字号、行距）" }),
+            ],
+            visible: { manager.isOpen && manager.activeTabId == tabID },
+            autoOverflow: true
+        ))
+    }
 
-            Spacer()
-
-            if controller.hasChapterNavigation {
-
-                Button { controller.jumpSection(-1) } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 12))
-                }
-                .buttonStyle(.plain)
-                .disabled(!controller.canGoPreviousSection)
-                .help("上一节（⌥⌘← / ⌥⌘↑）")
-                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-
-                Button { controller.jumpSection(1) } label: {
-                    Image(systemName: "chevron.right").font(.system(size: 12))
-                }
-                .buttonStyle(.plain)
-                .disabled(!controller.canGoNextSection)
-                .help("下一节（⌥⌘→ / ⌥⌘↓）")
-                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-
-                chromeButton("sidebar.leading",
-                             help: controller.tocOpen ? "收起目录与书签" : "展开目录与书签",
-                             active: controller.tocOpen) {
-                    withAnimation { controller.tocOpen.toggle() }
-                }
-            }
-
-            chromeButton(controller.bookmarkedHere ? "bookmark.fill" : "bookmark",
-                         help: controller.bookmarkedHere ? "取消书签（⌘D）" : "记住这一页（⌘D）",
-                         active: controller.bookmarkedHere) {
-                controller.toggleBookmark()
-            }
-            .keyboardShortcut("d", modifiers: .command)
-
-            chromeButton("magnifyingglass", help: "在本节查找（⌘F）", active: showFind) {
-                toggleFind()
-            }
-            .keyboardShortcut("f", modifiers: .command)
-
-            chromeButton("list.bullet.rectangle",
-                         help: controller.annotOpen ? "收起划线与批注（⌘⇧A）" : "展开划线与批注（⌘⇧A）",
-                         active: controller.annotOpen) {
-                withAnimation { controller.annotOpen.toggle() }
-            }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
-
-            chromeButton("gearshape", help: "阅读设置（字号、行距）", active: showSettings) {
-                showSettings.toggle()
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background {
-            // SwiftUI 一个 view 只能挂一个快捷键：⌥⌘↑/↓ 与 ⌥⌘←/→ 等价，另两个走隐形按钮
-            Group {
+    /// 阅读页快捷键：隐形按钮挂在内容区（登不进 `⋯`，也不会被降级吃掉），且只在本书 tab 前台时挂载。
+    /// SwiftUI 一个 view 只能挂一个快捷键，⌥⌘↑ / ⌥⌘↓ 与 ⌥⌘← / ⌥⌘→ 等价，所以四个方向键都要各挂一次。
+    @ViewBuilder
+    private var shortcutButtons: some View {
+        Group {
+            if isActive {
+                Button("") { controller.toggleBookmark() }
+                    .keyboardShortcut("d", modifiers: .command)
+                Button("") { controller.findOpen.toggle() }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("") { withAnimation { controller.annotOpen.toggle() } }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                Button("") { controller.jumpSection(-1) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                    .disabled(!controller.canGoPreviousSection)
                 Button("") { controller.jumpSection(-1) }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                     .disabled(!controller.canGoPreviousSection)
                 Button("") { controller.jumpSection(1) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                    .disabled(!controller.canGoNextSection)
+                Button("") { controller.jumpSection(1) }
                     .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                     .disabled(!controller.canGoNextSection)
             }
-            .opacity(0)
-            .accessibilityHidden(true)
         }
-    }
-
-    /// 当前读到哪：目录条目 → 节标题 → 章标题 → 章号
-    private var sectionLabel: String {
-        controller.currentTOCTitle ?? controller.currentSection?.title
-            ?? controller.chapter?.title ?? controller.chapterLabel
-    }
-
-    /// 顶栏标题：书名（13pt 半粗）+ 「 · 」+ 节标题（11pt 次级色）
-    private var headerTitle: Text {
-        let label = sectionLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = Text(controller.book.title).font(.system(size: 13, weight: .semibold))
-        guard !label.isEmpty else { return title }
-        return title
-            + Text(" · ").font(.system(size: 11)).foregroundColor(.secondary)
-            + Text(label).font(.system(size: 11)).foregroundColor(.secondary)
-    }
-
-    private var headerTitleText: String {
-        let label = sectionLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return label.isEmpty ? controller.book.title : "\(controller.book.title) · \(label)"
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 
     // MARK: - 查找栏
@@ -225,7 +224,7 @@ struct BookReaderView: View {
                 .onAppear { findFieldFocused = true }
                 .onSubmit { controller.findNext() }
                 .onKeyPress(.escape, phases: .down) { _ in
-                    toggleFind()
+                    controller.findOpen = false
                     return .handled
                 }
             Text(matchLabel)
@@ -244,7 +243,7 @@ struct BookReaderView: View {
             .buttonStyle(.plain)
             .disabled(controller.matchCount == 0)
             .help("下一个匹配")
-            Button { toggleFind() } label: {
+            Button { controller.findOpen = false } label: {
                 Image(systemName: "xmark").font(.system(size: 11))
             }
             .buttonStyle(.plain)
@@ -260,16 +259,6 @@ struct BookReaderView: View {
         guard !findQuery.isEmpty else { return "" }
         guard controller.matchCount > 0 else { return "无匹配" }
         return "\(controller.matchIndex + 1)/\(controller.matchCount)"
-    }
-
-    private func toggleFind() {
-        showFind.toggle()
-        if showFind {
-            findFieldFocused = true
-        } else {
-            findQuery = ""
-            controller.clearFind()
-        }
     }
 
     // MARK: - 正文
@@ -582,19 +571,6 @@ struct BookReaderView: View {
         }
         .frame(width: 32)
         .background(Color.primary.opacity(0.02))
-    }
-
-    private func chromeButton(_ systemName: String, help: String, active: Bool,
-                              action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12))
-                .foregroundColor(active ? Color("appAccent") : .secondary)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     // MARK: - Aa 弹层

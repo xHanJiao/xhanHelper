@@ -178,7 +178,9 @@ struct RightSidebarView: View {
         VStack(spacing: 0) {
             splitTabBar(tabs: tabs, side: side)
             Divider()
-            tabPane(active: active)
+            // 分屏时每个窗格只挂本组 tab：保活/最近详情也算左侧归属，
+            // 否则同一份内容（网页 NSView 是共享实例）会被两个窗格各挂一次（见 docs/bugs/030 同类坑）
+            tabPane(active: active, allowed: Set(tabs.map(\.id)))
         }
     }
 
@@ -290,13 +292,13 @@ struct RightSidebarView: View {
     /// 一个窗格：激活 tab + 保活 tab（媒体/最近详情）。
     /// `.id()` 必须：content 是同类型 AnyView，不加 id 切 tab 时 SwiftUI 会原地更新而不重挂。
     @ViewBuilder
-    private func tabPane(active: String?) -> some View {
+    private func tabPane(active: String?, allowed: Set<String>? = nil) -> some View {
         ZStack {
             ForEach(manager.tabs.filter { tab in
                 guard manager.renderableTabIds.contains(tab.id) else { return false }
-                // 分屏时两个窗格各挂各的激活 tab：同一 NSView 不能挂两个 superview（旧代码同样排除）
-                return tab.id == active
-                    || (tab.id != manager.leftDisplayTabId && tab.id != manager.rightDisplayTabId)
+                // 单栏：这一窗格挂全部可渲染项；分屏：只挂本组（active 永远例外，避免空窗格）
+                guard let allowed else { return true }
+                return tab.id == active || allowed.contains(tab.id)
             }) { tab in
                 let isActive = tab.id == active
                 tab.content

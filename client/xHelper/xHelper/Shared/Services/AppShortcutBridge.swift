@@ -56,7 +56,7 @@ final class AppShortcutBridge {
 
 /// 全局热键（Carbon）：不需要辅助功能授权，且能吞掉按键（不会漏给前台 app）。
 /// 同时监听 pressed / released —— 按住说话靠 released 收尾；万一系统不派发，
-/// `VoiceChatService` 里有 60 秒自动发送兜底。
+/// `VoiceChatService` 里有到上限自动发送兜底。
 @MainActor
 final class GlobalHotKey {
     private static var current: GlobalHotKey?

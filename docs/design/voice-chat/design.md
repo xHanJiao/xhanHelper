@@ -666,3 +666,6 @@ location = /api/voice/asr {
   方案与数据见 `docs/design/voice-reply-length/design.md`。
   影响文件：`server/internal/agent/promptbuilder/{static.go,builder_test.go}`、
   `server/internal/agent/orchestrator.go`。
+
+- 2026-11-18（长按上限 60 → 120 秒）：见 `docs/design/voice-hold-mode/design.md` 同名条目；
+  上一轮「60 秒自动发送兜底保留」现在是 120 秒，兜底语义不变。

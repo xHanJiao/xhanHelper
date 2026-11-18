@@ -17,11 +17,13 @@ const GATE_TAIL_MS = 600
 // 松手后等最后半句 definite：1.5s 静默提交，3s 硬上限（豆包判停 800ms + 二遍识别）
 const HOLD_TAIL_MS = 1500
 const HOLD_MAX_MS = 3000
-// 长按说话：单次录音上限（16k mono int16 下 60 秒 ≈ 1.9MB）
-const HOLD_TALK_MAX_SECONDS = 60
+// 长按说话：单次录音上限（16k mono int16 下 120 秒 ≈ 3.8MB）
+const HOLD_TALK_MAX_SECONDS = 120
 const HOLD_TALK_MIN_MS = 300
-// 松手后整段灌入的兜底超时（60 秒音频实测 ~4 秒出 final）
-const HOLD_TRANSCRIBE_TIMEOUT_MS = 15_000
+// 松手后整段灌入的兜底超时：底座覆盖建连 + 收尾，另按音频长度给上行留量
+// （120 秒音频在本地实测 ~7 秒出 final，但 2Mbps 上行光传 3.8MB 就要 15 秒）
+const HOLD_TRANSCRIBE_TIMEOUT_BASE_MS = 15_000
+const HOLD_TRANSCRIBE_TIMEOUT_PER_SECOND_MS = 150
 
 function resampleToInt16(input, inputRate) {
   if (inputRate === 16000) {
@@ -180,7 +182,7 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
   let holdSamples = 0
   let holdFrames = []
   let holdStartedAt = 0
-  // 这一轮采集归谁：voice = 语音条长按档，ptt = 输入卡按住说话（60 秒兜底要分派收尾）
+  // 这一轮采集归谁：voice = 语音条长按档，ptt = 输入卡按住说话（到上限兜底要分派收尾）
   let holdOwner = null
   // PTT 代次：取消/重按时让在飞的授权、识别结果失效
   let pttGen = 0
@@ -850,8 +852,8 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     holdChunks.push(pcm)
     holdSamples += pcm.length
     if (holdSamples >= 16000 * HOLD_TALK_MAX_SECONDS) {
-      log(`${holdOwner || 'hold'} reached 60s, auto submit`)
-      onNotice?.('已到 60 秒，自动发送')
+      log(`${holdOwner || 'hold'} reached ${HOLD_TALK_MAX_SECONDS}s, auto submit`)
+      onNotice?.(`已到 ${HOLD_TALK_MAX_SECONDS} 秒，自动发送`)
       if (holdOwner === 'ptt') finishPushToTalk()
       else stopHoldTalk()
     }
@@ -951,7 +953,9 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
         else if (err) reject(err)
         else resolve(text)
       }
-      timer = setTimeout(() => finish(new Error('语音识别超时')), HOLD_TRANSCRIBE_TIMEOUT_MS)
+      const timeoutMs = HOLD_TRANSCRIBE_TIMEOUT_BASE_MS
+        + Math.ceil(pcm.length / 16000) * HOLD_TRANSCRIBE_TIMEOUT_PER_SECOND_MS
+      timer = setTimeout(() => finish(new Error('语音识别超时')), timeoutMs)
       ws.onopen = () => {
         // 灌入不按实时节拍：豆包接受快于实时的音频（6.2s 音频 0.79s 出 final）
         for (let i = 0; i < pcm.length; i += CHUNK_SAMPLES) {

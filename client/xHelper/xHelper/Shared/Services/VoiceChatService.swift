@@ -115,7 +115,7 @@ final class VoiceChatService: ObservableObject {
     private var holdCapturing = false
     /// 全局热键按住说话：不进语音条、不置 holdModeActive（只影响这轮是否朗读回复）
     private var pushToTalkActive = false
-    /// 这轮热键说话已经提交过（含 60 秒自动发送）：松手时别再误报失败
+    /// 这轮热键说话已经提交过（含到上限自动发送）：松手时别再误报失败
     private var pushToTalkSubmitted = false
     /// 全局热键这一轮由谁接管：按下时定，松手按它路由（不能看松手瞬间的状态，
     /// 连续会话可能在按住期间结束）。nil = 这次按下没被接管。
@@ -129,7 +129,7 @@ final class VoiceChatService: ObservableObject {
     private var holdGen = 0
     private var holdBaseURL = ""
     private var holdToken = ""
-    private let holdTalkMaxSeconds = 60
+    private let holdTalkMaxSeconds = 120
     private let holdTalkMinSeconds: Double = 0.3
     /// 松手后再多收一段尾巴（毫秒）。VPIO 输入 + tap 缓冲有 150~300ms 延迟，
     /// 立刻 `removeTap` 会把最后几个字丢在设备缓冲里。这段只有静音，ASR 会忽略。
@@ -800,7 +800,7 @@ final class VoiceChatService: ObservableObject {
     /// 全局热键按下：连续会话开着就按住暂存，否则一次性采集。
     /// `.ignored` = 重复按下 / 已被松手作废（调用方不要发声）。
     func hotKeyPress(baseURL: String, token: String) async -> HotKeyStartResult {
-        // 松开事件丢了（⌘-Tab / 安全输入）：60 秒兜底收完录音后清掉残留路径，
+        // 松开事件丢了（⌘-Tab / 安全输入）：到上限自动提交后清掉残留路径，
         // 否则之后每次按下都会被当成重复按下，热键静默失效
         if hotKeyPath == .pushToTalk, !isHoldRecording, !isHoldTranscribing { hotKeyPath = nil }
         if hotKeyPath == .continuousHold, !isHolding, !continuousActive { hotKeyPath = nil }
@@ -846,7 +846,7 @@ final class VoiceChatService: ObservableObject {
 
     /// 全局热键松开：整段识别并提交。返回是否提交了一轮（false → 调用方 beep）。
     func finishPushToTalk() async -> Bool {
-        // 60 秒自动发送 / 上一轮已经提交：松手只是收尾，别当失败
+        // 到上限自动发送 / 上一轮已经提交：松手只是收尾，别当失败
         if isHoldTranscribing || pushToTalkSubmitted {
             pushToTalkSubmitted = false
             return true
@@ -892,7 +892,7 @@ final class VoiceChatService: ObservableObject {
         defer { pushToTalkActive = false }
         guard isHoldRecording else {
             // 只作废「按下还没落到录音」的那次启动（权限弹窗期间松手）；
-            // 识别进行中再被调一次（60 秒自动提交后抬手/失焦）不能加代次，否则会把已识别文本丢掉
+            // 识别进行中再被调一次（到上限自动提交后抬手/失焦）不能加代次，否则会把已识别文本丢掉
             if !isHoldTranscribing { holdGen += 1 }
             return false
         }
@@ -1348,7 +1348,7 @@ final class VoiceChatService: ObservableObject {
         if holdCapturing {
             holdPCM.append(data)
             if holdPCM.count >= 16000 * 2 * holdTalkMaxSeconds {
-                ToastCenter.shared.show("已到 60 秒，自动发送")
+                ToastCenter.shared.show("已到 \(holdTalkMaxSeconds) 秒，自动发送")
                 Task { await self.finishHoldTalk(cancelled: false) }
             }
             return

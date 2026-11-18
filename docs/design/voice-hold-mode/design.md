@@ -77,7 +77,7 @@
   → 启动麦克风，累积 16k/16bit/mono PCM，同时照常算电平帧（波形）
 按住期间
   → 上滑超过阈值 = 取消态（松手丢弃）
-  → 到 60 秒上限 = 自动结束并提交
+  → 到 120 秒上限 = 自动结束并提交
 松手
   → 停止采集
   → 近场闸：整段帧判定（关闭档跳过）
@@ -104,7 +104,7 @@
 
 需要确认的边界：
 
-- 一次灌入最多 60 秒音频（≈1.9MB），远低于现有 `MaxSeconds` 与 64KB 单帧上限
+- 一次灌入最多 120 秒音频（≈3.8MB），远低于现有 `MaxSeconds`（长按走 C 模式，等于 `session_seconds`）与 64KB 单帧上限
 - 客户端必须收完 `sentence` 再断开；`end` 之后服务端会主动关连接
 
 `shortcut:` 不复用常驻连接池，每句话一次 WS 握手（约 100ms，实测）。若移动网络下握手明显变慢，再考虑「松手后保留 10 秒连接」的复用窗口。
@@ -136,7 +136,7 @@
 
 - 松手 → `POST /api/voice/asr-ticket` → `new WebSocket('/api/voice/asr?mode=continuous&ticket=...')`
 - `ready` 后按 6.4KB 分片连续发完（不等节拍），再发 `{"type":"end"}`
-- 收 `sentence` 累积文本；连接关闭或 15 秒超时结束
+- 收 `sentence` 累积文本；连接关闭或兜底超时结束（底座 15 秒 + 每音频秒 150ms，120 秒 ≈ 33 秒）
 - 成功后调用现有提交路径，但**不挂 TTS 回调**：
   ```js
   await sendMessage(text, {
@@ -160,7 +160,7 @@
 - 移动端录音按钮必须加 `touch-action: none`，否则 iOS PWA 上滑会被页面滚动抢走
 - 桌面端：两态按钮，录音中左侧浮出取消钮（绝对定位，不挤动录音钮）；`Esc` 同取消；窗口失焦不取消
 - 太短：按住 < 300ms，或整段没有有声帧 → 丢弃 + 提示「说话时间太短」
-- 上限：60 秒自动结束并提交（提示「已到 60 秒，自动发送」）
+- 上限：120 秒自动结束并提交（提示「已到 120 秒，自动发送」）
 
 ### Swift（macOS）
 
@@ -250,7 +250,7 @@
   `definite`；客户端只需拼接所有 `sentence`，不依赖分句粒度
 - **两套链路并存**：连续 / 长按是两条路径，必须靠 `voice.mode` 单一开关分流，避免状态串线
 - **不朗读的感知**：用户可能以为没反应；「想」态必须可见，回复结束回到「听」
-- **录音上限**：60 秒是拍的，长按超过会被截断提交
+- **录音上限**：120 秒是拍的，长按超过会被截断提交
 - **短连接失败**：握手或识别失败只影响这一句，提示「没听清，再说一次」即可
 
 ## 实施清单
@@ -259,7 +259,7 @@
 |---|---|---|
 | 1 | 模式偏好（默认连续对话） | `front-end/src/utils/voicePref.js`、`LocalPaths.swift` |
 | 2 | PWA：PCM 累积、ticket + WS 灌入、拼接文本、不朗读提交 | `useVoiceChat.js` |
-| 3 | PWA：胶囊切档、小手按钮、上滑取消、太短、60 秒上限 | `ChatView.vue`、`VoiceWaveLine.vue` |
+| 3 | PWA：胶囊切档、小手按钮、上滑取消、太短、120 秒上限 | `ChatView.vue`、`VoiceWaveLine.vue` |
 | 4 | Swift：PCM 累积、ticket + WS 灌入、`speakReply:false` | `VoiceChatService.swift` |
 | 5 | Swift：胶囊切档、麦克风两态按钮 + 取消钮 | `ChatView.swift`、`InputBarButtons.swift` |
 | 6 | 近场闸整段判定（`judgeHoldSpan` 三态 + 太短语义） | `nearFieldGate.js`、`NearFieldGate.swift` + 两端单测 |
@@ -469,3 +469,12 @@
   - 影响文件：`Services/VoiceHotKeyController.swift`、`Services/AppShortcutBridge.swift`、
     `ViewModels/ChatTabManager.swift`、`Views/ContentView.swift`、`xHelperMac/ShortcutGuideView.swift`、
     `docs/design/voice-audio-engine/design.md`（四、四种交叠情形加一行）。
+
+- 2026-11-18（录音上限 60 → 120 秒）：
+  - 用户反馈「说久了会自动断」，确认是长按 / 全局热键 / PWA 按住说话那条 60 秒硬上限在到点自动提交。
+    长按走 `mode=continuous`，服务端上限取 `voice.asr.session_seconds`（600 秒），
+    因此只改客户端；豆包侧实测 120 秒音频（3.8MB、一次性快灌）6.5 秒出全文，无截断。
+  - PWA 整段灌入的兜底超时随之从固定 15 秒改成「底座 15 秒 + 每音频秒 150ms」（120 秒 ≈ 33 秒），
+    否则慢上行下两分钟录音会以超时被丢弃。
+  - 影响文件：`client/xHelper/xHelper/Shared/Services/VoiceChatService.swift`、
+    `Services/AppShortcutBridge.swift`、`front-end/src/composables/useVoiceChat.js`。

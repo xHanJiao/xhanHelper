@@ -102,7 +102,7 @@ function log(...args) {
  * （门控），而是按原节拍发等长静音保活——豆包 8 秒收不到音频包会断会话（45000081）。
  * 代价是播报时听不到你开口，打断只能点按钮（PWA 不做自动打断）。
  */
-export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, isBusy } = {}) {
+export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError, onNotice, isBusy } = {}) {
   const available = ref(false)
   // 会话开着（连 WS、录音、等回答、朗读都算）；浮层与按钮状态都看它
   const active = ref(false)
@@ -124,6 +124,9 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
   // 长按说话：正在录音 / 正在识别
   const holdRecording = ref(false)
   const holdTranscribing = ref(false)
+  // 输入卡上的「按住说话」（与会话无关）：录音 / 识别中
+  const pttRecording = ref(false)
+  const pttTranscribing = ref(false)
   // 切档过渡：旧链路已拆、新档还没就绪（连续档要等 ticket + 建连）。界面靠它别把语音条拆掉
   const switching = ref(false)
 
@@ -168,6 +171,7 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
   // 长按说话：本地采集（不建常驻连接），松手后整段灌进一条短连接
   let holdCtx = null
   let holdWorklet = null
+  let holdGraphPromise = null
   let holdSink = null
   let holdSource = null
   let holdStream = null
@@ -176,6 +180,10 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
   let holdSamples = 0
   let holdFrames = []
   let holdStartedAt = 0
+  // 这一轮采集归谁：voice = 语音条长按档，ptt = 输入卡按住说话（60 秒兜底要分派收尾）
+  let holdOwner = null
+  // PTT 代次：取消/重按时让在飞的授权、识别结果失效
+  let pttGen = 0
 
   // hold 暂存：holding = 按住中；awaitingTail = 已松手、还在等最后半句
   let heldSentences = []
@@ -761,51 +769,79 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     return holdCtx
   }
 
-  /** 按下：只本地录音（累积 PCM + 电平帧），不建连接。 */
-  async function startHoldTalk() {
-    if (!active.value || mode.value !== 'hold') return
-    if (holdRecording.value || holdTranscribing.value) return
+  /** 建 worklet 图（幂等）：极快「按-松-再按」时两次 begin 共用一个 in-flight，别各建一份。 */
+  function ensureHoldWorklet(ctx) {
+    if (holdWorklet) return Promise.resolve()
+    if (!holdGraphPromise) {
+      holdGraphPromise = ctx.audioWorklet.addModule('/voice-pcm-worklet.js')
+        .then(() => {
+          // ctx 已被 release 换掉（卸载/出错后重建）：别把节点挂到关掉的上下文上
+          if (holdWorklet || holdCtx !== ctx) return
+          holdWorklet = new AudioWorkletNode(ctx, 'voice-pcm')
+          holdWorklet.port.onmessage = (event) => handleHoldSamples(event.data, ctx.sampleRate)
+          // Safari 只从 destination 反向拉取音频图（见 start()）
+          holdSink = ctx.createGain()
+          holdSink.gain.value = 0
+          holdWorklet.connect(holdSink)
+          holdSink.connect(ctx.destination)
+        })
+        .catch((err) => {
+          // 失败别把拒绝的 promise 永久缓存：下一次按住还能重试
+          holdGraphPromise = null
+          throw err
+        })
+    }
+    return holdGraphPromise
+  }
+
+  /** 建长按采集图并开麦（语音条长按档与输入卡 PTT 共用）。返回 false = 中途放弃。 */
+  async function beginHoldCapture({ aborted } = {}) {
     holdChunks = []
     holdSamples = 0
     holdFrames = []
     holdStartedAt = Date.now()
     level.value = 0
+    const ctx = ensureHoldGraph()
+    await ensureHoldWorklet(ctx)
+    ctx.resume().catch((err) => console.warn('[voice] hold ctx resume failed', err))
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+    if (aborted?.()) {
+      stream.getTracks().forEach(t => t.stop())
+      return false
+    }
+    holdStream = stream
+    holdSource = ctx.createMediaStreamSource(stream)
+    holdSource.connect(holdWorklet)
+    // 计时从真正开始采集算起：权限弹窗/建图耗时不算「按住时长」
+    holdStartedAt = Date.now()
+    return true
+  }
+
+  /** 按下：只本地录音（累积 PCM + 电平帧），不建连接。 */
+  async function startHoldTalk() {
+    if (!active.value || mode.value !== 'hold') return
+    if (holdRecording.value || holdTranscribing.value || pttRecording.value) return
     holdRecording.value = true
+    holdOwner = 'voice'
     try {
-      const ctx = ensureHoldGraph()
-      if (!holdWorklet) {
-        await ctx.audioWorklet.addModule('/voice-pcm-worklet.js')
-        holdWorklet = new AudioWorkletNode(ctx, 'voice-pcm')
-        holdWorklet.port.onmessage = (event) => handleHoldSamples(event.data, ctx.sampleRate)
-        // Safari 只从 destination 反向拉取音频图（见 start()）
-        holdSink = ctx.createGain()
-        holdSink.gain.value = 0
-        holdWorklet.connect(holdSink)
-        holdSink.connect(ctx.destination)
-      }
-      ctx.resume().catch((err) => console.warn('[voice] hold ctx resume failed', err))
-      holdStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
       // 权限弹窗期间就松手了：别把麦克风留在后台
-      if (!holdRecording.value) {
-        holdStream.getTracks().forEach(t => t.stop())
-        holdStream = null
+      if (!(await beginHoldCapture({ aborted: () => !holdRecording.value }))) {
+        holdRecording.value = false
+        holdOwner = null
         return
       }
-      holdSource = ctx.createMediaStreamSource(holdStream)
-      holdSource.connect(holdWorklet)
-      // 计时从真正开始采集算起：权限弹窗/建图耗时不算「按住时长」
-      holdStartedAt = Date.now()
       log('hold talk started')
     } catch (err) {
       console.error('[voice] hold capture failed', err)
       holdRecording.value = false
+      holdOwner = null
       releaseHoldTalk()
       onError?.('麦克风启动失败')
     }
   }
 
   function handleHoldSamples(samples, sampleRate) {
-    if (!holdRecording.value || !samples || !samples.length) return
+    if ((!holdRecording.value && !pttRecording.value) || !samples || !samples.length) return
     let sum = 0
     for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
     level.value = Math.min(1, Math.sqrt(sum / samples.length) * 4)
@@ -814,9 +850,10 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     holdChunks.push(pcm)
     holdSamples += pcm.length
     if (holdSamples >= 16000 * HOLD_TALK_MAX_SECONDS) {
-      log('hold talk reached 60s, auto submit')
+      log(`${holdOwner || 'hold'} reached 60s, auto submit`)
       onNotice?.('已到 60 秒，自动发送')
-      stopHoldTalk()
+      if (holdOwner === 'ptt') finishPushToTalk()
+      else stopHoldTalk()
     }
   }
 
@@ -835,32 +872,38 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
       log('hold talk cancelled')
       return
     }
-    if (durationMs < HOLD_TALK_MIN_MS) {
-      onNotice?.('说话时间太短')
-      return
-    }
-    const verdict = judgeHoldSpan(frames, nearFieldThreshold(readVoiceNearField()))
-    if (verdict === 'tooShort') {
-      log(`hold talk too short: frames=${frames.length} span=${durationMs}ms`)
-      onNotice?.('说话时间太短')
-      return
-    }
-    if (verdict === 'reject') {
-      log(`hold talk dropped: near-field gate frames=${frames.length}`)
-      // 误拒比误收难受：被吞掉时必须让人看见，限频 10 秒
-      const now = Date.now()
-      if (now - lastNearFieldNoticeAt >= 10_000) {
-        lastNearFieldNoticeAt = now
-        onNotice?.('已忽略：声音来自远处')
-      }
-      return
-    }
+    if (!acceptHoldSpan(frames, durationMs)) return
     const pcm = concatInt16(chunks)
     if (!pcm.length) {
       onNotice?.('说话时间太短')
       return
     }
     await transcribeHold(gen, pcm)
+  }
+
+  /** 整段判定 + 提示（语音条长按档与输入卡 PTT 共用）。返回 true = 可以送 ASR。 */
+  function acceptHoldSpan(frames, durationMs) {
+    if (durationMs < HOLD_TALK_MIN_MS) {
+      onNotice?.('说话时间太短')
+      return false
+    }
+    const verdict = judgeHoldSpan(frames, nearFieldThreshold(readVoiceNearField()))
+    if (verdict === 'tooShort') {
+      log(`hold too short: frames=${frames.length} span=${durationMs}ms`)
+      onNotice?.('说话时间太短')
+      return false
+    }
+    if (verdict === 'reject') {
+      log(`hold dropped: near-field gate frames=${frames.length}`)
+      // 误拒比误收难受：被吞掉时必须让人看见，限频 10 秒
+      const now = Date.now()
+      if (now - lastNearFieldNoticeAt >= 10_000) {
+        lastNearFieldNoticeAt = now
+        onNotice?.('已忽略：声音来自远处')
+      }
+      return false
+    }
+    return true
   }
 
   async function transcribeHold(gen, pcm) {
@@ -947,8 +990,14 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
 
   /** 彻底释放长按模式资源（退出语音 / 卸载 / 出错）。 */
   function releaseHoldTalk() {
+    // 让在飞的 PTT 识别结果失效：外部拆掉采集（语音会话收口/卸载）时不能再落一条消息
+    pttGen += 1
     stopHoldCapture()
     holdTranscribing.value = false
+    pttRecording.value = false
+    pttTranscribing.value = false
+    holdOwner = null
+    holdGraphPromise = null
     if (holdSocket) {
       const ws = holdSocket
       holdSocket = null
@@ -966,6 +1015,112 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     if (holdCtx) {
       holdCtx.close().catch(() => {})
       holdCtx = null
+    }
+  }
+
+  // MARK: 输入卡按住说话（与会话无关）
+
+  /** 按下：只本地录音，不进语音条、不建常驻连接、不改档位偏好。 */
+  async function startPushToTalk({ isHeld } = {}) {
+    if (pttRecording.value || pttTranscribing.value) return
+    if (holdRecording.value || holdTranscribing.value) return
+    pttGen += 1
+    const gen = pttGen
+    holdOwner = 'ptt'
+    pttRecording.value = true
+    try {
+      // isHeld：首次授权弹窗会把手势打断，松手后别把麦克风留在后台。
+      // gen：极快「按-松-再按」时，前一次还在等授权，别让它把流接进新一轮。
+      if (!(await beginHoldCapture({ aborted: () => gen !== pttGen || !pttRecording.value || (isHeld && !isHeld()) }))) {
+        // 只有还是本轮才收自己的状态：极快重按时，新一轮已经在录了
+        if (gen === pttGen) {
+          pttRecording.value = false
+          holdOwner = null
+        }
+        return false
+      }
+      log('ptt started')
+      return true
+    } catch (err) {
+      if (gen !== pttGen) return false
+      console.error('[voice] ptt capture failed', err)
+      pttRecording.value = false
+      holdOwner = null
+      releaseHoldTalk()
+      onError?.('麦克风启动失败')
+      return false
+    }
+  }
+
+  /** 松手：整段判定 → 一次性识别 → onPushToTalk。 */
+  function finishPushToTalk({ cancelled = false } = {}) {
+    if (!pttRecording.value) return
+    const gen = pttGen
+    const frames = holdFrames
+    const chunks = holdChunks
+    const durationMs = Date.now() - holdStartedAt
+    const live = !!holdStream
+    stopHoldCapture()
+    holdChunks = []
+    holdSamples = 0
+    holdFrames = []
+    pttRecording.value = false
+    holdOwner = null
+    if (cancelled) {
+      log('ptt cancelled')
+      return
+    }
+    // 采集还没真正开始（首次授权弹窗期间就松手）：静默收掉，不报「太短」
+    if (!live) return
+    if (!acceptHoldSpan(frames, durationMs)) return
+    const pcm = concatInt16(chunks)
+    if (!pcm.length) {
+      onNotice?.('说话时间太短')
+      return
+    }
+    transcribePushToTalk(gen, pcm)
+  }
+
+  async function transcribePushToTalk(gen, pcm) {
+    const isCurrent = () => gen === pttGen
+    pttTranscribing.value = true
+    try {
+      const ticket = await api.post('/api/voice/asr-ticket', {})
+      if (!isCurrent()) return
+      const text = await injectAudio(ticket.ticket, pcm)
+      if (!isCurrent()) return
+      const trimmed = String(text || '').trim()
+      log(`ptt done chars=${trimmed.length} audio=${(pcm.length / 16000).toFixed(1)}s`)
+      if (!trimmed) {
+        onNotice?.('没有听清，请再说一次')
+        return
+      }
+      lastActivity = Date.now()
+      onPushToTalk?.(trimmed)
+    } catch (err) {
+      if (!isCurrent()) return
+      console.error('[voice] ptt transcribe failed', err)
+      onError?.('语音识别失败')
+    } finally {
+      if (isCurrent()) pttTranscribing.value = false
+    }
+  }
+
+  /** 取消（上滑松手 / 切后台 / 卸载）：丢音频，并让在飞的识别结果失效。 */
+  function cancelPushToTalk() {
+    if (!pttRecording.value && !pttTranscribing.value) return
+    pttGen += 1
+    holdOwner = null
+    pttRecording.value = false
+    pttTranscribing.value = false
+    stopHoldCapture()
+    holdChunks = []
+    holdSamples = 0
+    holdFrames = []
+    if (holdSocket) {
+      const ws = holdSocket
+      holdSocket = null
+      try { ws.close() } catch { /* 已关闭 */ }
     }
   }
 
@@ -1158,6 +1313,8 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     mode,
     holdRecording,
     holdTranscribing,
+    pttRecording,
+    pttTranscribing,
     switching,
     hasHeld,
     refresh,
@@ -1168,6 +1325,9 @@ export function useVoiceChat({ onSentence, onHoldSentence, onError, onNotice, is
     endHold,
     startHoldTalk,
     stopHoldTalk,
+    startPushToTalk,
+    finishPushToTalk,
+    cancelPushToTalk,
     stop,
     cancel,
     appendReplyDelta,

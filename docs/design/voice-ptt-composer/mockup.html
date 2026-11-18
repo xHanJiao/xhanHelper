@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>按住说话 · 输入卡 UI 预览</title>
+<style>
+  :root {
+    --app-accent: #2F7D63;
+    --accent-secondary: #41C9E2;
+    --color-primary: #2F7D63;
+    --color-primary-soft: rgba(47, 125, 99, 0.10);
+    --color-danger: #C0504D;
+    --color-danger-soft: rgba(192, 80, 77, 0.10);
+    --color-bg: #F7EEDD;
+    --color-bg-page: #F7EEDD;
+    --color-surface: rgba(255, 255, 255, 0.50);
+    --color-surface-strong: #FBF6EC;
+    --color-input: #F2F7F3;
+    --color-tool: #E8E4EF;
+    --color-text: #3B2E1F;
+    --color-text-secondary: rgba(59, 46, 31, 0.64);
+    --color-text-muted: rgba(59, 46, 31, 0.42);
+    --color-border: rgba(59, 46, 31, 0.12);
+    --color-border-strong: rgba(59, 46, 31, 0.18);
+    --chat-font-size: 15px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --shadow-sm: 0 1px 3px rgba(59, 46, 31, 0.05);
+    --shadow-md: 0 6px 18px rgba(59, 46, 31, 0.07);
+    --shadow-lg: 0 18px 50px rgba(59, 46, 31, 0.10);
+    --app-bg-image:
+      radial-gradient(900px 620px at 8% 4%, rgba(146, 200, 180, 0.30), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255, 213, 166, 0.34), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.18), transparent 60%),
+      linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
+  }
+  [data-theme="dark"] {
+    --app-accent: #92C8B4;
+    --color-primary: #92C8B4;
+    --color-primary-soft: rgba(146, 200, 180, 0.14);
+    --color-danger: #E07A76;
+    --color-danger-soft: rgba(224, 122, 118, 0.12);
+    --color-bg: #1C1C1E;
+    --color-bg-page: #141416;
+    --color-surface: rgba(255, 255, 255, 0.06);
+    --color-surface-strong: #242426;
+    --color-input: #2C2E2D;
+    --color-tool: #2E2B36;
+    --color-text: #FFFFFF;
+    --color-text-secondary: rgba(255, 255, 255, 0.66);
+    --color-text-muted: rgba(255, 255, 255, 0.40);
+    --color-border: rgba(255, 255, 255, 0.12);
+    --color-border-strong: rgba(255, 255, 255, 0.18);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.28);
+    --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.34);
+    --app-bg-image:
+      radial-gradient(900px 620px at 8% 4%, rgba(146, 200, 180, 0.14), transparent 62%),
+      radial-gradient(820px 620px at 92% 10%, rgba(255, 213, 166, 0.10), transparent 62%),
+      radial-gradient(900px 720px at 50% 112%, rgba(47, 125, 99, 0.12), transparent 60%),
+      linear-gradient(158deg, var(--color-bg) 0%, var(--color-bg-page) 100%);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    color: var(--color-text);
+    background: var(--app-bg-image);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage {
+    min-height: 100vh;
+    padding: 28px 24px 150px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+
+  /* 手机外壳 */
+  .phone {
+    width: 390px;
+    height: 720px;
+    border-radius: 34px;
+    padding: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(255,255,255,0.34));
+    border: 0.5px solid var(--color-border-strong);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  [data-theme="dark"] .phone {
+    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+  }
+  .phone-label {
+    position: absolute;
+    top: 14px;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    letter-spacing: .04em;
+  }
+  .chat {
+    flex: 1;
+    padding: 44px 14px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+  }
+  .bubble {
+    max-width: 82%;
+    padding: 10px 13px;
+    border-radius: 16px;
+    font-size: var(--chat-font-size);
+    line-height: 1.6;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: var(--color-primary);
+    color: #fff;
+    border-bottom-right-radius: 5px;
+  }
+  [data-theme="dark"] .bubble.user { color: #10221B; }
+  .bubble.ai {
+    align-self: flex-start;
+    background: var(--color-surface-strong);
+    border: 0.5px solid var(--color-border);
+    border-bottom-left-radius: 5px;
+  }
+
+  /* 输入卡 */
+  .composer {
+    padding: 6px 12px 10px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  body[data-state="collapsed"] .composer,
+  body[data-state="collapsed-recording"] .composer { display: none; }
+
+  .card {
+    position: relative;
+    border: 0.5px solid var(--color-border);
+    border-radius: 18px;
+    background: var(--color-input);
+    box-shadow: var(--shadow-sm);
+    padding: 8px 10px 6px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .input-area {
+    position: relative;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    margin: 2px 2px 4px;
+  }
+  .placeholder {
+    color: var(--color-text-muted);
+    font-size: var(--chat-font-size);
+    line-height: 36px;
+  }
+  .placeholder::before {
+    content: "";
+    display: inline-block;
+    width: 1.5px;
+    height: 15px;
+    background: var(--color-primary);
+    margin-right: 2px;
+    vertical-align: -2px;
+    animation: caret 1.1s steps(1) infinite;
+  }
+  @keyframes caret { 50% { opacity: 0; } }
+
+  .wave {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    background: var(--color-input);
+    border-radius: 8px;
+    gap: 2px;
+    padding: 0 2px;
+  }
+  .wave i {
+    flex: 1;
+    border-radius: 2px;
+    background: linear-gradient(180deg, var(--app-accent), var(--accent-secondary));
+    height: 4px;
+    animation: breathe 1.1s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
+
+  body[data-state="recording"] .wave,
+  body[data-state="cancelling"] .wave,
+  body[data-state="transcribing"] .wave { display: flex; }
+  body[data-state="transcribing"] .wave i { animation-duration: 2.4s; opacity: .55; }
+  body[data-state="transcribing"] .placeholder { visibility: hidden; }
+  body[data-state="recording"] .placeholder,
+  body[data-state="cancelling"] .placeholder { visibility: hidden; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .left {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--color-text-muted);
+    transition: opacity .15s;
+  }
+  body[data-state="recording"] .left,
+  body[data-state="cancelling"] .left { opacity: .4; }
+  .left svg { width: 17px; height: 17px; display: block; }
+  .ico {
+    width: 34px; height: 34px;
+    border-radius: 999px;
+    display: grid; place-items: center;
+    color: var(--color-text-muted);
+  }
+  .right { display: flex; align-items: center; gap: 6px; }
+
+  /* 发送键 */
+  .send {
+    width: var(--btn); height: var(--btn);
+    padding: 0;
+    border-radius: 50%;
+    border: 0;
+    background: var(--color-primary);
+    color: #fff;
+    display: grid; place-items: center;
+    font-size: 17px;
+    box-shadow: var(--shadow-sm);
+  }
+  [data-theme="dark"] .send { color: #10221B; }
+  body[data-state="recording"] .send,
+  body[data-state="cancelling"] .send,
+  body[data-state="transcribing"] .send { opacity: .38; }
+
+  /* 麦克风：候选 A = 浅绿底，候选 B = 纯描边 */
+  .mic {
+    width: var(--btn); height: var(--btn);
+    padding: 0;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    border: 0.5px solid var(--color-border);
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+    position: relative;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  body[data-mic="b"] .mic {
+    background: transparent;
+    color: var(--color-text-secondary);
+    border-color: var(--color-border-strong);
+  }
+  .mic svg { width: 20px; height: 20px; display: block; }
+  .mic .spinner { display: none; }
+  body[data-state="transcribing"] .mic svg { display: none; }
+  body[data-state="transcribing"] .mic .spinner { display: block; }
+  .spinner {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  body[data-state="recording"] .mic,
+  body[data-state="collapsed-recording"] .mic {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  body[data-theme="dark"][data-state="recording"] .mic,
+  body[data-theme="dark"][data-state="collapsed-recording"] .mic { color: #10221B; }
+  body[data-state="recording"] .mic::before,
+  body[data-state="collapsed-recording"] .mic::before {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+  }
+  body[data-state="cancelling"] .mic {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+    animation: none;
+  }
+  body[data-state="cancelling"] .mic::before {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,.5);
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 42%, transparent); }
+    50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+  }
+
+  /* 上滑取消提示 */
+  .hint {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    padding: 7px 13px;
+    border-radius: 999px;
+    border: 0.5px solid var(--color-border);
+    background: var(--color-surface-strong);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: var(--shadow-md);
+    display: none;
+    z-index: 5;
+  }
+  body[data-state="recording"] .hint,
+  body[data-state="cancelling"] .hint { display: block; }
+  body[data-state="cancelling"] .hint {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+  }
+  .hint .c-text { display: none; }
+  body[data-state="cancelling"] .hint .n-text { display: none; }
+  body[data-state="cancelling"] .hint .c-text { display: inline; }
+
+  /* 收起态：麦克风 + 发消息 */
+  .collapsed {
+    display: none;
+    position: absolute;
+    right: 14px;
+    bottom: 84px;
+    z-index: 4;
+    align-items: center;
+    gap: 6px;
+  }
+  body[data-state="collapsed"] .collapsed,
+  body[data-state="collapsed-recording"] .collapsed { display: flex; }
+  .rbtn {
+    height: 38px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    border: 0.5px solid var(--color-border);
+    background: var(--color-surface-strong);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-md);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12.5px;
+    padding: 0 14px;
+  }
+  .rbtn.mic { width: 38px; padding: 0; }
+  .rbtn.mic svg { width: 20px; height: 20px; display: block; }
+  .rbtn.mic .spinner { display: none; }
+  body[data-state="collapsed-recording"] .rbtn.mic .spinner { display: block; }
+  body[data-state="collapsed-recording"] .rbtn.mic svg { display: none; }
+  .rbtn.send { color: var(--color-text-secondary); }
+  .rbtn.send svg { width: 14px; height: 14px; }
+
+  /* 收起态录音胶囊 */
+  .capsule {
+    position: absolute;
+    right: 14px;
+    bottom: 128px;
+    z-index: 5;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 0.5px solid var(--color-border);
+    background: var(--color-surface-strong);
+    box-shadow: var(--shadow-md);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  body[data-state="collapsed-recording"] .capsule { display: flex; }
+  .capsule .wave-mini { display: flex; align-items: center; gap: 2px; width: 92px; height: 18px; }
+  .capsule .wave-mini i {
+    flex: 1;
+    height: 16px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, var(--app-accent), var(--accent-secondary));
+    transform-origin: center;
+    animation: breathe 1.1s ease-in-out infinite;
+  }
+
+  /* 首用提示 */
+  .coach {
+    position: absolute;
+    right: 10px;
+    bottom: calc(100% + 6px);
+    padding: 6px 11px;
+    border-radius: 10px;
+    background: var(--color-surface-strong);
+    border: 0.5px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  body[data-coach="0"] .coach { display: none; }
+  body:not([data-state="expanded"]) .coach { display: none; }
+
+  /* 控制条 */
+  .ui {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 10px 14px;
+    border-radius: 16px;
+    border: 0.5px solid var(--color-border-strong);
+    background: var(--color-surface-strong);
+    box-shadow: var(--shadow-lg);
+    z-index: 50;
+    font-size: 12px;
+  }
+  .ui label { color: var(--color-text-muted); }
+  .ui .group { display: inline-flex; gap: 4px; }
+  .ui button {
+    border: 0.5px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text-secondary);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .ui button.on {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+  .ui input[type="range"] { width: 110px; accent-color: var(--color-primary); }
+</style>
+</head>
+<body data-theme="light" data-state="expanded" data-mic="a" data-size="40" data-coach="1" style="--btn: 40px">
+  <div class="stage">
+    <div class="phone">
+      <div class="phone-label">聊天 · 手机布局 390pt</div>
+      <div class="chat">
+        <div class="bubble user">今天下午的会挪到几点？</div>
+        <div class="bubble ai">挪到 16:30。会议室换成 3 号，我已经在日历里改好了。</div>
+      </div>
+
+      <div class="composer">
+        <div class="hint"><span class="n-text">松手发送 · 上滑取消</span><span class="c-text">松开取消</span></div>
+        <div class="coach">按住说话，松手发送</div>
+        <div class="card">
+          <div class="input-area">
+            <div class="placeholder">发消息…</div>
+            <div class="wave" aria-hidden="true"></div>
+          </div>
+          <div class="row">
+            <div class="left" aria-hidden="true">
+              <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></span>
+              <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M17 15l2 2 3-3"/></svg></span>
+              <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg></span>
+              <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </div>
+            <div class="right">
+              <button class="mic" type="button" aria-label="按住说话，松手发送，上滑取消">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+                <span class="spinner" aria-hidden="true"></span>
+              </button>
+              <button class="send" type="button" aria-label="发送">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="capsule">
+        <div class="wave-mini" aria-hidden="true"></div>
+        <span>上滑取消</span>
+      </div>
+      <div class="collapsed">
+        <button class="rbtn mic" type="button" aria-label="按住说话，松手发送，上滑取消">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
+        <button class="rbtn send" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          发消息
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="ui">
+    <span class="group" id="states">
+      <button data-state="expanded" class="on">展开</button>
+      <button data-state="recording">录音</button>
+      <button data-state="cancelling">上滑取消</button>
+      <button data-state="transcribing">识别中</button>
+      <button data-state="collapsed">收起态</button>
+      <button data-state="collapsed-recording">收起态录音</button>
+    </span>
+    <span class="group" id="mics">
+      <label>麦克风</label>
+      <button data-mic="a" class="on">A 浅绿底</button>
+      <button data-mic="b">B 纯描边</button>
+    </span>
+    <span class="group" id="sizes">
+      <label>尺寸</label>
+      <button data-size="40" class="on">40</button>
+      <button data-size="42">42</button>
+      <button data-size="44">44</button>
+    </span>
+    <span class="group" id="themes">
+      <label>主题</label>
+      <button data-theme="light" class="on">浅</button>
+      <button data-theme="dark">深</button>
+    </span>
+    <span class="group">
+      <label>字号</label>
+      <input type="range" id="font" min="14" max="19" step="1" value="15">
+    </span>
+    <span class="group">
+      <label>首用提示</label>
+      <button data-coach="1" class="on">开</button>
+      <button data-coach="0">关</button>
+    </span>
+  </div>
+
+<script>
+(function () {
+  var body = document.body
+
+  // 波线柱子：一次生成，两处复用
+  function fillWave(el, count) {
+    for (var i = 0; i < count; i++) {
+      var bar = document.createElement('i')
+      // 固定的伪随机高度，截图稳定
+      var h = 20 + Math.round(Math.abs(Math.sin(i * 1.7)) * 70)
+      bar.style.height = h + '%'
+      bar.style.animationDelay = (-(i % 9) * 0.11) + 's'
+      el.appendChild(bar)
+    }
+  }
+  fillWave(document.querySelector('.wave'), 42)
+  fillWave(document.querySelector('.capsule .wave-mini'), 18)
+
+  function bindGroup(id, attr) {
+    var root = document.getElementById(id)
+    root.addEventListener('click', function (e) {
+      var btn = e.target.closest('button')
+      if (!btn) return
+      var value = btn.getAttribute('data-' + attr)
+      if (value == null) return
+      body.setAttribute('data-' + attr, value)
+      Array.prototype.forEach.call(root.querySelectorAll('button'), function (b) {
+        b.classList.toggle('on', b === btn)
+      })
+    })
+  }
+  bindGroup('states', 'state')
+  bindGroup('mics', 'mic')
+  bindGroup('sizes', 'size')
+  bindGroup('themes', 'theme')
+  bindGroup('themes', 'theme')
+  document.getElementById('states').addEventListener('click', function () {
+    // 收起态录音时把提示也切到红：这个 demo 图省事，直接复用 cancelling 的样式不可行，
+    // 胶囊保持绿色，跟真机一致（上滑后胶囊变红由手势驱动）
+  })
+
+  // 尺寸：只改按钮直径，其余间距不动
+  document.getElementById('sizes').addEventListener('click', function () {
+    body.style.setProperty('--btn', body.getAttribute('data-size') + 'px')
+  })
+
+  // 首用提示开关
+  var coachGroup = document.querySelector('[data-coach="1"]')
+  document.querySelectorAll('[data-coach]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      body.setAttribute('data-coach', btn.getAttribute('data-coach'))
+      document.querySelectorAll('[data-coach]').forEach(function (b) {
+        b.classList.toggle('on', b === btn)
+      })
+    })
+  })
+
+  // 字号
+  document.getElementById('font').addEventListener('input', function (e) {
+    document.documentElement.style.setProperty('--chat-font-size', e.target.value + 'px')
+  })
+
+  // URL 预设：?state=recording&theme=dark&mic=b&size=42
+  var params = new URLSearchParams(location.search)
+  ;['state', 'theme', 'mic', 'size', 'coach'].forEach(function (key) {
+    var value = params.get(key)
+    if (!value) return
+    body.setAttribute('data-' + key, value)
+    var group = document.getElementById({
+      state: 'states', theme: 'themes', mic: 'mics', size: 'sizes'
+    }[key] || 'states')
+    if (!group) return
+    Array.prototype.forEach.call(group.querySelectorAll('button'), function (b) {
+      b.classList.toggle('on', b.getAttribute('data-' + key) === value)
+    })
+  })
+  if (params.get('size')) body.style.setProperty('--btn', params.get('size') + 'px')
+})()
+</script>
+</body>
+</html>

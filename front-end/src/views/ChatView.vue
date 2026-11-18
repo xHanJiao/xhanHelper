@@ -89,6 +89,7 @@ import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import AttachmentTray from '@/components/chat/AttachmentTray.vue'
 import { prepareImage } from '@/utils/image'
 import { waitForUploads } from '@/utils/voiceImages'
+import { readPttHintSeen, setPttHintSeen } from '@/utils/voicePref'
 import { shouldDrainQueue } from '@/utils/promptQueue'
 import { peekUnsentDraft, saveUnsentDraft, takeUnsentDraft } from '@/utils/unsentDraft'
 import { useAuthStore } from '@/stores/auth'
@@ -126,18 +127,24 @@ const {
   mode: voiceMode,
   holdRecording: voiceHoldRecording,
   holdTranscribing: voiceHoldTranscribing,
+  pttRecording,
+  pttTranscribing,
   switching: voiceSwitching,
   hasHeld: voiceHasHeld,
   startHold: startVoiceHold,
   endHold: endVoiceHold,
   startHoldTalk: startVoiceHoldTalk,
   stopHoldTalk: stopVoiceHoldTalk,
+  startPushToTalk,
+  finishPushToTalk,
+  cancelPushToTalk,
   appendReplyDelta: appendVoiceReply,
   endReplyStream: endVoiceReply,
   stopSpeaking
 } = useVoiceChat({
   onSentence: submitVoiceSentence,
   onHoldSentence: submitHoldSentence,
+  onPushToTalk: handlePushToTalkText,
   onError: (message) => nMessage.error(message),
   onNotice: (message) => nMessage.info(message),
   isBusy: () => chat.isStreaming
@@ -190,6 +197,12 @@ function isTextEntryTarget(target) {
 }
 
 function onVoiceKeyDown(e) {
+  // 输入卡的按住说话：Esc 丢弃本次（只有挂了键盘的设备走得到）
+  if (e.key === 'Escape' && pttRecording.value) {
+    e.preventDefault()
+    cancelPtt()
+    return
+  }
   if (!voiceActive.value) return
   // Esc：录音中丢弃本次（移动端有上滑，桌面端靠它）
   if (e.key === 'Escape') {
@@ -234,7 +247,10 @@ function onVoiceKeyUp(e) {
 function onVoiceWindowBlur() {
   if (voiceHolding.value) endVoiceHold()
   // 移动端按住录音时切走 = 手指不在了，丢弃；桌面端是两态录音，切窗口不能把录了一半的话丢掉
-  if (isMobile.value) onHoldTalkCancel()
+  if (isMobile.value) {
+    onHoldTalkCancel()
+    cancelPtt()
+  }
 }
 
 // 录音发送档：移动端按住录音、松手整段识别，上滑 60px 进取消区（松手丢弃）；
@@ -676,7 +692,10 @@ function onVisibilityChange() {
     // 冻结期间浏览器会攒着定时器、恢复时立刻补触发：先暂停看门狗，别误报超时
     setSuspended(true)
     // 移动端按住录音时切后台/锁屏（iOS PWA 不一定触发 window blur）：丢掉这段并放掉麦克风
-    if (isMobile.value) onHoldTalkCancel()
+    if (isMobile.value) {
+      onHoldTalkCancel()
+      cancelPtt()
+    }
     return
   }
   setSuspended(false)
@@ -972,6 +991,7 @@ onBeforeUnmount(() => {
   // SSE 401 分支已经存过就不覆盖，避免空输入冲掉刚存的那条。
   if (auth.sessionExpired) saveUnsentBeforeUnmount()
   clearTimeout(hideCooldownTimer)
+  clearTimeout(pttHintTimer)
   composerObserver?.disconnect()
   contentObserver?.disconnect()
   window.removeEventListener('resize', onLayoutResize)
@@ -979,6 +999,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('keyup', onVoiceKeyUp)
   window.removeEventListener('blur', onVoiceWindowBlur)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  // 先让在飞的 PTT 结果失效，再拆语音会话（cancel 里的 releaseHoldTalk 会把 ptt 状态清掉）
+  cancelPushToTalk()
   cancelVoice()
   stopSpeaking()
   chat.clearPendingSends()
@@ -1277,6 +1299,103 @@ async function submitHoldSentence(text) {
   } finally {
     releaseQueueAfterManualSend()
   }
+}
+
+// --- 输入卡「按住说话」------------------------------------------------------
+// 不走语音条：按下只本地录，松手识别后按草稿规则处理（见 docs/design/voice-ptt-composer）。
+const pttCancelArmed = ref(false)
+const pttHintVisible = ref(false)
+let pttPointerStartY = 0
+let pttHeld = false
+let pttHintTimer = null
+
+const pttWaveOpen = computed(() => pttRecording.value || pttTranscribing.value)
+
+const pttLabel = computed(() => {
+  if (pttTranscribing.value) return '识别中'
+  if (pttRecording.value) return pttCancelArmed.value ? '松开手指取消发送' : '松开发送'
+  return '按住说话，松手发送，上滑取消'
+})
+
+function hidePttHint() {
+  if (pttHintTimer) { clearTimeout(pttHintTimer); pttHintTimer = null }
+  if (!pttHintVisible.value) return
+  pttHintVisible.value = false
+  setPttHintSeen()
+}
+
+// 首次进聊天页（或第一次展开输入卡）浮一次说明；点一下或 4 秒后不再出现
+watch([isMobile, voiceAvailable, inputVisible], ([mobile, available, visible]) => {
+  if (!mobile || !available || !visible) return
+  if (pttHintVisible.value || readPttHintSeen()) return
+  pttHintVisible.value = true
+  pttHintTimer = setTimeout(hidePttHint, 4000)
+}, { immediate: true })
+
+function cancelPtt() {
+  pttHeld = false
+  pttCancelArmed.value = false
+  cancelPushToTalk()
+}
+
+function onPttPointerDown(e) {
+  if (!isMobile.value || pttTranscribing.value || holdSubmitting.value) return
+  // 阻止默认聚焦与选中：textarea 不失焦，iOS 不会中途收键盘把卡片挪走
+  e.preventDefault()
+  hidePttHint()
+  pttHeld = true
+  pttPointerStartY = e.clientY
+  pttCancelArmed.value = false
+  e.currentTarget?.setPointerCapture?.(e.pointerId)
+  const downAt = Date.now()
+  startPushToTalk({ isHeld: () => pttHeld }).then((started) => {
+    if (!started || !pttRecording.value) return
+    // 首次授权弹窗会吞掉 pointerup：正常开麦远小于 1.5s，超过就当手势已被打断，
+    // 收口别让它没有手指也一直录到 60 秒（之后权限已给，再按住即可）
+    if (Date.now() - downAt > 1500) {
+      cancelPtt()
+      nMessage.info('麦克风已允许，请再按住说话')
+    }
+  })
+}
+
+function onPttPointerMove(e) {
+  if (!pttHeld || !pttRecording.value) return
+  pttCancelArmed.value = pttPointerStartY - e.clientY > 60
+}
+
+function onPttPointerUp() {
+  if (!pttHeld) return
+  pttHeld = false
+  const cancelled = pttCancelArmed.value
+  pttCancelArmed.value = false
+  finishPushToTalk({ cancelled })
+}
+
+function onPttPointerCancel() {
+  if (!pttHeld) return
+  cancelPtt()
+}
+
+// 识别结果：输入框为空就直接发一轮；已有草稿就接在后面等你改。
+// 异步回来后 iOS 不允许可靠 focus()，所以不抢焦点，也不清草稿。
+function handlePushToTalkText(text) {
+  const content = String(text || '').trim()
+  if (!content) return
+  if (inputValue.value.trim()) {
+    inputValue.value = `${inputValue.value.trimEnd()}\n${content}`
+    // 收起态里追加了草稿：展开，否则用户看不到任何反馈
+    if (!inputVisible.value) inputVisible.value = true
+    nextTick(() => {
+      const ta = document.querySelector('.chat-input textarea')
+      if (!ta || document.activeElement !== ta) return
+      ta.setSelectionRange(ta.value.length, ta.value.length)
+    })
+    return
+  }
+  submitHoldSentence(content).catch(err => console.error('Voice send failed', err))
+  // 和文字发送一致：手机端发完收起输入卡
+  if (isMobile.value) inputVisible.value = false
 }
 
 function handleStop() {
@@ -1663,8 +1782,12 @@ function handleContainerClick(e) {
       />
       <div class="chat-composer-card" :class="{ 'voice-open': voiceBarOpen }" @paste="onComposerPaste" @dragover.prevent @drop.prevent="onComposerDrop">
         <!-- 移动端上滑取消提示：浮在输入卡上方，不占布局 -->
-        <div v-if="isMobile && voiceHoldRecording" class="hold-hint" :class="{ armed: holdCancelArmed }">
-          {{ holdCancelArmed ? '松开取消' : '上滑取消' }}
+        <div
+          v-if="isMobile && inputVisible && (voiceHoldRecording || pttRecording)"
+          class="hold-hint"
+          :class="{ armed: holdCancelArmed || pttCancelArmed }"
+        >
+          {{ (holdCancelArmed || pttCancelArmed) ? '松开取消' : (pttRecording ? '松手发送 · 上滑取消' : '上滑取消') }}
         </div>
         <AttachmentTray
           v-if="draftImages.length"
@@ -1675,27 +1798,36 @@ function handleContainerClick(e) {
           @retry="retryDraft"
           @clear="clearDrafts"
         />
-        <VoiceWaveLine
-          v-if="voiceBarOpen"
-          :phase="voicePhase"
-          :level="voiceLevel"
-          @interrupt="voiceInterrupt"
-        />
-        <NInput
-          v-else
-          v-model:value="inputValue"
-          type="textarea"
-          :placeholder="chat.isStreaming ? '继续输入，Enter 加入队列...' : '发消息...'"
-          :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
-          class="chat-input"
-          @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
-          :bordered="false"
-          style="background: transparent; flex: 1;"
-        />
-        <div class="composer-row" :class="{ 'voice-row': voiceBarOpen }">
+        <!-- 首次进聊天页浮一次，按一下就消失（localStorage 记过） -->
+        <div v-if="pttHintVisible" class="ptt-coach">按住说话，松手发送</div>
+        <div class="composer-input">
+          <VoiceWaveLine
+            v-if="voiceBarOpen"
+            :phase="voicePhase"
+            :level="voiceLevel"
+            @interrupt="voiceInterrupt"
+          />
+          <NInput
+            v-else
+            v-model:value="inputValue"
+            type="textarea"
+            :placeholder="chat.isStreaming ? '继续输入，Enter 加入队列...' : '发消息...'"
+            :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
+            class="chat-input"
+            @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
+            :bordered="false"
+            style="background: transparent; flex: 1;"
+          />
+          <!-- 按住说话时波线只盖在上面，textarea 不卸载：iOS 一失焦就收键盘、卡片高度跟着变，
+               按钮会从手指底下挪走（见 docs/design/voice-ptt-composer） -->
+          <div v-if="inputVisible && pttWaveOpen" class="ptt-wave-overlay" aria-hidden="true">
+            <VoiceWaveLine :phase="pttTranscribing ? 'thinking' : 'listening'" :level="voiceLevel" />
+          </div>
+        </div>
+        <div class="composer-row" :class="{ 'voice-row': voiceBarOpen, 'ptt-active': pttRecording }">
           <template v-if="!voiceBarOpen">
             <div class="composer-left">
-              <NTooltip v-if="voiceAvailable" :disabled="isMobile" placement="top">
+              <NTooltip v-if="voiceAvailable && !isMobile" :disabled="isMobile" placement="top">
                 <template #trigger>
                   <button class="icon-pill" :class="{ on: voiceActive }" type="button"
                     :aria-label="voiceActive ? '结束语音对话' : '语音对话'"
@@ -1736,6 +1868,29 @@ function handleContainerClick(e) {
               </button>
             </div>
             <div class="composer-actions">
+              <!-- 按住说话：与会话无关的一次性采集，松手识别后按草稿规则发/追加。
+                   pointerdown 里 preventDefault 保住 textarea 焦点，iOS 不会中途收键盘。 -->
+              <button
+                v-if="isMobile && voiceAvailable"
+                class="ptt-btn"
+                :class="{ recording: pttRecording, cancel: pttCancelArmed, busy: pttTranscribing }"
+                type="button"
+                :aria-label="pttLabel"
+                :aria-pressed="pttRecording"
+                :disabled="pttTranscribing"
+                @pointerdown="onPttPointerDown"
+                @pointermove="onPttPointerMove"
+                @pointerup="onPttPointerUp"
+                @pointercancel="onPttPointerCancel"
+                @contextmenu.prevent
+              >
+                <span v-if="pttTranscribing" class="ptt-spin" aria-hidden="true"></span>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/>
+                  <path d="M19 11a7 7 0 0 1-14 0"/>
+                  <path d="M12 18v3"/>
+                </svg>
+              </button>
               <!-- 两枚发送键（↑）关掉 NButton 的 mousedown 自聚焦（见 docs/bugs/069）：它会
                    preventDefault 之后又 focus() 到自己身上，跟下面「发完收起」抢——先被按钮抢
                    焦点、再被 blur，iOS 上键盘会闪一下。■ 不动：它要保留 tabindex，
@@ -1744,7 +1899,7 @@ function handleContainerClick(e) {
                 v-if="!chat.isStreaming"
                 type="primary"
                 size="small"
-                :disabled="!canSend"
+                :disabled="!canSend || pttRecording"
                 :focusable="false"
                 @click="handleSend"
                 style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
@@ -1753,13 +1908,17 @@ function handleContainerClick(e) {
                 <NButton
                   type="error"
                   size="small"
+                  :disabled="pttRecording"
+                  aria-label="停止生成"
                   @click="handleStop"
                   style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
-                >■</NButton>
+                >
+                  <span class="stop-square" aria-hidden="true"></span>
+                </NButton>
                 <NButton
                   type="primary"
                   size="small"
-                  :disabled="!canSend"
+                  :disabled="!canSend || pttRecording"
                   :focusable="false"
                   title="加入队列（Enter）"
                   @click="handleSend"
@@ -1863,8 +2022,37 @@ function handleContainerClick(e) {
     </div>
     </div><!-- /chat-card -->
     <div v-if="isMobile && !inputVisible && !selectionMode" class="composer-reopen">
+      <!-- 收起态录音：胶囊浮在按钮上方，不展开输入卡、不跳布局 -->
+      <div v-if="pttRecording || pttTranscribing" class="ptt-capsule" :class="{ armed: pttCancelArmed }">
+        <VoiceWaveLine v-if="pttRecording" phase="listening" :level="voiceLevel" />
+        <span v-else class="ptt-capsule-think">识别中…</span>
+        <span>{{ pttCancelArmed ? '松开取消' : '上滑取消' }}</span>
+      </div>
       <!-- 收起态也要能停下生成：■ 只存在于输入卡里，收起后就够不着了 -->
-      <button v-if="chat.isStreaming" class="reopen-btn reopen-stop" type="button" aria-label="停止生成" @click="handleStop">■</button>
+      <button v-if="chat.isStreaming" class="reopen-btn reopen-stop" type="button" aria-label="停止生成" @click="handleStop">
+        <span class="reopen-stop-core" aria-hidden="true"></span>
+      </button>
+      <button
+        v-if="voiceAvailable"
+        class="reopen-btn reopen-mic"
+        :class="{ recording: pttRecording, cancel: pttCancelArmed }"
+        type="button"
+        :aria-label="pttLabel"
+        :aria-pressed="pttRecording"
+        :disabled="pttTranscribing"
+        @pointerdown="onPttPointerDown"
+        @pointermove="onPttPointerMove"
+        @pointerup="onPttPointerUp"
+        @pointercancel="onPttPointerCancel"
+        @contextmenu.prevent
+      >
+        <span v-if="pttTranscribing" class="ptt-spin" aria-hidden="true"></span>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/>
+          <path d="M19 11a7 7 0 0 1-14 0"/>
+          <path d="M12 18v3"/>
+        </svg>
+      </button>
       <button class="reopen-btn" type="button" @click="toggleInput">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         发消息
@@ -1948,11 +2136,106 @@ function handleContainerClick(e) {
   gap: 4px;
   min-width: 0;
 }
+/* 按住说话中：左排（挂图/计划/无痕/收起）置灰禁点，免得手指还在右边时误触 */
+.composer-row.ptt-active .composer-left {
+  opacity: 0.4;
+  pointer-events: none;
+}
 .composer-actions {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
   gap: 6px;
+  position: relative;
+}
+/* 输入框外壳：按住说话时波线只盖这一层，textarea 不卸载（见 docs/design/voice-ptt-composer） */
+.composer-input {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.ptt-wave-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  border-radius: 10px;
+  background: var(--color-input);
+  /* 只是指示器：点它不该触发 VoiceWaveLine 的「打断」 */
+  pointer-events: none;
+}
+/* 按住说话：常驻在发送键左边，按下变实心绿、滑进取消区变红 */
+.ptt-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  position: relative;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.ptt-btn svg { width: 20px; height: 20px; display: block; }
+.ptt-btn:hover:not(:disabled) { border-color: var(--color-primary); }
+.ptt-btn:disabled { opacity: 0.55; cursor: default; }
+.ptt-btn.recording {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  animation: hold-pulse 1.6s ease-in-out infinite;
+}
+.ptt-btn.recording::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+}
+.ptt-btn.cancel,
+.ptt-btn.cancel:hover:not(:disabled) {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+  animation: none;
+}
+.ptt-btn.cancel::before { border-color: rgba(255, 255, 255, 0.5); }
+[data-theme="dark"] .ptt-btn.recording,
+[data-theme="dark"] .ptt-btn.cancel,
+[data-theme="dark"] .reopen-btn.reopen-mic.recording,
+[data-theme="dark"] .reopen-btn.reopen-mic.cancel { color: #10221B; }
+.ptt-spin {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+.ptt-coach {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% + 6px);
+  padding: 6px 11px;
+  border-radius: 10px;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-surface-strong);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  z-index: 102;
 }
 
 /* 排队消息：虚线气泡紧跟流式回复后面，视觉在对话流里，数据不写 messages */
@@ -2060,7 +2343,72 @@ function handleContainerClick(e) {
   border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  font-size: 13px;
+}
+/* 方块用独立盒子画，不依赖 ■ 字形在各字体下的实际大小 */
+.reopen-btn.reopen-stop .reopen-stop-core {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.stop-square {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.reopen-btn.reopen-mic {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  justify-content: center;
+  background: var(--color-primary-soft);
+  border-color: var(--color-border);
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.reopen-btn.reopen-mic svg { width: 20px; height: 20px; }
+.reopen-btn.reopen-mic.recording {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  animation: hold-pulse 1.6s ease-in-out infinite;
+}
+.reopen-btn.reopen-mic.cancel,
+.reopen-btn.reopen-mic.cancel:hover {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+  animation: none;
+}
+/* 收起态录音胶囊：浮在「麦克风 + 发消息」上方，不展开输入卡 */
+.ptt-capsule {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 0.5px solid var(--color-border);
+  background: var(--color-surface-strong);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+.ptt-capsule .voice-wave { width: 92px; }
+.ptt-capsule.armed {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
 }
 .composer-row.voice-row { justify-content: center; }
 /* 语音条是纯控件（长按=录音手势）：不禁选中，iOS 会把隔壁胶囊的「连续对话」当选中锚点，
@@ -2221,8 +2569,8 @@ function handleContainerClick(e) {
   color: var(--color-danger);
 }
 .voice-stop .stop-core {
-  width: 11px;
-  height: 11px;
+  width: 13px;
+  height: 13px;
   border-radius: 2px;
   background: currentColor;
 }

@@ -59,3 +59,23 @@ export function setVoiceMode(value) {
     console.error('Failed to save voice mode', e)
   }
 }
+
+// 首用提示：输入卡上的「按住说话」只浮一次说明
+const PTT_HINT_KEY = 'voice.pttHintSeen'
+
+export function readPttHintSeen() {
+  try {
+    return localStorage.getItem(PTT_HINT_KEY) === '1'
+  } catch (e) {
+    console.error('Failed to read voice ptt hint flag', e)
+    return false
+  }
+}
+
+export function setPttHintSeen() {
+  try {
+    localStorage.setItem(PTT_HINT_KEY, '1')
+  } catch (e) {
+    console.error('Failed to save voice ptt hint flag', e)
+  }
+}

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   readVoiceSpeaker, setVoiceSpeaker,
   readVoiceNearField, setVoiceNearField,
-  readVoiceMode, setVoiceMode
+  readVoiceMode, setVoiceMode,
+  readPttHintSeen, setPttHintSeen
 } from './voicePref.js'
 
 function useStorage(initial = {}) {
@@ -84,4 +85,22 @@ test('voice mode: no localStorage fallback', () => {
   delete globalThis.localStorage
   assert.equal(readVoiceMode(), 'continuous')
   assert.doesNotThrow(() => setVoiceMode('hold'))
+})
+
+test('ptt hint: 默认未看过', () => {
+  useStorage()
+  assert.equal(readPttHintSeen(), false)
+})
+
+test('ptt hint: 看过之后为真', () => {
+  const store = useStorage()
+  setPttHintSeen()
+  assert.equal(store.get('voice.pttHintSeen'), '1')
+  assert.equal(readPttHintSeen(), true)
+})
+
+test('ptt hint: no localStorage fallback', () => {
+  delete globalThis.localStorage
+  assert.equal(readPttHintSeen(), false)
+  assert.doesNotThrow(() => setPttHintSeen())
 })

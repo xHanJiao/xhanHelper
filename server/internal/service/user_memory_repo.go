@@ -103,25 +103,25 @@ func (r *UserMemoryRepo) BatchDelete(ctx context.Context, ids []string, userID s
 	return nil
 }
 
-// PurgeBySourceConvs 删除这些会话写下的记忆，返回被删的 id（供清理派生数据）。
-// 无痕销毁专用：系统内部清理，不发实体变更事件（与 BeginPurge 的处理一致）。
-func (r *UserMemoryRepo) PurgeBySourceConvs(ctx context.Context, convIDs []string) ([]string, error) {
+// ListIDsBySourceConvs 取出这些会话写下的记忆 id（无痕销毁用）。
+func (r *UserMemoryRepo) ListIDsBySourceConvs(ctx context.Context, convIDs []string) ([]string, error) {
+	var ids []string
 	if len(convIDs) == 0 {
 		return nil, nil
 	}
-	var ids []string
-	if err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
-		Where("source_conv_id IN ?", convIDs).Pluck("id", &ids).Error; err != nil {
-		return nil, err
-	}
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("source_conv_id IN ?", convIDs).Pluck("id", &ids).Error
+	return ids, err
+}
+
+// DeleteIDs 按 id 删记忆行（调用方已清完派生数据）。
+// 无痕销毁专用：系统内部清理，不发实体变更事件（与 BeginPurge 的处理一致）。
+func (r *UserMemoryRepo) DeleteIDs(ctx context.Context, ids []string) (int64, error) {
 	if len(ids) == 0 {
-		return nil, nil
+		return 0, nil
 	}
-	if err := r.db.WithContext(activity.WithNoEvent(ctx)).
-		Where("id IN ?", ids).Delete(&model.UserMemory{}).Error; err != nil {
-		return nil, err
-	}
-	return ids, nil
+	res := r.db.WithContext(activity.WithNoEvent(ctx)).Where("id IN ?", ids).Delete(&model.UserMemory{})
+	return res.RowsAffected, res.Error
 }
 
 // GetByIDs 按 ID 列表查询

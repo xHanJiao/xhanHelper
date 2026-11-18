@@ -147,11 +147,14 @@ func TestBeginDestroy_PurgesMemoriesOfDestroyedConv(t *testing.T) {
 	db.Create(&model.UserMemory{ID: "mem-3", UserID: "user-0001", MemoryKey: "k", ContentHash: "h3",
 		MemoryValue: "存量无出处", Source: inline})
 
-	// 派生数据：向量行 + chunk 行 + 内存向量
+	// 派生数据：向量行 + chunk 行 + chunk 向量行 + 内存向量（含 chunk 向量键）
 	db.Create(&model.Embedding{ID: "mem-1", EntityType: model.EntityTypeMemory, EntityID: "mem-1", UserID: "user-0001", Model: "test"})
 	db.Create(&model.EmbeddingChunk{ID: "chunk-1", ParentType: model.EntityTypeMemory, ParentID: "mem-1",
 		UserID: "user-0001", ChunkIndex: 0, Content: "无痕会话里的隐私"})
+	chunkKey := model.ChunkVectorKey(model.EntityTypeMemory, "mem-1", 0)
+	db.Create(&model.Embedding{ID: chunkKey, EntityType: model.EntityTypeChunk, EntityID: chunkKey, UserID: "user-0001", Model: "test"})
 	d.vectorStore.Upsert(model.VectorPrefixMemory+"mem-1", []float64{1, 0}, map[string]string{"type": model.VectorTypeMemory})
+	d.vectorStore.Upsert(chunkKey, []float64{1, 0}, map[string]string{"type": model.VectorTypeChunk})
 	d.vectorStore.Upsert(model.VectorPrefixMemory+"mem-2", []float64{0, 1}, map[string]string{"type": model.VectorTypeMemory})
 
 	if err := d.BeginDestroy(ctx, "conv-0001", "user-0001"); err != nil {
@@ -175,10 +178,39 @@ func TestBeginDestroy_PurgesMemoriesOfDestroyedConv(t *testing.T) {
 	if n != 0 {
 		t.Errorf("记忆 chunk 应被清，剩 %d", n)
 	}
+	db.Model(&model.Embedding{}).Where("entity_type = ? AND entity_id = ?", model.EntityTypeChunk, chunkKey).Count(&n)
+	if n != 0 {
+		t.Errorf("记忆 chunk 的向量行应被清，剩 %d", n)
+	}
 	if _, ok := d.vectorStore.GetVector(model.VectorPrefixMemory + "mem-1"); ok {
 		t.Error("内存向量应被清")
 	}
+	if _, ok := d.vectorStore.GetVector(chunkKey); ok {
+		t.Error("内存 chunk 向量应被清")
+	}
 	if _, ok := d.vectorStore.GetVector(model.VectorPrefixMemory + "mem-2"); !ok {
 		t.Error("别的会话的内存向量不该被清")
+	}
+}
+
+// Stage B 也会清记忆：Stage A 的清理失败时，删会话行之前必须最后再试一次
+// （FinishPurge 抹掉会话行后 source_conv_id 就找不到目标了）。
+func TestRunPurge_AlsoPurgesMemories(t *testing.T) {
+	d, _, db, cleanup := setupDestroyer(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	db.Create(&model.Conversation{ID: "conv-0001", UserID: "user-0001", IsDeleted: true})
+	mine := "conv-0001"
+	db.Create(&model.UserMemory{ID: "mem-1", UserID: "user-0001", MemoryKey: "k", ContentHash: "h1",
+		MemoryValue: "无痕会话里的隐私", Source: model.MemorySourceInline, SourceConvID: &mine})
+
+	if err := d.RunPurge(ctx, "conv-0001"); err != nil {
+		t.Fatalf("RunPurge: %v", err)
+	}
+	var n int64
+	db.Model(&model.UserMemory{}).Where("id = ?", "mem-1").Count(&n)
+	if n != 0 {
+		t.Errorf("Stage B 应清掉本会话的记忆")
 	}
 }

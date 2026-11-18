@@ -397,8 +397,9 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
   - 新列 `UserMemory.SourceConvID`（`source_conv_id`，AutoMigrate 加列，无 SQL 迁移），
     决策循环 `Decide(ctx, userID, convID, cand)` → `newMemory` 给新建行记下会话 id；
     `update` 合并到别人的行**不改出处**。
-  - `EphemeralDestroyer.BeginDestroy` 拿到 scope（会话 + 子会话）后
-    `PurgeBySourceConvs` 批量删行 + `EntityPurger.PurgeMany` 清派生（embeddings/chunks/内存向量/版本）。
-    只在销毁时清，不在切换瞬间清（开关点回来还能反悔）。
-  - 失败只记日志不阻断销毁：消息物理销毁是可重试的主契约。
-  残留：存量行无出处（forward-only）；`action=update` 合并进旧会话的行不会被删；csv/replay 不写出处。
+  - `EphemeralDestroyer.BeginDestroy` 拿到 scope（会话 + 子会话）后按 `source_conv_id` 清记忆：
+    `ListIDsBySourceConvs` → `EntityPurger.PurgeMany`（清派生）→ `DeleteIDs`（删行）。
+    Stage A 失败时 Stage B `RunPurge` 在删会话行前重试一次（会话行删了出处键就没了）。
+    只在销毁时清，切换瞬间不清（开关点回来还能反悔）。
+  残留：存量行无出处（forward-only）；`action=update` 合并进旧会话的行不会被删；csv/replay 不写出处；
+  已挂进事件的记忆，事件 `Summary` 仍会被注入（不重写事件摘要）。

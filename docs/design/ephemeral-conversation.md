@@ -27,7 +27,9 @@
 3. `UPDATE messages SET status=2`
 4. `DELETE conversation_summaries / conversation_plans / message_shares`
 
-随后清除内存向量 `VectorStore.DeleteByMetadata("conv_id", id)`，并入队 `ephemeral_purge` 延迟任务。
+随后清除内存向量 `VectorStore.DeleteByMetadata("conv_id", id)`；再按 `source_conv_id IN scope`
+清掉这些会话写下的记忆（`ListIDsBySourceConvs` → `EntityPurger.PurgeMany` 清派生 → `DeleteIDs` 删行，
+先清派生再删行，失败可重跑）；最后入队 `ephemeral_purge` 延迟任务。
 
 触发点（两者代码一致，均只做 Stage A）：
 - 后处理：`PostChatWorkerGroup.Process` 检测到无痕会话 → `BeginDestroy`
@@ -41,6 +43,7 @@ loop:
   DELETE embeddings WHERE entity_type='message' AND entity_id IN ids
   DELETE messages WHERE id IN ids
   sleep 150ms   // 避免大字段删除打满磁盘 IO
+purge memories by source_conv_id   // Stage A 失败过就在这里重试（删会话行前最后一次机会）
 DELETE conversations WHERE id IN scope   // 最后一步
 ```
 
@@ -130,11 +133,14 @@ CronRunner `ScheduleRetry`（≤3 次，2 分钟退避）→ 重入 `RunPurge`�
   修法（出处 + 按出处清理）：
   - `UserMemory.SourceConvID`（新列，AutoMigrate 自动加）由决策循环写入：`Decide` 带 convID，
     `newMemory` 给新建行记下会话 id；**`update` 合并到别人的行时不改出处**（那是原会话的记忆）。
-  - `EphemeralDestroyer.BeginDestroy` 在拿到 scope（本会话 + `parent_id` 子会话）后调
-    `UserMemoryRepo.PurgeBySourceConvs` 批量删行，再用 `EntityPurger.PurgeMany` 清派生
-    （embeddings / chunks / 内存向量 / 版本快照）。销毁时清理、不在切换瞬间清理：用户把开关
-    点回来就还能反悔，记忆不丢。
-  - 清理失败只记日志、不阻断销毁（消息物理销毁是可重试的主契约）。
+  - `EphemeralDestroyer.BeginDestroy` 在拿到 scope（本会话 + `parent_id` 子会话）后按
+    `source_conv_id IN scope` 清记忆：`ListIDsBySourceConvs` → `EntityPurger.PurgeMany`（清派生）→
+    `DeleteIDs`（删行）。Stage A 失败时 Stage B `RunPurge` 会在 `FinishPurge` 删会话行**之前**重试一次
+    （会话行一删，出处键就没了）；两次都失败才永久残留（有日志）。只在销毁时清，不在切换瞬间清：
+    用户把开关点回来就还能反悔，记忆不丢。
+  - 清理顺序是「先清派生、再删行」：反过来失败会留下再也定位不到的 chunk 原文与向量行。
   残留：① 存量行没有出处，只能 forward-only；② 这次对话若是「合并进已有记忆」（决策循环 action=update），
-  那条行仍属原会话，销毁本会话不会删它（内容里可能含本会话的片段）；③ csv 导入与 replay/eval 不写出处。
+  那条行仍属原会话，销毁本会话不会删它（内容里可能含本会话的片段）；③ csv 导入与 replay/eval 不写出处；
+  ④ 记忆已挂进事件时，事件的 `Summary` 仍会被注入（`retrieval/event_source.go` 无条件注入），
+  本方案不重写事件摘要——销毁后这条通道仍可能带出隐私片段。
 

@@ -98,7 +98,8 @@ func (p *EntityPurger) PurgeMany(ctx context.Context, entityType string, entityI
 	return nil
 }
 
-// PurgeChunks 只清理句级 chunk（内存 chunk 向量 + chunk 向量行 + chunk 行）。// 用于「更新后重建 chunk」这类只替换 chunk 的场景，不动全文向量与版本快照。
+// PurgeChunks 只清理句级 chunk（内存 chunk 向量 + chunk 向量行 + chunk 行）。
+// 用于「更新后重建 chunk」这类只替换 chunk 的场景，不动全文向量与版本快照。
 func (p *EntityPurger) PurgeChunks(ctx context.Context, entityType, entityID string) error {
 	chunks, err := p.chunkRepo.ListByParent(ctx, entityType, entityID)
 	if err != nil {

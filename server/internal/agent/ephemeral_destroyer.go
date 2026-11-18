@@ -61,24 +61,30 @@ func (d *EphemeralDestroyer) BeginDestroy(ctx context.Context, convID, userID st
 	}
 	// 这些会话写下的记忆也一并销毁：无痕的承诺是「不留下痕迹」，而记忆行没有 conv 关联时
 	// 会永留并继续注入（会话从普通切无痕的 case 靠 source_conv_id 才能回溯，见
-	// docs/design/ephemeral-conversation.md）。失败只记日志、不阻断销毁——消息销毁是可重试的主契约。
+	// docs/design/ephemeral-conversation.md）。这里失败不阻断销毁——Stage B（RunPurge）
+	// 会在删会话行之前重试一次，那时出处键还在；两次都失败才会永久残留（有日志）。
 	if err := d.purgeMemories(ctx, scope); err != nil {
-		log.Printf("[ephemeral] purge memories failed (scope=%v): %v", scope, err)
+		log.Printf("[ephemeral] purge memories failed (scope=%v, Stage B 会重试): %v", scope, err)
 	}
 	return d.enqueuePurge(ctx, userID, convID)
 }
 
 // purgeMemories 删掉 scope 内会话写下的记忆并清派生数据（向量行/chunk/内存向量/版本快照）。
+// 顺序是「先清派生、再删行」：派生清理失败时记忆行还在，重跑还能按同一出处找到它；
+// 反过来会留下再也定位不到的 chunk 原文与向量行。幂等。
 func (d *EphemeralDestroyer) purgeMemories(ctx context.Context, scope []string) error {
-	ids, err := d.memRepo.PurgeBySourceConvs(ctx, scope)
+	ids, err := d.memRepo.ListIDsBySourceConvs(ctx, scope)
 	if err != nil {
-		return fmt.Errorf("delete memories: %w", err)
+		return fmt.Errorf("list memories: %w", err)
 	}
 	if len(ids) == 0 {
 		return nil
 	}
 	if err := d.purger.PurgeMany(ctx, model.EntityTypeMemory, ids); err != nil {
 		return fmt.Errorf("purge memory derivations: %w", err)
+	}
+	if _, err := d.memRepo.DeleteIDs(ctx, ids); err != nil {
+		return fmt.Errorf("delete memories: %w", err)
 	}
 	log.Printf("[ephemeral] purged %d memories (scope=%v)", len(ids), scope)
 	return nil
@@ -135,6 +141,11 @@ func (d *EphemeralDestroyer) RunPurge(ctx context.Context, convID string) error 
 			return ctx.Err()
 		case <-time.After(purgeBatchPause):
 		}
+	}
+	// 删会话行是不可逆的一步：记忆清理在 Stage A 失败过就在这里再试一次，
+	// 否则 FinishPurge 抹掉会话行后 source_conv_id 失去回溯目标，失败即永久残留。
+	if err := d.purgeMemories(ctx, scope); err != nil {
+		return fmt.Errorf("purge memories: %w", err)
 	}
 	if err := d.convRepo.FinishPurge(ctx, scope); err != nil {
 		return fmt.Errorf("finish purge: %w", err)

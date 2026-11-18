@@ -56,9 +56,25 @@ final class ArtifactViewModel: ObservableObject {
     /// （否则旧关键词的第二页会拼进新一次的搜索结果）。
     private var generation = 0
     private var countTask: Task<Void, Never>?
+    /// 最近一次成功拉列表的时间：面板入口 30s 内重进不再打接口（快速来回切不产生流量）。
+    private var loadedAt: Date?
+    private static let cacheTTL: TimeInterval = 30
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
+    }
+
+    /// 缓存还新鲜（30s 内成功拉过、且没有错误态）：面板入口直接放行、连闸门都不用等。
+    var isFresh: Bool {
+        guard errorMessage == nil, let loadedAt else { return false }
+        return Date().timeIntervalSince(loadedAt) < Self.cacheTTL
+    }
+
+    /// 面板入口用：30s 内重进直接吃上一次的结果。失败/被取消不写时间戳，下次进来立刻重试。
+    /// 页头刷新、筛选、搜索都直走 `load()`，不受它影响。
+    func loadIfStale() async {
+        if isFresh { return }
+        await load()
     }
 
     func load() async {
@@ -95,6 +111,8 @@ final class ArtifactViewModel: ObservableObject {
         isLoading = false
         // 词云不是列表的必要条件：单独失败只记日志、保留上一次的标签，别把整页拖进错误态
         await loadTags()
+        // 缓存戳等标签也拉完再打：切走时标签被取消的话，重进面板应该重试而不是吃半份数据
+        if !Task.isCancelled { loadedAt = Date() }
     }
 
     private func loadTags() async {

@@ -200,7 +200,56 @@ struct PanelTabView: View {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
+    /// 面板挂载闸门：切到本面板后稳定 210ms 才真正建内容，切走就取消。
+    /// 210 = 200 + 一帧余量：连点间隔 ≈200ms 时闸门必须严格更长，否则两边同时到点会偶发漏拦。
+    /// 快速连点面板时中间面板根本不挂载 → 内容里的 `.task` 不跑、一个请求都不发
+    /// （见 docs/design/right-sidebar-unified-tabs/design.md 的 2026-11-18 条目）。
+    /// 数据还新鲜（30s 内拉过）的面板直接放行：没有请求要拦，不该白等。
+    @State private var isSettled = false
+
+    /// 本面板的列表数据是否还在 30s 缓存期内（只有灵阅/文档/账单有缓存）。
+    private var hasFreshData: Bool {
+        switch panel {
+        case .bills: return billVM.isFresh
+        case .artifacts: return artifactVM.isFresh
+        case .documents: return documentVM.isFresh
+        default: return false
+        }
+    }
+
     var body: some View {
+        Group {
+            if isSettled {
+                panelBody
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task {
+            if hasFreshData {
+                isSettled = true
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(210))
+            } catch is CancellationError {
+                return // 被切走是正常路径：本次挂载作废
+            } catch {
+                LogBuffer.shared.error("面板挂载闸门等待被中断：\(error)")
+                return
+            }
+            isSettled = true
+        }
+        // 挂在闸门外面：闸门窗口里点顶栏刷新/多选也不能把事件丢掉（刷新必须回源）
+        .onReceive(NotificationCenter.default.publisher(for: .sidebarPanelAction)) { note in
+            guard let event = note.object as? SidebarPanelActionEvent, event.panel == panel else { return }
+            handle(event.action)
+        }
+    }
+
+    private var panelBody: some View {
         VStack(spacing: 0) {
             if isArtifactSelectionActive {
                 artifactSelectionHeader
@@ -251,10 +300,6 @@ struct PanelTabView: View {
         // 顶栏 `tab-actions` 的 enabled/图标是闭包，注册表不观察 VM → 列表长度/导入态变了主动刷一次。
         // 汇成一个 tick：逐个加 onChange 会把 body 的表达式撑到类型检查超时。
         .onChange(of: tabActionTick) { _, _ in TopBarRegistry.shared.refresh() }
-        .onReceive(NotificationCenter.default.publisher(for: .sidebarPanelAction)) { note in
-            guard let event = note.object as? SidebarPanelActionEvent, event.panel == panel else { return }
-            handle(event.action)
-        }
         // 关掉 tab 时把跨 tab 的选中状态收干净（原来挂在 browsePanelSelection 变化上）
         .onDisappear {
             docSearchOpen = false
@@ -871,7 +916,7 @@ struct PanelTabView: View {
             case .reminders: Task { await homeVM.refresh(baseURL: baseURL, token: token, force: true) }
             case .memories: Task { await memoryVM.load() }
             case .artifacts: Task { await artifactVM.load() }
-            case .documents: Task { await documentVM.loadCurrentMode() }
+            case .documents: Task { await documentVM.loadCurrentMode(force: true) }
             case .images: Task { await imageVM.load() }
             case .events: Task { await eventVM.load() }
             case .agents: Task { await agentVM.load() }

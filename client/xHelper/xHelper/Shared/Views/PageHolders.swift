@@ -30,8 +30,8 @@ struct AgentPage: View {
     @ObservedObject var viewModel: AgentViewModel
 
     var body: some View {
+        // 加载由 AgentListView 自己的 .task 负责，避免进面板时并发打两次列表请求。
         AgentListView(viewModel: viewModel)
-            .task { await viewModel.load() }
     }
 }
 
@@ -58,8 +58,9 @@ struct DocumentPage: View {
     var onOpen: ((Document) -> Void)? = nil
 
     var body: some View {
+        // 加载由 DocumentListView 自己的 .task 负责（它还负责当前模式：列表/回收站），
+        // 这里再挂一次会在进面板时并发打两次列表请求。
         DocumentListView(viewModel: viewModel, onOpen: onOpen)
-            .task { await viewModel.load() }
     }
 }
 
@@ -69,8 +70,8 @@ struct BillPage: View {
     let token: String
 
     var body: some View {
+        // 加载由 BillListView 自己的 .task 负责，避免进面板时并发打两次列表请求。
         BillListView(viewModel: viewModel, baseURL: baseURL, token: token)
-            .task { await viewModel.load() }
     }
 }
 

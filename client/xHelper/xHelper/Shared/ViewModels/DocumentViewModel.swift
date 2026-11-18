@@ -95,6 +95,10 @@ class DocumentViewModel: ObservableObject {
     private var generation = 0
     private var trashOffset = 0
     private var trashHasMore = true
+    /// 最近一次成功拉列表/回收站的时间：面板入口 30s 内重进不再打接口。
+    /// 页头刷新走 `loadCurrentMode(force: true)`，筛选/搜索/翻页直走 `load()`，都不受影响。
+    private var loadedAt: Date?
+    private static let cacheTTL: TimeInterval = 30
     private var countTask: Task<Void, Never>?
 
     init(apiClient: APIClient) {
@@ -211,8 +215,16 @@ class DocumentViewModel: ObservableObject {
         cooccurrence = adj
     }
 
-    /// 按当前模式加载（进入面板 / 刷新时用）。
-    func loadCurrentMode() async {
+    /// 缓存还新鲜（30s 内成功拉过、且没有错误态）：面板入口直接放行、连闸门都不用等。
+    var isFresh: Bool {
+        guard errorMessage == nil, let loadedAt else { return false }
+        return Date().timeIntervalSince(loadedAt) < Self.cacheTTL
+    }
+
+    /// 按当前模式加载（进入面板 / 刷新时用）。`force = false` 时 30s 内重进吃上一次的结果；
+    /// 页头刷新必须传 `true`（用户点刷新就是要求回源）。
+    func loadCurrentMode(force: Bool = false) async {
+        if !force, isFresh { return }
         if mode == .trash {
             await loadTrash()
         } else {
@@ -234,6 +246,7 @@ class DocumentViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isTrashLoading = false
+        if errorMessage == nil, !Task.isCancelled { loadedAt = Date() }
     }
 
     func loadMoreTrash() async {
@@ -322,6 +335,8 @@ class DocumentViewModel: ObservableObject {
         }
         guard gen == generation else { return }
         isLoading = false
+        // 被取消的那次不算成功，别给它打 30s 缓存戳（否则重进面板拿到的还是空列表）
+        if errorMessage == nil, !Task.isCancelled { loadedAt = Date() }
     }
 
     /// 刷新当前打开的详情文档（仅当详情页在前台时调用，见 BrowsePanelView）。

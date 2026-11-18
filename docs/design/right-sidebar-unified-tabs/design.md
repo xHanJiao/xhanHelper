@@ -94,3 +94,10 @@ macOS 右栏有两套壳并存：
      有下载进行中时先弹一次确认条：确认后才关并回首页，取消则什么都不关（收尾都在 completion 里）。
 - 已知遗留：`manager → tabs → AnyView → 视图 → manager` 存在强引用环（manager 生命周期 = 登录会话，
   登出时少回收一次，量级几 MB）；删除文档时其详情 tab 不会自动关（再激活会拉到 404）。
+- 2026-11-18 面板挂载闸门：`PanelTabView` 加 210ms 稳定期（`isSettled`，比 200ms 的连点间隔多一帧余量），切到面板后 210ms 内被切走就
+  一个请求都不发（内容里的 `.task` 根本不跑）。快速连点面板不再把每个中间面板的列表/标签/统计请求打到服务器；
+  代价是单进面板首屏多等 ≤210ms（期间显示小转圈）。数据还在 30s 缓存期内的面板（灵阅/文档/账单）直接放行，不等闸门。
+  `.onReceive(.sidebarPanelAction)` 挂在闸门外面：闸门窗口里点顶栏刷新/多选不能把事件丢掉。首页/其它 tab 不受影响。
+  影响：`BrowsePanelView.swift`（`PanelTabView`）、`PageHolders.swift`（去掉与子列表重复的入口 `.task`）、
+  `ArtifactListView.swift` / `BillListView.swift`（入口改 `loadIfStale()`）、
+  `ArtifactViewModel.swift` / `BillViewModel.swift` / `DocumentViewModel.swift`（30s 面板缓存，见 `right-sidebar-home` 同日条目）。

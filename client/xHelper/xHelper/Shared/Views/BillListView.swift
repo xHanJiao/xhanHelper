@@ -179,7 +179,7 @@ struct BillListView: View {
                     .padding(.horizontal, 12)
             }
         }
-        .task { await viewModel.load() }
+        .task { await viewModel.loadIfStale() }
     }
 
     private var filterPanel: some View {

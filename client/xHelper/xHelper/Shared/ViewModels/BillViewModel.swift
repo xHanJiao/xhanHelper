@@ -21,6 +21,9 @@ class BillViewModel: ObservableObject {
     private let apiClient: APIClient
     private var offset = 0
     @Published var hasMore = true
+    /// 最近一次成功拉列表的时间：面板入口 30s 内重进不再打接口。筛选/搜索/刷新直走 `load()`，不受影响。
+    private var loadedAt: Date?
+    private static let cacheTTL: TimeInterval = 30
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
@@ -72,6 +75,18 @@ class BillViewModel: ObservableObject {
         }
     }
 
+    /// 缓存还新鲜（30s 内成功拉过、且没有错误态）：面板入口直接放行、连闸门都不用等。
+    var isFresh: Bool {
+        guard errorMessage == nil, let loadedAt else { return false }
+        return Date().timeIntervalSince(loadedAt) < Self.cacheTTL
+    }
+
+    /// 面板入口用：30s 内重进直接吃上一次的结果。失败/被取消不写时间戳，下次进来立刻重试。
+    func loadIfStale() async {
+        if isFresh { return }
+        await load()
+    }
+
     func load() async {
         isLoading = true
         errorMessage = nil
@@ -87,6 +102,8 @@ class BillViewModel: ObservableObject {
             )
             bills = resp.bills
             hasMore = resp.bills.count >= 50
+            // 被取消的那次不算成功，别给它打 30s 缓存戳（否则重进面板拿到的还是空列表）
+            if !Task.isCancelled { loadedAt = Date() }
         } catch {
             LogBuffer.shared.error("BillViewModel.load: \(error)")
             errorMessage = error.localizedDescription

@@ -1126,6 +1126,12 @@ async function handleSend() {
   const outgoing = collectOutgoing()
   if (!outgoing) return
   exitSelectionMode()
+  // 手机屏幕小：发完就把输入卡收起来、退掉键盘，把整屏还给对话流（重新点「发消息」再展开）。
+  // 放在校验之后：草稿不合格（图还在传/传失败）会 early return，那种情况别把键盘收走。
+  if (isMobile.value) {
+    inputVisible.value = false
+    document.querySelector('.chat-input textarea')?.blur()
+  }
 
   // 流式中、队列非空或暂停中：都按先来后到追加，避免插队/丢消息
   if (chat.isStreaming || chat.pendingSends.length || chat.queuePaused) {
@@ -1730,11 +1736,16 @@ function handleContainerClick(e) {
               </button>
             </div>
             <div class="composer-actions">
+              <!-- 两枚发送键（↑）关掉 NButton 的 mousedown 自聚焦（见 docs/bugs/069）：它会
+                   preventDefault 之后又 focus() 到自己身上，跟下面「发完收起」抢——先被按钮抢
+                   焦点、再被 blur，iOS 上键盘会闪一下。■ 不动：它要保留 tabindex，
+                   而发送键的键盘路径就是 Enter。 -->
               <NButton
                 v-if="!chat.isStreaming"
                 type="primary"
                 size="small"
                 :disabled="!canSend"
+                :focusable="false"
                 @click="handleSend"
                 style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
               >↑</NButton>
@@ -1749,6 +1760,7 @@ function handleContainerClick(e) {
                   type="primary"
                   size="small"
                   :disabled="!canSend"
+                  :focusable="false"
                   title="加入队列（Enter）"
                   @click="handleSend"
                   style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
@@ -1850,10 +1862,14 @@ function handleContainerClick(e) {
       </div>
     </div>
     </div><!-- /chat-card -->
-    <button v-if="isMobile && !inputVisible && !selectionMode" class="composer-reopen" type="button" @click="toggleInput">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      发消息
-    </button>
+    <div v-if="isMobile && !inputVisible && !selectionMode" class="composer-reopen">
+      <!-- 收起态也要能停下生成：■ 只存在于输入卡里，收起后就够不着了 -->
+      <button v-if="chat.isStreaming" class="reopen-btn reopen-stop" type="button" aria-label="停止生成" @click="handleStop">■</button>
+      <button class="reopen-btn" type="button" @click="toggleInput">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        发消息
+      </button>
+    </div>
   </div>
 </template>
 
@@ -2021,6 +2037,11 @@ function handleContainerClick(e) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.reopen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 14px;
   border-radius: 999px;
   border: 0.5px solid var(--color-border);
@@ -2030,7 +2051,17 @@ function handleContainerClick(e) {
   box-shadow: var(--shadow-md);
   cursor: pointer;
 }
-.composer-reopen svg { width: 14px; height: 14px; }
+.reopen-btn svg { width: 14px; height: 14px; }
+.reopen-btn.reopen-stop {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  justify-content: center;
+  border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 13px;
+}
 .composer-row.voice-row { justify-content: center; }
 /* 语音条是纯控件（长按=录音手势）：不禁选中，iOS 会把隔壁胶囊的「连续对话」当选中锚点，
    上滑取消时还会一路延伸选到消息正文。touch-action / pointerdown.prevent 都拦不住选中手势。 */

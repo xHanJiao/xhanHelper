@@ -128,3 +128,4 @@ xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path --sdk macosx)" \
 
 - 2026-11-11：方案定稿。队列形态选 B（消息列表虚线气泡）；停止清空；切会话清空并提示；范围含网页 + Swift。
 - 2026-11-11：实现落地。补充语音轮时序（网页 `suppressQueueDrain` / Swift `clearPending:false`）、错误/断网暂停与恢复、iOS 下 `ChatView` 的 macOS-only 声明加 `#if`。
+- 2026-11-18：网页端手机布局（`isMobile`，宽度 < 1100）发完即收起输入卡 + 退键盘（`inputVisible=false`），整屏还给对话流；重新点右下角「发消息」再展开。收起态浮标旁补一枚 ■（停生成），所以流式中入队后要多点一次才能接着打，但停下仍是一下。见 `docs/bugs/069`。

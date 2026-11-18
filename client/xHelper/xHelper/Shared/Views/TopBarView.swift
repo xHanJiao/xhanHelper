@@ -442,11 +442,10 @@ struct TopBarView: View {
         #endif
     }
 
-    /// 打开右侧栏浏览面板（文档/灵阅/监控），复用浏览面板态
+    /// 打开右侧栏列表 tab（文档/灵阅/监控/记忆…），幂等
     private func openBrowsePanel(_ panel: BrowsePanel) {
         rightSidebar.isOpen = true
-        rightSidebar.showBrowsePanel()
-        rightSidebar.browsePanelSelection = panel
+        rightSidebar.openPanel(panel)
     }
 
     /// 深浅色切换：light ↔ dark 互切；跟随系统时先落到与当前实际配色相反的模式。

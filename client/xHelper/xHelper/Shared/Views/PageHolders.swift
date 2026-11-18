@@ -54,9 +54,11 @@ struct ArtifactPage: View {
 
 struct DocumentPage: View {
     @ObservedObject var viewModel: DocumentViewModel
+    /// 卡片点开详情：统一 tab 后详情是独立 tab，由 manager 开
+    var onOpen: ((Document) -> Void)? = nil
 
     var body: some View {
-        DocumentListView(viewModel: viewModel)
+        DocumentListView(viewModel: viewModel, onOpen: onOpen)
             .task { await viewModel.load() }
     }
 }

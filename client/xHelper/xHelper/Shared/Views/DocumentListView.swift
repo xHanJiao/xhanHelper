@@ -6,43 +6,37 @@ import AppKit
 
 struct DocumentListView: View {
     @ObservedObject var viewModel: DocumentViewModel
+    /// 卡片点开详情：统一 tab 后详情是独立 tab；nil 时退回旧行为（iOS sheet/内嵌）
+    var onOpen: ((Document) -> Void)? = nil
     /// 右键菜单里点了「删除」、等待二次确认的文档。
     @State private var pendingDelete: Document?
 
     var body: some View {
         Group {
-            if let doc = viewModel.openDocument {
+            // 没有 onOpen 的调用方（iOS 设置页 / 旧的单栏用法）仍走内嵌详情
+            if onOpen == nil, let doc = viewModel.openDocument {
                 DocumentFullView(
                     document: doc,
                     apiClient: viewModel.apiClient,
                     viewModel: viewModel,
                     onBack: { viewModel.openDocument = nil }
                 )
-                // 换篇重建：滚动位置 / 目录展开态归零（查找栏是 @AppStorage，跨篇保留）
                 .id(doc.id)
             } else {
-                #if os(macOS)
-                if viewModel.mode == .cloud {
-                    cloudContent
-                } else if viewModel.mode == .trash {
-                    trashContent
-                } else {
-                    listContent
-                }
-                #else
+            #if os(macOS)
+            if viewModel.mode == .cloud {
+                cloudContent
+            } else if viewModel.mode == .trash {
+                trashContent
+            } else {
                 listContent
-                #endif
+            }
+            #else
+            listContent
+            #endif
             }
         }
         .task { await viewModel.loadCurrentMode() }
-        // 同步选中态到顶栏文档按钮组（显隐由 Coordinator visible 闭包决定）
-        .onChange(of: viewModel.openDocument) { _, doc in
-            if let doc {
-                DocumentSelectionCoordinator.shared.select(doc)
-            } else {
-                DocumentSelectionCoordinator.shared.deselect()
-            }
-        }
         #if os(macOS)
         .confirmationDialog(
             "删除文档",
@@ -148,6 +142,8 @@ struct DocumentListView: View {
             onTap: {
                 if selecting {
                     viewModel.toggleDocumentSelection(doc.id)
+                } else if let onOpen {
+                    onOpen(doc)
                 } else {
                     viewModel.openDocument = doc
                 }
@@ -435,7 +431,7 @@ private enum DocSidebarMode: String {
     case list
 }
 
-private struct DocumentFullView: View {
+struct DocumentFullView: View {
     let document: Document
     let apiClient: APIClient
     /// 侧栏「列表」模式的数据源：同一份筛选条件下的文档列表（见 docs/design/document-sidebar-modes）。

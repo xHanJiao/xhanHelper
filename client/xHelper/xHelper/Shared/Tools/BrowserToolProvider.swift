@@ -1806,22 +1806,38 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 关闭全部标签页：取消下载 + teardown + 移除。
-    private func performCloseAll() {
+    /// `skipAgentTabs`：右栏「全部关闭」用 —— Agent 工作区标签是别人正在跑任务的页面，不跟着关。
+    private func performCloseAll(skipAgentTabs: Bool = false) {
         for (id, session) in tabs {
+            if skipAgentTabs && session.isAgentTab { continue }
             session.cancelLoadWait()
             session.forceCancelDownloads()
             tearDownWebView(session) // 停止加载与媒体播放（如 bilibili 视频声音）
             rightSidebar?.closeTab(id)
         }
-        tabs.removeAll()
-        pendingHandoff.removeAll()
-        lastAgentTabByOwner.removeAll()
+        if skipAgentTabs {
+            // 只留 agent 标签，连带把它们的交接/归属表收窄
+            tabs = tabs.filter { $0.value.isAgentTab }
+            let keep = Set(tabs.keys)
+            pendingHandoff = pendingHandoff.filter { keep.contains($0.value.tabId) }
+            lastAgentTabByOwner = lastAgentTabByOwner.filter { keep.contains($0.value) }
+        } else {
+            tabs.removeAll()
+            pendingHandoff.removeAll()
+            lastAgentTabByOwner.removeAll()
+        }
         closedStack.removeAll()
         activeTabId = nil
         // 灵阅与工具页（下载/收藏/历史/配置/本页资源）只在侧栏 tabs 里、没有浏览器 session，
         // 上面那轮关不到；不补这一轮，只剩灵阅时「退出」就是个 no-op（退不出去）。
-        for id in rightSidebar?.tabs.map(\.id) ?? [] {
-            rightSidebar?.closeTab(id)
+        // 统一 tab 之后 `rs.tabs` 里还有列表/文档/书：那些不是"浏览器"，不能跟着退。
+        for tab in rightSidebar?.tabs ?? [] {
+            switch tab.kind {
+            case .artifact, .tool:
+                rightSidebar?.closeTab(tab.id)
+            case .home, .panel, .document, .book, .web:
+                break
+            }
         }
         refreshBrowserGroup()
     }
@@ -1857,7 +1873,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if let cur = activeTabId, tabs[cur] == nil {
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
+            if let rs = rightSidebar, let rid = next,
+               rs.activeTabId == nil || rs.isWebTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -1921,7 +1938,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // activeSession）会报"没有打开的页面"，需手动 switch_tab 才能恢复。
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
+            if let rs = rightSidebar, let rid = next,
+               rs.activeTabId == nil || rs.isWebTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -2055,7 +2073,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if activeTabId == id {
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
+            if let rs = rightSidebar, let rid = next,
+               rs.activeTabId == nil || rs.isWebTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -2105,16 +2124,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func enterBrowser() {
         guard let rs = rightSidebar else { return }
         rs.isOpen = true
-        // HTML 产物 tab 不在浏览器 session 里：当成"没有激活的网页"处理，否则一键进浏览器会原地卡住。
-        let current = RightSidebarManager.isArtifactTab(rs.activeTabId) ? nil : rs.activeTabId
-        let target = current
-            ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) && !RightSidebarManager.isArtifactTab($0.id) })?.id
-            ?? rs.tabs.first(where: { !RightSidebarManager.isArtifactTab($0.id) })?.id
-        if let target {
-            rs.activeTabId = target
-            if !RightSidebarManager.specialTabIDs.contains(target) {
-                selectTab(target)
-            }
+        // 已经停在网页 tab 上就不动；否则切到第一个网页 tab，没有就新开
+        if rs.isWebTab(rs.activeTabId) { return }
+        if let target = rs.tabs.first(where: { $0.kind == .web })?.id {
+            rs.activateTab(id: target)
         } else {
             openBlankTab()
         }
@@ -2179,8 +2192,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 guard let rs = self?.rightSidebar else { return false }
                 // 灵阅 tab 也占 activeTabId，但它不是网页：浏览器工具组不该出现在产物页上，
                 // 也不该以更高优先级顶掉灵阅自己的 `artifact-actions` 组。
-                return rs.isOpen && rs.activeTabId != nil && !rs.tabs.isEmpty
-                    && !RightSidebarManager.isArtifactTab(rs.activeTabId)
+                return rs.isOpen && rs.isWebTab(rs.activeTabId)
             },
             // 放不下时允许"留一部分 + 末尾 ⋯"（自动省略），见 docs/design/overflow-collapse
             autoOverflow: true
@@ -2191,6 +2203,32 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 顶栏「退出」按钮调用；区别于「返回」（仅切浏览面板、保留标签与页面状态）。
     func exitBrowser() {
         _ = handleClose(owner: nil)
+    }
+
+    /// 右栏「全部关闭」：只关用户自己的标签（网页 / 灵阅 / 工具页），跳过 Agent 工作区标签。
+    /// 有下载进行中时先弹一次确认条，确认后才真正关闭并回调；用户取消则什么都不做（不回调），
+    /// 调用方（`RightSidebarManager.closeAllTabs`）必须把后续收尾放进 completion。
+    func closeAllUserTabs(completion: @escaping () -> Void) {
+        let userIDs = tabs.filter { !$0.value.isAgentTab }.map(\.key)
+        let downloading = userIDs.filter { tabs[$0]?.hasActiveDownloads == true }
+        let closeNow: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.performCloseAll(skipAgentTabs: true)
+            completion()
+        }
+        #if os(macOS)
+        if !downloading.isEmpty {
+            presentCloseConfirmation(
+                title: "全部关闭",
+                message: "有 \(downloading.count) 个下载进行中，关闭将取消下载。确认关闭？"
+            ) { allow in
+                guard allow else { return }
+                closeNow()
+            }
+            return
+        }
+        #endif
+        closeNow()
     }
 
     /// 清除浏览数据（顶栏/浏览器清数据按钮共用；sheet 确认，非阻塞）

@@ -504,19 +504,7 @@ struct ContentView: View {
                                     HSpace(Layout.seamHalfGap)
                                 }
 
-                                RightSidebarView(
-                                    manager: rightSidebar,
-                                    billVM: billVM,
-                                    memoryVM: memoryVM,
-                                    artifactVM: artifactVM,
-                                    documentVM: documentVM,
-                                    eventVM: eventVM,
-                                    agentVM: agentVM,
-                                    imageVM: imageVM,
-                                    homeVM: homeVM,
-                                    baseURL: deviceManager.baseURL,
-                                    token: deviceManager.token ?? ""
-                                )
+                                RightSidebarView(manager: rightSidebar)
                                 .frame(width: rightSidebar.isPipChat ? nil : rightSidebar.width)
                                 .transition(.move(edge: .trailing))
                             }
@@ -618,6 +606,40 @@ struct ContentView: View {
                     ArtifactOpenCoordinator.shared.artifactVM = artifactVM
                     ArtifactOpenCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     ArtifactOpenCoordinator.shared.ensureRegisteredGroup()
+                    // 统一 tab：内容工厂在这里接线（VMs 只在这一层），首页/列表/详情都从这儿拿视图
+                    rightSidebar.configure(factory: RightSidebarContentFactory(
+                        home: {
+                            AnyView(SidebarHomeView(
+                                manager: rightSidebar, homeVM: homeVM, deviceManager: deviceManager
+                            ))
+                        },
+                        panel: { panel in
+                            AnyView(PanelTabView(
+                                panel: panel,
+                                billVM: billVM, memoryVM: memoryVM, artifactVM: artifactVM,
+                                documentVM: documentVM, eventVM: eventVM, agentVM: agentVM,
+                                imageVM: imageVM, homeVM: homeVM, deviceManager: deviceManager,
+                                onOpenDocument: { rightSidebar.openDocumentTab($0) },
+                                onOpenBook: { rightSidebar.openBookTab($0) }
+                            ))
+                        },
+                        document: { doc in
+                            AnyView(DocumentTabView(
+                                document: doc, viewModel: documentVM, manager: rightSidebar,
+                                onBack: { rightSidebar.openPanel(.documents) }
+                            ))
+                        },
+                        book: { book in
+                            AnyView(BookReaderView(book: book) {
+                                rightSidebar.openPanel(.books)
+                                Task { await BookViewModel.shared.load() }
+                            })
+                        }
+                    ))
+                    RightSidebarTabActions.register(
+                        manager: rightSidebar, documentVM: documentVM,
+                        artifactVM: artifactVM, imageVM: imageVM
+                    )
                     registerAppShortcutBridge()
                 }
                 .onDisappear {

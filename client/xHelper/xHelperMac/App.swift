@@ -194,10 +194,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // 两窗格同时在，activeTabId 未必是眼前那个，灵阅用 X 关。
                 if let rs = BrowserToolProvider.shared.rightSidebar,
                    rs.isOpen,
+                   !ChatInputFocus.shared.isFocused,
                    rs.splitTabIds.isEmpty,
                    let id = rs.activeTabId,
-                   RightSidebarManager.isArtifactTab(id) {
-                    BrowserToolProvider.shared.closeTab(id)
+                   rs.activeTab?.kind != .home {
+                    if RightSidebarManager.isArtifactTab(id) {
+                        // 灵阅 tab 走 provider：要记恢复栈（Cmd+Shift+T 能重开）
+                        BrowserToolProvider.shared.closeTab(id)
+                    } else if rs.isWebTab(id) {
+                        if BrowserFocus.isFocused() {
+                            BrowserToolProvider.shared.closeActiveTab()
+                        }
+                    } else {
+                        // 文档详情 / 书阅读 / 列表 / 工具页：统一走 manager（含 onClose 收尾）
+                        rs.closeTab(id)
+                    }
                 } else if BrowserFocus.isFocused() {
                     BrowserToolProvider.shared.closeActiveTab()
                 } else {
@@ -1134,8 +1145,7 @@ struct MacSettingsView: View {
             return
         }
         rs.isOpen = true
-        rs.showBrowsePanel()
-        rs.browsePanelSelection = panel
+        rs.openPanel(panel)
         AppDelegate.primaryWindow?.makeKeyAndOrderFront(nil)
     }
 

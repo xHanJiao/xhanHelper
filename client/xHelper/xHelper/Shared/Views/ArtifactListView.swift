@@ -25,7 +25,7 @@ struct ArtifactListView: View {
             listContent
             #endif
         }
-        .task { await viewModel.load() }
+        .task { await viewModel.loadIfStale() }
         .alert(
             "删除页面？",
             isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),

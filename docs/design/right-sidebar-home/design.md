@@ -231,3 +231,12 @@
 - 2026-11-13：卡高不再随窗口高变 —— 信息档与紧凑信息档统一 164 / 3 行，窗口矮就整页滚动（`homeMetrics` 去掉 `availableHeight` / `homeChromeHeight`）。
 - 2026-11-13：问候区放大到 23pt / 13pt / 间距 8（原 19 / 12.5 / 6），日期固定 12pt；问候区抽成 `HomeGreetingView.swift`（尺寸参数化、默认值即线上值），出图脚本渲真视图。影响 `HomeGreetingView.swift`（新）、`BrowsePanelView.swift`、`scripts/snapshot-homecards.swift`。
 - 2026-11-13：删掉问候区右上角的日期（`11月13日 周五`）——卡里每行都自带相对时间，右上再压一个绝对日期是冗余；问候语因此独立成一行。
+- 2026-11-18：面板数据加 30s 缓存（与 `right-sidebar-unified-tabs` 的面板挂载闸门配套）：`ArtifactViewModel` /
+  `BillViewModel` 加 `loadIfStale()`、`DocumentViewModel` 加 `loadCurrentMode(force:)`，面板入口 30s 内重进吃上一次结果；
+  时间戳只在请求成功且未被取消时写入，跳过条件带 `errorMessage == nil`（失败/取消不会被缓存 30 秒）。
+  页头刷新一律回源（文档 `force: true`，灵阅/账单直走 `load()`），筛选/搜索/翻页也不受缓存影响。
+  缓存期内的面板进面板时不等 210ms 挂载闸门（`isFresh`），没有请求要拦就不该白等。
+  代价：聊天里新建/修改的账单、文档、灵阅页最多 30s 后才会出现在面板列表里（点页头刷新可立即回源）；
+  聊天写入后主动失效缓存暂不做（客户端拿不到「其它会话写了一笔」的信号，除非加推送）。
+  首页的 60s 缓存（`SidebarHomeViewModel`）保持原样。
+  影响：`ArtifactViewModel.swift`、`BillViewModel.swift`、`DocumentViewModel.swift`、`ArtifactListView.swift`、`BillListView.swift`、`BrowsePanelView.swift`。

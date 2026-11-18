@@ -48,7 +48,7 @@ final class DocumentSelectionCoordinator: ObservableObject {
         return id
     }
 
-    /// 按 id 打开文档：右栏切到文档面板 → 拉取 → 定位打开。
+    /// 按 id 打开文档：拉取 → 开（或激活）文档详情 tab。
     /// 入口有两个——聊天里的文档卡片、文档正文里的内链（`xhanhelper://document/<id>`）。
     /// id 非法或已删除时就地提示，不让链接点下去无声无息。
     func openDocument(id: String) {
@@ -57,11 +57,7 @@ final class DocumentSelectionCoordinator: ObservableObject {
             do {
                 let doc = try await APIClient(baseURL: baseURL, token: token).getDocument(id: id)
                 rs.isOpen = true
-                rs.showBrowsePanel()
-                rs.browsePanelSelection = .documents
-                documentVM?.openDocument = doc
-                // 右栏未挂载时 DocumentListView.onChange 不触发，这里直接同步顶栏按钮组
-                select(doc)
+                rs.openDocumentTab(doc)
             } catch {
                 LogBuffer.shared.error("DocumentSelectionCoordinator.openDocument: \(error)")
                 ToastCenter.shared.show("打不开文档：\(error.localizedDescription)")
@@ -84,6 +80,21 @@ final class DocumentSelectionCoordinator: ObservableObject {
             slot: .center,
             priority: 8,
             buttons: [
+                TopBarButton(id: "document-annot", icon: { "list.bullet.rectangle" },
+                             enabled: { true },
+                             action: {
+                                 let key = Self.annotOpenKey
+                                 UserDefaults.standard.set(!Self.readBool(key, default: true), forKey: key)
+                             },
+                             help: { "划线与批注面板" }),
+                TopBarButton(id: "document-find", icon: { "magnifyingglass" },
+                             enabled: { true },
+                             action: {
+                                 let key = Self.findOpenKey
+                                 UserDefaults.standard.set(!Self.readBool(key, default: false), forKey: key)
+                             },
+                             help: { "在文档中查找（⌘F）" },
+                             keyEquivalent: ("f", .command)),
                 TopBarButton(id: "document-download", icon: { "arrow.down.circle" },
                              enabled: { true },
                              action: { [weak self] in
@@ -105,11 +116,18 @@ final class DocumentSelectionCoordinator: ObservableObject {
         ))
     }
 
-    /// 当前是否应显示文档按钮组：右栏在前台展示文档详情页。
+    /// 当前是否应显示文档按钮组：右栏前台正停在文档详情 tab。
     private var isDocumentDetailVisible: Bool {
         guard let rs = rightSidebar, selectedDocument != nil else { return false }
-        // 文档面板选中 + 网页态未激活（无浏览器 tab 抢占）+ 右栏展开
-        return rs.isOpen && rs.activeTabId == nil && rs.browsePanelSelection == .documents
+        return rs.isOpen && rs.activeTab?.kind == .document
+    }
+
+    /// 详情 tab 的「划线与批注 / 查找」按钮：与 `DocumentFullView` 读写同两个 key。
+    private static let annotOpenKey = "xhan_doc_annot_open"
+    private static let findOpenKey = "xhan_doc_find_open"
+
+    private static func readBool(_ key: String, default defaultValue: Bool) -> Bool {
+        (UserDefaults.standard.object(forKey: key) as? Bool) ?? defaultValue
     }
 
     /// 下载文档为 .md 文件（macOS NSSavePanel，与账单 CSV 导出同模式）

@@ -27,7 +27,7 @@ enum BrowserFocus {
     /// 是否浏览器聚焦
     static func isFocused() -> Bool {
         guard let rs = BrowserToolProvider.shared.rightSidebar,
-              rs.activeTabId != nil,
+              rs.isWebTab(rs.activeTabId),
               let page = BrowserToolProvider.shared.activePage,
               let window = page.hostingView.window,
               window.isKeyWindow

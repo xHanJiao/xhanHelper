@@ -1857,7 +1857,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if let cur = activeTabId, tabs[cur] == nil {
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
+            if let rs = rightSidebar, let rid = next,
+               rs.activeTabId == nil || rs.isWebTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -1921,7 +1922,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // activeSession）会报"没有打开的页面"，需手动 switch_tab 才能恢复。
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
+            if let rs = rightSidebar, let rid = next,
+               rs.activeTabId == nil || rs.isWebTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -2055,7 +2057,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if activeTabId == id {
             let next = nextVisibleTabId()
             switchActiveTab(to: next)
-            if let rs = rightSidebar, let rid = next, !RightSidebarManager.isArtifactTab(rs.activeTabId) {
+            if let rs = rightSidebar, let rid = next,
+               rs.activeTabId == nil || rs.isWebTab(rs.activeTabId) {
                 rs.activeTabId = rid
             }
         }
@@ -2105,16 +2108,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func enterBrowser() {
         guard let rs = rightSidebar else { return }
         rs.isOpen = true
-        // HTML 产物 tab 不在浏览器 session 里：当成"没有激活的网页"处理，否则一键进浏览器会原地卡住。
-        let current = RightSidebarManager.isArtifactTab(rs.activeTabId) ? nil : rs.activeTabId
-        let target = current
-            ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) && !RightSidebarManager.isArtifactTab($0.id) })?.id
-            ?? rs.tabs.first(where: { !RightSidebarManager.isArtifactTab($0.id) })?.id
-        if let target {
-            rs.activeTabId = target
-            if !RightSidebarManager.specialTabIDs.contains(target) {
-                selectTab(target)
-            }
+        // 已经停在网页 tab 上就不动；否则切到第一个网页 tab，没有就新开
+        if rs.isWebTab(rs.activeTabId) { return }
+        if let target = rs.tabs.first(where: { $0.kind == .web })?.id {
+            rs.activateTab(id: target)
         } else {
             openBlankTab()
         }
@@ -2179,8 +2176,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 guard let rs = self?.rightSidebar else { return false }
                 // 灵阅 tab 也占 activeTabId，但它不是网页：浏览器工具组不该出现在产物页上，
                 // 也不该以更高优先级顶掉灵阅自己的 `artifact-actions` 组。
-                return rs.isOpen && rs.activeTabId != nil && !rs.tabs.isEmpty
-                    && !RightSidebarManager.isArtifactTab(rs.activeTabId)
+                return rs.isOpen && rs.isWebTab(rs.activeTabId)
             },
             // 放不下时允许"留一部分 + 末尾 ⋯"（自动省略），见 docs/design/overflow-collapse
             autoOverflow: true

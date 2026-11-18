@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 /// 视觉基准见 `Books/BookUIPrototype.swift`（已确认的 SwiftUI 原型）。
 struct BookshelfView: View {
     @ObservedObject var viewModel: BookViewModel
+    /// 点封面进阅读：统一 tab 后书阅读是独立 tab
+    var onOpen: ((BookMeta) -> Void)? = nil
 
     @State private var isDropTargeted = false
     @State private var pendingDelete: BookMeta?
@@ -120,7 +122,7 @@ struct BookshelfView: View {
                     BookShelfCard(
                         book: book,
                         coverURL: viewModel.coverURL(for: book),
-                        onOpen: { viewModel.openBook = book },
+                        onOpen: { onOpen?(book) ?? { viewModel.openBook = book }() },
                         onReveal: { viewModel.revealInFinder(book) },
                         onDelete: { pendingDelete = book }
                     )

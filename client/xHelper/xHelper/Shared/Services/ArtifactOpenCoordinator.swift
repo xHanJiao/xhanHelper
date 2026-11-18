@@ -116,7 +116,8 @@ final class ArtifactOpenCoordinator: ObservableObject {
             id: tabID,
             title: title,
             icon: "doc.richtext",
-            content: tabContent(id: id, title: title, html: cached.map { injectingBaseline($0.html) })
+            content: tabContent(id: id, title: title, html: cached.map { injectingBaseline($0.html) }),
+            kind: .artifact
         )
         #else
         // iOS：有缓存就先弹 sheet（无骨架），条件请求随后确认/更新

@@ -106,7 +106,12 @@ struct HomeEntryCard: View {
 
     private var infoCard: some View {
         HStack(spacing: 0) {
-            band(width: 116)
+            Button(action: action) {
+                band(width: 116)
+            }
+            .buttonStyle(.plain)
+            .help(title)
+            .accessibilityLabel(title)
 
             if !infoRows.isEmpty {
                 VStack(spacing: 6) {
@@ -117,9 +122,18 @@ struct HomeEntryCard: View {
                 // 行区宽度随卡宽走（560 → 244，≥636 → 320）：宽卡别让行区白占着、文字区空着
                 .frame(width: SidebarHomeFormat.homeInfoRowsWidth(cardWidth: width))
                 .padding(.horizontal, 10)
+                // 信息行以外全是可点区：行间 6pt 缝、左右 10pt 与上下空余都进面板。
+                // 垫底按钮在行按钮后面——点行仍走行自己的动作，空处才落到这层。
+                .frame(maxHeight: .infinity)
+                .background {
+                    // 只补鼠标热区；卡片动作由文字区按钮承载，别让 VoiceOver/全键盘多一个无名焦点
+                    Button(action: action) { Color.clear.contentShape(Rectangle()) }
+                        .buttonStyle(.plain)
+                        .accessibilityHidden(true)
+                }
             }
 
-            // 信息行各自是按钮，整卡不能再套一层按钮（会丢点击）——这里只有文字区可点。
+            // 信息行各自是按钮，整卡不能再套一层按钮（会丢点击）——所以文字区自带按钮。
             Button(action: action) {
                 HStack(spacing: 0) {
                     textStack
@@ -150,6 +164,7 @@ struct HomeEntryCard: View {
             }
             .buttonStyle(.plain)
             .help(title)
+            .accessibilityLabel(title)
 
             VStack(alignment: .leading, spacing: 6) {
                 Button(action: action) {
@@ -170,15 +185,20 @@ struct HomeEntryCard: View {
 
                 // 只有 1 条行的卡（如浏览器只开着一个标签）不居中：头部和第一条行跟邻居
                 // 对齐，空位留在卡底，否则同一行卡片的信息区会错位（用户 2026-11-13）。
-                // 这块空位也能点进面板，别让 1 行卡的下半张卡是死的。
                 Spacer(minLength: 0)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: action)
             }
             .padding(.horizontal, 14)
             // 164 里放「头部 ~17 + 3×28 + 4 个 6pt 间距」= 125，加上下各 14 = 153，余 11 留给卡底 Spacer
             .padding(.vertical, 14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // 头部行 / 信息行以外（内距、行间缝、卡底空位）也都能进面板：
+            // 垫底按钮在按钮后面，碰不到行的点击。
+            .background {
+                // 同信息档：只补鼠标热区，读屏焦点留给头部行按钮
+                Button(action: action) { Color.clear.contentShape(Rectangle()) }
+                    .buttonStyle(.plain)
+                    .accessibilityHidden(true)
+            }
 
             Button(action: action) {
                 chevron

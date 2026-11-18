@@ -128,6 +128,9 @@ final class BookReaderController: ObservableObject {
     /// 目录/批注面板开合（记忆跨书、跨启动）
     @Published var tocOpen = false
     @Published var annotOpen = false
+    /// 查找栏 / Aa 弹层的开合：开关在顶栏，界面画在内容区，所以状态放这儿（每本书各一份）
+    @Published var findOpen = false
+    @Published var settingsOpen = false
     /// 批注面板里刚被点中的那条（滚动 + 闪烁）
     @Published var focusedAnnotationID: String?
     /// 本章查找（切章后要按同一关键词重跑，否则栏里显示「无匹配」但框里还有字）

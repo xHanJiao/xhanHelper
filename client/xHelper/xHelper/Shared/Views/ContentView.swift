@@ -630,10 +630,7 @@ struct ContentView: View {
                             ))
                         },
                         book: { book in
-                            AnyView(BookReaderView(book: book) {
-                                rightSidebar.openPanel(.books)
-                                Task { await BookViewModel.shared.load() }
-                            })
+                            AnyView(BookReaderView(book: book, manager: rightSidebar))
                         }
                     ))
                     RightSidebarTabActions.register(

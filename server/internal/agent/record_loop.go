@@ -33,7 +33,7 @@ func (d *RecordDecisionLoop) RecordInline(ctx context.Context, userID, convID, t
 	}
 	facts = kept
 
-	res, err := d.Decide(ctx, userID, recordCandidate{Summary: summary, Facts: facts, Topic: topic})
+	res, err := d.Decide(ctx, userID, convID, recordCandidate{Summary: summary, Facts: facts, Topic: topic})
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,8 @@ func (d *RecordDecisionLoop) verifyInlineFacts(ctx context.Context, userID, conv
 }
 
 // Decide 对一条候选跑一遍决策循环。返回本条的实际动作。LLM 出错时上抛。
-func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand recordCandidate) (*recordLoopResult, error) {
+// convID 只用于给新建记忆记出处（无痕销毁时回溯清理），空值（replay/eval）就不记。
+func (d *RecordDecisionLoop) Decide(ctx context.Context, userID, convID string, cand recordCandidate) (*recordLoopResult, error) {
 	neighbors, summaryVec, err := d.preRetrieve(ctx, userID, cand.Summary)
 	if err != nil {
 		return nil, fmt.Errorf("record loop pre-retrieve: %w", err)
@@ -73,7 +74,8 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	topicRecords, topicTotal := d.sameTopicRecords(ctx, userID, cand.Topic, neighbors)
 
 	state := &recordLoopState{deps: d.deps, cfg: d.cfg, userID: userID, source: d.source,
-		candTopic: cand.Topic, candFacts: cand.Facts, idSet: map[string]bool{}, idType: map[string]string{}}
+		sourceConvID: convID,
+		candTopic:    cand.Topic, candFacts: cand.Facts, idSet: map[string]bool{}, idType: map[string]string{}}
 	for _, n := range neighbors {
 		state.idSet[n.ID] = true
 		state.idType[n.ID] = n.Type

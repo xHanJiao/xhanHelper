@@ -26,16 +26,19 @@ const (
 // Stage B（RunPurge，后台分批节流）：物理删除消息/向量，最后删会话行，可幂等续跑。
 type EphemeralDestroyer struct {
 	convRepo        *service.ConversationRepo
+	memRepo         *service.UserMemoryRepo
+	purger          *service.EntityPurger
 	vectorStore     *VectorStore
 	delayedTaskRepo *service.DelayedTaskRepo
 }
 
 // NewEphemeralDestroyer 创建销毁器。依赖为 nil 时 panic（接线 bug 炸在明处）。
-func NewEphemeralDestroyer(convRepo *service.ConversationRepo, vs *VectorStore, delayedTaskRepo *service.DelayedTaskRepo) *EphemeralDestroyer {
-	if convRepo == nil || vs == nil || delayedTaskRepo == nil {
+func NewEphemeralDestroyer(convRepo *service.ConversationRepo, memRepo *service.UserMemoryRepo,
+	purger *service.EntityPurger, vs *VectorStore, delayedTaskRepo *service.DelayedTaskRepo) *EphemeralDestroyer {
+	if convRepo == nil || memRepo == nil || purger == nil || vs == nil || delayedTaskRepo == nil {
 		panic("ephemeral_destroyer: nil dependency (wiring bug)")
 	}
-	return &EphemeralDestroyer{convRepo: convRepo, vectorStore: vs, delayedTaskRepo: delayedTaskRepo}
+	return &EphemeralDestroyer{convRepo: convRepo, memRepo: memRepo, purger: purger, vectorStore: vs, delayedTaskRepo: delayedTaskRepo}
 }
 
 // IsEphemeral 判断会话是否为无痕会话。
@@ -56,7 +59,29 @@ func (d *EphemeralDestroyer) BeginDestroy(ctx context.Context, convID, userID st
 	for _, id := range scope {
 		d.vectorStore.DeleteByMetadata("conv_id", id)
 	}
+	// 这些会话写下的记忆也一并销毁：无痕的承诺是「不留下痕迹」，而记忆行没有 conv 关联时
+	// 会永留并继续注入（会话从普通切无痕的 case 靠 source_conv_id 才能回溯，见
+	// docs/design/ephemeral-conversation.md）。失败只记日志、不阻断销毁——消息销毁是可重试的主契约。
+	if err := d.purgeMemories(ctx, scope); err != nil {
+		log.Printf("[ephemeral] purge memories failed (scope=%v): %v", scope, err)
+	}
 	return d.enqueuePurge(ctx, userID, convID)
+}
+
+// purgeMemories 删掉 scope 内会话写下的记忆并清派生数据（向量行/chunk/内存向量/版本快照）。
+func (d *EphemeralDestroyer) purgeMemories(ctx context.Context, scope []string) error {
+	ids, err := d.memRepo.PurgeBySourceConvs(ctx, scope)
+	if err != nil {
+		return fmt.Errorf("delete memories: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := d.purger.PurgeMany(ctx, model.EntityTypeMemory, ids); err != nil {
+		return fmt.Errorf("purge memory derivations: %w", err)
+	}
+	log.Printf("[ephemeral] purged %d memories (scope=%v)", len(ids), scope)
+	return nil
 }
 
 // enqueuePurge 入队一条 ephemeral_purge 延迟任务（去重：同 conv 已有 pending 则跳过）。

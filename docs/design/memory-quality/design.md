@@ -391,3 +391,14 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
   修法（见 `docs/design/ephemeral-conversation.md` §8）：请求层隐藏 `record_memory`，
   执行层 `RecordMemoryTool` 用 `EphemeralChecker` 兜底拒写（fail-closed）。存量 9 条已人工核对后删除
   （连带 embeddings）。`MemoryDefinition`、抽取段、事件拼装均不变。
+- **2026-11-18（第七轮：记忆记出处，无痕销毁按出处清理）**：遗留边界——普通会话聊出几条记忆、
+  再把会话切成无痕，这些记忆既不会被拒写（写发生在切换前）也无法回溯（`user_memories` 没有 conv 关联），
+  销毁后永留并继续注入。修法：
+  - 新列 `UserMemory.SourceConvID`（`source_conv_id`，AutoMigrate 加列，无 SQL 迁移），
+    决策循环 `Decide(ctx, userID, convID, cand)` → `newMemory` 给新建行记下会话 id；
+    `update` 合并到别人的行**不改出处**。
+  - `EphemeralDestroyer.BeginDestroy` 拿到 scope（会话 + 子会话）后
+    `PurgeBySourceConvs` 批量删行 + `EntityPurger.PurgeMany` 清派生（embeddings/chunks/内存向量/版本）。
+    只在销毁时清，不在切换瞬间清（开关点回来还能反悔）。
+  - 失败只记日志不阻断销毁：消息物理销毁是可重试的主契约。
+  残留：存量行无出处（forward-only）；`action=update` 合并进旧会话的行不会被删；csv/replay 不写出处。

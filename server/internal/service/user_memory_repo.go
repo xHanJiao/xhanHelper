@@ -103,6 +103,27 @@ func (r *UserMemoryRepo) BatchDelete(ctx context.Context, ids []string, userID s
 	return nil
 }
 
+// PurgeBySourceConvs 删除这些会话写下的记忆，返回被删的 id（供清理派生数据）。
+// 无痕销毁专用：系统内部清理，不发实体变更事件（与 BeginPurge 的处理一致）。
+func (r *UserMemoryRepo) PurgeBySourceConvs(ctx context.Context, convIDs []string) ([]string, error) {
+	if len(convIDs) == 0 {
+		return nil, nil
+	}
+	var ids []string
+	if err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("source_conv_id IN ?", convIDs).Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := r.db.WithContext(activity.WithNoEvent(ctx)).
+		Where("id IN ?", ids).Delete(&model.UserMemory{}).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // GetByIDs 按 ID 列表查询
 func (r *UserMemoryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.UserMemory, error) {
 	var list []model.UserMemory

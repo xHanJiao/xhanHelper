@@ -479,3 +479,18 @@ func TestRecordLoopInstructionMirrorsDoc(t *testing.T) {
 		t.Errorf("record-loop-prompt.md 的 MemoryDefinition 镜像与代码不一致——改定义请同步该 md")
 	}
 }
+
+// 记忆出处：inline/post_chat 新建的行记下会话 id（无痕销毁时按它回溯清理）；
+// 空 convID（replay/eval）不记。update 路径不会覆盖既有出处，见 record_loop_write.go。
+func TestNewMemory_SourceConvID(t *testing.T) {
+	base := &recordLoopState{userID: "u1", source: model.MemorySourceInline, sourceConvID: "conv-1"}
+	m := base.newMemory("topic", "summary", nil)
+	if m.SourceConvID == nil || *m.SourceConvID != "conv-1" {
+		t.Errorf("expected source_conv_id=conv-1, got %v", m.SourceConvID)
+	}
+
+	noConv := &recordLoopState{userID: "u1", source: model.MemorySourceInline}
+	if got := noConv.newMemory("topic", "summary", nil).SourceConvID; got != nil {
+		t.Errorf("expected nil source_conv_id without conv, got %q", *got)
+	}
+}

@@ -153,7 +153,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 事件拼装：session 结束后把本 session 新增/变更的记忆归到事件（等记忆写完才跑）。
 	eventAssembler := BuildEventAssembler(cfg, repos, infra, llmClients, unifiedSearch, eventTool)
 	// 无痕会话销毁器：Stage A 由后处理/在线删除触发，Stage B 由 cron 轮询执行
-	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, vs, repos.DelayedTask)
+	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, repos.Mem, tools.EntityPurger, vs, repos.DelayedTask)
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 		summaryWorker,
 		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{

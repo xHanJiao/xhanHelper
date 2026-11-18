@@ -14,7 +14,7 @@
 | 后处理 | 窗口结束（静默 `SessionGapMinutes`，默认 30 分钟）时**跳过全部 worker**（summary/memory/state/profile），改为销毁；**inline `record_memory` 也不写**（请求体隐藏该工具 + 执行层 `EphemeralChecker` 拒写） |
 | 手动删除 | `DELETE /api/conversations/:id` 对无痕会话走销毁；普通会话仍软删 |
 | 分享 | 无痕会话禁止创建消息分享（`403`） |
-| 销毁范围 | 会话域数据：自身 + `parent_id` 子会话的 messages、消息向量、summaries、plans、shares、会话行 |
+| 销毁范围 | 会话域数据：自身 + `parent_id` 子会话的 messages、消息向量、summaries、plans、shares、会话行；**该会话写下的 memories**（按 `source_conv_id`，含 embeddings/chunks） |
 | 保留 | documents（用户产物）、notes/bills（工具副作用，无 conv 关联）、llm_cost、llm_call_io；**memories 不产生**（2026-11-18 起，见文末「后续变更」） |
 | 恢复 | 无 |
 
@@ -102,7 +102,7 @@ CronRunner `ScheduleRetry`（≤3 次，2 分钟退避）→ 重入 `RunPurge`�
 ## 7. 测试
 
 - `service/conversation_repo_test.go`：IsEphemeral / BeginPurge（含子会话、无关会话隔离）/ PurgeMessageBatch 分批 / FinishPurge
-- `agent/ephemeral_destroyer_test.go`：BeginDestroy（入队、去重、清向量、幂等）/ RunPurge（分批、硬删、幂等）
+- `agent/ephemeral_destroyer_test.go`：BeginDestroy（入队、去重、清向量、幂等）/ 按 `source_conv_id` 删本会话记忆与派生（其他会话、无出处记忆不误删）/ RunPurge（分批、硬删、幂等）
 - `agent/post_chat_group_test.go`：无痕会话跳过 workers 只调 BeginDestroy
 - `tool/record_memory_test.go`：无痕拒写（runner 不被调用）/ 正常写入 / checker 报错 fail-closed / 空 convID 放行 / nil checker panic
 - `agent/orchestrator_ephemeral_test.go`：无痕请求体不下发 `record_memory`、`expose_tools` 拒绝并把它移出 available，其他工具不受连坐
@@ -122,5 +122,19 @@ CronRunner `ScheduleRetry`（≤3 次，2 分钟退避）→ 重入 `RunPurge`�
     无痕或**查询报错**时拒写（fail-closed）；`convID` 为空（replay/eval）或会话行不存在时放行
     （后者没有 chat 入口）。
   存量：9 条已按「落在 purge 窗口 + facts 在 messages 里无出处」逐条核对后删除（含 derivations）。
-  已知残留：把普通会话**事后转成**无痕时，此前写入的记忆仍在（无法回溯归属）；system prompt 的
-  工具目录不过滤 `record_memory`（只影响一轮 token，不影响正确性）。
+  已知残留：system prompt 的工具目录不过滤 `record_memory`（只影响一轮 token，不影响正确性）。
+
+- **2026-11-18（同日第二刀）：补上「普通会话事后转无痕」的缺口。** 上一刀只挡住「无痕会话里
+  **新建**记忆」，但用户可以先在普通会话聊出几条记忆、再把会话切成无痕：记忆在切换前就落库了，
+  请求层隐藏与执行层拒写都管不到，销毁时也没人认得它是哪来的（`user_memories` 无 conv 关联）。
+  修法（出处 + 按出处清理）：
+  - `UserMemory.SourceConvID`（新列，AutoMigrate 自动加）由决策循环写入：`Decide` 带 convID，
+    `newMemory` 给新建行记下会话 id；**`update` 合并到别人的行时不改出处**（那是原会话的记忆）。
+  - `EphemeralDestroyer.BeginDestroy` 在拿到 scope（本会话 + `parent_id` 子会话）后调
+    `UserMemoryRepo.PurgeBySourceConvs` 批量删行，再用 `EntityPurger.PurgeMany` 清派生
+    （embeddings / chunks / 内存向量 / 版本快照）。销毁时清理、不在切换瞬间清理：用户把开关
+    点回来就还能反悔，记忆不丢。
+  - 清理失败只记日志、不阻断销毁（消息物理销毁是可重试的主契约）。
+  残留：① 存量行没有出处，只能 forward-only；② 这次对话若是「合并进已有记忆」（决策循环 action=update），
+  那条行仍属原会话，销毁本会话不会删它（内容里可能含本会话的片段）；③ csv 导入与 replay/eval 不写出处。
+

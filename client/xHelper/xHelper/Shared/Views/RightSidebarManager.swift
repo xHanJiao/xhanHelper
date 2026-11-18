@@ -311,6 +311,22 @@ final class RightSidebarManager: ObservableObject {
         BrowserToolProvider.shared.deselectTab()
     }
 
+    /// 全部关闭：网页/灵阅/工具页走 provider（session teardown、下载强取消、媒体停播），
+    /// 列表/文档/书走各自 `onClose`，最后回首页（分屏一并清掉）。
+    /// 有意不做两件事：不保留 ⌘⇧T 恢复栈（重置语义，与右键「退出浏览器」一致）；
+    /// 不碰 Agent 工作区标签（那是 agent 正在跑任务的页面，工作区自带「全部关闭」）。
+    func closeAllTabs() {
+        guard hasTabs else { return }
+        BrowserToolProvider.shared.exitBrowser()
+        for tab in tabs {
+            switch tab.kind {
+            case .panel, .document, .book: closeTab(tab.id)
+            case .home, .artifact, .web, .tool: break  // 后三类已由 exitBrowser 收掉
+            }
+        }
+        goHome()
+    }
+
     func activateTab(id: String) {
         guard tabs.contains(where: { $0.id == id }) else { return }
         activeTabId = id

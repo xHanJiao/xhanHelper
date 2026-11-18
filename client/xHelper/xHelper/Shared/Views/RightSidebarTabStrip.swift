@@ -21,6 +21,9 @@ struct RightSidebarTabStrip: View {
     var body: some View {
         HStack(spacing: 6) {
             homeChip
+            if manager.hasTabs {
+                closeAllChip
+            }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -56,6 +59,22 @@ struct RightSidebarTabStrip: View {
     }
 
     // MARK: - 单个 tab
+
+    /// 全部关闭（网页/文档/列表都关）后回首页；没有 tab 时整颗不显示
+    private var closeAllChip: some View {
+        Button {
+            manager.closeAllTabs()
+        } label: {
+            Image(systemName: "xmark.circle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .background(chipBackground(active: false), in: Capsule())
+                .overlay(Capsule().stroke(chipStroke(active: false), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .help("全部关闭，回到首页")
+    }
 
     private func chip(_ tab: RightSidebarTab) -> some View {
         TabChipView(

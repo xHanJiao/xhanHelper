@@ -156,11 +156,12 @@ struct PanelTabView: View {
     @State private var isConfirmingArtifactBatchDelete = false
     @State private var trashBulkAction: TrashBulkAction?
 
-    /// 影响顶栏 `tab-actions` 状态的信号（列表长度 + 书架导入中）
-    private var tabActionTick: Int {
-        var tick = documentVM.documents.count &+ artifactVM.items.count &+ imageVM.items.count
+    /// 影响顶栏 `tab-actions` 状态的信号（列表长度 + 书架导入中）。
+    /// 用数组而不是求和：两个列表此消彼长时和值不变，`onChange` 会漏掉。
+    private var tabActionTick: [Int] {
+        var tick = [documentVM.documents.count, artifactVM.items.count, imageVM.items.count]
         #if os(macOS)
-        if bookVM.isImporting { tick &+= 1 }
+        tick.append(bookVM.isImporting ? 1 : 0)
         #endif
         return tick
     }
@@ -846,6 +847,8 @@ struct PanelTabView: View {
                     configuration: dashboardConfig,
                     allowedOrigins: dashboardAllowedOrigins
                 )
+                // bridge token 只在 makeNSView 注入一次：换 token（本地后端重启）得重建 web view
+                .id(token)
             } else {
                 Text("无法构建监控看板地址")
                     .font(.system(size: 12))

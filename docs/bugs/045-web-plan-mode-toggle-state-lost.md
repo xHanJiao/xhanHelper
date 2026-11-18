@@ -29,3 +29,7 @@
 ## 已知残留（本次未修）
 
 打开一个不在会话列表第一页、且没点过「加载更多」的会话（深链进入），列表里没有该条目，watcher 拿不到 `mode`，pill 仍可能显示错误。这不是本次覆盖问题，需要后端补会话详情接口（或让列表/消息接口带回 `mode`）才能根治。
+
+## 后续变更（2026-11-18）
+
+Web 端无痕入口已整体移除（见 `docs/design/mobile-web-parity/02-*.md` 第十四节）：`chat.ephemeral`、`updateEphemeral`、`useChatSSE` 的 `ephemeral` 参数与 done 快照全部删除。上面涉及 `ephemeral` 的修复点（`prepend` 合并、`updateEphemeral`、`done` 快照）只对 `mode` 仍适用；本次变更不再有「无痕开关显示被冲掉」这类问题。

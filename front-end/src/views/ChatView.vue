@@ -1072,9 +1072,8 @@ async function dispatchOutgoing(outgoing) {
     conversationId: chat.conversationId,
     agentId: chat.agentId,
     attachments: outgoing.imageIds,
-    // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+    // 仅新会话需要：已有会话的模式走 PATCH 单独落库
     initMode: chat.conversationId ? undefined : chat.mode,
-    ephemeral: chat.conversationId ? false : chat.ephemeral
   })
 }
 
@@ -1244,9 +1243,8 @@ async function submitVoiceSentence(text) {
     await sendMessage(content, {
       conversationId: chat.conversationId,
       agentId: chat.agentId,
-      // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+      // 仅新会话需要：已有会话的模式走 PATCH 单独落库
       initMode: chat.conversationId ? undefined : chat.mode,
-      ephemeral: chat.conversationId ? false : chat.ephemeral,
       // 语音来源：服务端注入短回答约束；正文边到边切句合成，done 后收尾。
       // 退出语音时 flush 的话按普通消息提交（voiceExitFlush），不朗读。
       voiceMode: !voiceExitFlush,
@@ -1289,9 +1287,8 @@ async function submitHoldSentence(text) {
     await sendMessage(content, {
       conversationId: chat.conversationId,
       agentId: chat.agentId,
-      // 仅新会话需要：已有会话的模式/无痕走 PATCH 单独落库
+      // 仅新会话需要：已有会话的模式走 PATCH 单独落库
       initMode: chat.conversationId ? undefined : chat.mode,
-      ephemeral: chat.conversationId ? false : chat.ephemeral,
       // 仍走语音轮的短回答约束，但不出声
       voiceMode: true,
       ...(imageIds.length ? { attachments: imageIds } : {})
@@ -1425,14 +1422,13 @@ async function retryAfterError() {
   requestAnimationFrame(() => pinToBottom())
 }
 
-// 会话的模式/无痕状态来自列表接口（mode / ephemeral）；冷启动时列表可能晚于
+// 会话的模式来自列表接口（mode）；冷启动时列表可能晚于
 // 路由 watcher 到达，所以用 watch 挂在「当前会话对象」上，而不是在切换分支里读一次。
 watch(
   () => convs.list.find(c => c.id === chat.conversationId),
   (conv) => {
     if (!conv) return
     chat.mode = conv.mode || 'work'
-    chat.ephemeral = !!conv.ephemeral
   },
   { immediate: true }
 )
@@ -1557,9 +1553,8 @@ function onComposerDrop(e) {
   if (files.length) addImages(files)
 }
 
-// --- 会话模式 / 无痕 ---
-// 新会话只在本地记意图，首条消息随 init_mode / ephemeral 落库；
-// 已有会话直接 PATCH（默认会话禁止无痕，服务端会 400，这里把原因透出来）。
+// --- 会话模式 ---
+// 新会话只在本地记意图，首条消息随 init_mode 落库；已有会话直接 PATCH。
 async function toggleMode() {
   const next = chat.mode === 'plan' ? 'work' : 'plan'
   // 提示只弹一次、几秒自动消失；模式状态由 pill 高亮保留，不常驻黄条
@@ -1577,25 +1572,6 @@ async function toggleMode() {
   } catch (e) {
     console.error('Failed to switch conversation mode', e)
     nMessage.error(e?.message || '切换模式失败')
-  }
-}
-
-async function toggleEphemeral() {
-  const next = !chat.ephemeral
-  const hint = next ? '无痕会话已开启：结束后自动销毁' : '已关闭无痕会话'
-  if (!chat.conversationId) {
-    chat.ephemeral = next
-    nMessage.info(hint)
-    return
-  }
-  try {
-    await api.patch(`/api/conversations/${chat.conversationId}/ephemeral`, { ephemeral: next })
-    chat.ephemeral = next
-    convs.updateEphemeral(chat.conversationId, next)
-    nMessage.info(hint)
-  } catch (e) {
-    console.error('Failed to toggle ephemeral', e)
-    nMessage.error(e?.message || '切换无痕失败')
   }
 }
 
@@ -1854,14 +1830,6 @@ function handleContainerClick(e) {
                   </button>
                 </template>
                 {{ chat.mode === 'plan' ? '退出计划模式' : '计划模式（只读）' }}
-              </NTooltip>
-              <NTooltip :disabled="isMobile" placement="top">
-                <template #trigger>
-                  <button class="icon-pill" :class="{ on: chat.ephemeral }" type="button" :aria-pressed="chat.ephemeral" :aria-label="chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）'" @click="toggleEphemeral">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
-                  </button>
-                </template>
-                {{ chat.ephemeral ? '关闭无痕会话' : '无痕会话（结束后销毁）' }}
               </NTooltip>
               <button v-if="isMobile" class="icon-pill" type="button" aria-label="收起输入框" @click="toggleInput">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
@@ -2136,7 +2104,7 @@ function handleContainerClick(e) {
   gap: 4px;
   min-width: 0;
 }
-/* 按住说话中：左排（挂图/计划/无痕/收起）置灰禁点，免得手指还在右边时误触 */
+/* 按住说话中：左排（挂图/计划/收起）置灰禁点，免得手指还在右边时误触 */
 .composer-row.ptt-active .composer-left {
   opacity: 0.4;
   pointer-events: none;

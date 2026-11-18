@@ -62,9 +62,8 @@ export function useChatSSE() {
   let streamOutcome = null
   // 上一次失败是不是网络层（决定「拉历史成功」时能不能清掉错误）
   let lastErrorKind = null
-  // 新会话（懒创建）在 meta 帧就先拿到 id；模式/无痕用发送那一刻的快照
+  // 新会话（懒创建）在 meta 帧就先拿到 id；模式用发送那一刻的快照
   let streamMode = 'work'
-  let streamEphemeral = false
   // 本轮是否语音来源（done 后朗读回复）；resume 续传沿用
   let streamVoiceMode = false
   let streamReplyHandler = null
@@ -151,17 +150,15 @@ export function useChatSSE() {
       title: '新对话',
       agent_id: chat.agentId,
       agent_name: chat.agentName,
-      mode: streamMode,
-      ephemeral: streamEphemeral
+      mode: streamMode
     })
   }
 
-  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, ephemeral, voiceMode, onAssistantReply, onAssistantReplyDelta } = {}) {
+  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking, attachments, initMode, voiceMode, onAssistantReply, onAssistantReplyDelta } = {}) {
     if (chat.isStreaming) return
 
-    // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再点开关不该改写已落库的值）
+    // 新会话在 done 回传 id 后要入会话列表，用发送这一刻的模式快照（流式中途再切不该改写已落库的值）
     streamMode = initMode || 'work'
-    streamEphemeral = !!ephemeral
     streamVoiceMode = !!voiceMode
     streamReplyHandler = onAssistantReply || null
     streamReplyDeltaHandler = onAssistantReplyDelta || null
@@ -203,9 +200,8 @@ export function useChatSSE() {
         agent_id: agentId || undefined
       }
       if (attachments && attachments.length) body.attachments = attachments
-      // 仅新会话生效：服务端对已有会话忽略这两个字段
+      // 仅新会话生效：服务端对已有会话忽略该字段
       if (initMode) body.init_mode = initMode
-      if (ephemeral) body.ephemeral = true
       if (temperature !== undefined && temperature !== null) {
         body.temperature = temperature
       }

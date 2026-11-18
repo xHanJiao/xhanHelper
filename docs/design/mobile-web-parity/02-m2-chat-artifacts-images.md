@@ -287,3 +287,9 @@ new MarkdownIt({
 - 流式加 120s 空闲看门狗：`utils/sse.js` 的 `createIdleWatchdog` 在 `api.stream()` 之前 arm，覆盖「请求发出 → 响应头 → 流结束」整条链路；超时先把 UI 收尾（`failStream` + `isStreaming=false`）再 `abort`，已 abort 过（用户停止）则只复位状态、不报假超时。`cancel()` 也直接复位 `isStreaming`。
 - 起因：移动端 PWA 被挂起后可能留下半开连接（reader 既不返回也不报错），`chat.isStreaming` 会永远为真，回前台既不同步历史也发不出消息、只能杀进程。
 - 服务端没有心跳帧，阈值不能再压低；要更灵敏需服务端在静默时发 `: ping`（SSE 注释行，`createSSEParser` 已能忽略）。
+
+## 十四、后续变更（2026-11-18）
+
+- **Web 端无痕入口整体移除**（本文件 M2c「计划模式 pill、无痕 pill」中的无痕部分作废）：删掉左排那枚波浪线 `icon-pill` 与 `toggleEphemeral`，连同 `chat.ephemeral`、`convs.updateEphemeral`、`useChatSSE` 的 `ephemeral` 参数与 done 事件里的快照。原因：Web 上无痕只有「按钮变绿 + 一次 toast」，会话列表和顶栏都没有任何标识，用户看不出是否生效；默认会话开了还会直接 400。
+- 后端能力与 macOS/iOS 客户端入口不受影响（`/chat {ephemeral}`、`PATCH /conversations/:id/ephemeral`、销毁 worker 仍在用）。代价：客户端建的无痕会话在 Web 里打开时，不再有「将销毁」的提示，也没有关闭入口（销毁照常）。
+- 同批：左排「添加图片」图标由回形针换成相框——它只接受图片（`addImages` 过滤 `image/*`），回形针容易被当成「附件」。

@@ -19,9 +19,8 @@ export const useChatStore = defineStore('chat', () => {
   const error = ref(null)
   const statusMessage = ref(null)
   const needsRefetch = ref(false)
-  // 当前会话模式（work/plan）与无痕意图。新会话时只存在本地，首条消息随 init_mode/ephemeral 落库。
+  // 当前会话模式（work/plan）。新会话时只存在本地，首条消息随 init_mode 落库。
   const mode = ref('work')
-  const ephemeral = ref(false)
 
   // 消息分页游标
   const oldestCursor = ref(null)
@@ -100,7 +99,6 @@ export const useChatStore = defineStore('chat', () => {
     oldestCursor.value = null
     hasMoreBefore.value = false
     mode.value = 'work'
-    ephemeral.value = false
   }
 
   return {
@@ -122,7 +120,6 @@ export const useChatStore = defineStore('chat', () => {
     hasMoreBefore,
     needsRefetch,
     mode,
-    ephemeral,
     setConversation,
     addMessage,
     setMessages,

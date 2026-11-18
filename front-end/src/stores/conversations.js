@@ -33,7 +33,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
-  // 前置会话（刚创建的 / 顶到最前）：保留已有条目的字段，避免丢掉 mode/ephemeral 等
+  // 前置会话（刚创建的 / 顶到最前）：保留已有条目的字段，避免丢掉 mode 等
   function prepend(conv) {
     const prev = list.value.find(c => c.id === conv.id)
     list.value = [{ ...prev, ...conv }, ...list.value.filter(c => c.id !== conv.id)]
@@ -49,8 +49,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       title: res.title || '新对话',
       agent_id: res.agent_id,
       agent_name: res.agent_name,
-      mode: res.mode || 'work',
-      ephemeral: !!res.ephemeral
+      mode: res.mode || 'work'
     })
     return res
   }
@@ -72,15 +71,10 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
-  // 更新会话模式 / 无痕标记（与 PATCH 成功后的服务端状态保持一致）
+  // 更新会话模式（与 PATCH 成功后的服务端状态保持一致）
   function updateMode(id, mode) {
     const conv = list.value.find(c => c.id === id)
     if (conv) conv.mode = mode
-  }
-
-  function updateEphemeral(id, ephemeral) {
-    const conv = list.value.find(c => c.id === id)
-    if (conv) conv.ephemeral = ephemeral
   }
 
   // 重命名会话
@@ -148,7 +142,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     updateTitle,
     updateAgent,
     updateMode,
-    updateEphemeral,
     rename,
     remove,
     togglePin,

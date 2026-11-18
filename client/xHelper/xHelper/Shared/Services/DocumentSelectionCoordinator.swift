@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 #if os(macOS)
 import AppKit
 import UniformTypeIdentifiers

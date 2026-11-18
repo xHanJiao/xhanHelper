@@ -132,7 +132,9 @@ struct PanelTabView: View {
     let token: String
     /// 卡片点开详情：交给 manager 开独立 tab
     let onOpenDocument: (Document) -> Void
+    #if os(macOS)
     let onOpenBook: (BookMeta) -> Void
+    #endif
 
     #if os(macOS)
     @ObservedObject private var bookVM = BookViewModel.shared

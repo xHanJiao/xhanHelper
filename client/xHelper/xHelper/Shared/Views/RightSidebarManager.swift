@@ -46,7 +46,10 @@ struct RightSidebarContentFactory {
     let home: () -> AnyView
     let panel: (BrowsePanel) -> AnyView
     let document: (Document) -> AnyView
+    #if os(macOS)
+    /// 书阅读只在 macOS（`BookMeta` / `BookReaderView` 都是 macOS-only）
     let book: (BookMeta) -> AnyView
+    #endif
 }
 
 final class RightSidebarManager: ObservableObject {
@@ -273,6 +276,7 @@ final class RightSidebarManager: ObservableObject {
         isOpen = true
     }
 
+    #if os(macOS)
     /// 打开/激活书阅读 tab。
     func openBookTab(_ book: BookMeta) {
         let id = Self.bookTabID(book.id)
@@ -295,6 +299,7 @@ final class RightSidebarManager: ObservableObject {
         activateTab(id: id)
         isOpen = true
     }
+    #endif
 
     /// 回到首页（等价「关掉一切导航、回到入口网格」）
     func goHome() {

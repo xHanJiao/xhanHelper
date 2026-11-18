@@ -292,7 +292,12 @@ struct RightSidebarView: View {
     @ViewBuilder
     private func tabPane(active: String?) -> some View {
         ZStack {
-            ForEach(manager.tabs.filter { manager.renderableTabIds.contains($0.id) }) { tab in
+            ForEach(manager.tabs.filter { tab in
+                guard manager.renderableTabIds.contains(tab.id) else { return false }
+                // 分屏时两个窗格各挂各的激活 tab：同一 NSView 不能挂两个 superview（旧代码同样排除）
+                return tab.id == active
+                    || (tab.id != manager.leftDisplayTabId && tab.id != manager.rightDisplayTabId)
+            }) { tab in
                 let isActive = tab.id == active
                 tab.content
                     .opacity(isActive ? 1 : 0)

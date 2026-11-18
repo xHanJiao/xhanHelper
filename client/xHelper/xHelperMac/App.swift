@@ -194,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // 两窗格同时在，activeTabId 未必是眼前那个，灵阅用 X 关。
                 if let rs = BrowserToolProvider.shared.rightSidebar,
                    rs.isOpen,
+                   !ChatInputFocus.shared.isFocused,
                    rs.splitTabIds.isEmpty,
                    let id = rs.activeTabId,
                    rs.activeTab?.kind != .home {

@@ -1820,8 +1820,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         activeTabId = nil
         // 灵阅与工具页（下载/收藏/历史/配置/本页资源）只在侧栏 tabs 里、没有浏览器 session，
         // 上面那轮关不到；不补这一轮，只剩灵阅时「退出」就是个 no-op（退不出去）。
-        for id in rightSidebar?.tabs.map(\.id) ?? [] {
-            rightSidebar?.closeTab(id)
+        // 统一 tab 之后 `rs.tabs` 里还有列表/文档/书：那些不是"浏览器"，不能跟着退。
+        for tab in rightSidebar?.tabs ?? [] {
+            switch tab.kind {
+            case .artifact, .tool:
+                rightSidebar?.closeTab(tab.id)
+            case .home, .panel, .document, .book, .web:
+                break
+            }
         }
         refreshBrowserGroup()
     }

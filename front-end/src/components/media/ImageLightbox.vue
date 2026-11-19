@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AuthImage from '@/components/media/AuthImage.vue'
+import { prefetchImage } from '@/components/media/imageBlobCache'
 
 const props = defineProps({
   // 单图用法（文档配图等）：不传 sources 时只用 src
@@ -15,34 +16,65 @@ const emit = defineEmits(['close'])
 const list = computed(() => (props.sources.length ? props.sources : [props.src]).filter(Boolean))
 const hasMany = computed(() => list.value.length > 1)
 const current = ref(0)
+// 真正在 <img> 里的地址：切换时先滑出、等图透明了再换，避免原地换 src 的硬切
+const shownSrc = ref('')
 const frameEl = ref(null)
+const switching = ref(false)
+let anim = null
+
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
 function clamp(i) {
   if (!list.value.length) return 0
   return Math.min(Math.max(i, 0), list.value.length - 1)
 }
-// 切图时按方向滑一小段并淡入：图是原地换 src 的，用 WAAPI 动外层即可，不重建节点
-function slide(dir) {
-  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
-  frameEl.value?.animate(
-    [
-      { transform: `translateX(${dir * 28}px)`, opacity: 0.45 },
-      { transform: 'none', opacity: 1 }
-    ],
-    { duration: 180, easing: 'ease-out' }
-  )
-}
-function step(delta) {
+
+function prefetchNeighbors() {
   if (!hasMany.value) return
-  const next = clamp(current.value + delta)
-  if (next === current.value) return
-  current.value = next
-  slide(delta)
+  prefetchImage(list.value[current.value - 1])
+  prefetchImage(list.value[current.value + 1])
 }
 
-// 每次打开都从被点的那张开始
+// 滑出 / 滑入各一小段：中间那一刻（opacity 0）才换图，所以看不到尺寸跳变
+function animate(delta, out) {
+  const el = frameEl.value
+  if (!el || reducedMotion()) return Promise.resolve()
+  const shift = out ? -delta * 48 : delta * 48
+  const frames = out
+    ? [{ transform: 'none', opacity: 1 }, { transform: `translateX(${shift}px)`, opacity: 0 }]
+    : [{ transform: `translateX(${shift}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }]
+  anim?.cancel() // 上一段（滑出）的 fill 状态必须先撤，否则滑入会从它接着走
+  anim = el.animate(frames, { duration: 140, easing: 'ease-out', fill: 'forwards' })
+  return anim.finished.catch(() => {}) // 被打断就按已完成处理
+}
+
+async function step(delta) {
+  if (!hasMany.value || switching.value) return
+  const next = clamp(current.value + delta)
+  if (next === current.value) return
+  switching.value = true
+  try {
+    await animate(delta, true)
+    current.value = next
+    shownSrc.value = list.value[next] || ''
+    await nextTick() // 让新图先上屏，再做滑入
+    prefetchNeighbors()
+    await animate(delta, false)
+  } finally {
+    anim?.cancel() // 回到自然样式（opacity 1、无位移），观感与最后一帧一致
+    anim = null
+    switching.value = false
+  }
+}
+
+// 每次打开都从被点的那张开始，顺手把左右两张先拉进缓存
 watch([() => props.visible, () => props.startIndex], ([vis]) => {
-  if (vis) current.value = clamp(props.startIndex)
+  if (!vis) return
+  current.value = clamp(props.startIndex)
+  shownSrc.value = list.value[current.value] || ''
+  anim?.cancel()
+  anim = null
+  prefetchNeighbors()
 }, { immediate: true })
 
 // 手机滑动：横向位移够大且不是竖着划，就切图；
@@ -100,7 +132,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
       @touchend="onTouchEnd"
     >
       <div ref="frameEl" class="frame">
-        <AuthImage :src="list[current] || ''" :keep-previous="hasMany" />
+        <AuthImage :src="shownSrc" />
       </div>
       <button class="close" type="button" aria-label="关闭" @click.stop="emit('close')">×</button>
       <template v-if="hasMany">

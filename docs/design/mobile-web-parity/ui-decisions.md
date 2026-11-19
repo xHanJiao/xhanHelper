@@ -137,3 +137,12 @@
 - 记忆/笔记/摘要：标题 + 搜索；主题/智能体/Prompt/工具：标题 + 新建；设置/我的：只有标题。
 - 手机端 `.icon-btn` 38px、`.page-action` 加内边距，撑到接近 44px 的触控区。文档无结果且有筛选时给「清除筛选」，与灵阅对齐。
 - **2026-11-18 修正第 9 条**：输入框左排不再有「无痕」入口（Web 只有按钮高亮、没有状态展示，默认会话还会 400）。无痕能力仅保留给 macOS/iOS 客户端，后端接口未动。同批把「添加图片」图标从回形针换成相框，与它的实际能力（只发图）对齐。
+
+## 十、手机端界面文字禁选（2026-11-19 实施）
+
+影响 `front-end/src/style.css`、`front-end/src/views/SummaryMessagesView.vue`：
+
+- 粗指针设备（`hover: none` + `pointer: coarse`）下默认 `html { user-select: none; -webkit-touch-callout: none }`：按钮、Tab、页头、筛选胶囊、浮标等界面文字长按不再出现选择手柄/菜单。
+- **正文例外**（显式恢复 `user-select: text` + `touch-callout: default`）：AI 消息正文（`.assistant-content`）、卡片正文（`.card-content`）、文档阅读页（`.paper`）、分享文档（`.doc-content`）、事件详情与摘要正文（`.event-summary` / `.event-memory` / `.summary-text`），以及 `input` / `textarea` / `select` / `[contenteditable]` / `.n-input`。
+- 用户气泡维持既有的禁选（`MessageBubble.vue` 的 `.user-bubble`），复制走长按菜单；以后新增正文容器需显式加进 `style.css` 的例外列表，否则默认不可选。
+- **已知限制**：iOS 长按非可选区域时会就近把选区锚点逃逸到最近的正文（例如浮标上方正好有 AI 消息正文），所以「长按浮标」仍可能弹出一段与浮标无关的选区。真机验收必须单独看这个场景；若实际可复现且碍事，再在浮标的 `pointerdown` 里 `preventDefault` 兜底，不在本轮扩范围。

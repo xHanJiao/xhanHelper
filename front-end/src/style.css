@@ -468,3 +468,29 @@ img {
     }
   }
 }
+
+/* 手机上界面文字一律不可选：长按语音/消息时，iOS 会就近找可选文字当锚点，
+   弹出选择手柄和菜单（收起态「发消息」浮标踩过）。正文/输入区在下面显式放行。 */
+@media (hover: none) and (pointer: coarse) {
+  html {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  input,
+  textarea,
+  select,
+  [contenteditable],
+  .n-input,
+  .assistant-content,   /* AI 消息正文 */
+  .card-content,        /* 灵阅/笔记/记忆/事件卡片正文 */
+  .paper,               /* 文档阅读页 */
+  .doc-content,         /* 分享文档正文 */
+  .event-summary,
+  .event-memory,
+  .summary-text {       /* 摘要详情正文 */
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+}

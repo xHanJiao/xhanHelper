@@ -86,7 +86,7 @@ onMounted(fetchSummaryMessages)
                 {{ statusText(summary.status) }}
               </NTag>
             </div>
-            <div style="color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;">
+            <div class="summary-text" style="color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;">
               {{ summary.summary_text }}
             </div>
             <div v-if="summary.topics" style="margin-top: var(--space-sm); display: flex; gap: 4px; flex-wrap: wrap;">

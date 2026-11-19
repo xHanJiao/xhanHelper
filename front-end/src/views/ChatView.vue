@@ -257,13 +257,15 @@ function onVoiceWindowBlur() {
 // 桌面端是两态按钮，点一下开始、再点一下发送，录音中左侧出现取消钮（Esc 同取消）。
 const holdPointerStartY = ref(0)
 const holdCancelArmed = ref(false)
+// 手指还在不在按钮上：首次授权弹窗会吞掉 pointerup，靠它把「没按住却在录」收掉
+let holdHeld = false
 // 松手后可能还在等图上传（最长 15 秒）：这期间再按一次会并发提交，后一条被
 // sendMessage 的 isStreaming 静默丢掉（见 docs/bugs/061），所以先不接新的按下
 const holdSubmitting = ref(false)
 
-function beginHoldTalk() {
+function beginHoldTalk(opts) {
   if (holdSubmitting.value) return
-  startVoiceHoldTalk()
+  startVoiceHoldTalk(opts)
 }
 
 function onHoldTalkPointerDown(e) {
@@ -272,9 +274,10 @@ function onHoldTalkPointerDown(e) {
   e.preventDefault()
   holdPointerStartY.value = e.clientY
   holdCancelArmed.value = false
+  holdHeld = true
   // 没有指针捕获的话，手指移出按钮后 pointerup 会丢（iOS PWA 尤其明显）
   e.currentTarget?.setPointerCapture?.(e.pointerId)
-  beginHoldTalk()
+  beginHoldTalk({ isHeld: () => holdHeld })
 }
 
 function onHoldTalkPointerMove(e) {
@@ -283,6 +286,7 @@ function onHoldTalkPointerMove(e) {
 }
 
 function onHoldTalkPointerUp() {
+  holdHeld = false
   if (!isMobile.value || !voiceHoldRecording.value) return
   const cancelled = holdCancelArmed.value
   holdCancelArmed.value = false
@@ -290,6 +294,7 @@ function onHoldTalkPointerUp() {
 }
 
 function onHoldTalkPointerCancel() {
+  holdHeld = false
   if (!isMobile.value || !voiceHoldRecording.value) return
   holdCancelArmed.value = false
   stopVoiceHoldTalk({ cancelled: true })
@@ -303,6 +308,7 @@ function onHoldTalkToggle() {
 }
 
 function onHoldTalkCancel() {
+  holdHeld = false
   if (!voiceHoldRecording.value) return
   holdCancelArmed.value = false
   stopVoiceHoldTalk({ cancelled: true })

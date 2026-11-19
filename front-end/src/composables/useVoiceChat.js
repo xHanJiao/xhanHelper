@@ -20,6 +20,11 @@ const HOLD_MAX_MS = 3000
 // 长按说话：单次录音上限（16k mono int16 下 120 秒 ≈ 3.8MB）
 const HOLD_TALK_MAX_SECONDS = 120
 const HOLD_TALK_MIN_MS = 300
+// 采集心跳：没人说话时 worklet 也每 ~46ms 上报一包，「一帧都没有」= 引擎没跑起来
+const HOLD_READY_MS = 800
+// 首次授权弹窗会吞掉 pointerup：只量 getUserMedia 这一段，超时就当手势已被打断
+// （与 ChatView 的 PTT 兜底同值）
+const HOLD_GRANT_GRACE_MS = 1500
 // 松手后整段灌入的兜底超时：底座覆盖建连 + 收尾，另按音频长度给上行留量
 // （120 秒音频在本地实测 ~7 秒出 final，但 2Mbps 上行光传 3.8MB 就要 15 秒）
 const HOLD_TRANSCRIBE_TIMEOUT_BASE_MS = 15_000
@@ -182,6 +187,16 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
   let holdSamples = 0
   let holdFrames = []
   let holdStartedAt = 0
+  // 采集心跳看门狗：接上 source 后 HOLD_READY_MS 内一帧都没有 = 引擎没跑
+  let holdWatchTimer = null
+  // 看门狗是否已经就「没心跳」提过醒（松手时别再重复弹一次）
+  let holdStalled = false
+  // getUserMedia 上一次的耗时：只有它变长才说明撞上了授权弹窗（建 worklet 的耗时不算）
+  let holdGrantMs = 0
+  // 采集代次：弹窗期松手后立刻重按时，让前一次在飞的授权/建图作废
+  let holdGen = 0
+  // 权限是否已经要到手（进语音条时预热一次，之后长按不再被弹窗打断）
+  let micPrimed = false
   // 这一轮采集归谁：voice = 语音条长按档，ptt = 输入卡按住说话（到上限兜底要分派收尾）
   let holdOwner = null
   // PTT 代次：取消/重按时让在飞的授权、识别结果失效
@@ -225,6 +240,29 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     el.src = SILENT_WAV
     el.play().catch(() => {})
     el.dataset.unlocked = '1'
+  }
+
+  /**
+   * 预热麦克风权限：进语音条那一下是有效手势，先把权限要到手再立刻放流。
+   * 否则首次长按会被授权弹窗打断 —— 手指「消失」、AudioContext 被 iOS 打断，
+   * 之后一帧都收不到（见 docs/bugs/071）。
+   */
+  async function primeMicPermission() {
+    if (micPrimed || !navigator.mediaDevices?.getUserMedia) return
+    // 只在触屏设备预热：桌面端没有「弹窗打断手势」这回事，别平白弹一次权限
+    if (!window.matchMedia?.('(pointer: coarse)').matches) {
+      micPrimed = true
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+      stream.getTracks().forEach(t => t.stop())
+      micPrimed = true
+      log('mic permission primed')
+    } catch (err) {
+      // 拒绝/不支持：留给真正的长按去报错，这里不弹红
+      console.warn('[voice] mic permission prime failed', err)
+    }
   }
 
   function setGate(value) {
@@ -737,6 +775,8 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
       generation += 1
       log('enter voice (hold)')
       active.value = true
+      // 不 await：进语音条当口就要权限，别让随后的长按撞上弹窗
+      primeMicPermission()
       return
     }
     await start()
@@ -761,6 +801,8 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     generation += 1
     active.value = true
     switching.value = false
+    // 切到长按档（默认档是连续档，老用户走这条）同样是有效手势：顺手把权限要到手
+    primeMicPermission()
   }
 
   function ensureHoldGraph() {
@@ -796,6 +838,36 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     return holdGraphPromise
   }
 
+  /** 扔掉长按采集图。iOS 一旦把 ctx 打成 interrupted 就 resume 不回来，
+   *  只能丢掉，让下一次 pointerdown（有效手势）重建。 */
+  function resetHoldGraph() {
+    holdGraphPromise = null
+    if (holdWorklet) {
+      holdWorklet.port.onmessage = null
+      holdWorklet.disconnect()
+      holdWorklet = null
+    }
+    if (holdSink) { holdSink.disconnect(); holdSink = null }
+    if (holdCtx) {
+      holdCtx.close().catch(() => {})
+      holdCtx = null
+    }
+  }
+
+  /** 接上采集后看心跳：静音也有帧，所以一帧没有就是引擎没跑。只提示，不打断录音。 */
+  function armHoldWatchdog() {
+    if (holdWatchTimer) clearTimeout(holdWatchTimer)
+    holdStalled = false
+    holdWatchTimer = setTimeout(() => {
+      holdWatchTimer = null
+      if (!holdRecording.value && !pttRecording.value) return
+      if (holdFrames.length) return
+      holdStalled = true
+      log('capture stalled: no frames yet')
+      onNotice?.('麦克风好像没工作，松手后再按一次')
+    }, HOLD_READY_MS)
+  }
+
   /** 建长按采集图并开麦（语音条长按档与输入卡 PTT 共用）。返回 false = 中途放弃。 */
   async function beginHoldCapture({ aborted } = {}) {
     holdChunks = []
@@ -806,7 +878,9 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     const ctx = ensureHoldGraph()
     await ensureHoldWorklet(ctx)
     ctx.resume().catch((err) => console.warn('[voice] hold ctx resume failed', err))
+    const grantAt = Date.now()
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } })
+    holdGrantMs = Date.now() - grantAt
     if (aborted?.()) {
       stream.getTracks().forEach(t => t.stop())
       return false
@@ -816,20 +890,37 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     holdSource.connect(holdWorklet)
     // 计时从真正开始采集算起：权限弹窗/建图耗时不算「按住时长」
     holdStartedAt = Date.now()
+    armHoldWatchdog()
     return true
   }
 
   /** 按下：只本地录音（累积 PCM + 电平帧），不建连接。 */
-  async function startHoldTalk() {
+  async function startHoldTalk({ isHeld } = {}) {
     if (!active.value || mode.value !== 'hold') return
     if (holdRecording.value || holdTranscribing.value || pttRecording.value) return
     holdRecording.value = true
     holdOwner = 'voice'
+    holdGen += 1
+    const gen = holdGen
     try {
-      // 权限弹窗期间就松手了：别把麦克风留在后台
-      if (!(await beginHoldCapture({ aborted: () => !holdRecording.value }))) {
-        holdRecording.value = false
-        holdOwner = null
+      // 权限弹窗期间就松手了：别把麦克风留在后台。
+      // gen：弹窗期松手后立刻重按时，前一次在飞的授权/建图不能把新一轮的流顶掉或收掉。
+      if (!(await beginHoldCapture({
+        aborted: () => gen !== holdGen || !holdRecording.value || (isHeld && !isHeld())
+      }))) {
+        if (gen === holdGen) {
+          holdRecording.value = false
+          holdOwner = null
+        }
+        return
+      }
+      if (gen !== holdGen) return
+      // 首次授权弹窗会吞掉 pointerup：只量 getUserMedia 那一段，超长就当手势已被打断，
+      // 否则会出现「没按住也在录」（橙点不灭）。弹窗期间建的图多半已被 iOS 打断，一并丢掉。
+      if (isHeld && holdGrantMs > HOLD_GRANT_GRACE_MS) {
+        stopHoldTalk({ cancelled: true })
+        resetHoldGraph()
+        onNotice?.('麦克风已允许，请再按住说一次')
         return
       }
       log('hold talk started')
@@ -866,12 +957,28 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     const frames = holdFrames
     const chunks = holdChunks
     const durationMs = Date.now() - holdStartedAt
+    // 采集有没有真接上：授权弹窗期间就松手时为 false，不能把空采集当「说完了」
+    const live = !!holdStream
     stopHoldCapture()
+    holdOwner = null
     holdChunks = []
     holdSamples = 0
     holdFrames = []
     if (cancelled) {
       log('hold talk cancelled')
+      return
+    }
+    if (!live) {
+      log('hold talk dropped: capture never started')
+      return
+    }
+    if (!frames.length && durationMs >= HOLD_TALK_MIN_MS) {
+      // 看门狗已经提示过了：引擎死了，边说边录都是空，扔掉别让它继续坏。
+      // （按一下就松的短按不算：那时还不足一帧，交给下面按「太短」处理）
+      log('hold talk dropped: capture stalled')
+      const told = holdStalled
+      resetHoldGraph()
+      if (!told) onNotice?.('麦克风没就绪，请再按住说一次')
       return
     }
     if (!acceptHoldSpan(frames, durationMs)) return
@@ -984,6 +1091,7 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
   /** 停采集并释放本次录音（保留 AudioContext 供下次快速启动）。 */
   function stopHoldCapture() {
     holdRecording.value = false
+    if (holdWatchTimer) { clearTimeout(holdWatchTimer); holdWatchTimer = null }
     if (holdSource) { holdSource.disconnect(); holdSource = null }
     if (holdStream) {
       holdStream.getTracks().forEach(t => t.stop())
@@ -1001,7 +1109,6 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     pttRecording.value = false
     pttTranscribing.value = false
     holdOwner = null
-    holdGraphPromise = null
     if (holdSocket) {
       const ws = holdSocket
       holdSocket = null
@@ -1010,16 +1117,7 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     holdChunks = []
     holdSamples = 0
     holdFrames = []
-    if (holdWorklet) {
-      holdWorklet.port.onmessage = null
-      holdWorklet.disconnect()
-      holdWorklet = null
-    }
-    if (holdSink) { holdSink.disconnect(); holdSink = null }
-    if (holdCtx) {
-      holdCtx.close().catch(() => {})
-      holdCtx = null
-    }
+    resetHoldGraph()
   }
 
   // MARK: 输入卡按住说话（与会话无关）
@@ -1076,6 +1174,14 @@ export function useVoiceChat({ onSentence, onHoldSentence, onPushToTalk, onError
     }
     // 采集还没真正开始（首次授权弹窗期间就松手）：静默收掉，不报「太短」
     if (!live) return
+    if (!frames.length && durationMs >= HOLD_TALK_MIN_MS) {
+      // 引擎被 iOS 打断：一帧都没采到，扔掉坏图，别让它继续坏（短按交给下面的「太短」）
+      log('ptt dropped: capture stalled')
+      const told = holdStalled
+      resetHoldGraph()
+      if (!told) onNotice?.('麦克风没就绪，请再按住说一次')
+      return
+    }
     if (!acceptHoldSpan(frames, durationMs)) return
     const pcm = concatInt16(chunks)
     if (!pcm.length) {

@@ -150,16 +150,23 @@
 
 **麦克风生命周期**
 
-- 进入长按模式**不启动**麦克风；按下才 `getUserMedia` + `AudioContext`
+- 进入长按模式**不启动**采集；按下才 `getUserMedia` + `AudioContext`
+- `shortcut:` 进语音条（点麦克风那一下）会先空跑一次 `getUserMedia` 预热权限再立刻放流：
+  iOS 首次的授权弹窗会吞掉 `pointerup` 并打断 `AudioContext`（见 `docs/bugs/071`）。
+  代价是首次进入时状态栏橙点闪一下；桌面端不预热
 - 松手后停掉采集（保留 `AudioContext` 以便下次快速启动；退出模式/页面隐藏时彻底释放）
-- `shortcut:` 首次按下有 100–300ms 麦克风启动延迟，微信同样存在；若实测明显，再改成进入模式时预热
+- `shortcut:` AudioContext **不**在进入模式时预热（首次按下仍有 100–300ms 启动延迟）：预热的只有权限
+- 采集心跳：接上采集 0.8 秒一帧都没有（静音也有帧，所以这是「引擎没跑」的可靠信号）→
+  只提示「麦克风好像没工作」，不打断录音；松手时一帧都没有 → 丢掉这张采集图（下次按下重建）
+- 长按开麦时 `getUserMedia` 超过 1.5 秒（授权弹窗吞掉了 `pointerup`）→ 收手 + 提示「请再按住说一次」
 
 **取消与边界**
 
 - 移动端上滑取消：`pointermove` 记录纵坐标，相对按下点上移 > 60px 进入取消态（提示条变红「松开取消」），松手丢弃
 - 移动端录音按钮必须加 `touch-action: none`，否则 iOS PWA 上滑会被页面滚动抢走
 - 桌面端：两态按钮，录音中左侧浮出取消钮（绝对定位，不挤动录音钮）；`Esc` 同取消；窗口失焦不取消
-- 太短：按住 < 300ms，或整段没有有声帧 → 丢弃 + 提示「说话时间太短」
+- 太短：按住 < 300ms，或整段没有有声帧 → 丢弃 + 提示「说话时间太短」；
+  按了 ≥300ms 却一帧都没采到 → 提示「麦克风没就绪，请再按住说一次」（见上行采集心跳）
 - 上限：120 秒自动结束并提交（提示「已到 120 秒，自动发送」）
 
 ### Swift（macOS）
@@ -478,3 +485,12 @@
     否则慢上行下两分钟录音会以超时被丢弃。
   - 影响文件：`client/xHelper/xHelper/Shared/Services/VoiceChatService.swift`、
     `Services/AppShortcutBridge.swift`、`front-end/src/composables/useVoiceChat.js`。
+
+- 2026-11-19（首次授权后录不到音 / 橙点不灭）：
+  - 根因：iOS 首次 `getUserMedia` 的授权弹窗会吞掉 `pointerup`，且会把弹窗之前建好的
+    `AudioContext` 打成 interrupted（`resume()` 已不在手势任务里，救不回来）。
+    表现：没按住也在录（橙点不灭）、波形不动、松手报「说话时间太短」（见 `docs/bugs/071`）。
+  - 处置：进语音条时预热权限；长按开麦耗时超过 1.5 秒当作手势被吞；接上采集后 0.8 秒
+    没有心跳就提示重按；松手时一帧都没有则丢掉被 iOS 打断的采集图，下次在 `pointerdown`
+    手势里重建。`AudioContext` 仍跨次复用，只在这几种失败路径上丢弃。
+  - 影响文件：`front-end/src/composables/useVoiceChat.js`、`front-end/src/views/ChatView.vue`。

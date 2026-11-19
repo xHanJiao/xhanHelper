@@ -400,6 +400,9 @@ struct ImageGalleryPreviewView: View {
     let onClose: () -> Void
 
     @State private var index: Int
+    /// 切换方向：+1 下一张 / -1 上一张，决定交叉淡入从哪边进、往哪边出
+    @State private var dir = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var loader = AttachmentImageLoader.shared
 
     init(source: Source, startIndex: Int, onClose: @escaping () -> Void) {
@@ -461,6 +464,11 @@ struct ImageGalleryPreviewView: View {
                     Image(platformImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
+                        .id(index)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .offset(x: CGFloat(dir) * 40)),
+                            removal: .opacity.combined(with: .offset(x: CGFloat(-dir) * 40))
+                        ))
                 } else if failed {
                     Text("图片加载失败（可能已被清理）")
                         .font(.callout)
@@ -522,7 +530,15 @@ struct ImageGalleryPreviewView: View {
 
     private func step(_ delta: Int) {
         guard count > 1 else { return }
-        index = min(max(index + delta, 0), count - 1)
+        let next = min(max(index + delta, 0), count - 1)
+        guard next != index else { return }
+        dir = delta
+        if reduceMotion {
+            index = next
+        } else {
+            // 旧图滑出、新图滑入，两张在 ZStack 里交叉淡入，不重建外层布局
+            withAnimation(.easeOut(duration: 0.22)) { index = next }
+        }
     }
 
     /// 预取当前 ±1：缩略图条折叠时后面的图还没拉过。

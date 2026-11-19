@@ -2295,27 +2295,32 @@ function handleContainerClick(e) {
   align-items: center;
   gap: 6px;
 }
+/* 收起态这一组是手机端唯一的输入入口：麦克风与「＋发消息」同为一级入口，
+   所以共用一套软绿容器（同高 44、同填充、同描边），靠字号把胶囊的密度补到与圆钮相当 */
 .reopen-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
   border-radius: 999px;
-  border: 0.5px solid var(--color-border);
-  background: var(--color-surface-strong);
-  color: var(--color-primary);
-  font-size: 12.5px;
+  border: 0.5px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+  /* 浮在消息流上：软底半透明会让滚上来的正文透进胶囊，所以叠一层不透明面。
+     文字用 primary-hover 过 4.5:1（软底上 primary 只有约 4.1:1） */
+  background: linear-gradient(var(--color-primary-soft), var(--color-primary-soft)), var(--color-surface-strong);
+  color: var(--color-primary-hover);
+  font-size: 16px;
+  font-weight: 500;
   box-shadow: var(--shadow-md);
   cursor: pointer;
 }
-.reopen-btn svg { width: 14px; height: 14px; }
+.reopen-btn svg { width: 19px; height: 19px; }
 .reopen-btn.reopen-stop {
-  width: 38px;
-  height: 38px;
+  width: 44px;
   padding: 0;
   justify-content: center;
   border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
-  background: var(--color-danger-soft);
+  background: linear-gradient(var(--color-danger-soft), var(--color-danger-soft)), var(--color-surface-strong);
   color: var(--color-danger);
 }
 /* 方块用独立盒子画，不依赖 ■ 字形在各字体下的实际大小 */
@@ -2334,18 +2339,15 @@ function handleContainerClick(e) {
   background: currentColor;
 }
 .reopen-btn.reopen-mic {
-  width: 38px;
-  height: 38px;
+  width: 44px;
   padding: 0;
   justify-content: center;
-  background: var(--color-primary-soft);
-  border-color: var(--color-border);
   touch-action: none;
   user-select: none;
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
 }
-.reopen-btn.reopen-mic svg { width: 20px; height: 20px; }
+.reopen-btn.reopen-mic svg { width: 24px; height: 24px; }
 .reopen-btn.reopen-mic.recording {
   background: var(--color-primary);
   border-color: var(--color-primary);

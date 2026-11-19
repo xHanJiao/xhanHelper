@@ -84,3 +84,11 @@
 5. 流式中按住 → 松手停当前轮并发出。
 6. 桌面（≥1100）不受影响：左排语音入口、语音条、发送键焦点行为都不变。
 7. 首次安装/清 localStorage 后进聊天页 → 只浮一次「按住说话，松手发送」。
+
+## 后续变更
+
+- 2026-11-19 · 收起态那组浮动按钮重做视觉重心（用户：麦克风与「＋发消息」都是同级入口，不能一小一大）：
+  两者统一 44px 高、`primary-soft` 叠 `surface-strong`（半透明软底会让滚上来的正文透字）、
+  `primary 30%` 描边、文字 `primary-hover`（软底上 `primary` 只有约 4.1:1）；麦克风图标 20→24px、
+  胶囊文字 12.5→16px/500、＋图标 14→19px，停止键 38→44。展开态那套 40px 控件不动。
+  影响文件：`front-end/src/views/ChatView.vue`、`docs/design/voice-ptt-composer/mockup.html`。

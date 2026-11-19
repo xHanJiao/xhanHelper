@@ -9,6 +9,7 @@
     --app-accent: #2F7D63;
     --accent-secondary: #41C9E2;
     --color-primary: #2F7D63;
+    --color-primary-hover: #245F4B;
     --color-primary-soft: rgba(47, 125, 99, 0.10);
     --color-danger: #C0504D;
     --color-danger-soft: rgba(192, 80, 77, 0.10);
@@ -38,6 +39,7 @@
   [data-theme="dark"] {
     --app-accent: #92C8B4;
     --color-primary: #92C8B4;
+    --color-primary-hover: #B4E0CF;
     --color-primary-soft: rgba(146, 200, 180, 0.14);
     --color-danger: #E07A76;
     --color-danger-soft: rgba(224, 122, 118, 0.12);
@@ -356,29 +358,32 @@
   }
   body[data-state="collapsed"] .collapsed,
   body[data-state="collapsed-recording"] .collapsed { display: flex; }
+  /* 麦克风与「＋发消息」是同级入口：同高 44、同软绿底（叠不透明面，避免正文透字）、同描边 */
   .rbtn {
-    height: 38px;
+    height: 44px;
     white-space: nowrap;
     flex: 0 0 auto;
     border-radius: 999px;
-    border: 0.5px solid var(--color-border);
-    background: var(--color-surface-strong);
-    color: var(--color-primary);
+    border: 0.5px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+    background: linear-gradient(var(--color-primary-soft), var(--color-primary-soft)), var(--color-surface-strong);
+    color: var(--color-primary-hover);
     box-shadow: var(--shadow-md);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    font-size: 12.5px;
-    padding: 0 14px;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 0 18px;
   }
-  .rbtn.mic { width: 38px; padding: 0; }
-  .rbtn.mic svg { width: 20px; height: 20px; display: block; }
+  .rbtn.mic { width: 44px; padding: 0; }
+  .rbtn.mic svg { width: 24px; height: 24px; display: block; }
   .rbtn.mic .spinner { display: none; }
   body[data-state="collapsed-recording"] .rbtn.mic .spinner { display: block; }
   body[data-state="collapsed-recording"] .rbtn.mic svg { display: none; }
-  .rbtn.send { color: var(--color-text-secondary); }
-  .rbtn.send svg { width: 14px; height: 14px; }
+  /* 收起态复用 .mic/.send 的类名，得把「展开态 40px 方块」那几条按住的属性放回来 */
+  .rbtn.send { width: auto; color: var(--color-primary-hover); }
+  .rbtn.send svg { width: 19px; height: 19px; }
 
   /* 收起态录音胶囊 */
   .capsule {

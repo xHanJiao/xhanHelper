@@ -507,6 +507,10 @@ struct ImageGalleryPreviewView: View {
         .frame(minHeight: 360)
         #endif
         .task(id: index) { await loadAround() }
+        #if os(macOS)
+        // 触控板双指横滑切图（SwiftUI 没有滚轮手势）
+        .background { TrackpadSwipeMonitor { step($0) } }
+        #endif
     }
 
     private func navButton(delta: Int, symbol: String, label: String) -> some View {
@@ -556,6 +560,110 @@ struct ImageGalleryPreviewView: View {
         }
     }
 }
+
+#if os(macOS)
+/// 触控板双指横滑切图。SwiftUI 没有滚轮手势，挂窗口级本地监听（只认本视图所在窗口）。
+/// 这个视图只用来拿 window，不参与命中测试，所以不会挡按钮点击。
+private struct TrackpadSwipeMonitor: NSViewRepresentable {
+    let onSwipe: (Int) -> Void
+
+    final class HostView: NSView {
+        var onWindowChange: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindowChange?(window)
+        }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    final class Coordinator {
+        var onSwipe: (Int) -> Void
+        private var monitor: Any?
+        private var window: NSWindow?
+        private var accX: CGFloat = 0
+        private var accY: CGFloat = 0
+        private var fired = false
+        /// 没有 phase 的事件（普通鼠标滚轮）按单次手势算，带冷却
+        private var lastDiscreteFire = Date.distantPast
+
+        init(onSwipe: @escaping (Int) -> Void) { self.onSwipe = onSwipe }
+
+        func attach(window newWindow: NSWindow?) {
+            if monitor != nil, newWindow === window { return }
+            detach()
+            window = newWindow
+            guard newWindow != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+                // 本地监听回调没有主线程签名保证；滚轮实际都在主线程，别的线程就放行
+                guard Thread.isMainThread else { return event }
+                let consumed = MainActor.assumeIsolated { self?.handle(event) ?? false }
+                return consumed ? nil : event
+            }
+        }
+
+        func detach() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            window = nil
+        }
+
+        /// 返回 true = 已当作切图手势消费，别再让下层跟着滚
+        private func handle(_ event: NSEvent) -> Bool {
+            guard let window, event.window === window else { return false }
+            // 惯性阶段是手指离开后的余速，再翻一张就成了「一划两张」
+            guard event.momentumPhase.isEmpty else { return false }
+            // 统一成和 web 的 wheel.deltaX 同向（正值 = 手指往左划 = 下一张）：
+            // AppKit 的 scrollingDeltaX 在「自然滚动」下与浏览器符号相反
+            let dx = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaX : event.scrollingDeltaX
+            let dy = event.scrollingDeltaY
+
+            guard !event.phase.isEmpty else {
+                guard abs(dx) > 60, abs(dx) > abs(dy) * 1.5,
+                      Date().timeIntervalSince(lastDiscreteFire) > 0.25 else { return false }
+                lastDiscreteFire = Date()
+                onSwipe(dx > 0 ? 1 : -1)
+                return true
+            }
+
+            if event.phase == .began {
+                accX = 0
+                accY = 0
+                fired = false
+            } else if event.phase == .ended || event.phase == .cancelled {
+                accX = 0
+                accY = 0
+                fired = false
+                return false
+            }
+            accX += dx
+            accY += dy
+            // 横向明显占优才算横滑手势（双指斜着划也会带 deltaY）
+            guard !fired, abs(accX) > 60, abs(accX) > abs(accY) * 1.5 else { return false }
+            fired = true
+            // deltaX > 0 = 内容往右滚 = 手指往左划 = 下一张（与 iOS 滑动、web 同向）
+            onSwipe(accX > 0 ? 1 : -1)
+            return true
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onSwipe: onSwipe) }
+
+    func makeNSView(context: Context) -> HostView {
+        let view = HostView(frame: .zero)
+        view.onWindowChange = { context.coordinator.attach(window: $0) }
+        return view
+    }
+
+    func updateNSView(_ nsView: HostView, context: Context) {
+        context.coordinator.onSwipe = onSwipe
+        context.coordinator.attach(window: nsView.window)
+    }
+
+    static func dismantleNSView(_ nsView: HostView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+}
+#endif
 
 // MARK: - 平台适配
 

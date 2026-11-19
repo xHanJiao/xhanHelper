@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AuthImage from '@/components/media/AuthImage.vue'
 import { prefetchImage } from '@/components/media/imageBlobCache'
+import { createWheelSwipe } from '@/components/media/wheelSwipe'
 
 const props = defineProps({
   // 单图用法（文档配图等）：不传 sources 时只用 src
@@ -99,6 +100,17 @@ function onTouchEnd(e) {
   }
 }
 
+// 触控板双指横滑切图：一次手势只切一张（判定见 wheelSwipe.js）
+const wheelSwipe = createWheelSwipe()
+
+function onWheel(e) {
+  e.preventDefault() // 别让背景跟着滚，也别触发浏览器历史滑动
+  if (!hasMany.value) return
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerWidth : 1
+  const dir = wheelSwipe(e.deltaX * unit, e.deltaY * unit, performance.now())
+  if (dir) step(dir)
+}
+
 // 点画面任意处关闭（含图本身）；按钮/计数各自 stop
 function onTap() {
   if (Date.now() - swipeEndedAt < 350) return
@@ -128,6 +140,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
       v-if="visible"
       class="lightbox"
       @click="onTap"
+      @wheel="onWheel"
       @touchstart.passive="onTouchStart"
       @touchend="onTouchEnd"
     >

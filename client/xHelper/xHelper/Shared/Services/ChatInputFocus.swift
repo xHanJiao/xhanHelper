@@ -14,6 +14,10 @@ final class ChatInputFocus: ObservableObject {
     static let shared = ChatInputFocus()
 
     @Published var isFocused = false
+    /// 全屏输入是否展开：App 级 Esc（L3 工具确认的「拒绝」）要给它让路，
+    /// 否则面板收不起来，还会在看不到确认条时静默拒绝工具。
+    /// 只给 NSEvent monitor 读，不需要触发 SwiftUI 重算，故不标 @Published。
+    var expandedComposerActive = false
 
     private init() {}
 }

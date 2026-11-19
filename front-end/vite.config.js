@@ -5,7 +5,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 import { execSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
@@ -43,6 +43,17 @@ function buildVersion() {
   return `${prefix}${commit}${dirty}`
 }
 
+// 手机验收要 https（getUserMedia / AudioWorklet 都要求安全上下文）。证书放 .certs/（已 gitignore），
+// 有就用；没有就走 http（桌面连 localhost 本来就够）。
+function devHttps() {
+  const dir = path.join(rootDir, '.certs')
+  const key = path.join(dir, 'dev-key.pem')
+  const cert = path.join(dir, 'dev.pem')
+  if (!existsSync(key) || !existsSync(cert)) return undefined
+  console.log('[vite] https enabled (.certs/)')
+  return { key: readFileSync(key), cert: readFileSync(cert) }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   define: {
@@ -78,11 +89,15 @@ export default defineConfig({
   },
   server: {
     // 监听 0.0.0.0，手机同 Wi-Fi 直接开 http://<Mac 局域网 IP>:5173 验收
+    // （语音输入要安全上下文，手机验收见 .certs/ + README 里 mkcert 那几句）
     host: true,
+    https: devHttps(),
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
-        changeOrigin: true
+        changeOrigin: true,
+        // 语音 ASR 走 /api/voice/asr 的 WebSocket，Vite 不给 ws:true 就不转发 upgrade，会连不上
+        ws: true
       },
       '/images': {
         target: 'http://localhost:8080',

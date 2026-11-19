@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+# 手机验收用的本地 https 证书（mkcert 生成，绝不入仓）
+.certs
 
 # Editor directories and files
 .vscode/*

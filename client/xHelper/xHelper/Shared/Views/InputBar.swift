@@ -14,6 +14,8 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
     @Binding var isEditing: Bool
     let isStreaming: Bool
     var dismissKeyboardToken: UUID?
+    /// 回焦请求：变化即把焦点移回编辑器（全屏输入收起/发送后由外部触发）。
+    var focusToken: UUID? = nil
     /// 容器描边/光晕色（随会话模式由外部计算传入）。
     var containerTint: Color
     /// 已挂附件（草稿区缩略图）。仅用于计算 canSend——只发图不写字也要能发。
@@ -55,6 +57,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
         isEditing: Binding<Bool>,
         isStreaming: Bool,
         dismissKeyboardToken: UUID? = nil,
+        focusToken: UUID? = nil,
         containerTint: Color = Color("appAccent"),
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
@@ -67,6 +70,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             isEditing: isEditing,
             isStreaming: isStreaming,
             dismissKeyboardToken: dismissKeyboardToken,
+            focusToken: focusToken,
             containerTint: containerTint,
             onSend: onSend,
             onStop: onStop,
@@ -85,6 +89,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
         isEditing: Binding<Bool>,
         isStreaming: Bool,
         dismissKeyboardToken: UUID? = nil,
+        focusToken: UUID? = nil,
         containerTint: Color = Color("appAccent"),
         hasAttachments: Bool = false,
         onFocusChange: ((Bool) -> Void)? = nil,
@@ -104,6 +109,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
         self._isEditing = isEditing
         self.isStreaming = isStreaming
         self.dismissKeyboardToken = dismissKeyboardToken
+        self.focusToken = focusToken
         self.containerTint = containerTint
         self.hasAttachments = hasAttachments
         self.onFocusChange = onFocusChange
@@ -242,6 +248,11 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
         let editorHeight = min(max(contentHeight, lineHeight), lineHeight * 4)
         return TextEditor(text: $text)
             .focused($isFocused)
+            // 外部（全屏输入收起/发送后）请求回焦
+            .onChange(of: focusToken) { _, _ in
+                guard voiceStrip == nil else { return }
+                isFocused = true
+            }
             .onChange(of: text) {
                 idleTask?.cancel()
                 if !isEditing {
@@ -254,8 +265,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 }
             }
             .onChange(of: isFocused) { _, new in
-                // 供 ⌘V 粘贴判定（macOS 的 NSEvent monitor 拿不到 SwiftUI 的焦点态）
-                ChatInputFocus.shared.isFocused = new
+                // 焦点态往上报（ChatView 统一写 ChatInputFocus，供 ⌘V 粘贴判定）
                 onFocusChange?(new)
                 if !new {
                     idleTask?.cancel()
@@ -264,7 +274,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
             }
             .onDisappear {
                 // 输入框被移除（切页/收起）时焦点态不会自己变，留着会误判 ⌘V 该接管
-                ChatInputFocus.shared.isFocused = false
+                onFocusChange?(false)
             }
             // Return：单独按发送；Shift+Return / Option+Return 换行（放行给 TextEditor）。
             // 流式中也放行：由上层决定直接发还是排队（见 ChatViewModel.sendDraft）。

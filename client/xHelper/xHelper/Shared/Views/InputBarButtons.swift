@@ -220,6 +220,10 @@ struct SendStopButton: View {
     let context: InputBarContext
     let isStreaming: Bool
     let canSend: Bool
+    /// 发送键的 hover 文案（全屏输入里补上键位）。
+    var sendTooltip: String = "发送"
+    /// 流式中「加入队列」键的 hover 文案。
+    var queueTooltip: String = "加入队列（Enter）"
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -241,7 +245,7 @@ struct SendStopButton: View {
                         context: context,
                         symbol: "arrow.up",
                         tint: Color("appAccent"),
-                        tooltip: "加入队列（Enter）",
+                        tooltip: queueTooltip,
                         action: onSend
                     )
                 }
@@ -253,7 +257,7 @@ struct SendStopButton: View {
                 symbol: "arrow.up",
                 tint: canSend ? Color("appAccent") : .gray,
                 isEnabled: canSend,
-                tooltip: "发送",
+                tooltip: sendTooltip,
                 action: onSend
             )
         }

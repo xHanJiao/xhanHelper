@@ -50,13 +50,19 @@ struct ChatView: View {
 
     // MARK: 输入框附件（选图 → 上传 → 发送）
     @State private var showFileImporter = false
-    /// 本视图输入框是否聚焦（⌘V 粘贴定位收件 ChatView 用，见 viewModel.pastedImages）
-    @State private var inputFocused = false
+    /// 输入区是否聚焦：普通胶囊与全屏面板各存一份，再「或」出结果给 ⌘V 判定。
+    /// 两个 @FocusState 各自上报，合用一个 Bool 会被后写的 false 冲掉。
+    @State private var inputBarFocused = false
+    @State private var composerFocused = false
 
     // MARK: 输入栏折叠的更多操作
     /// 展开态：在按钮行上方多出一行（同一胶囊内）。12s 无操作自动收起。
     @State private var inputBarExtrasExpanded = false
     @State private var extrasCollapseTask: Task<Void, Never>?
+    /// 全屏输入（macOS）：盖住中栏整高写长文（见 ExpandedComposer）。
+    @State private var composerExpanded = false
+    /// 普通输入框回焦请求：全屏输入收起/发送后把焦点还给胶囊。
+    @State private var inputBarFocusToken: UUID?
     /// 每个按钮常驻/收起的配置（右键菜单切换，持久化，主/PiP 实例共享）。
     @ObservedObject private var inputBarLayout = InputBarLayoutState.shared
     /// 完全信任开关（全局持久化，主/PiP 共享）+ 开启前的二次确认。
@@ -214,6 +220,9 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomComposer
         }
+        // 全屏输入：盖住中栏整高（消息区 + 底部栈），发送后由回调收起。
+        .overlay { expandedComposerOverlay }
+        .animation(.easeOut(duration: 0.18), value: composerExpanded)
         // 量中栏整高，供子任务面板封顶（展开态内联在底部栈里，太高会把消息区挤没）。
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
@@ -249,6 +258,8 @@ struct ChatView: View {
         // 不重接的话语音还绑在上一个会话的 VM 上，分句会提交进旧会话（docs/bugs/056）。
         // 语音服务随 tab 走（在 VM 上）：要先把旧 tab 的服务收干净，再登记新服务。
         .onChange(of: ObjectIdentifier(viewModel)) { _, _ in
+            // 换会话时退出全屏输入：新会话的草稿是另一份。
+            composerExpanded = false
             let previous = wiredViewModel?.voice
             unwireVoice()
             if voiceHolding {
@@ -263,6 +274,10 @@ struct ChatView: View {
         .onDisappear {
 #if os(macOS)
             removeSpaceHoldMonitor()
+            // 兜底：只为「自己持有的面板」清标志——PiP 的 ChatView 消失时不能顺手清掉主窗的。
+            if composerExpanded {
+                ChatInputFocus.shared.expandedComposerActive = false
+            }
 #endif
             releaseVoiceIfLast()
         }
@@ -329,7 +344,7 @@ struct ChatView: View {
         voice.onFinalTranscript = { text in
             viewModel.draftText = text
             viewModel.pendingVoiceReply = true
-            inputFocused = true
+            inputBarFocused = true
         }
         // C3：播报期间用户开口 → 立刻停生成（朗读与门控已在 service 里处理）
         voice.onBargeIn = {
@@ -540,9 +555,93 @@ struct ChatView: View {
         }
     }
 
-    /// 输入框焦点变化（InputBar 上报）：用于判断 ⌘V 粘贴该由哪个 ChatView 收下
-    private func setInputFocused(_ focused: Bool) {
-        inputFocused = focused
+    /// 输入区是否聚焦（任一输入框拿着焦点即可）。⌘V 贴图只投给聚焦的 ChatView。
+    private var inputFocused: Bool {
+        inputBarFocused || composerFocused
+    }
+
+    /// 普通输入栏焦点变化：ChatInputFocus 的**唯一**写入点（两条输入路径都汇到这里），
+    /// 否则两个 @FocusState 交替上报时，后到的 false 会把共享标记冲掉。
+    private func setInputBarFocused(_ focused: Bool) {
+        inputBarFocused = focused
+        ChatInputFocus.shared.isFocused = inputFocused
+    }
+
+    /// 全屏输入面板焦点变化（同上，同一写入口径）。
+    private func setComposerFocused(_ focused: Bool) {
+        composerFocused = focused
+        ChatInputFocus.shared.isFocused = inputFocused
+    }
+
+    // MARK: - 全屏输入（macOS）
+
+    /// 有字或有图才可发（与普通输入栏同一口径）。
+    private var canSendDraft: Bool {
+        !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty
+            || !viewModel.draftAttachments.isEmpty
+    }
+
+    /// 全屏输入覆盖层：只盖聊天中栏，草稿与普通输入栏共用同一份。
+    @ViewBuilder
+    private var expandedComposerOverlay: some View {
+        #if os(macOS)
+        if composerExpanded {
+            ExpandedComposer(
+                text: $viewModel.draftText,
+                isStreaming: viewModel.isStreaming,
+                canSend: canSendDraft,
+                onSend: sendExpandedDraft,
+                onStop: {
+                    voice.stopSpeaking()
+                    viewModel.stopStreaming()
+                },
+                onClose: closeExpandedComposer,
+                onClearAll: clearDraft,
+                onToggleMode: cycleMode,
+                onFocusChange: setComposerFocused
+            )
+            .transition(.opacity)
+        }
+        #endif
+    }
+
+    private func openExpandedComposer() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            composerExpanded = true
+        }
+    }
+
+    /// 清空草稿（普通输入栏 ⌃C 与全屏输入共用）。
+    private func clearDraft() {
+        viewModel.draftText = ""
+        viewModel.draftAttachments.removeAll()
+        // 语音标记跟着那句识别文本走：清空输入后手打的第一条不能还按语音轮处理
+        viewModel.pendingVoiceReply = false
+    }
+
+    /// 循环计划模式（普通输入栏 Tab 与全屏输入共用）。
+    private func cycleMode() {
+        Task { await viewModel.cycleMode() }
+    }
+
+    /// 收起全屏输入并把焦点还给普通输入框。等覆盖层退场再抢焦点，
+    /// 否则焦点会落在正在消失的面板上。
+    private func closeExpandedComposer() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            composerExpanded = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            // 这 200ms 内又打开了面板：不能把焦点抢回被盖住的胶囊。
+            guard !composerExpanded else { return }
+            inputBarFocusToken = UUID()
+        }
+    }
+
+    /// 全屏输入里发送：沿用 sendDraft（附件/排队逻辑一致），发完自动收起回对话。
+    private func sendExpandedDraft() {
+        guard canSendDraft else { return }
+        sendDraft()
+        closeExpandedComposer()
     }
 
     /// 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态。
@@ -554,23 +653,17 @@ struct ChatView: View {
             isEditing: $isEditing,
             isStreaming: viewModel.isStreaming,
             dismissKeyboardToken: dismissKeyboardToken,
+            focusToken: inputBarFocusToken,
             containerTint: inputBarTint,
             hasAttachments: !viewModel.draftAttachments.isEmpty,
-            onFocusChange: setInputFocused,
-            onClearAll: {
-                viewModel.draftText = ""
-                viewModel.draftAttachments.removeAll()
-                // 语音标记跟着那句识别文本走：清空输入后手打的第一条不能还按语音轮处理
-                viewModel.pendingVoiceReply = false
-            },
+            onFocusChange: setInputBarFocused,
+            onClearAll: clearDraft,
             onSend: sendDraft,
             onStop: {
                 voice.stopSpeaking()
                 viewModel.stopStreaming()
             },
-            onToggleMode: {
-                Task { await viewModel.cycleMode() }
-            },
+            onToggleMode: cycleMode,
             voiceStrip: voiceStripSlot,
             statusRow: inputBarStatusRow,
             statusRowExtras: inputBarExtrasRow,
@@ -684,6 +777,16 @@ struct ChatView: View {
                 // 连续对话紧挨「更多操作」左侧（原「语音输入」按钮已按用户要求删除）
                 if voice.isAvailable {
                     voiceContinuousButton(ctx)
+                }
+                // 全屏输入入口：紧挨「更多操作」左侧（用户要求放在 chevron 左边）
+                IconButton(
+                    visibility: .always,
+                    context: ctx,
+                    symbol: "rectangle.expand.vertical",
+                    tint: .secondary,
+                    tooltip: "全屏输入 · Enter 发送 / ⇧Enter 换行"
+                ) {
+                    openExpandedComposer()
                 }
                 // 更多操作：有按钮被收起时才提供 chevron（否则全常驻，无展开行）。
                 if !collapsedInExtras.isEmpty {

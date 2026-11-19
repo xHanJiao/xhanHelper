@@ -94,12 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // L3 工具确认：Tab=允许，Esc=拒绝（无需 Command，优先级最高）。
             // 作用于队列队首（多条并发到时逐条处理），移除后自动轮到下一条，连按安全。
+            // 全屏输入展开时 Esc 归它（收起面板），不能再当「拒绝」吞掉。
             if AppShortcutBridge.shared.confirmationPending?() == true {
-                if event.keyCode == 48 { // Tab
+                if event.keyCode == 48, !ChatInputFocus.shared.expandedComposerActive { // Tab
                     AppShortcutBridge.shared.resolveConfirmation?(true)
                     return nil
                 }
-                if event.keyCode == 53 { // Esc
+                if event.keyCode == 53, !ChatInputFocus.shared.expandedComposerActive { // Esc
                     AppShortcutBridge.shared.resolveConfirmation?(false)
                     return nil
                 }

@@ -476,6 +476,11 @@ chat:
 
 ## 后续变更
 
+- **2026-11-19 · 大图灯箱切图动效与触控板手势**
+  - 切图不再是原地硬换：web 先滑出淡出、在透明那一帧换图再反向滑入（约 280ms），并加了私有图 blob 的模块级 LRU 缓存（`front-end/src/components/media/imageBlobCache.js`，上限 12）在切图前预取 ±1；客户端 `ImageGalleryPreviewView` 用 `.id(index)` + asymmetric transition 做交叉滑入滑出（0.22s），两条路径都尊重「减弱动态」。
+  - 触控板双指横滑也能切图（`手指往左划 = 下一张`，纵向滚动不触发）：web 监听 `wheel`，判定在纯逻辑 `front-end/src/components/media/wheelSwipe.js`（带单测）——新手势靠「事件流断 120ms」或「惯性衰减中幅度反弹」识别，不能用停手防抖（惯性事件会让它永远不结束）；macOS 挂窗口级 `NSEvent.scrollWheel` 本地监听（`TrackpadSwipeMonitor`），忽略 `momentumPhase` 余速，`scrollingDeltaX` 按 `isDirectionInvertedFromDevice` 归一成与 web 同向。
+  - 影响文件：`front-end/src/components/media/{ImageLightbox.vue,AuthImage.vue,imageBlobCache.js,wheelSwipe.js}`、`client/xHelper/xHelper/Shared/Views/AttachmentViews.swift`。
+
 - **2026-11-19 · 多图放大后可左右切换**
   - 旧行为：多张图点开只看得到被点的那张，浮层里没有任何切换入口（要看下一张只能关掉重开）。
   - 新决定：已发消息图片条（macOS/iOS）与待发草稿托盘点开都是「多图灯箱」——左右圆形按钮 + `n / m` 计数，两端置灰；macOS 方向键 `← →` 可切（按钮 key equivalent），iOS 支持左右滑动。Vue 聊天消息同样：`← →` 键 + 左右按钮 + 计数。单图（文档配图等）行为不变，仍是原浮层。

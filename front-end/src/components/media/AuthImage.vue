@@ -6,7 +6,9 @@ import { api } from '@/api/client'
 // 不做跨组件缓存：同一张图在一轮对话里重复出现的概率极低，省掉一套 revoke 引用计数的坑。
 const props = defineProps({
   src: { type: String, required: true },
-  alt: { type: String, default: '' }
+  alt: { type: String, default: '' },
+  // 多图切换时先留着上一张，等新图解码好再换：否则占位尺寸会把外层容器抽塌、按钮跟着跳
+  keepPrevious: { type: Boolean, default: false }
 })
 
 const url = ref('')
@@ -15,33 +17,48 @@ const failed = ref(false)
 // 既不会拼错 URL，也不会把 Bearer 发给第三方
 const NEEDS_AUTH = /^\/api\/images\//
 let owned = false
+// 快速切图时旧请求可能后回来：只认最后一次
+let seq = 0
+
+function setUrl(next, blobOwned) {
+  if (owned && url.value) URL.revokeObjectURL(url.value)
+  url.value = next
+  owned = blobOwned
+}
 
 async function load() {
-  url.value = ''
+  const my = ++seq
   failed.value = false
-  owned = false
-  if (!props.src) return
+  if (!props.keepPrevious) setUrl('', false)
+  if (!props.src) {
+    setUrl('', false)
+    return
+  }
   if (!NEEDS_AUTH.test(props.src)) {
-    url.value = props.src
+    setUrl(props.src, false)
     return
   }
   try {
     const blob = await api.blob(props.src)
+    if (my !== seq) return
     if (!blob.type.startsWith('image/')) throw new Error(`unexpected content-type: ${blob.type}`)
-    url.value = URL.createObjectURL(blob)
-    owned = true
+    setUrl(URL.createObjectURL(blob), true)
   } catch (e) {
+    if (my !== seq) return
     console.error('Failed to load image', props.src, e)
     failed.value = true
+    // 失败不留旧图：留着会让用户以为切到了另一张
+    setUrl('', false)
   }
 }
 
-watch(() => props.src, () => {
-  if (owned && url.value) URL.revokeObjectURL(url.value)
-  load()
-}, { immediate: true })
+// 撤销统一交给 setUrl：这里先 revoke 会把 keepPrevious 要留住的旧图提前撤掉
+watch(() => props.src, load, { immediate: true })
 
-onBeforeUnmount(() => { if (owned && url.value) URL.revokeObjectURL(url.value) })
+onBeforeUnmount(() => {
+  seq++ // 卸载后回来的请求别再造孤立的 blob URL
+  if (owned && url.value) URL.revokeObjectURL(url.value)
+})
 </script>
 
 <template>

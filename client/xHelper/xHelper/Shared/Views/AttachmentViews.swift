@@ -167,8 +167,8 @@ struct AttachmentTray: View {
     let onAdd: () -> Void
     /// 一次清空所有待发图
     let onClearAll: () -> Void
-    /// 点击缩略图看大图
-    let onPreview: (DraftAttachment) -> Void
+    /// 点击缩略图看大图（带索引，浮层里可左右切换）
+    let onPreview: (Int) -> Void
 
     private let thumbSize: CGFloat = 56
     @State private var expanded = false
@@ -184,17 +184,17 @@ struct AttachmentTray: View {
             trailingCells: showsClearAll ? 2 : 1,
             expanded: $expanded
         ) { index in
-            thumbCell(attachments[index])
+            thumbCell(attachments[index], index: index)
         } trailing: {
             addCell
             if showsClearAll { clearAllCell }
         }
     }
 
-    private func thumbCell(_ item: DraftAttachment) -> some View {
+    private func thumbCell(_ item: DraftAttachment, index: Int) -> some View {
         ZStack(alignment: .topTrailing) {
             Button {
-                onPreview(item)
+                onPreview(index)
             } label: {
                 Image(platformImage: item.image)
                     .resizable()
@@ -266,7 +266,8 @@ struct MessageAttachmentStrip: View {
     let token: String
     /// 刚发出、尚未从服务端拉回时直接用内存图（省一次往返 + 不闪）
     var localImage: PlatformImage? = nil
-    let onPreview: (PlatformImage) -> Void
+    /// 点哪张回哪张的索引（浮层里可左右切换）
+    let onPreview: (Int) -> Void
 
     private let thumbSize: CGFloat = 88
     @State private var expanded = false
@@ -287,7 +288,7 @@ struct MessageAttachmentStrip: View {
                 token: token,
                 localImage: index == 0 ? localImage : nil,
                 size: thumbSize,
-                onTap: onPreview
+                onTap: { onPreview(index) }
             )
         } trailing: {
             EmptyView()
@@ -302,7 +303,7 @@ struct MessageAttachmentThumb: View {
     let token: String
     var localImage: PlatformImage? = nil
     let size: CGFloat
-    let onTap: (PlatformImage) -> Void
+    let onTap: () -> Void
 
     @ObservedObject private var loader = AttachmentImageLoader.shared
 
@@ -310,7 +311,7 @@ struct MessageAttachmentThumb: View {
         Group {
             if let img = loader.images[imageId] ?? localImage {
                 Button {
-                    onTap(img)
+                    onTap()
                 } label: {
                     Image(platformImage: img)
                         .resizable()
@@ -381,6 +382,162 @@ struct AttachmentPreviewView: View {
                 .padding(.bottom, 12)
         }
         .frame(minWidth: 480, minHeight: 360)
+    }
+}
+
+// MARK: - 多图预览
+
+/// 多图浮层：左右按钮 + 方向键（macOS）/ 左右滑动（iOS）切换，计数显示当前位置。
+/// 单张时只剩关闭按钮（与 `AttachmentPreviewView` 观感一致）；点外部关闭由 `LightboxCenter` 负责。
+struct ImageGalleryPreviewView: View {
+    /// 远程图（消息图片条，按 id 走共享缓存）或本地内存图（草稿托盘）
+    enum Source {
+        case remote([String], baseURL: String, token: String)
+        case local([PlatformImage])
+    }
+
+    let source: Source
+    let onClose: () -> Void
+
+    @State private var index: Int
+    @ObservedObject private var loader = AttachmentImageLoader.shared
+
+    init(source: Source, startIndex: Int, onClose: @escaping () -> Void) {
+        self.source = source
+        self.onClose = onClose
+        let n: Int
+        switch source {
+        case .remote(let ids, _, _): n = ids.count
+        case .local(let images): n = images.count
+        }
+        _index = State(initialValue: n > 0 ? min(max(startIndex, 0), n - 1) : 0)
+    }
+
+    private var count: Int {
+        switch source {
+        case .remote(let ids, _, _): return ids.count
+        case .local(let images): return images.count
+        }
+    }
+
+    private var image: PlatformImage? {
+        switch source {
+        case .remote(let ids, _, _):
+            return ids.indices.contains(index) ? loader.cached(ids[index]) : nil
+        case .local(let images):
+            return images.indices.contains(index) ? images[index] : nil
+        }
+    }
+
+    private var failed: Bool {
+        guard case .remote(let ids, _, _) = source, ids.indices.contains(index) else { return false }
+        return loader.failed.contains(ids[index])
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                if count > 1 {
+                    Text("\(index + 1) / \(count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Spacer()
+                Button {
+                    onClose()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(10)
+
+            ZStack {
+                if let image {
+                    Image(platformImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else if failed {
+                    Text("图片加载失败（可能已被清理）")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                }
+
+                if count > 1 {
+                    HStack {
+                        navButton(delta: -1, symbol: "chevron.left", label: "上一张")
+                        Spacer()
+                        navButton(delta: 1, symbol: "chevron.right", label: "下一张")
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+            #if os(iOS)
+            .gesture(
+                DragGesture(minimumDistance: 30).onEnded { value in
+                    if value.translation.width < -40 {
+                        step(1)
+                    } else if value.translation.width > 40 {
+                        step(-1)
+                    }
+                }
+            )
+            #endif
+        }
+        // iOS 屏宽可能不到 480，撑出去会把两侧按钮推出屏幕
+        #if os(macOS)
+        .frame(minWidth: 480, minHeight: 360)
+        #else
+        .frame(minHeight: 360)
+        #endif
+        .task(id: index) { await loadAround() }
+    }
+
+    private func navButton(delta: Int, symbol: String, label: String) -> some View {
+        // 不用 .disabled：那会把 key equivalent 一起摘掉，方向键会漏给下层的消息列表滚动。
+        // 两端只做置灰，step() 自带 clamp
+        let atEnd = delta < 0 ? index == 0 : index == count - 1
+        return Button {
+            step(delta)
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(.black.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .opacity(atEnd ? 0.25 : 1)
+        .keyboardShortcut(delta < 0 ? .leftArrow : .rightArrow, modifiers: [])
+        .help(label)
+    }
+
+    private func step(_ delta: Int) {
+        guard count > 1 else { return }
+        index = min(max(index + delta, 0), count - 1)
+    }
+
+    /// 预取当前 ±1：缩略图条折叠时后面的图还没拉过。
+    /// 网络类失败不落 failed，所以按缩略图同样的节奏重试，直到成功/终局/视图消失
+    private func loadAround() async {
+        guard case .remote(let ids, let baseURL, let token) = source, !ids.isEmpty else { return }
+        while !Task.isCancelled {
+            let nearby = (max(0, index - 1)...min(ids.count - 1, index + 1)).map { ids[$0] }
+            let missing = nearby.filter { loader.cached($0) == nil && !loader.failed.contains($0) }
+            if missing.isEmpty { return }
+            for id in missing {
+                loader.load(id: id, baseURL: baseURL, token: token)
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
     }
 }
 

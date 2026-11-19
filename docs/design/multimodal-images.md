@@ -476,6 +476,11 @@ chat:
 
 ## 后续变更
 
+- **2026-11-19 · 多图放大后可左右切换**
+  - 旧行为：多张图点开只看得到被点的那张，浮层里没有任何切换入口（要看下一张只能关掉重开）。
+  - 新决定：已发消息图片条（macOS/iOS）与待发草稿托盘点开都是「多图灯箱」——左右圆形按钮 + `n / m` 计数，两端置灰；macOS 方向键 `← →` 可切（按钮 key equivalent），iOS 支持左右滑动。Vue 聊天消息同样：`← →` 键 + 左右按钮 + 计数。单图（文档配图等）行为不变，仍是原浮层。
+  - 影响文件：`client/xHelper/xHelper/Shared/Views/AttachmentViews.swift`（`ImageGalleryPreviewView`、`MessageAttachmentStrip`/`AttachmentTray` 的 `onPreview` 改成回索引）、`Shared/Views/MessageListView.swift`、`Shared/Views/ChatView.swift`、`front-end/src/components/media/ImageLightbox.vue`、`front-end/src/components/MessageBubble.vue`。
+
 - **2026-11-07 · 图片搜索（关键词 + 语义）**
   - 新增 `image.search_images`：按描述关键词搜，或按描述语义搜（向量元数据 `type=img`）。语义搜索只覆盖描述已生成的图；图片本身嵌入留给以后。
   - 描述生成成功后自动建向量（`agent.ImageIndexer`）；启动 warmup 加载并回填老图；删图（手动 / 到期清理 / 坏记录自愈）同步清向量。搜索结果一律回 DB 取资产，已删除的图不会出现。

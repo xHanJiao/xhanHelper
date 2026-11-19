@@ -683,9 +683,12 @@ struct MessageListView: View {
                         baseURL: baseURL,
                         token: token,
                         localImage: msg.localImages.first
-                    ) { image in
+                    ) { index in
                         LightboxCenter.shared.present {
-                            AttachmentPreviewView(image: image) { LightboxCenter.shared.dismiss() }
+                            ImageGalleryPreviewView(
+                                source: .remote(msg.imageIds, baseURL: baseURL, token: token),
+                                startIndex: index
+                            ) { LightboxCenter.shared.dismiss() }
                         }
                     }
                     // 与气泡正文右缘对齐：气泡用的是 chatHorizontalPadding(24) + 正文内边距 14，

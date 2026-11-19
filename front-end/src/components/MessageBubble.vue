@@ -60,7 +60,9 @@ const imageIds = computed(() => {
   }
 })
 
-const previewSrc = ref('')
+// 多图预览：值是被点的那张索引，-1 = 关闭
+const previewIndex = ref(-1)
+const imageSources = computed(() => imageIds.value.map((id) => `/api/images/${id}/file`))
 
 const timeText = computed(() => {
   if (!props.message.created_at) return ''
@@ -211,11 +213,11 @@ onBeforeUnmount(() => {
         <div class="user-bubble" style="border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: var(--chat-font-size); line-height: 1.6; position: relative;">
           <div v-if="imageIds.length" class="user-images" :class="{ single: imageIds.length === 1 }">
             <button
-              v-for="id in imageIds"
+              v-for="(id, i) in imageIds"
               :key="id"
               type="button"
               class="user-image-btn"
-              @click.stop="previewSrc = `/api/images/${id}/file`"
+              @click.stop="previewIndex = i"
             >
               <AuthImage :src="`/api/images/${id}/file`" />
             </button>
@@ -266,7 +268,13 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <ImageLightbox v-if="previewSrc" :src="previewSrc" :visible="true" @close="previewSrc = ''" />
+    <ImageLightbox
+      v-if="previewIndex >= 0"
+      :sources="imageSources"
+      :start-index="previewIndex"
+      :visible="true"
+      @close="previewIndex = -1"
+    />
   </div>
 </template>
 

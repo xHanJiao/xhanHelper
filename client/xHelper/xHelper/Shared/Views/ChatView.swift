@@ -992,9 +992,12 @@ struct ChatView: View {
                 },
                 onAdd: { showFileImporter = true },
                 onClearAll: { viewModel.draftAttachments.removeAll() },
-                onPreview: { item in
+                onPreview: { index in
                     LightboxCenter.shared.present {
-                        AttachmentPreviewView(image: item.image) { LightboxCenter.shared.dismiss() }
+                        ImageGalleryPreviewView(
+                            source: .local(viewModel.draftAttachments.map(\.image)),
+                            startIndex: index
+                        ) { LightboxCenter.shared.dismiss() }
                     }
                 }
             )

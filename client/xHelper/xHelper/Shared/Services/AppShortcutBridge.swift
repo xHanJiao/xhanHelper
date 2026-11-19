@@ -8,6 +8,8 @@ import Carbon.HIToolbox
 /// 承载的快捷键（macOS）：
 /// - Cmd+Shift+B         切换右侧栏（焦点无关，直接走 BrowserToolProvider.shared.rightSidebar）
 /// - Cmd+N               新建对话（焦点无关）
+/// - Ctrl+1–9            跳右栏 tab（1–8 定位，9 = 最后一个；仅侧栏打开时）
+/// - Cmd+Shift+[ / ]     右栏上一个 / 下一个 tab（仅侧栏打开时）
 /// - Cmd+Shift+↑ / ↓     会话列表上/下切换（焦点无关，delta -1/+1）
 /// - Tab / Esc           有 L3 工具确认待处理时：Tab=允许，Esc=拒绝（无需 Command）
 /// - Ctrl+Option+V       全局按住说话（Carbon 热键，按住/松开各回调一次）

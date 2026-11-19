@@ -495,6 +495,14 @@ final class RightSidebarManager: ObservableObject {
         }
     }
 
+    /// ⌃1–8 跳第 N 个 tab（首页算第 1 位，与 tab 条视觉顺序一致），⌃9 = 最后一个；越界不动。
+    func activateTab(atPosition pos: Int) {
+        guard !tabs.isEmpty else { return }
+        let index = pos >= 9 ? tabs.count - 1 : pos - 1
+        guard tabs.indices.contains(index) else { return }
+        activateTab(id: tabs[index].id)
+    }
+
     /// 关 tab（UI 的 × / ⌘W / 右键菜单）。网页 tab 也走这里：
     /// provider 会先做 session teardown 再回调本方法（见 `BrowserToolProvider.closeTab`）。
     func closeTab(_ id: String) {

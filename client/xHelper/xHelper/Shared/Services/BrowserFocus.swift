@@ -15,6 +15,9 @@ import AppKit
 ///    - 其他（页面内 WKWebView、窗口、按钮、无焦点）→ 视为浏览器聚焦
 ///      （对齐 Chrome：有激活 tab 且未在别处输入时，Cmd+W 关 tab）。
 ///
+/// 注意：**Cmd+W 已不再用本判定**——右栏当前 tab（任意 kind、非首页）直接关，
+/// 焦点停在哪都不改变意图（`docs/bugs/070`）。这里只服务于「右栏没有可关 tab」时的兜底。
+///
 /// 不用 superview 链判定"浏览器容器"：SwiftUI 窗口整个由单个根 NSHostingView 承载，
 /// webView 与聊天输入框同为该宿主视图的子视图，无法靠祖先区分。
 enum BrowserFocus {
@@ -59,6 +62,7 @@ enum BrowserFocus {
             + " right=\(rs?.rightDisplayTabId ?? "nil")"
             + " page=\(page != nil) window=\(window != nil) key=\(window?.isKeyWindow == true)"
             + " firstResponder=\(responder) urlField=\(isUrlFieldFocused) findField=\(isFindFieldFocused)"
+            + " chatInput=\(ChatInputFocus.shared.isFocused)"
     }
 #endif
 }

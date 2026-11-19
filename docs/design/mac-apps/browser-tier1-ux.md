@@ -14,7 +14,8 @@
 本期目标（Tier 1）：
 - 节能：非激活 tab 从视图层级摘除，不再合成渲染，页面状态保留。
 - 快捷键：Cmd+T 新标签 / Cmd+W 关闭当前 tab / Cmd+Shift+T 恢复关闭的 tab / Cmd+[ ] 后退前进 / Cmd+R 刷新 / Cmd+`=` `-` 页面缩放 / Cmd+F 页内查找（+ Cmd+G 下一个、Cmd+Shift+G 上一个、Esc 关闭）。
-- 焦点路由：浏览器聚焦时拦截以上快捷键；聊天/其他区聚焦时保持原行为（聊天历史、全局刷新、字号、关窗）。
+- 焦点路由：浏览器聚焦时拦截以上快捷键；聊天/其他区聚焦时保持原行为（聊天历史、全局刷新、字号）。
+  （**2026-11-18 起 Cmd+W 不再走焦点路由**：右栏有可见的非首页 tab 就关它，见 §3.2 注。）
 - **明确不做**：Cmd+L 聚焦地址栏（用户决定跳过）；地址栏增强（HTTPS 锁/进度/搜索兜底）留待后续。
 
 ## 二、用户决策记录
@@ -23,8 +24,8 @@
 |--------|------|
 | Cmd+L | 不做（本期跳过） |
 | 快捷键生效条件 | 浏览器"聚焦"时（见焦点路由） |
-| 非浏览器聚焦 | 保持原行为（Cmd+[ ] 聊天历史、Cmd+R 全局刷新、Cmd+± 字号、Cmd+W 关窗） |
-| Cmd+W 语义 | 浏览器聚焦 → 关闭当前 tab；否则 → 关闭窗口（默认） |
+| 非浏览器聚焦 | 保持原行为（Cmd+[ ] 聊天历史、Cmd+R 全局刷新、Cmd+± 字号）；Cmd+W 例外，见下一行 |
+| Cmd+W 语义 | 右栏打开且当前 tab 不是首页 → 关它（**不看焦点**，网页/文档/书/列表/工具/灵阅同一入口 `provider.closeTab`）；否则有网页焦点 → 关当前网页 tab；都没有 → 吞掉（**不关窗**） |
 | 节能手段 | 非激活 tab 摘除视图层级（WKWebView 实例保留，页面状态不丢） |
 | 页内查找 | WKWebView 原生 `find(_:configuration:)`（无需自写高亮 JS）。WKFindResult 仅暴露 matchFound（无计数），查找栏只显示命中与否（✓/✗） |
 | 实现位置 | AppDelegate 现有 keyDown monitor 扩展 + RightSidebarView contentArea + BrowserFindCoordinator |
@@ -54,9 +55,10 @@
 |------|---------|-----------|-------------|
 | Cmd+T | 17 | openBlankTab() | 透传（无绑定） |
 | Cmd+Shift+T | 17+shift | 恢复最近关闭的 tab | 透传 |
-| Cmd+W | 13 | 关闭当前 tab | 透传（默认关窗） |
+| Cmd+W | 13 | 关闭当前 tab | **不看焦点**：右栏打开且非首页 tab → 关它；否则有网页焦点 → 关网页 tab；否则吞掉（不关窗，见下方注） |
 | Cmd+[ | 33 | webView.goBack() | 透传（聊天历史） |
 | Cmd+] | 30 | webView.goForward() | 透传（聊天历史） |
+| Cmd+Shift+[ / ] | 33/30+shift | 右栏上一个 / 下一个 tab（仅侧栏打开时；侧栏收起时**什么都不做**，不退化成后退/前进） | 同左 |
 | Cmd+R | 15 | webView.reload() | 透传（全局刷新） |
 | Cmd+`=` | 24 | pageZoom += 0.1 | FontSizeManager.increase() |
 | Cmd+`-` | 27 | pageZoom -= 0.1 | FontSizeManager.decrease() |
@@ -65,7 +67,9 @@
 | Cmd+Shift+G | 5+shift | 查找上一个 | 透传 |
 | Esc | 53 | 关闭查找栏（栏显示时） | 透传 |
 
-> **灵阅（HTML 产物）tab**：它没有浏览器 session，`BrowserFocus` 判不出焦点，所以焦点门控的快捷键默认都不生效。已接的两条：**Cmd+W** 在右栏展开、非分屏、且激活 tab 带 `artifact:` 前缀时直接关（侧栏收起时不关；分屏下两窗格同时在、activeTabId 未必是眼前那个，退回浏览器语义、灵阅用 X 关；分支排在 BrowserFocus 之前，免被后台保活的网页 tab 抢走）；关闭灵阅 tab 会记进 `closedStack`（记 artifactID），**Cmd+Shift+T** 用 `ArtifactOpenCoordinator.open` 重开。Cmd+T / Cmd+Shift+T 的触发条件同时放宽为「有 tab **或** 有可恢复项」，否则关掉最后一个 tab 后恢复键完全没反应。缩放 / 刷新 / 页内查找目前仍不作用于灵阅。
+> **Cmd+W 不再看焦点**（2026-11-18，见 `docs/bugs/070`）：侧栏打开、非分屏、当前 tab 不是首页就关它，无论焦点在聊天框、网页还是别处 —— `activeTabId` 就是用户眼前那个 tab。收尾统一走 `BrowserToolProvider.closeTab(id)`（网页 teardown + 恢复栈 / 灵阅恢复栈 / 其余 `onClose`）。曾经的 `ChatInputFocus` 门控会因 SwiftUI `@FocusState` 不跟随 AppKit 焦点而永久为真，把非网页 tab 的关闭路径堵死。
+>
+> **灵阅（HTML 产物）tab**：它没有浏览器 session，`BrowserFocus` 判不出焦点，所以焦点门控的快捷键默认都不生效。灵阅靠上面这条 Cmd+W（非首页 tab 一律可关）与 **Cmd+Shift+T**（`ArtifactOpenCoordinator.open` 重开，`closedStack` 记 artifactID）覆盖。Cmd+T / Cmd+Shift+T 的触发条件同时放宽为「有 tab **或** 有可恢复项」，否则关掉最后一个 tab 后恢复键完全没反应。缩放 / 刷新 / 页内查找目前仍不作用于灵阅。
 
 ## 四、节能：非激活 tab 摘除
 
@@ -127,7 +131,8 @@ if let active = manager.tabs.first(where: { $0.id == manager.activeTabId }) { ac
 
 - 打开 ≥2 个 tab，切后台 tab：确认 WKWebView 不再渲染（Activity Monitor CPU/GPU 下降、Xcode 视图调试器确认脱层）。
 - 切回 tab：URL/滚动位置/页面状态保留。
-- 浏览器聚焦时各快捷键生效；聊天聚焦时 Cmd+[ ] 仍为聊天历史、Cmd+W 关窗、Cmd+± 改字号。
+- 浏览器聚焦时各快捷键生效；聊天聚焦时 Cmd+[ ] 仍为聊天历史、Cmd+± 改字号。
+- Cmd+W：聊天框里点一下 → 开文档 tab → 能关（`docs/bugs/070` 的回归）；侧栏收起时按 Cmd+W 不关任何 tab。
 - 页内查找：Cmd+F 唤出、输入高亮计数、Cmd+G/Shift+Cmd+G 跳转、Esc 关闭。
 - Cmd+Shift+T 恢复最近关闭 tab。
 - 回归：agent 浏览器工具链（open/switch_tab/close_tab/snapshot/click）在节能改动后仍正常作用于激活 session。

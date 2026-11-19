@@ -25,13 +25,23 @@ struct RightSidebarTabStrip: View {
                 closeAllChip
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(manager.tabs.filter { $0.kind != .home }) { tab in
-                        chip(tab)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(manager.tabs.filter { $0.kind != .home }) { tab in
+                            chip(tab)
+                                .id(tab.id)
+                        }
                     }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
+                // ⌃N / ⌘⇧[ ] 跳到屏幕外的 tab 时把它带进视野（已在视野内则不动）
+                .onChange(of: manager.activeTabId) { _, id in
+                    guard let id,
+                          manager.tabs.contains(where: { $0.id == id && $0.kind != .home })
+                    else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id) }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

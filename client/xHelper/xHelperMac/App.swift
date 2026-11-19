@@ -113,6 +113,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Ctrl+1–9：跳右栏 tab（⌃9 = 最后一个）。仅侧栏打开时生效，焦点无关。
+            // 必须放在下面那道 `.command` guard **之前**：这里要求修饰键恰好是 .control。
+            // 与顶栏导航的 ⌘1–9 不冲突：面板导航那组是 .command。
+            if !event.isARepeat,
+               NSApp.modalWindow == nil,
+               event.modifierFlags.intersection([.control, .shift, .option, .command]) == .control,
+               let rs = BrowserToolProvider.shared.rightSidebar,
+               rs.isOpen, rs.hasTabs,
+               let position = Self.tabPosition(for: event.keyCode) {
+                rs.activateTab(atPosition: position)
+                return nil
+            }
+
             guard event.modifierFlags.contains(.command),
                   !event.isARepeat
             else { return event }
@@ -167,12 +180,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
-            // Cmd+Shift+[ / Cmd+Shift+]：切换上一个/下一个 tab（焦点无关，只要浏览器有 tab）
+            // Cmd+Shift+[ / Cmd+Shift+]：切换上一个/下一个 tab（焦点无关；仅侧栏打开时生效）
             if (event.keyCode == 33 || event.keyCode == 30),
                event.modifierFlags.contains(.shift),
                NSApp.modalWindow == nil,
-               BrowserToolProvider.shared.rightSidebar?.hasTabs == true {
-                BrowserToolProvider.shared.rightSidebar?.switchTab(delta: event.keyCode == 33 ? -1 : 1)
+               let rs = BrowserToolProvider.shared.rightSidebar,
+               rs.isOpen, rs.hasTabs {
+                rs.switchTab(delta: event.keyCode == 33 ? -1 : 1)
                 return nil
             }
 
@@ -186,29 +200,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             // Cmd+W：全局拦截，禁用默认"关闭窗口"菜单快捷键（防止误触退出）。
-            // 顺位：灵阅 tab → 浏览器聚焦的当前 tab → 忽略。
+            // 顺位：侧栏当前 tab → 浏览器聚焦的当前 tab → 忽略。
+            //
+            // **不看键盘焦点**（`ChatInputFocus` / 网页内 `BrowserFocus`）：`activeTabId` 就是用户
+            // 眼前那个 tab，焦点停在哪不改变这份意图。曾按 `ChatInputFocus` 拦过，但那个标记只由
+            // InputBar 的 `@FocusState` 写，焦点落到 WKWebView / tab 条按钮这类非 SwiftUI 视图后
+            // 不回 false，于是非网页 tab 的关闭路径被永久堵死（docs/bugs/070）。
             if event.keyCode == 13 {
-                // 灵阅分支放在 BrowserFocus 之前：后台保活的网页 tab 仍在视图层级里，
-                // BrowserFocus 可能为 true 从而抢走这次 Cmd+W（关掉后台网页而不是眼前的灵阅）。
                 // 侧栏收起时不关（tab 不可见，静默关掉会很意外）；分屏下退回浏览器语义——
                 // 两窗格同时在，activeTabId 未必是眼前那个，灵阅用 X 关。
                 if let rs = BrowserToolProvider.shared.rightSidebar,
                    rs.isOpen,
-                   !ChatInputFocus.shared.isFocused,
                    rs.splitTabIds.isEmpty,
                    let id = rs.activeTabId,
                    rs.activeTab?.kind != .home {
-                    if RightSidebarManager.isArtifactTab(id) {
-                        // 灵阅 tab 走 provider：要记恢复栈（Cmd+Shift+T 能重开）
-                        BrowserToolProvider.shared.closeTab(id)
-                    } else if rs.isWebTab(id) {
-                        if BrowserFocus.isFocused() {
-                            BrowserToolProvider.shared.closeActiveTab()
-                        }
-                    } else {
-                        // 文档详情 / 书阅读 / 列表 / 工具页：统一走 manager（含 onClose 收尾）
-                        rs.closeTab(id)
-                    }
+                    // 一条入口覆盖三种收尾：网页 session teardown + 恢复栈 / 灵阅恢复栈 / 其余 onClose
+                    BrowserToolProvider.shared.closeTab(id)
                 } else if BrowserFocus.isFocused() {
                     BrowserToolProvider.shared.closeActiveTab()
                 } else {
@@ -230,11 +237,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // 浏览器聚焦时拦截浏览器快捷键（事件不下发 → 工具栏 keyboardShortcut/默认菜单不触发）
             if BrowserFocus.isFocused() {
+                // ⇧ 是右栏 tab 的地盘（⌘⇧[ / ]）：侧栏收着时那两个键应该什么都不做，
+                // 不能被这里当成后退/前进（review P2）。
+                let hasShift = event.modifierFlags.contains(.shift)
                 switch event.keyCode {
-                case 33: // Cmd+[ 后退
+                case 33 where !hasShift: // Cmd+[ 后退
                     BrowserToolProvider.shared.activePage?.goBack()
                     return nil
-                case 30: // Cmd+] 前进
+                case 30 where !hasShift: // Cmd+] 前进
                     BrowserToolProvider.shared.activePage?.goForward()
                     return nil
                 case 15: // Cmd+R 刷新
@@ -300,6 +310,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static func zoomActivePage(by delta: Double) {
         guard let page = BrowserToolProvider.shared.activePage else { return }
         page.setZoomScale(min(max(page.zoomScale + delta, 0.5), 2.5))
+    }
+
+    /// ⌃1–9 的 keyCode → 序号（1–9，9 = 最后一个）。
+    ///
+    /// 用 keyCode 而不是字符：数字键在键盘布局不同时字符会变，keyCode 是物理键位。
+    private static func tabPosition(for keyCode: UInt16) -> Int? {
+        switch keyCode {
+        case 18: return 1
+        case 19: return 2
+        case 20: return 3
+        case 21: return 4
+        case 23: return 5
+        case 22: return 6
+        case 26: return 7
+        case 28: return 8
+        case 25: return 9
+        default: return nil
+        }
     }
 
     /// 收藏/取消收藏当前页（Cmd+D，与地址栏星标按钮逻辑一致）

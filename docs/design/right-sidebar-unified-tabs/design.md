@@ -56,8 +56,9 @@ macOS 右栏有两套壳并存：
 | 聊天文档卡片 / `xhanhelper://document/<id>` | `openDocument(id:)` → 文档详情 tab |
 | 灵阅卡片 / 抽屉 | 已有 `artifact:<id>` tab，不变 |
 | 书架卡片 | 书详情 tab |
-| ⌘W | 侧栏展开且无分屏：关当前 tab（网页走 provider，其余走 manager） |
-| ⌘⇧[ / ] | 在原窗格内切 tab（含非网页） |
+| ⌘W | 侧栏展开且无分屏：关当前 tab。**不看键盘焦点**；统一走 `provider.closeTab`（网页 teardown + 恢复栈 / 灵阅恢复栈 / 其余 `onClose`） |
+| ⌘⇧[ / ] | 在原窗格内切 tab（含非网页）；**仅侧栏打开时生效** |
+| ⌃1–9 | 跳第 N 个 tab（首页算第 1 位），⌃9 = 最后一个；仅侧栏打开时生效 |
 
 ## 5. 验收
 
@@ -111,3 +112,15 @@ macOS 右栏有两套壳并存：
   影响：`BrowsePanelView.swift`（`PanelTabView`）、`PageHolders.swift`（去掉与子列表重复的入口 `.task`）、
   `ArtifactListView.swift` / `BillListView.swift`（入口改 `loadIfStale()`）、
   `ArtifactViewModel.swift` / `BillViewModel.swift` / `DocumentViewModel.swift`（30s 面板缓存，见 `right-sidebar-home` 同日条目）。
+- 2026-11-18 tab 快捷键（⌃1–9）+ ⌘W 回归修复：
+  - 新增 ⌃1–8 跳第 N 个 tab（首页算第 1 位）、⌃9 = 最后一个，越界不动；`⌘⇧[ / ]` 与它一起加
+    `rightSidebar.isOpen` 门槛（侧栏收起时不再盲切看不见的 tab）。跳转后 tab 条用 `ScrollViewReader`
+    把激活 chip 滚进视野（`anchor` 不指定 = 只在需要时最小滚动，已可见则不动）。
+  - **⌘W 不再看键盘焦点**：`89b4386d` 加的 `!ChatInputFocus.shared.isFocused` 会在焦点落到非 SwiftUI
+    视图后永久为真，把非网页 tab 的关闭路径堵死；同时删掉网页分支里的 `BrowserFocus.isFocused()` 内层判定，
+    统一走 `BrowserToolProvider.closeTab(id)`。见 `docs/bugs/070`。
+  - 有意不加的两套：⌘⇧←/→（会吞掉文本框「选中到行首/行尾」）、⌘⌥←/→ 与 ⌃⇥（书阅读页 `⌘⌥←→↑↓` 翻章冲突；
+    ⌃⇥ 只是第三组同义键，且 `Tab` 还被 L3 工具确认无条件占用）。
+  - 影响：`xHelperMac/App.swift` / `xHelperMac/ShortcutGuideView.swift` / `Shared/Views/RightSidebarManager.swift` /
+    `Shared/Views/RightSidebarTabStrip.swift` / `Shared/Services/BrowserFocus.swift`（诊断加 `chatInput=`）/
+    `Shared/Services/AppShortcutBridge.swift`（注释清单）。

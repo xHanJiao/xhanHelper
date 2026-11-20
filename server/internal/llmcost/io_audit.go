@@ -38,6 +38,7 @@ var auditWhitelist = map[string]map[string]bool{
 		SubEventAssemble:    true,
 		SubProfileExtract:   true,
 		SubProfileColdStart: true,
+		SubProfileRewrite:   true,
 		SubSummary:          true,
 	},
 	CategoryAdmin: {SubAgentSummary: true},

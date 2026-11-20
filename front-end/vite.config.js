@@ -45,7 +45,13 @@ function buildVersion() {
 
 // 手机验收要 https（getUserMedia / AudioWorklet 都要求安全上下文）。证书放 .certs/（已 gitignore），
 // 有就用；没有就走 http（桌面连 localhost 本来就够）。
+// VITE_DEV_HTTP=1 强制走 http —— 客户端里 web 面板（消息调试/监控看板/浏览/分享页）的地址
+// 硬编码是 http://localhost:5173，自签名 https 下 WKWebView 既连不上也不接受证书。
 function devHttps() {
+  if (process.env.VITE_DEV_HTTP === "1") {
+    console.log("[vite] http forced by VITE_DEV_HTTP=1 (.certs/ ignored)")
+    return undefined
+  }
   const dir = path.join(rootDir, '.certs')
   const key = path.join(dir, 'dev-key.pem')
   const cert = path.join(dir, 'dev.pem')

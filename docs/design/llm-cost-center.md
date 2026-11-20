@@ -32,6 +32,7 @@
 | memory_extract | `agent/extractor.go:125` | ChatSync | Flash | session_end → MemoryWorker |
 | profile_extract | `agent/profile_worker.go:199` | ChatSync | Flash | session_end → ProfileWorker（增量） |
 | profile_cold_start | `agent/profile_worker.go:154` | MiniReAct ChatSync | Pro/Flash | 无画像时冷启动提取 |
+| profile_rewrite | `agent/profile_consolidate.go`（callLLM） | ChatSync | Flash | 画像每周整合重写（cron 每日判定，到期才跑） |
 | summary | `agent/summary_worker.go:133` | ChatSync | Flash | session_end → SummaryWorker |
 
 ### 反思系统（reflection）
@@ -143,6 +144,7 @@ type LlmCostDetail struct {
 | post_chat | memory_extract | ✓ | — | — |
 | post_chat | profile_extract | ✓ | — | — |
 | post_chat | profile_cold_start | ✓ | — | — |
+| post_chat | profile_rewrite | — | — | — |
 | post_chat | summary | ✓ | — | — |
 | reflection | finding_score | — | finding | finding_id |
 | reflection | finding_humanize | — | finding | finding_id |

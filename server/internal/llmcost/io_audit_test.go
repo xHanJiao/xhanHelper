@@ -97,6 +97,7 @@ func TestShouldAudit(t *testing.T) {
 		{CategoryPostChat, SubMemoryExtract, true},
 		{CategoryPostChat, SubSummary, true},
 		{CategoryPostChat, SubProfileColdStart, true},
+		{CategoryPostChat, SubProfileRewrite, true},
 		{CategoryAdmin, SubAgentSummary, true},
 		{CategoryTool, SubReminderGen, true},
 		{CategoryReflection, SubThemeAnalyze, false}, // 反思已有追溯，跳过

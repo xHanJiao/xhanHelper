@@ -168,6 +168,19 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		profileWorker,
 	}, repos.Message, ephemeralDestroyer)
 
+	// 画像每周整合重写：把「事件 → 记忆 → 现有画像」重新压缩一遍（增量提取负责及时，它负责收敛）。
+	profileRewriter := agent.NewProfileConsolidator(&agent.ProfileConsolidatorConfig{
+		Client:    llmClients.BgFlash,
+		FactRepo:  repos.UserProfileFact,
+		EventRepo: repos.Event,
+		MemRepo:   repos.Mem,
+		ConvRepo:  repos.Conversation,
+		UserRepo:  repos.User,
+		StateRepo: repos.ProfileRewriteState,
+		BackupDir: agent.ProfileBackupDir(cfg),
+		DBName:    cfg.DB.Database,
+	})
+
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		UserRepo:          repos.User,
 		DelayedTaskRepo:   repos.DelayedTask,
@@ -190,6 +203,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VacuumThreshold:   int64(cfg.Vector.VacuumFreeThresholdMB) << 20,
 		DocRepo:           repos.Document,
 		Activity:          activityRecomputer(activityStore),
+		ProfileRewriter:   profileRewriter,
 	})
 
 	// --- Orchestrator ---

@@ -78,8 +78,8 @@ func (SummaryMeta) isPacketMeta() {}
 type ProfileMeta struct {
 	Key       string    // 字段名（籍贯/伴侣/...）
 	Value     string    // 字段值
-	Source    string    // explicit / llm_additional
-	UpdatedAt time.Time // 更新时间
+	Source    string    // explicit / llm_additional：仅回放历史 XML 时带上，新写入恒为空（真实来源在 user_profile_facts.source 列）
+	UpdatedAt time.Time // 最近一次被证实的日期
 }
 
 func (ProfileMeta) isPacketMeta() {}

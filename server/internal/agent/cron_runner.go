@@ -18,14 +18,15 @@ import (
 
 // HookStatus — 系统钩子状态快照
 type HookStatus struct {
-	PendingDelayedTasks   int64                          `json:"pending_delayed_tasks"`
-	NextDelayedTaskAt     string                         `json:"next_delayed_task_at"`
-	TaskQueues            []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
-	ArchiveRemaining      string                         `json:"archive_remaining"`
-	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
-	VectorEvictRemaining  string                         `json:"vector_evict_remaining"`
-	DocCleanupRemaining   string                         `json:"doc_cleanup_remaining"`
-	ActivityRemaining     string                         `json:"activity_recompute_remaining"`
+	PendingDelayedTasks     int64                          `json:"pending_delayed_tasks"`
+	NextDelayedTaskAt       string                         `json:"next_delayed_task_at"`
+	TaskQueues              []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
+	ArchiveRemaining        string                         `json:"archive_remaining"`
+	ImageCleanupRemaining   string                         `json:"image_cleanup_remaining"`
+	VectorEvictRemaining    string                         `json:"vector_evict_remaining"`
+	DocCleanupRemaining     string                         `json:"doc_cleanup_remaining"`
+	ActivityRemaining       string                         `json:"activity_recompute_remaining"`
+	ProfileRewriteRemaining string                         `json:"profile_rewrite_remaining"`
 }
 
 // 回收站文档保留期与清理扫描间隔（硬编码：7 天 / 每天一次）
@@ -36,6 +37,9 @@ const (
 
 // activityRecomputeEvery — 活动埋点派生重算间隔（每晚一次）。
 const activityRecomputeEvery = 24 * time.Hour
+
+// profileRewriteEvery — 画像每周重写的检查节拍（每天看一次是否到期）。
+const profileRewriteEvery = 24 * time.Hour
 
 // CronRunner — 后台任务调度器（会话后处理、归档、清理、活动埋点重算等）
 type CronRunner struct {
@@ -60,17 +64,20 @@ type CronRunner struct {
 	vacuumThreshold   int64                 // 空闲页超此字节才 VACUUM；<=0 关闭
 	docRepo           *service.DocumentRepo // 回收站过期文档物理清理
 	activity          ActivityRecomputer    // 活动埋点派生重算（events.db；nil = 未启用）
+	profileRewriter   *ProfileConsolidator  // 画像每周整合重写；nil = 不启用
 
 	// 钩子状态追踪
-	mu                sync.Mutex
-	archiveNext       time.Time
-	imageCleanupNext  time.Time
-	evictNext         time.Time
-	docCleanupNext    time.Time
-	activityNext      time.Time
-	sessionEndRunning bool
-	activityRunning   bool
-	imageRunning      bool
+	mu                    sync.Mutex
+	archiveNext           time.Time
+	imageCleanupNext      time.Time
+	evictNext             time.Time
+	docCleanupNext        time.Time
+	activityNext          time.Time
+	profileRewriteNext    time.Time
+	sessionEndRunning     bool
+	activityRunning       bool
+	imageRunning          bool
+	profileRewriteRunning bool
 }
 
 // ActivityRecomputer 是 activity.Store 暴露给调度器的重算口子（避免直接依赖，便于测试替身）。
@@ -105,6 +112,7 @@ type CronRunnerConfig struct {
 	VacuumThreshold   int64                 // 空闲页超此字节才 VACUUM；<=0 关闭
 	DocRepo           *service.DocumentRepo // 回收站过期文档物理清理
 	Activity          ActivityRecomputer    // 活动埋点派生重算；nil = 未启用
+	ProfileRewriter   *ProfileConsolidator  // 画像每周整合重写；nil = 不启用
 }
 
 // NewCronRunner 创建调度器
@@ -140,6 +148,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		vacuumThreshold:   cfg.VacuumThreshold,
 		docRepo:           cfg.DocRepo,
 		activity:          cfg.Activity,
+		profileRewriter:   cfg.ProfileRewriter,
 	}
 }
 
@@ -175,6 +184,13 @@ func (cr *CronRunner) setDocCleanupNext(t time.Time) {
 func (cr *CronRunner) setActivityNext(t time.Time) {
 	cr.mu.Lock()
 	cr.activityNext = t
+	cr.mu.Unlock()
+}
+
+// setProfileRewriteNext 更新画像重写下次检查时间
+func (cr *CronRunner) setProfileRewriteNext(t time.Time) {
+	cr.mu.Lock()
+	cr.profileRewriteNext = t
 	cr.mu.Unlock()
 }
 
@@ -264,6 +280,9 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	s.DocCleanupRemaining = remainingLabel(cr.docCleanupNext, now)
 	if cr.activity != nil {
 		s.ActivityRemaining = remainingLabel(cr.activityNext, now)
+	}
+	if cr.profileRewriter != nil {
+		s.ProfileRewriteRemaining = remainingLabel(cr.profileRewriteNext, now)
 	}
 
 	return s
@@ -438,6 +457,22 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setActivityNext(time.Time{})
 	}
 
+	// 画像每周重写：每天检查一次是否到期。ticker 首次触发在 +24h，进程重启频繁会永远等不到，
+	// 所以启动先补跑一次（到期判定在 worker 内部，未到期立即返回）。
+	var profileChan <-chan time.Time
+	if cr.profileRewriter != nil {
+		profileTicker := time.NewTicker(profileRewriteEvery)
+		defer profileTicker.Stop()
+		profileChan = profileTicker.C
+		cr.setProfileRewriteNext(time.Now().Add(profileRewriteEvery))
+		cr.mu.Lock()
+		cr.profileRewriteRunning = true
+		cr.mu.Unlock()
+		go cr.runProfileRewrite(ctx)
+	} else {
+		cr.setProfileRewriteNext(time.Time{})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -508,8 +543,29 @@ func (cr *CronRunner) Start(ctx context.Context) {
 				cr.mu.Unlock()
 			}()
 			cr.setActivityNext(time.Now().Add(activityRecomputeEvery))
+
+		case <-profileChan:
+			cr.mu.Lock()
+			if cr.profileRewriteRunning {
+				cr.mu.Unlock()
+				continue
+			}
+			cr.profileRewriteRunning = true
+			cr.mu.Unlock()
+			go cr.runProfileRewrite(ctx)
+			cr.setProfileRewriteNext(time.Now().Add(profileRewriteEvery))
 		}
 	}
+}
+
+// runProfileRewrite 跑一轮画像重写（可能耗时数十秒，放后台，别堵住其它钩子）。
+func (cr *CronRunner) runProfileRewrite(ctx context.Context) {
+	defer func() {
+		cr.mu.Lock()
+		cr.profileRewriteRunning = false
+		cr.mu.Unlock()
+	}()
+	cr.profileRewriter.Run(ctx)
 }
 
 // cleanupImages 按保留期清理过期图片（全局，不分用户）：被引用过的走长保留期，孤儿走短保留期；

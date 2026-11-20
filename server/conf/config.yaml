@@ -169,7 +169,7 @@ retrieval:
   resource_zone:
     enabled: true
     budget_chars: 24000 # 总预算帽（UTF-8 字符数，中文 1 字=1）
-    budget_profile: 1600 # profile 预算（稳定画像层）
+    budget_profile: 3000 # profile 预算（稳定画像层；13 字段全满约 2472 字，留余量）
     budget_summary: 500 # summary 预算
     budget_memory: 3000 # memory 预算（只放未聚合的普通记忆）
     budget_note: 0 # note 预算（笔记不再注入资源区）

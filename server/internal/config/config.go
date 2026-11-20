@@ -323,7 +323,7 @@ type RetrievalConfig struct {
 type ResourceZoneConfig struct {
 	Enabled       bool `yaml:"enabled"`        // 是否启用资源区（历史消息不再重放 XML）
 	BudgetChars   int  `yaml:"budget_chars"`   // 总预算帽（UTF-8 字符数，中文 1 字=1）
-	BudgetProfile int  `yaml:"budget_profile"` // profile 每类型预算（chars），默认 1600
+	BudgetProfile int  `yaml:"budget_profile"` // profile 每类型预算（chars），默认 3000
 	BudgetSummary int  `yaml:"budget_summary"` // summary 预算，默认 800
 	BudgetMemory  int  `yaml:"budget_memory"`  // memory 预算，默认 3000
 	BudgetNote    int  `yaml:"budget_note"`    // note 预算，默认 0（笔记不再注入）
@@ -899,7 +899,7 @@ func validate(cfg *Config) error {
 		cfg.Retrieval.ResourceZone.BudgetChars = 24000
 	}
 	if cfg.Retrieval.ResourceZone.BudgetProfile == 0 {
-		cfg.Retrieval.ResourceZone.BudgetProfile = 1600
+		cfg.Retrieval.ResourceZone.BudgetProfile = 3000
 	}
 	if cfg.Retrieval.ResourceZone.BudgetSummary == 0 {
 		cfg.Retrieval.ResourceZone.BudgetSummary = 800

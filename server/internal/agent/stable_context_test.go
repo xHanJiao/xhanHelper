@@ -36,7 +36,7 @@ func TestStableContext_ProfileAndSummaryInXML_ByteStable(t *testing.T) {
 		SummaryText: "近期摘要：讨论了函数级暴露", CreatedAt: now,
 	})
 	db.Create(&model.UserProfileFact{
-		ID: "f-1", UserID: "u1", Field: "工作", Value: "后端工程师",
+		ID: "f-1", UserID: "u1", Field: "职业阶段", Value: "后端工程师",
 		Status: model.FactStatusActive, CreatedAt: now,
 	})
 

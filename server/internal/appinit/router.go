@@ -153,6 +153,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare)
 	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, repos.Conversation)
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
+	profileHandler := controller.NewProfileHandler(repos.UserProfileFact)
 	reminderHandler := controller.NewReminderHandler(repos.Reminder, repos.Conversation, repos.Message)
 	eventHandler := controller.NewEventHandler(repos.Event, repos.Mem)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
@@ -182,6 +183,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		DocumentShareHandler: documentShareHandler,
 		MessageShareHandler:  messageShareHandler,
 		SummaryHandler:       summaryHandler,
+		ProfileHandler:       profileHandler,
 		ReminderHandler:      reminderHandler,
 		EventHandler:         eventHandler,
 		ImageHandler:         imageHandler,

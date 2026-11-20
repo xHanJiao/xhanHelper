@@ -58,3 +58,6 @@ DerivedData/
 
 # SPM (FsCore swift test)
 .build/
+
+# 运维工具在仓库根跑时的备份落点（profile-rebuild 等，含真实数据）
+/data/

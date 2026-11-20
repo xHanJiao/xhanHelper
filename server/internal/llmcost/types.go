@@ -30,6 +30,7 @@ const (
 	SubEventAssemble    = "event_assemble"
 	SubProfileExtract   = "profile_extract"
 	SubProfileColdStart = "profile_cold_start"
+	SubProfileRewrite   = "profile_rewrite" // 每周整合重写（压缩整份画像）
 	SubSummary          = "summary"
 	SubImageDescribe    = "image_describe" // 上传后异步生成图片描述
 

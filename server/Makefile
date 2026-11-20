@@ -39,6 +39,7 @@ help:
 	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
 	@echo "  make db-import      - 仅导入本地最新 dump（不联网，用于下载后导入失败重跑）"
 	@echo "  make entity-gc      - 远端清理孤儿派生数据（默认 dry-run；ARGS=\"--write\" 落库）"
+	@echo "  make profile-rebuild - 本地画像重建（默认 dry-run；ARGS=\"--write\" 落库）"
 	@echo "  make entity-gc-local - 本地清理（默认 dev 沙盒库；ARGS=\"--purge-cancelled --write\" 硬删取消态笔记）"
 	@echo "  make backfill-audience-local - 本机文档 audience 回标（默认 dev 沙盒；prod 用 APP_ENV=local CONFIRM_PROD=yes）"
 	@echo "  make topic-merge-plan  - 远端生成 topic 收敛报告+映射，拉到本地 data/topic-merge/"
@@ -90,6 +91,8 @@ local-build: embed-frontend
 	go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
 
 # 同时启动前后端开发服务器
+# 桌面开发用 http（客户端里 web 面板写死 http://localhost:5173）；
+# 手机验收要 https，手动跑 `cd front-end && npm run dev`（有 .certs/ 就自动 https）
 dev-full: check-env
 	@echo "=== 启动前后端开发环境 ==="
 	@mkdir -p logs
@@ -98,7 +101,7 @@ dev-full: check-env
 	echo "  日志文件: $$LOG"; \
 	go run ./cmd/xhan-helper/ >> "$$LOG" 2>&1 & \
 	BPID=$$!; \
-	(cd $(FRONTEND_DIR) && npm run dev) & \
+	(cd $(FRONTEND_DIR) && VITE_DEV_HTTP=1 npm run dev) & \
 	FPID=$$!; \
 	sleep 2; \
 	echo "  后端: http://localhost:8080"; \
@@ -217,6 +220,15 @@ entity-gc-local:
 	E=$${APP_ENV:-local.dev}; \
 	echo "=== entity-gc 本地（APP_ENV=$$E）==="; \
 	APP_ENV=$$E go run ./cmd/entity-gc/ $(ARGS)
+
+# 画像一次性重建（docs/design/user-profile-v2 §6.3）。默认 dry-run；落库 ARGS="--write"。
+# 自动加载 .env（直接 go run 会因 ${XHAN_HELPER_ADMIN} 等未注入而拒绝启动）；多用户需 ARGS="--user <id>"。
+.PHONY: profile-rebuild
+profile-rebuild:
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-dev}; \
+	echo "=== profile-rebuild（APP_ENV=$$E，默认 dry-run）==="; \
+	APP_ENV=$$E go run ./cmd/profile-rebuild/ $(ARGS)
 
 # 文档 audience（读者层级）存量回标（本机）。默认 dev 沙盒，prod 需显式 APP_ENV=local。
 # 正序：先回标（自带 AutoMigrate 建列）→ 再上新代码。反过来会「列已建、值未回标 →

@@ -188,14 +188,14 @@ func TestProfileWorker_NormalExtraction_WritesFacts(t *testing.T) {
 	legacyRepo, factRepo := setupProfileRepos(t)
 
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"职业领域":["5年Go后端","gap期求职中"],"不存在字段":["x"]}`},
+		{Content: `{"职业阶段":["5年Go后端","gap期求职中"],"不存在字段":["x"]}`},
 	}}
 	w := newTestProfileWorker(llmClient, legacyRepo, factRepo)
 
-	if err := w.extractNormal(context.Background(), testSess("我在面试"), false); err != nil {
+	if err := w.extractNormal(context.Background(), testSess("我5年Go后端，现在gap期求职中，我在面试"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业领域")
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业阶段")
 	if err != nil {
 		t.Fatalf("GetActiveByField: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestProfileWorker_NormalExtraction_SingleStringValue(t *testing.T) {
 	}}
 	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	if err := w.extractNormal(context.Background(), testSess("我老家河南的"), false); err != nil {
+	if err := w.extractNormal(context.Background(), testSess("我老家河南焦作的"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
 	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "籍贯")
@@ -245,7 +245,7 @@ func TestProfileWorker_NormalExtraction_NoChangeSkip(t *testing.T) {
 	}}
 	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	if err := w.extractNormal(ctx, testSess("我老家河南的"), false); err != nil {
+	if err := w.extractNormal(ctx, testSess("我老家河南焦作的"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
 	facts, err := factRepo.GetActiveByField(ctx, "user-1", "籍贯")
@@ -263,14 +263,14 @@ func TestProfileWorker_NormalExtraction_NoChangeSkip(t *testing.T) {
 func TestProfileWorker_NormalExtraction_QuotaRetry(t *testing.T) {
 	_, factRepo := setupProfileRepos(t)
 
-	longFact := strings.Repeat("长", 100) // 职业领域 MaxLen=60
+	longFact := strings.Repeat("长", 100) // 职业阶段 MaxLen=50
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"职业领域":["` + longFact + `"]}`},
-		{Content: `{"职业领域":["5年Go后端"]}`}, // 重试后合规
+		{Content: `{"职业阶段":["` + longFact + `"]}`},
+		{Content: `{"职业阶段":["5年Go后端"]}`}, // 重试后合规
 	}}
 	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	if err := w.extractNormal(context.Background(), testSess("我是后端"), false); err != nil {
+	if err := w.extractNormal(context.Background(), testSess("我是后端，5年Go后端"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
 	if llmClient.callCount != 2 {
@@ -282,10 +282,10 @@ func TestProfileWorker_NormalExtraction_QuotaRetry(t *testing.T) {
 	if last.Role != "user" || !strings.Contains(last.Content, "不满足约束") {
 		t.Errorf("retry should include quota feedback, got role=%s content=%s", last.Role, last.Content)
 	}
-	if !strings.Contains(last.Content, "职业领域") || !strings.Contains(last.Content, "上限 60 字") {
+	if !strings.Contains(last.Content, "职业阶段") || !strings.Contains(last.Content, "上限 50 字") {
 		t.Errorf("feedback should mention field and limit, got %s", last.Content)
 	}
-	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业领域")
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业阶段")
 	if err != nil {
 		t.Fatalf("GetActiveByField: %v", err)
 	}
@@ -297,38 +297,39 @@ func TestProfileWorker_NormalExtraction_QuotaRetry(t *testing.T) {
 func TestProfileWorker_NormalExtraction_QuotaRetryExhausted_TruncateFallback(t *testing.T) {
 	_, factRepo := setupProfileRepos(t)
 
-	tooLong := strings.Repeat("超", 200) // 职业领域 MaxLen=60
+	tooLong := strings.Repeat("超", 200) // 职业阶段 MaxLen=50
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"职业领域":["` + tooLong + `"]}`},
-		{Content: `{"职业领域":["` + tooLong + `"]}`},
-		{Content: `{"职业领域":["` + tooLong + `"]}`}, // 重试耗尽（初始+2次）
+		{Content: `{"职业阶段":["` + tooLong + `"]}`},
+		{Content: `{"职业阶段":["` + tooLong + `"]}`},
+		{Content: `{"职业阶段":["` + tooLong + `"]}`}, // 重试耗尽（初始+2次）
 	}}
 	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	if err := w.extractNormal(context.Background(), testSess("我是后端"), false); err != nil {
+	// 用户原话里确实说过这段（截断后仍是子串）→ 判为用户自陈，落 active
+	if err := w.extractNormal(context.Background(), testSess("我是后端，"+strings.Repeat("超", 50)), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业领域")
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业阶段")
 	if err != nil {
 		t.Fatalf("GetActiveByField: %v", err)
 	}
 	if len(facts) != 1 {
 		t.Fatalf("expected 1 truncated fact, got %+v", facts)
 	}
-	if utf8.RuneCountInString(facts[0].Value) != 60 {
-		t.Errorf("fallback fact should be truncated to MaxLen=60, got %d chars", utf8.RuneCountInString(facts[0].Value))
+	if utf8.RuneCountInString(facts[0].Value) != 50 {
+		t.Errorf("fallback fact should be truncated to MaxLen=50, got %d chars", utf8.RuneCountInString(facts[0].Value))
 	}
 }
 
 func TestProfileWorker_NormalExtraction_MaxFactsTruncate(t *testing.T) {
 	_, factRepo := setupProfileRepos(t)
 
-	// 补充说明 MaxFacts=10，输出 12 条 → 重试耗尽后截取前 10
-	facts := make([]string, 12)
+	// 协作偏好 MaxFacts=5，输出 7 条 → 重试耗尽后截取前 5
+	facts := make([]string, 7)
 	for i := range facts {
-		facts[i] = "杂项" + string(rune('a'+i))
+		facts[i] = "偏好" + string(rune('a'+i))
 	}
-	payload, _ := json.Marshal(map[string][]string{"补充说明": facts})
+	payload, _ := json.Marshal(map[string][]string{"协作偏好": facts})
 	llmClient := &syncMockLLM{responses: []llm.Message{
 		{Content: string(payload)},
 		{Content: string(payload)},
@@ -336,15 +337,15 @@ func TestProfileWorker_NormalExtraction_MaxFactsTruncate(t *testing.T) {
 	}}
 	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	if err := w.extractNormal(context.Background(), testSess("杂事一堆"), false); err != nil {
+	if err := w.extractNormal(context.Background(), testSess("我的偏好：偏好a偏好b偏好c偏好d偏好e偏好f偏好g"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-	got, err := factRepo.GetActiveByField(context.Background(), "user-1", "补充说明")
+	got, err := factRepo.GetActiveByField(context.Background(), "user-1", "协作偏好")
 	if err != nil {
 		t.Fatalf("GetActiveByField: %v", err)
 	}
-	if len(got) != 10 {
-		t.Errorf("expected 10 facts after MaxFacts truncate, got %d", len(got))
+	if len(got) != 5 {
+		t.Errorf("expected 5 facts after MaxFacts truncate, got %d", len(got))
 	}
 }
 
@@ -411,23 +412,23 @@ func TestProfileWorker_LegacyMigration_SplitsToFacts(t *testing.T) {
 	legacyRepo, factRepo := setupProfileRepos(t)
 	ctx := context.Background()
 	// 旧表混装值
-	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "职业领域", FieldValue: "5年Go后端；gap期求职中"}); err != nil {
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "职业阶段", FieldValue: "5年Go后端；gap期求职中"}); err != nil {
 		t.Fatalf("seed legacy: %v", err)
 	}
 
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"职业领域":["5年Go后端","gap期求职中"],"称呼":["哥"]}`},
+		{Content: `{"职业阶段":["5年Go后端","gap期求职中"],"称呼":["哥"]}`},
 	}}
 	w := newTestProfileWorker(llmClient, legacyRepo, factRepo)
 
-	if err := w.extractNormal(ctx, testSess("我在面试"), true); err != nil {
+	if err := w.extractNormal(ctx, testSess("我5年Go后端，现在gap期求职中，我在面试"), true); err != nil {
 		t.Fatalf("extractNormal legacy: %v", err)
 	}
 	// LLM 看到的 existing 应含旧表整段值
 	if !strings.Contains(llmClient.reqs[0].Messages[0].Content, "5年Go后端；gap期求职中") {
 		t.Error("legacy extract should show old table value in existing_profile")
 	}
-	facts, err := factRepo.GetActiveByField(ctx, "user-1", "职业领域")
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "职业阶段")
 	if err != nil {
 		t.Fatalf("GetActiveByField: %v", err)
 	}
@@ -441,7 +442,7 @@ func TestProfileWorker_LegacyMigration_SplitsToFacts(t *testing.T) {
 	}
 	legacyKept := false
 	for _, r := range legacyRows {
-		if r.Field == "职业领域" {
+		if r.Field == "职业阶段" {
 			legacyKept = true
 		}
 	}
@@ -638,7 +639,7 @@ func TestProfileWorker_RunStartupMigration_MigratesLegacy(t *testing.T) {
 	if err := db.Create(&model.User{ID: "user-1", Username: "u1"}).Error; err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "职业领域", FieldValue: "5年Go后端；gap期求职中"}); err != nil {
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "职业阶段", FieldValue: "5年Go后端；gap期求职中"}); err != nil {
 		t.Fatalf("seed legacy: %v", err)
 	}
 	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "重要关系", FieldValue: "CJ: 伴侣"}); err != nil {
@@ -646,7 +647,7 @@ func TestProfileWorker_RunStartupMigration_MigratesLegacy(t *testing.T) {
 	}
 
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"职业领域":["5年Go后端","gap期求职中"],"重要关系":["CJ: 伴侣"]}`},
+		{Content: `{"职业阶段":["5年Go后端","gap期求职中"],"重要关系":["CJ: 伴侣"]}`},
 	}}
 	w := &UserProfileWorker{flashClient: llmClient, profileRepo: legacyRepo, factRepo: factRepo, userRepo: userRepo}
 
@@ -727,15 +728,15 @@ func TestProfileWorker_RunStartupMigration_QuotaRetry(t *testing.T) {
 	if err := db.Create(&model.User{ID: "user-1", Username: "u1"}).Error; err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	// 补充说明 MaxLen=30，旧值是一整段长文本
-	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "补充说明", FieldValue: "这是一段非常非常非常非常非常非常非常非常非常非常非常非常长的旧值"}); err != nil {
+	// 饮食偏好 MaxLen=40，旧值是一整段长文本
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "饮食偏好", FieldValue: "这是一段非常非常非常非常非常非常非常非常非常非常非常非常长的旧值"}); err != nil {
 		t.Fatalf("seed legacy: %v", err)
 	}
 
 	longFact := strings.Repeat("超", 100)
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"补充说明":["` + longFact + `"]}`},
-		{Content: `{"补充说明":["睡眠差"]}`}, // 重生成后合规
+		{Content: `{"饮食偏好":["` + longFact + `"]}`},
+		{Content: `{"饮食偏好":["睡眠差"]}`}, // 重生成后合规
 	}}
 	w := &UserProfileWorker{flashClient: llmClient, profileRepo: legacyRepo, factRepo: factRepo, userRepo: userRepo}
 
@@ -744,7 +745,7 @@ func TestProfileWorker_RunStartupMigration_QuotaRetry(t *testing.T) {
 	if llmClient.callCount != 2 {
 		t.Fatalf("expected 2 LLM calls (1 retry), got %d", llmClient.callCount)
 	}
-	facts, err := factRepo.GetActiveByField(ctx, "user-1", "补充说明")
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "饮食偏好")
 	if err != nil {
 		t.Fatalf("GetActiveByField: %v", err)
 	}

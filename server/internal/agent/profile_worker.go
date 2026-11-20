@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -48,6 +47,10 @@ var profileRules = []string{
 	"只输出有变化或需修订的字段；无变化输出 {}",
 	"只提取用户明确陈述的事实，不要从对话中推断",
 	"无法确定的信息宁可省略，不要猜测",
+	"画像只写稳定属性：条目不出现具体日期、金额、地点组合（如\"11-13青岛鲜啤\"\"喝了打200块\"\"10-17东京\"），出现即说明这是事件，整条不写",
+	"每条必须能脱离上下文独立成立：不写\"以前\"\"上周\"\"某天\"这类时间参照，不写代词",
+	"同字段内语义互斥时只保留最新一条（如\"已戒酒\"覆盖\"喝酒\"），不并存",
+	"旅行、出差、看房、聚会这类有具体起止时间的安排属于事件，不进画像（任何字段都不要）",
 }
 
 // profileOutputFormat — 正常增量提取的输出格式约束（注入 user message XML <output_format>）。
@@ -67,6 +70,8 @@ var profileMigrationRules = []string{
 	"事实短句：无引导词，直接写事实；并列项用分号分隔；禁散文长句",
 	"未过时的信息必须保留（可适当压缩原文）；不确定的信息保留原文",
 	"单值字段输出长度为 1 的数组",
+	"画像只写稳定属性：条目不出现具体日期、金额、地点组合，出现即说明这是事件，整条不搬",
+	"每条必须能脱离上下文独立成立：不写\"以前\"\"上周\"\"某天\"这类时间参照，不写代词",
 }
 
 // profileMigrationOutputFormat — 启动迁移输出格式（全量，非"仅变化字段"）。
@@ -192,6 +197,10 @@ func coldStartSystemPrompt() string {
 - 只填写用户明确陈述过的事实，禁止用你的推断填充
 - 若某字段所有事实均已过时，输出空数组表示清空该字段（如{"长期目标":[]}）
 - 不确定的信息宁可省略，不要猜测
+- 画像只写稳定属性：条目不出现具体日期、金额、地点组合（如"11-13青岛鲜啤""喝了打200块"），出现即说明这是事件，整条不写
+- 每条必须能脱离上下文独立成立：不写"以前""上周""某天"这类时间参照，不写代词
+- 同字段内语义互斥时只保留最新一条（如"已戒酒"覆盖"喝酒"），不并存
+- 旅行、出差、看房、聚会这类有具体起止时间的安排属于事件，不进画像（任何字段都不要）
 - 你最多有 6 轮搜索机会，合理规划搜索内容`, profilefield.ProfileExtractFieldText())
 }
 
@@ -242,7 +251,8 @@ func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string
 		return nil // 不重试，下次 session_end 自然重跑
 	}
 	log.Printf("[profile] cold start: extracted %d fields, iterations=%d", len(extracted), result.Iterations)
-	w.applyExtracted(ctx, userID, extracted)
+	// 冷启动的事实来自历史记忆（用户过去确实说过），不是本轮推断 → 全部按用户自陈落 active
+	w.applyExtracted(ctx, userID, extracted, "")
 	return nil
 }
 
@@ -269,7 +279,7 @@ func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnap
 		return nil
 	}
 	log.Printf("[profile] normal: extracted %d fields, conv=%s", len(extracted), sess.ConvID[:min(8, len(sess.ConvID))])
-	w.applyExtracted(ctx, sess.UserID, extracted)
+	w.applyExtracted(ctx, sess.UserID, extracted, joinUserMessageText(sess.GetUserMessages()))
 	return nil
 }
 
@@ -372,20 +382,14 @@ func buildQuotaFeedback(violations []string) string {
 }
 
 // applyExtracted 按白名单过滤并写入 facts 表。
-// 每字段：与现有 active facts 精确比较（排序后 join），相同则跳过（防膨胀第一道闸）；
-// 不同则全量替换（旧 active 标 outdated + 新 facts 插入）。
+// 每字段走 ReconcileFieldFacts（对账语义）：仍在输出里的续命、消失的置过时、新增的按证据分档。
+// evidenceText 是本 session 用户消息的原文：事实能在里面找到 → 判定用户自陈，直接 active；
+// 找不到（LLM 改写或推断）→ 先进 pending，下次再被提及才晋升。
+// evidenceText 为空（冷启动 / 启动迁移）视为全部用户自陈 —— 那些事实来自历史记忆，不是本轮推断。
 // 超限兜底：单条 rune 截断、条数截取前 N（重试耗尽后的降级路径）。
-func (w *UserProfileWorker) applyExtracted(ctx context.Context, userID string, extracted map[string][]string) {
+func (w *UserProfileWorker) applyExtracted(ctx context.Context, userID string, extracted map[string][]string, evidenceText string) {
 	batchID := idgen.Next()
-	existing, err := w.factRepo.GetActiveByUser(ctx, userID)
-	if err != nil {
-		log.Printf("[profile] GetActiveByUser error: %v", err)
-		return
-	}
-	activeByField := make(map[string][]string, 8)
-	for _, f := range existing {
-		activeByField[f.Field] = append(activeByField[f.Field], f.Value)
-	}
+	normEvidence := normFactText(evidenceText)
 
 	for field, facts := range extracted {
 		if !profilefield.InProfileWhitelist(field) {
@@ -393,13 +397,10 @@ func (w *UserProfileWorker) applyExtracted(ctx context.Context, userID string, e
 			continue
 		}
 		def := profilefield.ProfileFieldDesc(field)
-		// 空数组 = 清空意图（LLM 判定该字段所有事实均已过时）
+		// 空数组 = 清空意图（LLM 判定该字段所有事实均已过时；用户手写行不受影响）
 		if len(facts) == 0 {
-			if len(activeByField[field]) == 0 {
-				continue
-			}
-			if err := w.factRepo.ReplaceFieldFacts(ctx, userID, field, nil, batchID); err != nil {
-				log.Printf("[profile] ReplaceFieldFacts field %s error: %v", field, err)
+			if err := w.factRepo.ReconcileFieldFacts(ctx, userID, field, nil, batchID); err != nil {
+				log.Printf("[profile] ReconcileFieldFacts field %s error: %v", field, err)
 				continue
 			}
 			log.Printf("[profile] cleared field %s", field)
@@ -409,14 +410,22 @@ func (w *UserProfileWorker) applyExtracted(ctx context.Context, userID string, e
 		if len(facts) == 0 {
 			continue // 过滤后变空（全是占位符）→ 忽略，不当作清空
 		}
-		if factsEqual(facts, activeByField[field]) {
-			continue // 无变化，跳过（不产生新批次）
+		inputs := make([]service.FactInput, 0, len(facts))
+		stated, inferred := 0, 0
+		for _, f := range facts {
+			isStated := evidenceText == "" || strings.Contains(normEvidence, normFactText(f))
+			if isStated {
+				stated++
+			} else {
+				inferred++
+			}
+			inputs = append(inputs, service.FactInput{Value: f, UserStated: isStated})
 		}
-		if err := w.factRepo.ReplaceFieldFacts(ctx, userID, field, facts, batchID); err != nil {
-			log.Printf("[profile] ReplaceFieldFacts field %s error: %v", field, err)
+		if err := w.factRepo.ReconcileFieldFacts(ctx, userID, field, inputs, batchID); err != nil {
+			log.Printf("[profile] ReconcileFieldFacts field %s error: %v", field, err)
 			continue
 		}
-		log.Printf("[profile] replaced field %s: %d facts", field, len(facts))
+		log.Printf("[profile] reconciled field %s: %d facts (stated=%d inferred=%d)", field, len(facts), stated, inferred)
 	}
 
 	// outdated 审计保留最近 N 批，更旧物理清理
@@ -425,6 +434,11 @@ func (w *UserProfileWorker) applyExtracted(ctx context.Context, userID string, e
 	} else if n > 0 {
 		log.Printf("[profile] cleaned %d outdated facts (user=%s)", n, userID)
 	}
+}
+
+// normFactText 归一化用于「是否在本轮对话里说过」的判断：去空白、统一小写。
+func normFactText(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), ""))
 }
 
 // filterFacts 过滤占位值 + 超限兜底截断（按 MaxLen 截单条、MaxFacts 截条数）。
@@ -450,16 +464,24 @@ func filterFacts(facts []string, def *profilefield.ProfileFieldDef) []string {
 	return out
 }
 
-// factsEqual 判断两个事实集是否等价：排序后拼接比较（顺序无关，内容精确）。
-func factsEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+// joinUserMessageText 把本 session 的用户消息拼成一段纯文本（证据判定用）。
+func joinUserMessageText(msgs []model.Message) string {
+	var sb strings.Builder
+	for _, m := range msgs {
+		sb.WriteString(m.Content)
+		sb.WriteString("\n")
 	}
-	sa := append([]string(nil), a...)
-	sb := append([]string(nil), b...)
-	sort.Strings(sa)
-	sort.Strings(sb)
-	return strings.Join(sa, "\x00") == strings.Join(sb, "\x00")
+	return sb.String()
+}
+
+// factObservedDate 返回事实的观察日期（给提取 prompt 看"这条是什么时候知道的"）。
+// observed_at 缺失时回退 created_at（老数据），格式 YYYY-MM-DD。
+func factObservedDate(f model.UserProfileFact) string {
+	t := f.CreatedAt
+	if f.ObservedAt != nil {
+		t = *f.ObservedAt
+	}
+	return t.In(config.BJ).Format("2006-01-02")
 }
 
 func truncateRunes(s string, n int) string {
@@ -523,7 +545,7 @@ func (w *UserProfileWorker) RunStartupMigration(ctx context.Context) {
 			continue
 		}
 		log.Printf("[profile] startup migration: user=%s extracted %d fields", u.ID[:min(8, len(u.ID))], len(extracted))
-		w.applyExtracted(ctx, u.ID, extracted)
+		w.applyExtracted(ctx, u.ID, extracted, "")
 	}
 	log.Printf("[profile] startup migration: done")
 }
@@ -621,7 +643,7 @@ func (w *UserProfileWorker) buildExtractionXML(ctx context.Context, sess *Sessio
 			byField := make(map[string][]existingFactXML)
 			for _, f := range existing {
 				byField[f.Field] = append(byField[f.Field], existingFactXML{
-					CreatedAt: f.CreatedAt.In(config.BJ).Format("2006-01-02"),
+					CreatedAt: factObservedDate(f),
 					Text:      f.Value,
 				})
 			}

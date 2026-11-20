@@ -45,9 +45,9 @@ type ZoneBudgets struct {
 }
 
 // DefaultZoneBudgets 默认预算（与 config/validate 对齐）：
-// profile 1600 / summary 500 / memory 3000 / note 0 / event 18000。
+// profile 3000 / summary 500 / memory 3000 / note 0 / event 18000。
 func DefaultZoneBudgets() ZoneBudgets {
-	return ZoneBudgets{Profile: 1600, Summary: 500, Memory: 3000, Note: 0, Event: 18000}
+	return ZoneBudgets{Profile: 3000, Summary: 500, Memory: 3000, Note: 0, Event: 18000}
 }
 
 // zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/events/recent），
@@ -463,6 +463,9 @@ func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, tot
 			if !demoteLastSummary(pkts) {
 				pkts = dropLastUnprotectedEvent(pkts)
 			}
+		} else if victim == TypeProfile {
+			// 画像从尾部丢（先丢偏好/骨架），与 per-type 截断保持一致
+			pkts = dropLastOfType(pkts, victim)
 		} else {
 			pkts = dropFirstOfType(pkts, victim)
 		}
@@ -491,6 +494,8 @@ func budgetPerType(pkts []retrieval.ContextPacket, budgets ZoneBudgets) []retrie
 			groups[typ] = trimEventGroup(list, budget)
 			continue
 		}
+		// 画像按层排序（A→F）：超预算从尾部丢，先丢偏好/骨架，身份类（A/B/C）留到最后。
+		tailDrop := typ == TypeProfile
 		for {
 			if len(list) == 0 {
 				break
@@ -498,7 +503,11 @@ func budgetPerType(pkts []retrieval.ContextPacket, budgets ZoneBudgets) []retrie
 			if utf8.RuneCountInString(FormatResourceZone(list)) <= budget {
 				break
 			}
-			list = list[1:] // 砍最旧
+			if tailDrop {
+				list = list[:len(list)-1]
+			} else {
+				list = list[1:] // 砍最旧
+			}
 		}
 		groups[typ] = list
 	}

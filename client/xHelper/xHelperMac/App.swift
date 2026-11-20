@@ -1486,6 +1486,11 @@ struct MacSettingsView: View {
                 panelButton("监控看板", detail: "成本与调用统计", icon: "chart.bar.xaxis", panel: .dashboard)
             }
 
+            Section("关于我") {
+                BrowseRow("我的画像", icon: "person.text.rectangle", destination: ProfileSettingsView(apiClient: apiClient),
+                          sheetSize: CGSize(width: 640, height: 640))
+            }
+
             Section("浏览") {
                 BrowseRow("账单记录", icon: "list.bullet.rectangle", destination: BillListView(
                     viewModel: BillViewModel(apiClient: apiClient),

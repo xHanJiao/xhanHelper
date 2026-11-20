@@ -7,6 +7,7 @@ import (
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/profilefield"
 )
 
 const (
@@ -489,12 +490,8 @@ func RecentPacket(id string, createdAt time.Time, role, content string) retrieva
 }
 
 // ProfilePacket 生成 profile 类型的 ContextPacket（用户画像稳定层字段，fact 聚合后的值）。
-// source 由字段派生：补充说明是 LLM 自行判断（低置信），其余字段只提取用户明确陈述。
+// updated_at 传最近一次被证实的日期。
 func ProfilePacket(field, value string, updatedAt time.Time) retrieval.ContextPacket {
-	source := ""
-	if field == "补充说明" {
-		source = "llm_additional"
-	}
 	return retrieval.ContextPacket{
 		ID:   field,
 		Type: TypeProfile,
@@ -502,7 +499,6 @@ func ProfilePacket(field, value string, updatedAt time.Time) retrieval.ContextPa
 		Meta: retrieval.ProfileMeta{
 			Key:       field,
 			Value:     value,
-			Source:    source,
 			UpdatedAt: updatedAt,
 		},
 	}
@@ -531,7 +527,8 @@ func sortBlocks(blocks []Block) {
 
 // sortPacketsByType 对同一类型块内的 packet 做稳定排序（硬约束：块内顺序必须确定且可重现，保证缓存稳定）。
 // 各类型排序规则：
-//   - profile：按字段名（packet.ID）字母序——字段名是白名单常量，永远稳定，与更新时间无关
+//   - profile：按 (层, 字段名) 排序——层号小的先注入（A 身份 → F 骨架），
+//     超预算时从尾部丢，保证身份类字段留到最后
 //   - summary：按 SummaryMeta.CreatedAt 时间旧→新，与 buildSummaryPackets 的阅读顺序一致（确定性 + 语义保持）
 //   - 检索类（memory/note/history/theme）：Score 降序 → 同分按 ID 字母序（保证确定性）
 //   - datetime/notice：单 item，无需排序
@@ -539,7 +536,12 @@ func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
 	switch typ {
 	case TypeProfile:
 		sort.SliceStable(packets, func(i, j int) bool {
-			return packets[i].ID < packets[j].ID
+			li, ni := profilefield.SortKey(packets[i].ID)
+			lj, nj := profilefield.SortKey(packets[j].ID)
+			if li != lj {
+				return li < lj
+			}
+			return ni < nj
 		})
 	case TypeSummary:
 		sort.SliceStable(packets, func(i, j int) bool {

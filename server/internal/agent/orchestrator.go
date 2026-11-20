@@ -21,6 +21,7 @@ import (
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/monitor"
+	"xhan-helper/internal/profilefield"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 	"xhan-helper/internal/util"
@@ -978,7 +979,8 @@ func (o *Orchestrator) emitUserMessageEvent(req *RunRequest, userMsg *model.Mess
 }
 
 // buildProfilePackets 加载用户画像稳定层（facts 表 active 事实），按字段聚合后生成 ContextPacket。
-// 画像为空时不注入任何块。字段按名字母序排序，保证块内顺序确定，缓存友好。
+// 画像为空时不注入任何块。只注入白名单字段（迁移残留的旧字段名不再进上下文），
+// 并按 (层, 字段名) 排序：层号小的先注入，超预算时从尾部丢（保身份、丢偏好/骨架）。
 func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) []retrieval.ContextPacket {
 	facts, err := o.profileFactRepo.GetActiveByUser(ctx, userID)
 	if err != nil {
@@ -990,10 +992,21 @@ func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) [
 		updatedAt time.Time
 	}, 8)
 	for _, f := range facts {
+		if !profilefield.InProfileWhitelist(f.Field) {
+			continue
+		}
 		agg := byField[f.Field]
 		agg.values = append(agg.values, f.Value)
-		if f.CreatedAt.After(agg.updatedAt) {
-			agg.updatedAt = f.CreatedAt
+		// 注入的 updated_at = 最近一次被证实的时间（没有就退回观察时间/写入时间）
+		seen := f.CreatedAt
+		if f.ObservedAt != nil {
+			seen = *f.ObservedAt
+		}
+		if f.LastSeenAt != nil {
+			seen = *f.LastSeenAt
+		}
+		if seen.After(agg.updatedAt) {
+			agg.updatedAt = seen
 		}
 		byField[f.Field] = agg
 	}
@@ -1003,7 +1016,12 @@ func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) [
 		packets = append(packets, ctxflow.ProfilePacket(field, strings.Join(agg.values, "\n"), agg.updatedAt))
 	}
 	sort.SliceStable(packets, func(i, j int) bool {
-		return packets[i].ID < packets[j].ID
+		li, ni := profilefield.SortKey(packets[i].ID)
+		lj, nj := profilefield.SortKey(packets[j].ID)
+		if li != lj {
+			return li < lj
+		}
+		return ni < nj
 	})
 	return packets
 }

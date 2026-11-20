@@ -91,6 +91,8 @@ local-build: embed-frontend
 	go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
 
 # 同时启动前后端开发服务器
+# 桌面开发用 http（客户端里 web 面板写死 http://localhost:5173）；
+# 手机验收要 https，手动跑 `cd front-end && npm run dev`（有 .certs/ 就自动 https）
 dev-full: check-env
 	@echo "=== 启动前后端开发环境 ==="
 	@mkdir -p logs
@@ -99,7 +101,7 @@ dev-full: check-env
 	echo "  日志文件: $$LOG"; \
 	go run ./cmd/xhan-helper/ >> "$$LOG" 2>&1 & \
 	BPID=$$!; \
-	(cd $(FRONTEND_DIR) && npm run dev) & \
+	(cd $(FRONTEND_DIR) && VITE_DEV_HTTP=1 npm run dev) & \
 	FPID=$$!; \
 	sleep 2; \
 	echo "  后端: http://localhost:8080"; \

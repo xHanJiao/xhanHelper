@@ -42,7 +42,8 @@ ChatView.content
   草稿用 `@Binding` 注入，发送/停止/收起用闭包回调。独立成文件是因为 `ChatView` 里
   InputBar 的调用表达式已经顶到类型检查预算上限（见该文件既有注释）。
 - **按键**：`Enter` 拦截为发送（与普通输入栏同一套 IME `hasMarkedText` 判断），
-  `⇧Enter` / `⌥Enter` 放行给 TextEditor 换行；`Esc` 收起（不清草稿）；
+  `⇧Enter` / `⌥Enter` 放行给 TextEditor 换行；`Esc` 收起（不清草稿），
+  但**输入法组词中 `Esc` 只取消拼音**（同样看 `hasMarkedText`，放行给输入法），不收起面板；
   `Tab` 循环计划模式、`⌃C` 清空草稿 —— 与普通输入栏一致，两处共用 ChatView 里的
   `cycleMode()` / `clearDraft()`。
 - **与 App 级 Esc 的关系**：有 L3 工具确认待处理时，App 级 NSEvent monitor 会把 Esc 当「拒绝」吞掉。

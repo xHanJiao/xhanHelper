@@ -592,3 +592,29 @@ func TestBudgetResourceZone_HitNotDegraded(t *testing.T) {
 		t.Fatalf("hit event must not be demoted: %+v", meta)
 	}
 }
+
+func TestBudgetResourceZone_ProfileDropsFromTail(t *testing.T) {
+	// 画像按层排序（A→F）注入，超预算时从尾部丢：先丢偏好/骨架，身份层留到最后。
+	big := strings.Repeat("字", 300)
+	pkts := []retrieval.ContextPacket{
+		ProfilePacket("称呼", big, makeTime(2026, 8, 1)),
+		ProfilePacket("协作偏好", big, makeTime(2026, 8, 1)),
+		ProfilePacket("饮食偏好", big, makeTime(2026, 8, 1)),
+		ProfilePacket("重要关系", big, makeTime(2026, 8, 1)),
+	}
+	// 只放得下约两条 → 保留最前（身份 / 协作），丢掉尾部（偏好 / 骨架）
+	out := BudgetResourceZone(pkts, ZoneBudgets{Profile: 700}, 0)
+	kept := make(map[string]bool, len(out))
+	for _, p := range out {
+		kept[p.ID] = true
+	}
+	if !kept["称呼"] {
+		t.Error("identity field 称呼 must survive (drop from tail)")
+	}
+	if kept["重要关系"] {
+		t.Error("skeleton field 重要关系 should be dropped first")
+	}
+	if len(out) == 0 || out[0].ID != "称呼" {
+		t.Errorf("first surviving field should be 称呼, got %v", out)
+	}
+}

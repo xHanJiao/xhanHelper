@@ -45,6 +45,7 @@ type RouterConfig struct {
 	DocumentShareHandler *DocumentShareHandler
 	MessageShareHandler  *MessageShareHandler
 	SummaryHandler       *SummaryHandler
+	ProfileHandler       *ProfileHandler
 	ReminderHandler      *ReminderHandler
 	EventHandler         *EventHandler
 	ImageHandler         *ImageHandler
@@ -151,6 +152,10 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/notes", rc.NoteHandler.ListNotes)
 		auth.POST("/notes/batch", rc.NoteHandler.BatchGetNotes)
 		auth.DELETE("/notes/:id", rc.NoteHandler.DeleteNote)
+		auth.GET("/profile", rc.ProfileHandler.GetProfile)
+		auth.POST("/profile/facts", rc.ProfileHandler.CreateFact)
+		auth.PATCH("/profile/facts/:id", rc.ProfileHandler.UpdateFact)
+		auth.DELETE("/profile/facts/:id", rc.ProfileHandler.DeleteFact)
 		auth.GET("/memories", rc.MemHandler.ListMemories)
 		auth.GET("/memories/topics", rc.MemHandler.ListMemoryTopics)
 		auth.DELETE("/memories/:id", rc.MemHandler.DeleteMemory)

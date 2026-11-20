@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -87,6 +88,21 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		log.Fatalf("[db] purge legacy plaintext tokens failed (refusing to start): %v", err)
 	} else if n > 0 {
 		log.Printf("[db] purged %d legacy plaintext tokens; affected clients must log in again", n)
+	}
+
+	// 画像 v2 字段搬家（幂等）：旧字段名 → 新字段名、非白名单字段置过时、按新配额收敛。
+	// 必须与代码里的字段白名单同步上线，否则旧字段名会继续注入而新字段永远为空。
+	profileRepo := service.NewUserProfileFactRepo(db)
+	if renamed, retired, err := profileRepo.MigrateLegacyFields(context.Background()); err != nil {
+		log.Fatalf("[db] migrate profile fields failed (refusing to start): %v", err)
+	} else if renamed+retired > 0 {
+		log.Printf("[db] profile fields migrated: renamed=%d retired=%d", renamed, retired)
+	}
+	// v2 时间列回填（幂等）：老行没有 observed_at/last_seen_at，用 created_at 近似。
+	if n, err := profileRepo.BackfillFactTimestamps(context.Background()); err != nil {
+		log.Fatalf("[db] backfill profile fact timestamps failed (refusing to start): %v", err)
+	} else if n > 0 {
+		log.Printf("[db] profile fact timestamps backfilled: %d rows", n)
 	}
 
 	return db

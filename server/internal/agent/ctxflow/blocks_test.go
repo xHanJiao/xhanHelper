@@ -222,31 +222,29 @@ func TestNoticeBlock_RendersInUserMessage(t *testing.T) {
 
 func TestBuildProfileBlock(t *testing.T) {
 	items := []retrieval.ContextPacket{
-		ProfilePacket("补充说明", "睡眠差\n房价观察", makeTime(2026, 8, 7)),
+		ProfilePacket("硬约束", "不吃辣\n对海鲜过敏", makeTime(2026, 8, 7)),
 	}
 	got := marshalBlock(t, buildBlock(TypeProfile, items))
 	if !strings.Contains(got, `<profile`) {
 		t.Errorf("should produce profile root: %s", got)
 	}
-	if !strings.Contains(got, `key="补充说明"`) {
+	if !strings.Contains(got, `key="硬约束"`) {
 		t.Errorf("missing field key: %s", got)
-	}
-	if !strings.Contains(got, `source="llm_additional"`) {
-		t.Errorf("补充说明 field should derive source=llm_additional: %s", got)
 	}
 	if !strings.Contains(got, `updated_at="2026-08-07"`) {
 		t.Errorf("missing updated_at attr: %s", got)
 	}
-	if !strings.Contains(got, ">睡眠差&#xA;房价观察</field>") {
+	if !strings.Contains(got, ">不吃辣&#xA;对海鲜过敏</field>") {
 		t.Errorf("missing field value: %s", got)
 	}
 }
 
-func TestProfilePacket_NonAdditionalField_NoSource(t *testing.T) {
+// 画像字段的 source 恒为空（字段名不再派生置信度，来源在 facts 表的 source 列）。
+func TestProfilePacket_NoSource(t *testing.T) {
 	pkt := ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 7))
 	meta := pkt.Meta.(retrieval.ProfileMeta)
 	if meta.Source != "" {
-		t.Errorf("non-补充说明 field should have empty source, got %q", meta.Source)
+		t.Errorf("profile packet source should be empty, got %q", meta.Source)
 	}
 }
 
@@ -276,19 +274,20 @@ func TestProfileBlock_RendersFirstInUserMessage(t *testing.T) {
 	}
 }
 
-func TestSortPacketsByType_ProfileAlphabetical(t *testing.T) {
-	// 乱序输入，期望按字段名字母序输出（确定性，与更新时间无关）
+func TestSortPacketsByType_ProfileByLayer(t *testing.T) {
+	// 乱序输入，期望按 (层, 字段名) 输出：身份层最前、白名单外字段排最后（确定性，与更新时间无关）
 	pkts := []retrieval.ContextPacket{
-		ProfilePacket("伴侣", "CJ", makeTime(2026, 8, 7)),
+		ProfilePacket("补充说明", "旧字段", makeTime(2026, 8, 9)),
 		ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 1)),
-		ProfilePacket("出生日期", "1995", makeTime(2026, 8, 8)),
+		ProfilePacket("称呼", "哥", makeTime(2026, 8, 7)),
+		ProfilePacket("长期目标", "回西安定居", makeTime(2026, 8, 8)),
 	}
 	sortPacketsByType(TypeProfile, pkts)
 	got := make([]string, 0, len(pkts))
 	for _, p := range pkts {
 		got = append(got, p.ID)
 	}
-	want := []string{"伴侣", "出生日期", "籍贯"} // 按 UTF-8 字节序："伴" < "出" < "籍"
+	want := []string{"称呼", "籍贯", "长期目标", "补充说明"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("expected %v, got %v", want, got)
@@ -329,17 +328,22 @@ func TestFormatUserMessage_ProfileItemsSorted(t *testing.T) {
 	packets := map[string][]retrieval.ContextPacket{
 		TypeProfile: {
 			ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 1)),
-			ProfilePacket("伴侣", "CJ", makeTime(2026, 8, 7)),
+			ProfilePacket("称呼", "哥", makeTime(2026, 8, 7)),
+			ProfilePacket("补充说明", "旧字段", makeTime(2026, 8, 1)),
 		},
 	}
 	out := f.FormatUserMessage(packets, "你好")
-	companionIdx := strings.Index(out, `key="伴侣"`)
+	nameIdx := strings.Index(out, `key="称呼"`)
 	hometownIdx := strings.Index(out, `key="籍贯"`)
-	if companionIdx < 0 || hometownIdx < 0 {
-		t.Fatalf("expected both fields in output: %s", out)
+	legacyIdx := strings.Index(out, `key="补充说明"`)
+	if nameIdx < 0 || hometownIdx < 0 || legacyIdx < 0 {
+		t.Fatalf("expected all fields in output: %s", out)
 	}
-	if companionIdx > hometownIdx {
-		t.Errorf("profile items should be sorted alphabetically (伴侣 before 籍贯): %s", out)
+	if nameIdx > hometownIdx {
+		t.Errorf("identity layer should come first (称呼 before 籍贯): %s", out)
+	}
+	if legacyIdx < hometownIdx {
+		t.Errorf("non-whitelist field should come last (补充说明 after 籍贯): %s", out)
 	}
 }
 

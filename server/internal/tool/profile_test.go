@@ -45,8 +45,8 @@ func seedProfileFacts(t *testing.T, repo *service.UserProfileFactRepo, userID st
 	if err := repo.ReplaceFieldFacts(ctx, userID, "籍贯", []string{"河南焦作"}, "b2"); err != nil {
 		t.Fatalf("seed 籍贯: %v", err)
 	}
-	if err := repo.ReplaceFieldFacts(ctx, userID, "职业领域", []string{"5年Go后端", "gap期求职中"}, "b3"); err != nil {
-		t.Fatalf("seed 职业领域: %v", err)
+	if err := repo.ReplaceFieldFacts(ctx, userID, "职业阶段", []string{"5年Go后端", "gap期求职中"}, "b3"); err != nil {
+		t.Fatalf("seed 职业阶段: %v", err)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestProfile_AllFieldsGrouped(t *testing.T) {
 	if out.IsEmpty {
 		t.Error("不应为空")
 	}
-	if facts := out.Fields["职业领域"].Facts; len(facts) != 2 || facts[0] != "5年Go后端" || facts[1] != "gap期求职中" {
-		t.Errorf("职业领域应含 2 条事实: %v", facts)
+	if facts := out.Fields["职业阶段"].Facts; len(facts) != 2 || facts[0] != "5年Go后端" || facts[1] != "gap期求职中" {
+		t.Errorf("职业阶段应含 2 条事实: %v", facts)
 	}
 	if out.Fields["籍贯"].Desc == "" {
 		t.Error("字段应带 desc")
@@ -172,7 +172,7 @@ func TestProfile_FieldListInDescription(t *testing.T) {
 		t.Fatalf("fields 参数缺失: %+v", props)
 	}
 	desc, _ := fieldProp["description"].(string)
-	for _, f := range []string{"称呼", "出生日期", "籍贯", "职业领域", "重要关系", "补充说明"} {
+	for _, f := range []string{"称呼", "出生日期", "籍贯", "职业阶段", "重要关系", "饮食偏好"} {
 		if !strings.Contains(desc, f) {
 			t.Errorf("fields 描述应含字段 %s: %s", f, desc)
 		}

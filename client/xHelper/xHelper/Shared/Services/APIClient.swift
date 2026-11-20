@@ -426,8 +426,29 @@ class APIClient {
 		try await patch("/api/memories/\(id)/rating", body: ["rating": rating])
 	}
 
-	// MARK: Agents (P3)
+	// MARK: 用户画像（设置页「关于我」）
 
+	/// 拉取画像：按层分组，全部白名单字段都会返回（空字段 items 为 []）。
+	func getProfile() async throws -> ProfileResponse {
+		return try await get("/api/profile")
+	}
+
+	/// 用户手动新增一条画像事实（服务端标 source=user，模型不得覆盖）。
+	func createProfileFact(field: String, value: String) async throws -> ProfileFactItem {
+		return try await post("/api/profile/facts", body: ["field": field, "value": value])
+	}
+
+	/// 用户改一条画像事实（改后归用户所有，模型不得覆盖）。
+	func updateProfileFact(id: String, value: String) async throws {
+		try await patch("/api/profile/facts/\(id)", body: ["value": value])
+	}
+
+	/// 用户删一条画像事实（服务端置 rejected，模型永不写回）。
+	func deleteProfileFact(id: String) async throws {
+		try await delete("/api/profile/facts/\(id)")
+	}
+
+	// MARK: Agents (P3)
 	func listAgents(limit: Int = 50) async throws -> AgentListResponse {
 		return try await get("/api/agents?limit=\(limit)")
 	}

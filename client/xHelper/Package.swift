@@ -210,5 +210,17 @@ let package = Package(
             dependencies: ["EpubCore"],
             path: "Tests/EpubParserTests"
         ),
+        // DraftAutosaveCore — 聊天空白/按会话草稿的本地落盘（过期清理 / 超长拒存）。
+        // 丢字是这个功能的唯一致命点，边界用 swift test 钉住。
+        .target(
+            name: "DraftAutosaveCore",
+            path: "xHelper/Shared",
+            sources: ["Services/DraftAutosaveStore.swift"]
+        ),
+        .testTarget(
+            name: "DraftAutosaveStoreTests",
+            dependencies: ["DraftAutosaveCore"],
+            path: "Tests/DraftAutosaveStoreTests"
+        ),
     ]
 )

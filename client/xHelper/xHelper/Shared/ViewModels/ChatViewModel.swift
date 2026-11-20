@@ -848,6 +848,8 @@ class ChatViewModel: ObservableObject {
     #endif
     /// 语音服务的状态转发（语音已挪进 VM，见 `voice`）
     private var voiceObserver: AnyCancellable?
+    /// 草稿落盘的防抖订阅（见 DraftAutosaveStore）
+    private var draftAutosave: AnyCancellable?
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
@@ -855,6 +857,43 @@ class ChatViewModel: ObservableObject {
         // ChatView 只观察 VM：语音的 @Published（说/想/句级进度等）要能驱动它刷新
         voiceObserver = voice.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+        }
+        // 草稿自动落盘：输入停下 0.4s 写一次，空串即删除该条。
+        // dropFirst 跳过订阅时的初始空串——否则启动瞬间就会把空白 tab 的草稿删掉。
+        // key 必须在文本产生的这一刻锁定：防抖窗口里 conversationId 会变（空白 tab 发完首条
+        // 转正、切会话），写入时现算就会写错/删错条目。
+        draftAutosave = $draftText
+            .dropFirst()
+            .map { [weak self] text in
+                (key: self?.draftKey ?? DraftAutosaveStore.blankKey, text: text)
+            }
+            .removeDuplicates { $0 == $1 }
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            .sink { item in
+                if !DraftAutosaveStore.save(item.text, for: item.key) {
+                    LogBuffer.shared.warning("DraftAutosaveStore: 草稿超过长度上限，未保存 key=\(item.key)")
+                }
+            }
+    }
+
+    // MARK: 草稿落盘
+
+    /// 草稿的存储 key：会话 id；空白 tab（还没落库的新对话）用固定 key。
+    private var draftKey: String {
+        let cid = (conversationId ?? "").trimmingCharacters(in: .whitespaces)
+        return cid.isEmpty ? DraftAutosaveStore.blankKey : cid
+    }
+
+    /// 回填草稿：只在输入框空着时填，不覆盖用户此刻正在写的字。
+    private func restoreDraftIfNeeded() {
+        guard draftText.isEmpty else { return }
+        draftText = DraftAutosaveStore.load(for: draftKey) ?? ""
+    }
+
+    /// 立刻落盘（不等防抖）：tab 被淘汰 / 关闭前调用，别丢最后 0.4 秒的字。
+    func flushDraft() {
+        if !DraftAutosaveStore.save(draftText, for: draftKey) {
+            LogBuffer.shared.warning("DraftAutosaveStore: 草稿超过长度上限，未保存 key=\(draftKey)")
         }
     }
 
@@ -872,6 +911,8 @@ class ChatViewModel: ObservableObject {
         }
         conversationId = id
         pendingConversationID = "" // 切会话后不能再用上一轮 meta 给的 id
+        // 新 tab（或重开 App）回填上次没发的草稿；已有内容时不覆盖
+        restoreDraftIfNeeded()
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
         // 2026-10：模型切换按钮已从输入栏下架 → 恒为快速模型，不再从会话键恢复
@@ -1038,8 +1079,16 @@ class ChatViewModel: ObservableObject {
         isLoadingMore = false
         isInitialLoading = false
         loadMoreError = nil
+        // 「新对话」不再抹掉已写的字：内存里的优先（落盘有 0.4s 防抖，刚打的字可能还没写下去），
+        // 否则回填空白 tab 上次留下的草稿（DA-2）。
+        let pendingDraft = draftText
         draftText = ""
         draftAttachments = []
+        if pendingDraft.isEmpty {
+            restoreDraftIfNeeded()
+        } else {
+            draftText = pendingDraft
+        }
         pendingVoiceReply = false // 否则新会话里手打的第一条会被当成语音轮（短答 + 自动朗读）
         streamingContent = ""
     }
@@ -1055,6 +1104,9 @@ class ChatViewModel: ObservableObject {
         guard hasText || !attachments.isEmpty else { return }
         let speakReply = pendingVoiceReply
         pendingVoiceReply = false
+        // 立刻删掉落盘草稿：空白 tab 发完首条后 conversationId 很快变成新会话 id，
+        // 等防抖任务（0.4s）再删就会删错 key，把已发内容留成下一条草稿。
+        DraftAutosaveStore.remove(for: draftKey)
         draftText = ""
         draftAttachments = []
 

@@ -59,6 +59,8 @@ struct ChatView: View {
     /// 展开态：在按钮行上方多出一行（同一胶囊内）。12s 无操作自动收起。
     @State private var inputBarExtrasExpanded = false
     @State private var extrasCollapseTask: Task<Void, Never>?
+    /// 指针是否停在展开行上：停着就不武装 12s 自动收起（含行内胶囊点击后的重新计时）。
+    @State private var inputBarExtrasHovering = false
     /// 全屏输入（macOS）：盖住中栏整高写长文（见 ExpandedComposer）。
     @State private var composerExpanded = false
     /// 普通输入框回焦请求：全屏输入收起/发送后把焦点还给胶囊。
@@ -771,22 +773,8 @@ struct ChatView: View {
             voiceStatusRow(ctx)
         } else {
             HStack(spacing: 4) {
-                ForEach(InputBarButtonID.allCases.filter { !inputBarLayout.isCollapsed($0) || isPinnedInStatusRow($0) }, id: \.self) { id in
+                ForEach(InputBarButtonID.allCases.filter { isButtonAvailable($0) && (!inputBarLayout.isCollapsed($0) || isPinnedInStatusRow($0)) }, id: \.self) { id in
                     inputBarButton(id, ctx: ctx)
-                }
-                // 连续对话紧挨「更多操作」左侧（原「语音输入」按钮已按用户要求删除）
-                if voice.isAvailable {
-                    voiceContinuousButton(ctx)
-                }
-                // 全屏输入入口：紧挨「更多操作」左侧（用户要求放在 chevron 左边）
-                IconButton(
-                    visibility: .always,
-                    context: ctx,
-                    symbol: "rectangle.expand.vertical",
-                    tint: .secondary,
-                    tooltip: "全屏输入 · Enter 发送 / ⇧Enter 换行"
-                ) {
-                    openExpandedComposer()
                 }
                 // 更多操作：有按钮被收起时才提供 chevron（否则全常驻，无展开行）。
                 if !collapsedInExtras.isEmpty {
@@ -884,6 +872,22 @@ struct ChatView: View {
                 }
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
+            // 指针停在展开行上（包括在右键菜单里挑选项）时不自动收起：
+            // 否则那 12 秒一到，行连同菜单一起消失。离开后重新计时。
+            .onHover { hovering in
+                inputBarExtrasHovering = hovering
+                if hovering {
+                    extrasCollapseTask?.cancel()
+                } else {
+                    resetExtrasAutoCollapse()
+                }
+            }
+            // 行重新出现时从「未悬停」重新起算：悬停中被移除（最后一颗按钮改回常驻、
+            // 语音条接管）不会投递 onHover(false)，标志会停在 true，此后这一行再也不自动收起。
+            .onAppear {
+                inputBarExtrasHovering = false
+                resetExtrasAutoCollapse()
+            }
         }
         #endif
     }
@@ -893,9 +897,24 @@ struct ChatView: View {
         id == .trust && trustStore.fullTrust
     }
 
+    /// 按钮此刻有没有意义：数据/能力还没到位时整颗不出现，也不该占一个空的
+    /// 「更多操作」位（否则 chevron 展开出一条空行）。
+    private func isButtonAvailable(_ id: InputBarButtonID) -> Bool {
+        switch id {
+        case .voice:
+            return voice.isAvailable
+        case .agent:
+            return hasLoadedAgents && !pickerAgents.isEmpty
+        default:
+            return true
+        }
+    }
+
     /// 真正收进「更多操作」行的按钮（被强制常驻的不算，否则会出现两处入口/空展开行）。
     private var collapsedInExtras: [InputBarButtonID] {
-        InputBarButtonID.allCases.filter { inputBarLayout.isCollapsed($0) && !isPinnedInStatusRow($0) }
+        InputBarButtonID.allCases.filter {
+            isButtonAvailable($0) && inputBarLayout.isCollapsed($0) && !isPinnedInStatusRow($0)
+        }
     }
 
     /// 单个输入栏按钮：按 id 构造对应控件，并挂右键菜单切换常驻/收起。
@@ -1002,6 +1021,20 @@ struct ChatView: View {
                 tooltip: "添加图片",
                 action: { showFileImporter = true }
             )
+        case .voice:
+            // 连续对话 / 点击说话：原本是裸视图，现在走同一套常驻/收起
+            voiceContinuousButton(ctx)
+        case .fullscreen:
+            // 全屏输入入口
+            IconButton(
+                visibility: .always,
+                context: ctx,
+                symbol: "rectangle.expand.vertical",
+                tint: .secondary,
+                tooltip: "全屏输入 · Enter 发送 / ⇧Enter 换行"
+            ) {
+                openExpandedComposer()
+            }
         }
     }
 
@@ -1018,7 +1051,8 @@ struct ChatView: View {
     /// 重置自动收起计时（点胶囊后重新计时）。
     private func resetExtrasAutoCollapse() {
         extrasCollapseTask?.cancel()
-        guard inputBarExtrasExpanded else { return }
+        // 指针还在展开行上就别武装：行内胶囊点一下会走到这里，武装了会在鼠标底下消失。
+        guard inputBarExtrasExpanded, !inputBarExtrasHovering else { return }
         extrasCollapseTask = Task {
             try? await Task.sleep(for: .seconds(12))
             guard !Task.isCancelled else { return }

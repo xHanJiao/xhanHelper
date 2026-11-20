@@ -7,28 +7,38 @@ import Combine
 final class InputBarLayoutState: ObservableObject {
     static let shared = InputBarLayoutState()
 
-    private static let key = "xhan_inputbar_collapsed"
+    private static let key = "xhan_inputbar_collapsed_v2"
+    /// 老格式（stringArray，只含被收起的 id）。V2 落盘时删掉，只用于一次性迁移。
+    private static let legacyKey = "xhan_inputbar_collapsed"
 
     @Published var collapsed: Set<InputBarButtonID> {
-        didSet { UserDefaults.standard.set(collapsed.map(\.rawValue), forKey: Self.key) }
+        didSet { persist() }
     }
 
     private init() {
-        guard let stored = UserDefaults.standard.stringArray(forKey: Self.key) else {
-            collapsed = InputBarButtonID.defaultCollapsed
-            return
+        let defaults = UserDefaults.standard
+        let stored = defaults.dictionary(forKey: Self.key) as? [String: Bool]
+        let legacy = defaults.stringArray(forKey: Self.legacyKey)
+
+        // 每个 id 都单独定值：
+        // - V2 map 有记录 → 照用户的选择（「常驻」= false 也算数，不会再被打回）
+        // - V2 map 缺项 → 只可能是新加的按钮，取 defaultCollapsed
+        // - 只有老数组 → 老格式是完整快照，不在里面 = 用户故意设成常驻
+        var restored: Set<InputBarButtonID> = []
+        for id in InputBarButtonID.allCases {
+            let isCollapsed: Bool
+            if let stored {
+                isCollapsed = stored[id.rawValue] ?? InputBarButtonID.defaultCollapsed.contains(id)
+            } else if let legacy {
+                isCollapsed = legacy.contains(id.rawValue)
+            } else {
+                isCollapsed = InputBarButtonID.defaultCollapsed.contains(id)
+            }
+            if isCollapsed { restored.insert(id) }
         }
-        var restored = Set(stored.compactMap(InputBarButtonID.init(rawValue:)))
-            // 只留仍在 allCases 里的 id：下架按钮（hidden 的 model/brief/handoff）不进内存，
-            // 否则老用户存过「常驻」的会留下空占位、存过「收起」的会让 chevron 展开出一条空行。
-            .intersection(InputBarButtonID.allCases)
-        // 新增按钮要补进 collapsed：老用户存下来的集合里没这个 id，Set(stored) 会让它落在
-        // "未收起"→ 显示在常驻行，与 defaultCollapsed 的意图相反。新 id 不可能被用户主动
-        // 展开过，所以"缺失即补入"安全；补进去后用户再展开会被存下来，不会重复补。
-        // 以后再加按钮，这里跟着补一行。
-        if !stored.contains(InputBarButtonID.ephemeral.rawValue) { restored.insert(.ephemeral) }
-        if !stored.contains(InputBarButtonID.trust.rawValue) { restored.insert(.trust) }
         collapsed = restored
+        // init 里赋值不触发 didSet：补全结果和迁移结果都得自己落盘
+        persist()
     }
 
     func isCollapsed(_ id: InputBarButtonID) -> Bool {
@@ -41,5 +51,15 @@ final class InputBarLayoutState: ObservableObject {
         } else {
             collapsed.insert(id)
         }
+    }
+
+    /// 按 allCases 写完整 map：显式的 false 也是用户的选择，必须留下来。
+    private func persist() {
+        let map = Dictionary(uniqueKeysWithValues: InputBarButtonID.allCases.map {
+            ($0.rawValue, collapsed.contains($0))
+        })
+        let defaults = UserDefaults.standard
+        defaults.set(map, forKey: Self.key)
+        defaults.removeObject(forKey: Self.legacyKey)
     }
 }

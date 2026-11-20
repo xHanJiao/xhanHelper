@@ -27,12 +27,15 @@ enum InputBarButtonID: String, CaseIterable {
     case ephemeral
     case handoff
     case attach
+    case voice
+    case fullscreen
 
     /// 展示顺序。无痕只有 macOS 有入口（iOS 客户端无无痕功能），故 iOS 上不出现。
     /// 2026-10 下架：model / brief / handoff（三颗 pill 已 hidden）。
+    /// voice（连续对话）/ fullscreen（全屏输入）是从裸视图搬进来的，顺序与原位置一致。
     static var allCases: [InputBarButtonID] {
         #if os(macOS)
-        return [.mode, .agent, .trust, .ephemeral, .attach]
+        return [.mode, .agent, .trust, .ephemeral, .attach, .voice, .fullscreen]
         #else
         return [.mode, .agent, .attach]
         #endif

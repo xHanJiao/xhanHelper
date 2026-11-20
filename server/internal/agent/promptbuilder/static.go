@@ -35,7 +35,7 @@ func (p *corePrinciplesProvider) Render(ctx context.Context) string {
 // ==================== Layer 3 附加 — 工具规则 ====================
 
 // subagentPriorityRule — 开放探索类任务优先派子 agent（原准则 8，移到工具规则区）。
-const subagentPriorityRule = `本地文件检索/读代码/查看仓库状态等开放探索类任务，macOS 客户端在线时优先派 task 子任务（subagent_type=file_explore），由子 agent 完成搜索、阅读与只读命令执行，主对话只收结论。联网信息：单次检索或读一两个页面直接用 web 工具；多页深挖、需要点击或 JS 渲染的才派 web_explore（需客户端在线）。web 工具报「额度用尽」时不要再重试，改派 web_explore；客户端不在线就如实告诉用户今日额度已用完。子任务返回的内容由你归纳，不转述其原文，正文只给结论与关键位置`
+const subagentPriorityRule = `本地文件检索/读代码/查看仓库状态等开放探索类任务，macOS 客户端在线时优先派 task 子任务（subagent_type=file_explore），由子 agent 完成搜索、阅读与只读命令执行，主对话只收结论。联网信息：先用 web 工具自行检索，线索不足可继续换关键词搜；web 无法抓取（JS 渲染页、需点击交互）或多次检索仍无法确认时，才派 web_explore（需客户端在线）。web 工具报「额度用尽」时不要再重试，改派 web_explore；客户端不在线就如实告诉用户今日额度已用完。子任务返回的内容由你归纳，不转述其原文，正文只给结论与关键位置`
 
 type subagentPriorityProvider struct{}
 

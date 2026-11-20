@@ -86,8 +86,8 @@ func (t *WebTool) Name() string { return "web" }
 
 func (t *WebTool) Description() string {
 	return "联网：search 搜索网页，fetch 抓取指定 URL 的正文（已清洗为 Markdown）。" +
-		"【成本】每次调用都按次计费、结果全部进入上下文：先用 search 看摘要挑来源，只在必须读原文时对选中的 URL 调 fetch，不要批量抓取多个页面。" +
-		"需要 JS 渲染、点击交互的多页调研请派 task 子任务 web_explore（需 Mac 客户端在线）。"
+		"search 可按需多次调用、换关键词补搜，不必为减少调用次数牺牲检索质量；结果全部进入上下文，先用摘要挑来源，需要原文时再对选中的 URL 调 fetch。" +
+		"JS 渲染页与需要点击交互的多页调研派 task 子任务 web_explore（需 Mac 客户端在线）。"
 }
 
 func (t *WebTool) Catalog() (CatalogEntry, bool) {
@@ -582,7 +582,7 @@ func isBinaryWebContentType(ct string) bool {
 // ---------- 额度 ----------
 
 // useQuota 预扣一次调用额度，返回非空字符串即失败文案（可直接展示给模型）。
-// 口径：请求前预扣 —— 失败的请求也占额度（比 DeepSeek「成功才计费」保守，日上限量级下可接受）。
+// 口径：请求前预扣 —— 失败的请求也占额度（与上游是否计费无关；这道闸防的是把搜索当循环用）。
 func (t *WebTool) useQuota(ctx context.Context) string {
 	if t.quota == nil || t.dailyLimit < 0 {
 		return ""

@@ -2,11 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import PageTopBar from '@/components/PageTopBar.vue'
+import PromptViewer from '@/components/PromptViewer.vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-// 统一用 html:false 的实例：system prompt 里混着用户笔记/记忆/网页抓取内容，
-// 默认 MarkdownIt 会把其中的 HTML 当标签执行（存储型 XSS）。
-import md from '@/utils/markdown'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -316,7 +314,10 @@ onMounted(loadAnchor)
             </template>
           </div>
 
-          <div v-if="configB.override_system_prompt == null" class="md-preview" v-html="bPromptPreview ? md.render(bPromptPreview) : '<em>(空 — 可能跳过了检索)</em>'"></div>
+          <template v-if="configB.override_system_prompt == null">
+            <div v-if="bPromptPreview" style="max-height: 500px; overflow-y: auto;"><PromptViewer :text="bPromptPreview" /></div>
+            <div v-else class="md-preview"><em>(空 — 可能跳过了检索)</em></div>
+          </template>
 
           <div v-else>
             <textarea v-model="configB.override_system_prompt" class="prompt-editor"></textarea>
@@ -379,7 +380,7 @@ onMounted(loadAnchor)
               <!-- A 侧 system prompt（只读折叠） -->
               <details v-if="sideA?.system_prompt" style="margin-bottom: var(--space-sm);">
                 <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">原始 System Prompt（{{ sideA.system_prompt.length }} 字符）</summary>
-                <div class="md-preview" v-html="md.render(sideA.system_prompt)" style="max-height: 300px; margin-top: 8px;"></div>
+                <div style="max-height: 300px; overflow-y: auto; margin-top: 8px;"><PromptViewer :text="sideA.system_prompt" /></div>
               </details>
 
               <!-- A 侧结果 -->
@@ -421,7 +422,7 @@ onMounted(loadAnchor)
               <!-- B 侧 system prompt（折叠） -->
               <details v-if="sideB?.system_prompt" style="margin-bottom: var(--space-sm);">
                 <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">实际 System Prompt（{{ sideB.system_prompt.length }} 字符）</summary>
-                <div class="md-preview" v-html="md.render(sideB.system_prompt)" style="max-height: 300px; margin-top: 8px;"></div>
+                <div style="max-height: 300px; overflow-y: auto; margin-top: 8px;"><PromptViewer :text="sideB.system_prompt" /></div>
               </details>
 
               <!-- B 侧检索溯源 -->

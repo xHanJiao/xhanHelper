@@ -15,6 +15,7 @@ import {
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useExportPDF } from '@/composables/useExportPDF'
+import { useVisibleRefresh } from '@/composables/useVisibleRefresh'
 import { ensureDocumentShareUrl, writeClipboard, downloadMarkdown } from '@/utils/document'
 
 const message = useMessage()
@@ -57,7 +58,7 @@ async function copyShareUrl() {
 // 请求序号：快速改搜索词/翻页时，慢的旧响应不许覆盖新结果
 let listSeq = 0
 
-async function fetchDocuments() {
+async function fetchDocuments({ silent = false } = {}) {
   const my = ++listSeq
   loading.value = true
   try {
@@ -66,12 +67,16 @@ async function fetchDocuments() {
     if (keyword.value) url += `&keyword=${encodeURIComponent(keyword.value)}`
     if (selectedTag.value) url += `&tag=${encodeURIComponent(selectedTag.value)}`
     const res = await api.get(url)
-    if (my !== listSeq) return
+    if (my !== listSeq) return false
     documents.value = res.documents || []
     total.value = res.total || 0
+    return true
   } catch (e) {
-    if (my !== listSeq) return
-    message.error('加载文档列表失败')
+    if (my !== listSeq) return false
+    console.error('Failed to load documents', e)
+    // 后台自动刷新失败（回前台短时无网）不弹 toast，留日志就够
+    if (!silent) message.error('加载文档列表失败')
+    return false
   } finally {
     if (my === listSeq) loading.value = false
   }
@@ -148,6 +153,27 @@ function getCardActions(doc) {
   ]
 }
 
+// 刷新不动 page：翻到第 3 页回前台，还是第 3 页
+const refreshing = ref(false)
+
+async function manualRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    const ok = await fetchDocuments()
+    fetchDocTags()
+    if (ok) message.success('已刷新')
+  } finally {
+    refreshing.value = false
+  }
+}
+
+// PWA 挂起再回前台不会重新 mount，列表会停在旧快照
+useVisibleRefresh(() => {
+  fetchDocuments({ silent: true })
+  fetchDocTags()
+})
+
 onMounted(() => {
   fetchDocuments()
   fetchDocTags()
@@ -162,9 +188,12 @@ onMounted(() => {
         searchable
         :filterable="docTags.length > 0"
         :filter-count="selectedTag ? 1 : 0"
+        refreshable
+        :refreshing="refreshing"
         v-model:keyword="keyword"
         search-placeholder="搜索文档"
         @search="handleSearch"
+        @refresh="manualRefresh"
         @open-filter="openFilter"
         @apply="applyTag"
         @clear="clearDraftTag"
@@ -215,7 +244,7 @@ onMounted(() => {
         <NPagination
           v-model:page="page"
           :page-count="Math.ceil(total / pageSize)"
-          @update:page="fetchDocuments"
+          @update:page="fetchDocuments()"
         />
       </div>
     </div>

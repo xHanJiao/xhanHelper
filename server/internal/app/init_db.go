@@ -46,6 +46,7 @@ func AllModels() []any {
 		&model.ConversationPlan{},
 		&model.UserProfile{},
 		&model.UserProfileFact{},
+		&model.ProfileRewriteState{},
 		&model.LLMCallIO{},
 		&model.LlmCostDetail{},
 		&model.LlmModelPrice{},

@@ -1,6 +1,6 @@
 # 用户画像 v2 · 设计
 
-> 日期：2026-11-20 | 状态：**P0 + P1 已实现**（P2 未做，见 §9）
+> 日期：2026-11-20 | 状态：**P0 + P1 + P2 已实现**（目标状态机只评估未建表，见 §9）
 > 上级文档：`docs/design/facts-system/`（事实系统，profile 的 storage 部分沿用它）
 > 人话版：[人话版.md](./人话版.md)（审阅用，不含实现细节）
 > 估算（开工）：15 面 / 2 缝（0 条需先建探针）/ 3 次真机往返 / 4 个待拍决定 · 9–16h
@@ -184,9 +184,22 @@ P0 阶段证据门槛只能靠 LLM 自判（"该信息是否为用户明确自�
 
 关键点：**重写的输入里必须有事件**。现在抽取只看对话字面，所以只能反复抄日期；有了事件聚合，"喝过几次啤酒"和"戒酒"才能被正确归并。
 
+> 实现（2026-11-20）：`internal/agent/profile_consolidate.go`。到期状态存
+> `profile_rewrite_states`（每用户一行：last_run_at / 上次输入计数 / last_status / last_error）；
+> 触发常量写死（7 天 / 3 事件 / 5 会话）。`cmd/profile-rebuild` 退化为它的 `--force` 薄壳
+> （同一份 prompt，不再两套）。
+
 ### 4.6 目标状态机（P2，仅预留）
 
 `长期目标` 的最终形态是带状态的对象（`open / waiting / done / dropped` + `deadline` + `next_step`），并与 plan/todo 同源。本期只做字段瘦身，**不新建表**；等 P2 评估时再决定是并入 plan 体系还是独立成表。
+
+> 评估结论（2026-11-20，P2 收尾时）：**不新建表，并入 plan 体系**。理由：
+> ① `ConversationPlan` + `PlanStep` 已经提供 `pending/in_progress/done` 三态、顺序与勾选，
+> 缺的只是 `deadline` 与 `dropped`，而这两项都能用 `PlanStep` 扩展字段表达；
+> ② 长期目标与"这周要做什么"本来就是同一根轴上的粗细两端，独立成表立刻要写双向同步；
+> ③ 目标目前只有 3 条、全部是方向性陈述（回西安 / 买房后生育 / 保持阅读），没有排期语义，
+> 为它建状态机是纯投机。等真的出现"要跟进度、要截止日"的目标（比如求职时间线）再动手。
+> 届时改 `PlanStep`（加 `deadline` + `dropped`），画像侧只保留"目标文本"，不复制状态。
 
 ---
 
@@ -264,9 +277,11 @@ P0 阶段证据门槛只能靠 LLM 自判（"该信息是否为用户明确自�
 整字段替换 + `CleanupOutdated` 只留最近 3 批 —— 重建不满意时旧值可能已被物理删除，回不来。
 
 ```
-server/data/profile-backup-<YYYY-MM-DD>.json
-  { field, value, status, batch_id, created_at }   // active + 全部 outdated
+server/data/profile-backup-<user8>-<YYYYMMDD-HHMMSS.纳秒>.json   // BJ 时间
+  { db, user_id, exported_at, facts: [...] }        // active + outdated + rejected 全量
 ```
+
+文件名带 user 与纳秒：`profile-rebuild` 与每周重写都落这个目录，秒级命名在多用户连续跑时会互相覆盖。
 
 `server/data/` 已 gitignore。这份文件同时充当"隔离区"：被剔掉的事件型条目全在里面，未来做人物/事件机制时是原料，现在不造导入管线。
 
@@ -299,13 +314,14 @@ server/data/profile-backup-<YYYY-MM-DD>.json
   [改写] 西安租两室一厅预算3000元内 → 计划回西安，租房预算 3000/月
 ```
 
-**写入时打标**（依赖 P1 的新列）：
+**写入时打标**（依赖 P1 的新列；2026-11-20 按实现修订）：
 
-- `source = migrated`（面板可一眼识别、可审）
-- `evidence_count = 2`（视为已证实，否则会被证据门槛打回 `pending`）
-- `observed_at` = 备份里的 `created_at`
+- `source = migrated`（一次性重建）/ `source = rewrite`（每周重写），面板可一眼区分
+- 直接以 `UserStated=true` 对账 → 新行落 `active`，不受证据门槛打回 `pending`；`evidence_count` 从 1 起算
+- `observed_at` = 本次重写时间（不是备份里的 `created_at`：那个值被历次整字段重写刷新过，不可信）
 - `last_seen_at` = now
 - `重要关系` 仍整字段跳过，LLM 不许碰
+- `source=user`（用户手写）与 `status=rejected`（用户删过）行由 `ReconcileFieldFacts` 保护，重写不越权
 
 ### 6.4 两个必须接受的近似
 
@@ -358,4 +374,20 @@ server/data/profile-backup-<YYYY-MM-DD>.json
 | 启动迁移的截断 | **不做**。评审指出改写内容会让旧文本不可恢复，且与 §6.1「只搬格子不清内容」自相矛盾。改为只改名 + 非白名单退场，配额收敛交给下一次 session_end（本条已同步 §6.1）。 |
 | 注入 `updated_at` | 从 `created_at` 改为 `last_seen_at`（缺省退回 `observed_at` → `created_at`），让 LLM 看到"最近一次被证实"的时间。 |
 
-P2（每周整合重写 + 目标状态机）未做：需要在库里新存"上次重写时间"、把事件接进提取输入，且设计里本就单列一期（2–4h）。当前增量提取 + 证据门槛 + 用户手改已能覆盖主要收益。
+~~P2（每周整合重写 + 目标状态机）未做~~：已于同日完成，见下节。
+
+### 2026-11-20 · P2 实现记录（每周整合重写）
+
+| 项 | 落地方式 |
+|---|---|
+| 与 `profile-rebuild` 的关系 | 核心逻辑搬进 `agent.ProfileConsolidator`（prompt/调用/diff/写入/备份全在一处），CLI 退化为薄壳调 `Rewrite(…, {DryRun, Force:true})`。**不再有两份 prompt**，避免改了抽取规则只改一处。 |
+| 到期状态 | 新建 `profile_rewrite_states`（user_id 主键 + last_run_at / 上次事件数·会话数·事实数 / last_status / last_error）。不选"从 facts.created_at 推导"：一次重写若无任何字段变化就不产生新行，推导值会停在上次真有变化的时刻，退化成每天白跑。 |
+| 触发 | 常量：距上次 ≥7 天，且近 7 天新增事件 ≥3 或新增会话 ≥5。不加配置项（先跑一段时间看真实分布再决定是否暴露）。**首次运行（无状态行）只记基线不重写**，避免上线/重启那一刻静默改写画像；手工 `--write` 会把 `last_run_at` 推到当下，之后满 7 天由 worker 接管。 |
+| 会话计数 | 新增 `ConversationRepo.CountTouchedSince(userID, since)`（按用户 + 返回 error）。不复用 `CountActive`：它不分用户且吞掉 error。 |
+| 证据输入 | 事件 = `EventRepo.ListUpdatedSince`（近窗、按 last_memory_at 排序）；记忆 = `UserMemoryRepo.ListUpdatedSince` 取窗口内最新 30 条。**近似**：设计写的是"高频记忆 top N"，库里没有可靠的高频口径，先按时间窗取。 |
+| 写入 | 逐字段 `ReconcileFieldFacts`（`UserStated=true` → 直接 active，不受增量证据门槛）。`重要关系` 整字段跳过（模型输出丢弃）。`source=user` / `rejected` 行由对账保护，重写不越权。 |
+| 失败处理 | 备份失败 → 本轮不落库（宁可少跑一次）；LLM/解析失败 → 记 `last_error`、**不推进** `last_run_at`，下次节拍自动重试；状态写失败只记日志。空输出（`{}` 或解析不出字段）按失败处理，不冒充"无事发生"。 |
+| 备份 | 落库前写 `profile-backup-<user8>-<YYYYMMDD-HHMMSS.纳秒>.json`（0600，BJ 时间，含历史批次）。落点：SQLite 跟库同目录、MySQL 用 `data/`。dry-run 不备份（不写库）。 |
+| 调度 | `CronRunner` 加 24h ticker + 启动补跑一次（ticker 首触在 +24h，重启频繁会永远等不到），running 标志防重入；`GetHookStatus` 增加 `profile_rewrite_remaining`。 |
+| CLI | `make profile-rebuild` 行为不变（默认 dry-run）、`--write` 落库；去掉没人用过的 `--events/--memories` 两个旋钮。 |
+| 前端 | 新增 `source=rewrite`，面板显示"每周整合"。 |

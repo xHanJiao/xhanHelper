@@ -39,6 +39,7 @@ struct ProfileFactItem: Identifiable, Decodable, Equatable {
         case "user": return "你写的"
         case "user_stated": return "对话自述"
         case "migrated": return "老数据迁移"
+        case "rewrite": return "每周整合"
         default: return "自动提取"
         }
     }

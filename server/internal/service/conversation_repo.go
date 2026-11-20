@@ -137,6 +137,15 @@ func (r *ConversationRepo) CountActive(ctx context.Context, since time.Duration)
 	return int(count)
 }
 
+// CountTouchedSince 统计该用户在 since 之后有活动的会话数（画像重写的活跃度门槛用）。
+func (r *ConversationRepo) CountTouchedSince(ctx context.Context, userID string, since time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("user_id = ? AND updated_at >= ? AND is_deleted = ?", userID, since, false).
+		Count(&count).Error
+	return count, err
+}
+
 // Touch 更新会话的 updated_at 到当前时间
 func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error

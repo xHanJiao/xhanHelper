@@ -43,4 +43,5 @@ const (
 	FactSourceUserStated = "user_stated" // 用户在本段对话中明确自陈
 	FactSourceUser       = "user"        // 用户在设置页手写/手改（LLM 不得覆盖）
 	FactSourceMigrated   = "migrated"    // 老数据重建/迁移写入
+	FactSourceRewrite    = "rewrite"     // 每周整合重写压缩产出
 )

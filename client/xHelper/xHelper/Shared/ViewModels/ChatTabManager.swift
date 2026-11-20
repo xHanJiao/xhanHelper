@@ -240,6 +240,7 @@ final class ChatTabManager: ObservableObject {
             currentTabID = nil
         }
         tab.viewModel.stopStreaming()
+        tab.viewModel.flushDraft() // 别丢最后 0.4s 的字；空白 tab 的草稿下次开新对话时回填
         tabs.remove(at: idx)
     }
 
@@ -280,6 +281,7 @@ final class ChatTabManager: ObservableObject {
                 victim.id != currentTabID
             else { break }
             victim.viewModel.stopStreaming()
+            victim.viewModel.flushDraft() // 淘汰前落盘，重新打开时草稿能回填
             tabs.remove(at: idx)
         }
     }

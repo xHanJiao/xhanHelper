@@ -130,13 +130,15 @@ const routes = [
     path: '/admin/message-debug/:id',
     name: 'MessageDebug',
     component: () => import('@/views/MessageDebugView.vue'),
-    meta: { adminOnly: true }
+    // 不挂 adminOnly：数据由后端 AdminMiddleware 兜底。前端在这里拦会在 isAdmin 缓存过期时
+    // 把管理员静默弹回 /chat（看着像"跳进新会话"），非管理员也只该看到 403 报错而不是被传送。
+    meta: {}
   },
   {
     path: '/admin/replay-compare/:id',
     name: 'ReplayCompare',
     component: () => import('@/views/ReplayCompareView.vue'),
-    meta: { adminOnly: true }
+    meta: {}
   },
   {
     path: '/admin/eval',

@@ -78,6 +78,23 @@ enum BrowserEngineRouter {
         if !cefAvailable { return .compat }
         return defaultEngine
     }
+
+    /// 空白 tab 的第一次 http(s) 导航 = 这个 tab 的「创建 URL」（D15 补充规则）。
+    ///
+    /// 空 tab 建的时候还没有 URL，只能按默认引擎起；用户随后在新标签页点推荐磁贴 / 地址栏输入
+    /// 才落到真实站点。不复算的话白名单与域名偏好整条被绕过（小红书落进 CEF）。
+    /// 返回 nil = 不动（tab 粘性）；否则返回该换成的引擎。
+    ///
+    /// - Parameter cefUsable: 主引擎已确认起不来时传 false —— 偏好表里写着 cef 也不能换，
+    ///   否则新 tab 会再降级回 compat，来回换。
+    static func rerouteTarget(current: BrowserEngine, url: URL, cefUsable: Bool = true) -> BrowserEngine? {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        let resolved = resolveEngine(url: url, cefAvailable: cefUsable)
+        guard resolved != current else { return nil }
+        // 第 4 条（域名偏好）在降级判定之前，可能返回 cef —— 起不来就别换
+        if resolved == .cef, !cefUsable { return nil }
+        return resolved
+    }
 }
 
 /// 按 eTLD+1 记住用户手动选过的引擎（D15 第 4 条：别烦用户）。

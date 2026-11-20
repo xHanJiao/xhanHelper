@@ -825,6 +825,13 @@ func validate(cfg *Config) error {
 	if cfg.LLM.APIKey == "" {
 		return fmt.Errorf("llm.api_key is required (set LLM_API_KEY env var)")
 	}
+	// admin_users 里的空串几乎一定是 ${VAR} 没注入：${VAR} 展开会把未设置的变量静默变空，
+	// 结果是配置看起来"有管理员"，实际所有 /api/admin/* 全 403（监控看板打不开）。
+	for _, id := range cfg.Server.AdminUsers {
+		if id == "" {
+			return fmt.Errorf("server.admin_users 含空值（多半是 ${XHAN_HELPER_ADMIN} 等环境变量未注入）")
+		}
+	}
 	// Activity（events.db）水位口径：只允许 time / segment（空 = time）。
 	// 字面量与 activity.WatermarkTime / WatermarkSegment 同步（config 是最底层，不反向依赖 activity/model）。
 	if m := cfg.Activity.WatermarkModeNormalized(); m != "time" && m != "segment" {

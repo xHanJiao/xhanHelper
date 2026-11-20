@@ -5,7 +5,7 @@ server:
   allowed_users: [your-username]
   memory_auto_extract: false # 第五轮：停掉 post_chat 抽取，只留 inline record_memory；事件拼装不按 source 过滤，仍会处理 inline 记忆
   admin_users:
-    - ${XHAN_HELPER_ADMIN}
+    - "${XHAN_HELPER_ADMIN}"
 
 db:
   host: 127.0.0.1

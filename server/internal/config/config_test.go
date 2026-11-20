@@ -103,6 +103,20 @@ func TestValidate_LLMBgAPIKey(t *testing.T) {
 	}
 }
 
+// admin_users 空串 = ${XHAN_HELPER_ADMIN} 漏注入（YAML 引号内展开为空），必须启动即失败：
+// 否则配置看起来「有管理员」，实际所有 /api/admin/* 静默 403（监控看板打不开）。
+func TestValidate_RejectsEmptyAdminUser(t *testing.T) {
+	cfg := &Config{
+		DB:     DBConfig{Driver: "sqlite", Database: "test.db"},
+		LLM:    LLMConfig{APIKey: "sk-test"},
+		Server: ServerConfig{AdminUsers: []string{""}},
+	}
+	err := validate(cfg)
+	if err == nil || !strings.Contains(err.Error(), "admin_users") {
+		t.Fatalf("expected admin_users error, got %v", err)
+	}
+}
+
 func TestContextWindowFor(t *testing.T) {
 	cfg := LLMConfig{
 		Model:               "deepseek-v4-flash",

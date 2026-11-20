@@ -71,4 +71,41 @@ final class BrowserEngineRouterTests: XCTestCase {
         XCTAssertEqual(EnginePreferenceStore.hostKey("baidu.com"), "baidu.com")
         XCTAssertNil(EnginePreferenceStore.hostKey(nil))
     }
+
+    // MARK: - 空白 tab 首次导航复算（D15 补充规则）
+
+    func testBlankTabFirstNavigationAdoptsSiteRule() {
+        let original = BrowserEngineRouter.videoWhitelistEnabled
+        defer { BrowserEngineRouter.videoWhitelistEnabled = original }
+        BrowserEngineRouter.videoWhitelistEnabled = true
+        // 默认 CEF 起的空 tab，点小红书磁贴 / 地址栏输小红书 → 换成兼容引擎
+        XCTAssertEqual(BrowserEngineRouter.rerouteTarget(
+            current: .cef, url: URL(string: "https://www.xiaohongshu.com/explore/1")!), .compat)
+        // 普通站不换（否则每开一个空白页都多一张 tab）
+        XCTAssertNil(BrowserEngineRouter.rerouteTarget(
+            current: .cef, url: URL(string: "https://www.baidu.com/")!))
+    }
+
+    func testBlankTabFirstNavigationFollowsEnginePreference() {
+        EnginePreferenceStore.reset()
+        defer { EnginePreferenceStore.reset() }
+        EnginePreferenceStore.setEngine(.compat, for: "example-pref.test")
+        XCTAssertEqual(BrowserEngineRouter.rerouteTarget(
+            current: .cef, url: URL(string: "https://www.example-pref.test/a")!), .compat)
+    }
+
+    func testBlankTabRerouteSkipsCefWhenEngineUnavailable() {
+        EnginePreferenceStore.reset()
+        defer { EnginePreferenceStore.reset() }
+        let url = URL(string: "https://www.example-cef-pref.test/a")!
+        EnginePreferenceStore.setEngine(.cef, for: url.host)
+        // 主引擎起不来：偏好写着 cef 也不能把 compat 换过去（换完又降级，来回换）
+        XCTAssertNil(BrowserEngineRouter.rerouteTarget(current: .compat, url: url, cefUsable: false))
+        XCTAssertEqual(BrowserEngineRouter.rerouteTarget(current: .compat, url: url), .cef)
+    }
+
+    func testBlankTabRerouteIgnoresNonHTTPSchemes() {
+        XCTAssertNil(BrowserEngineRouter.rerouteTarget(current: .cef, url: URL(string: "about:blank")!))
+        XCTAssertNil(BrowserEngineRouter.rerouteTarget(current: .cef, url: URL(string: "file:///tmp/a.pdf")!))
+    }
 }

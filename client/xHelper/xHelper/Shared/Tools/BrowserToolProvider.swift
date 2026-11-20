@@ -1918,11 +1918,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 实际执行关闭单个 tab（下载已确认取消或本无下载）。
-    private func performCloseTab(session: TabSession, tabId: String) -> LocalToolResult {
+    /// - Parameter recordRestore: 是否进 Cmd+Shift+T 恢复栈。换内核时收掉空白页传 false（恢复一张空白页没意义）。
+    private func performCloseTab(session: TabSession, tabId: String, recordRestore: Bool = true) -> LocalToolResult {
         let wasActive = activeTabId == tabId
         let hadDownloads = session.hasActiveDownloads
         // 无下载的 tab 才进恢复栈；取消了下载的 tab 恢复无意义（重开会再次触发下载/确认）
-        if !hadDownloads {
+        if recordRestore, !hadDownloads {
             closedStack.append((url: session.page.url, title: session.page.title ?? session.page.url?.host ?? "", artifactID: nil))
         }
         session.cancelLoadWait()
@@ -2105,6 +2106,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let session = TabSession(engine: BrowserEngineRouter.resolveEngine(url: nil, cefAvailable: Self.cefAvailable))
+        // 空白页还没有 URL，引擎只能按默认取；首次真实导航时再按站点规则复算一次（见 handleNavigation）
+        session.adoptsFirstSiteNavigation = true
         tabs[tabId] = session
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
@@ -2571,6 +2574,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 导航变化：更新 tab host + 记录历史；仅页面就绪（didFinish / .finished）后才提取 favicon。
     /// .provisional 来自 URL KVO，此时 DOM 可能还是上一页，提取会读到上一页的图标并写到新 host（见 docs/bugs/018）。
     private func handleNavigation(session: TabSession, tabId: String, url: URL, phase: URLChangePhase) {
+        // 空白 tab 的第一次 http(s) 导航 = 它的「创建 URL」：先按站点规则复算内核（D15 补充）。
+        // 换不换都清标记 —— 之后就是同 tab 内的普通导航，回到引擎粘性。
+        if session.adoptsFirstSiteNavigation,
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            session.adoptsFirstSiteNavigation = false
+            if let target = BrowserEngineRouter.rerouteTarget(
+                current: session.engine, url: url, cefUsable: !isCefUnavailable) {
+                Task { @MainActor in self.rerouteBlankTab(url: url, tabId: tabId, to: target) }
+                return   // 不记历史、不更新 host：这一页交给换出来的新 tab
+            }
+        }
         let host = url.host ?? ""
         if !host.isEmpty {
             rightSidebar?.updateTabHost(id: tabId, host: host)
@@ -2595,6 +2609,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             ActivityClient.emit(events)
         }
         #endif
+    }
+
+    /// 空白 tab 落到真实站点、但站点规则要求换内核：开一张对的 tab，静默收掉空白那张。
+    /// 空白页没有滚动 / 表单 / 回退栈可丢，重建代价为零；不进恢复栈（Cmd+Shift+T 不该恢复空白页）。
+    private func rerouteBlankTab(url: URL, tabId: String, to engine: BrowserEngine) {
+        // Task 延迟执行的窗口里用户可能已经把这张空白页关掉：别再多开一张
+        guard let session = tabs[tabId] else { return }
+        // 就地导航已经把请求打到目标站了，先停掉，别白打一次
+        session.page.stopLoading()
+        // 先开新 tab（会切激活），再收旧 tab —— 反过来会先触发一轮"关掉激活页 → 切到别的 tab"
+        openURL(url, engine: engine)
+        _ = performCloseTab(session: session, tabId: tabId, recordRestore: false)
     }
 
     /// 提取当前页 favicon href 并交给 FaviconStore 缓存。host / pageURL 在 await 前一起捕获，
@@ -2956,6 +2982,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// agent 打开的标签（用于空闲超时自动关闭，用户自开的标签不受影响）
         var isAgentTab = false
+        /// 空白页建出来的 tab：还没落到任何真实站点。首次 http(s) 导航要按站点规则复算内核（D15 补充）。
+        var adoptsFirstSiteNavigation = false
         /// 标签归属（client_tool_call owner 下发）："main:<convID>" / "subagent:<convID>"，nil=用户标签。
         /// 并发子任务共享浏览器实例，close_tab 保护只允许关闭同归属标签（防互相踩踏）。
         var owner: String?

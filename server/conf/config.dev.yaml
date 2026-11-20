@@ -3,10 +3,10 @@ server:
   registration_enabled: true
   disable_background_tasks: false # 开启后台任务（会话后处理/归档/反思等）
   memory_auto_extract: false # 第五轮：全环境停掉 post_chat 抽取（见 memory-quality/design.md）
+  # 真实值放 server/.env（make dev 会 source）；漏注入会启动失败，不会静默 403。
+  # 必须带引号：${VAR} 展开为空时，裸 `- ` 会被 YAML 解析成 null 并被整条丢弃（列表变空，校验形同虚设）。
   admin_users:
-    - 11111111-1111-4111-8111-111111111111
-    - 22222222-2222-4222-8222-222222222222
-    - 33333333-3333-4333-8333-333333333333
+    - "${XHAN_HELPER_ADMIN}"
   # allowed_users:
   #   - your-username
 

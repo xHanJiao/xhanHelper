@@ -1015,7 +1015,7 @@ struct ChatView: View {
             IconButton(
                 visibility: .always,
                 context: ctx,
-                symbol: "paperclip",
+                symbol: "photo.badge.plus",
                 tint: Color("appAccent"),
                 isEnabled: !viewModel.isUploadingAttachments,
                 tooltip: "添加图片",

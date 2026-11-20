@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 
 /// 全屏输入面板（macOS）：盖住聊天中栏整高，供写长文本（手账等）。
-/// 键位与普通输入栏**完全一致**：Enter 发送、Shift+Enter 换行、Esc 收起。
+/// 键位与普通输入栏**完全一致**：Enter 发送、Shift+Enter 换行、Esc 收起（输入法组词中只取消拼音）。
 /// 草稿由外部绑定（与普通输入栏共用同一份 `draftText`），发送/停止也走外部回调。
 struct ExpandedComposer: View {
     @Binding var text: String
@@ -21,6 +21,11 @@ struct ExpandedComposer: View {
 
     @EnvironmentObject private var fontSizeManager: FontSizeManager
     @FocusState private var isFocused: Bool
+
+    /// 输入法组词中：Enter 是确认拼音、Esc 是取消拼音，都该放行给输入法。
+    private var isIMEComposing: Bool {
+        (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,7 +58,7 @@ struct ExpandedComposer: View {
                     let modifiers = keyPress.modifiers
                     guard !modifiers.contains(.shift), !modifiers.contains(.option) else { return .ignored }
                     // IME 组合态下交给输入法确认。
-                    if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
+                    if isIMEComposing {
                         return .ignored
                     }
                     guard canSend else { return .handled }
@@ -63,6 +68,8 @@ struct ExpandedComposer: View {
                     return .handled
                 }
                 .onKeyPress(.escape, phases: .down) { _ in
+                    // 组词中 Esc 只取消拼音（放行给输入法），不收起面板。
+                    if isIMEComposing { return .ignored }
                     onClose()
                     return .handled
                 }

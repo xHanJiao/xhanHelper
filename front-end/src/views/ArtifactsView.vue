@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NPopconfirm, NSpin, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
+import { useVisibleRefresh } from '@/composables/useVisibleRefresh'
 
 // 灵阅列表：单列大卡（手机）、桌面自动 2–3 列。卡片只显示标题/摘要/标签/日期，
 // 正文点进去再取（列表接口不带 html）。
@@ -33,7 +34,7 @@ const selectedCount = computed(() => selectedIds.value.length)
 // 请求序号：快速切标签 / 加载更多在飞时切筛选，只让最后一次响应落地
 let listSeq = 0
 
-async function fetchList(reset = true) {
+async function fetchList(reset = true, { silent = false } = {}) {
   const my = ++listSeq
   loading.value = true
   try {
@@ -44,14 +45,17 @@ async function fetchList(reset = true) {
       url += `&tags=${selectedTags.value.map((t) => encodeURIComponent(t)).join(',')}`
     }
     const res = await api.get(url)
-    if (my !== listSeq) return
+    if (my !== listSeq) return false
     const list = res.items || []
     items.value = reset ? list : [...items.value, ...list]
     total.value = res.total || 0
+    return true
   } catch (e) {
-    if (my !== listSeq) return
+    if (my !== listSeq) return false
     console.error('Failed to load artifacts', e)
-    message.error('加载灵阅列表失败')
+    // 后台自动刷新失败（回前台短时无网）不弹 toast，留日志就够
+    if (!silent) message.error('加载灵阅列表失败')
+    return false
   } finally {
     if (my === listSeq) loading.value = false
   }
@@ -181,6 +185,27 @@ function formatDate(value) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+// 页头刷新：失败时 fetchList 自己弹过错误提示，这里不再弹成功
+const refreshing = ref(false)
+
+async function manualRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    const ok = await fetchList()
+    fetchTags()
+    if (ok) message.success('已刷新')
+  } finally {
+    refreshing.value = false
+  }
+}
+
+// PWA 挂起再回前台不会重新 mount，列表会停在旧快照；多选态里不刷，别把勾选洗掉
+useVisibleRefresh(() => {
+  fetchList(true, { silent: true })
+  fetchTags()
+}, { enabled: () => !selecting.value })
+
 onMounted(() => {
   fetchList()
   fetchTags()
@@ -195,9 +220,12 @@ onMounted(() => {
         :searchable="!selecting"
         :filterable="!selecting && tags.length > 0"
         :filter-count="selecting ? 0 : selectedTags.length"
+        :refreshable="!selecting"
+        :refreshing="refreshing"
         v-model:keyword="keyword"
         search-placeholder="搜索标题/摘要"
         @search="runSearch"
+        @refresh="manualRefresh"
         @open-filter="openFilter"
         @apply="applyFilters"
         @clear="clearFilters"

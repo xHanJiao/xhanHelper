@@ -12,11 +12,14 @@ const props = defineProps({
   keyword: { type: String, default: '' },
   searchPlaceholder: { type: String, default: '搜索' },
   filterable: { type: Boolean, default: false },
-  filterCount: { type: Number, default: 0 }
+  filterCount: { type: Number, default: 0 },
+  // 列表页的刷新入口（手机 PWA 没有地址栏，只能在页头给一个）
+  refreshable: { type: Boolean, default: false },
+  refreshing: { type: Boolean, default: false }
 })
 
 // clear = 清面板草稿；reset = 清已生效的筛选（胶囊行上的「清除」）
-const emit = defineEmits(['update:keyword', 'search', 'apply', 'clear', 'reset', 'open-filter'])
+const emit = defineEmits(['update:keyword', 'search', 'apply', 'clear', 'reset', 'open-filter', 'refresh'])
 
 const route = useRoute()
 const { isMobile, isDesktop } = useMobile()
@@ -102,6 +105,19 @@ watch(() => props.filterable, (v) => {
       <h1 class="ph-title">{{ title }}</h1>
 
       <div class="ph-actions">
+        <button
+          v-if="refreshable"
+          class="icon-btn ph-refresh"
+          :class="{ busy: refreshing }"
+          type="button"
+          aria-label="刷新"
+          title="刷新"
+          :disabled="refreshing"
+          @click="emit('refresh')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v4.5h-4.5"/></svg>
+        </button>
+
         <button
           v-if="searchable && !searchOpen"
           class="icon-btn"
@@ -264,6 +280,11 @@ watch(() => props.filterable, (v) => {
   .ph-divide { display: block; }
 }
 .ph-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* 刷新中：图标转圈 + 高亮，别被 .icon-btn:disabled 的 40% 透明度压灰 */
+.ph-refresh.busy { color: var(--color-primary); background: var(--color-primary-soft); }
+.ph-refresh.busy:disabled { opacity: 1; }
+.ph-refresh.busy svg { animation: ph-spin 0.75s linear infinite; }
+@keyframes ph-spin { to { transform: rotate(360deg); } }
 .ph-badge {
   position: absolute;
   top: -3px;

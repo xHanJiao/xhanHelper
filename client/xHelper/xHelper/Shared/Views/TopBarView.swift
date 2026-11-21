@@ -403,12 +403,12 @@ struct TopBarView: View {
                              enabled: { true },
                              action: { rightSidebar.toggle() },
                              help: { "切换右侧栏" }),
-                // 深浅色切换：深色=月亮、浅色=太阳；跟随系统时按当前实际配色显示，点击切到相反显式模式
+                // 深浅色切换：深色=太阳、浅色=月亮；跟随系统时按当前实际配色显示，点击切到相反显式模式
                 TopBarButton(id: "color-scheme",
-                             icon: { colorSchemeManager.selectedScheme == .dark ? "moon.fill" : "sun.max.fill" },
+                             icon: { effectiveIsDark ? "sun.max.fill" : "moon.fill" },
                              enabled: { true },
                              action: { toggleColorScheme() },
-                             help: { colorSchemeManager.selectedScheme == .dark ? "切换浅色模式" : "切换深色模式" }),
+                             help: { effectiveIsDark ? "切换浅色模式" : "切换深色模式" }),
                 // 设置固定最右
                 TopBarButton(id: "settings", icon: { "gear" },
                              enabled: { true },
@@ -452,17 +452,21 @@ struct TopBarView: View {
         )
     }
 
+    #if os(macOS)
+    /// 当前实际生效的是否为深色（跟随系统时看环境里的实际配色）
+    private var effectiveIsDark: Bool {
+        switch colorSchemeManager.selectedScheme {
+        case .system: return colorScheme == .dark
+        case .light:  return false
+        case .dark:   return true
+        }
+    }
+    #endif
+
     /// 深浅色切换：light ↔ dark 互切；跟随系统时先落到与当前实际配色相反的模式。
     private func toggleColorScheme() {
         #if os(macOS)
-        switch colorSchemeManager.selectedScheme {
-        case .system:
-            colorSchemeManager.selectedScheme = (colorScheme == .dark) ? .light : .dark
-        case .light:
-            colorSchemeManager.selectedScheme = .dark
-        case .dark:
-            colorSchemeManager.selectedScheme = .light
-        }
+        colorSchemeManager.selectedScheme = effectiveIsDark ? .light : .dark
         #endif
     }
 

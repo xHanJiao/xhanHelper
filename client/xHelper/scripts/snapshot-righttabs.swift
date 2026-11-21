@@ -70,7 +70,7 @@ private struct TopBar: View {
             capsule(actions, highlighted: highlighted)
             Rectangle().fill(p.divider).frame(width: 1, height: 14).padding(.horizontal, 2)
             capsule(["arrow.up.left.and.arrow.down.right", "sidebar.trailing",
-                     p.dark ? "moon.fill" : "sun.max.fill", "gearshape"], highlighted: [])
+                     p.dark ? "sun.max.fill" : "moon.fill", "gearshape"], highlighted: [])
         }
         .padding(.trailing, 16)
         .frame(height: 46)

@@ -37,7 +37,8 @@
 
 - `resetEditorSession()`：记住光标和内部滚动位置 → `value=''` → `value=原文` → `setSelectionRange` 还原 → `scrollTop` 还原 → 重新量高；
 - 两个入口都挂：`@paste`（光标操作栏粘贴）与 `@beforeinput`（`inputType === 'insertFromPaste'`，覆盖输入框上方「粘贴」提示），用一次 `setTimeout(0)` debounce 去重；
-- 图片粘贴逻辑不变：带图片且不带文字的粘贴仍然走 `addImages`，不重建会话。
+- 图片粘贴逻辑不变：带图片且不带文字的粘贴仍然走 `addImages`，不重建会话；
+- 只对 iOS 生效（`useDevice().isIOS`）：桌面/安卓没有这个降级态，不值得白丢一次撤销栈。
 
 **真机对比过 5 种做法，只有「重写 value」有效**，其余都无效：
 

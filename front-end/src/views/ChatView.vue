@@ -1624,11 +1624,12 @@ function onComposerPaste(e) {
     addImages(files)
     return
   }
-  scheduleEditorReset()
+  // 只有 iOS 有这个降级态；桌面/安卓粘贴白丢一次撤销栈不值当
+  if (isIOS) scheduleEditorReset()
 }
 
 function onComposerBeforeInput(e) {
-  if (e.inputType === 'insertFromPaste') scheduleEditorReset()
+  if (isIOS && e.inputType === 'insertFromPaste') scheduleEditorReset()
 }
 
 function onComposerDrop(e) {

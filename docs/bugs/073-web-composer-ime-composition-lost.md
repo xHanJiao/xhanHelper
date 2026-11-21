@@ -2,7 +2,7 @@
 
 - 日期：2026-11-21
 - 平台：iOS PWA（主屏独立窗口，原生拼音输入法），现象与具体系统版本无关
-- 相关：`docs/design/voice-ptt-composer/`（输入框形态）、`docs/bugs/069`（同族的「丢光标」）
+- 相关：`docs/design/voice-ptt-composer/`（输入框形态）、`docs/bugs/069`（同族的「丢光标」）、`docs/bugs/074`（同一输入框的另一个坑：粘贴后输入法降级，与本条无因果关系）
 
 ## 问题表现
 

@@ -96,3 +96,6 @@
 - 2026-11-21 · 输入框从 naive `NInput` 换回原生 `<textarea>`（高度自己量、组合输入期间不量高，
   修「打拼音丢光标」），「录音时 textarea 不卸载」这条约束不变。见 `docs/bugs/073`。
   影响文件：`front-end/src/views/ChatView.vue`。
+
+- 2026-11-21 · 粘贴文字后重写一次输入框 value（重建 WebKit 编辑会话），修「粘贴后拼音不组词、数字落成圈码」。
+  代价：该次粘贴不能撤销。见 `docs/bugs/074`。影响文件：`front-end/src/views/ChatView.vue`。

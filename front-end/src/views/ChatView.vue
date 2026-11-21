@@ -1588,13 +1588,47 @@ function onFilesChosen(e) {
   if (files.length) addImages(files)
 }
 
+// 粘贴文字后重写一次 value：iOS 上粘贴会把输入法打成「击键直接插一个字符」的降级态
+// （拼音不再组词、数字落成圈码，见 docs/bugs/074）。重写 value 能逼 WebKit 重建编辑会话，
+// 代价是这次粘贴不再能撤销。不要改成 blur/focus 或 execCommand：真机验证过那两条都没用。
+function resetEditorSession() {
+  const el = composerRef.value
+  if (!el) return
+  const value = el.value
+  const start = el.selectionStart ?? value.length
+  const end = el.selectionEnd ?? value.length
+  const scrollTop = el.scrollTop
+  el.value = ''
+  el.value = value
+  el.setSelectionRange(start, end)
+  el.scrollTop = scrollTop
+  autoGrow()
+}
+
+// paste 事件和 beforeinput(insertFromPaste) 都会到；两种入口（光标操作栏、输入框上方「粘贴」提示）都覆盖，
+// 用一次 debounce 保证只重建一次
+let editorResetTimer = null
+function scheduleEditorReset() {
+  clearTimeout(editorResetTimer)
+  editorResetTimer = setTimeout(() => {
+    editorResetTimer = null
+    resetEditorSession()
+  }, 0)
+}
+
 // 粘贴图片：剪贴板同时带文字时不接管，让用户拿到文字（与 macOS 端规则一致）
 function onComposerPaste(e) {
   const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'))
-  if (!files.length) return
-  if (e.clipboardData.getData('text/plain').trim()) return
-  e.preventDefault()
-  addImages(files)
+  if (files.length && !e.clipboardData.getData('text/plain').trim()) {
+    e.preventDefault()
+    addImages(files)
+    return
+  }
+  scheduleEditorReset()
+}
+
+function onComposerBeforeInput(e) {
+  if (e.inputType === 'insertFromPaste') scheduleEditorReset()
 }
 
 function onComposerDrop(e) {
@@ -1844,6 +1878,7 @@ function handleContainerClick(e) {
             rows="1"
             :placeholder="chat.isStreaming ? '继续输入，Enter 加入队列...' : '发消息...'"
             @keydown="onComposerKeydown"
+            @beforeinput="onComposerBeforeInput"
             @compositionstart="inputComposing = true"
             @compositionend="endComposing"
             @blur="endComposing"

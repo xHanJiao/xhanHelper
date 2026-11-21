@@ -4,6 +4,8 @@ import WebKit
 struct BrowserTabView: View {
     /// 只认内核协议（`BrowserPage`）：WK 与 CEF 走同一份地址栏/工具栏。
     let page: BrowserPage
+    /// 落地页还没 commit 时是否自动把焦点给地址栏（仅空白页需要；换引擎重建的页面传 false）
+    var autoFocusAddressBar: Bool = true
     let onSetupErrorBinding: ((_ onError: @escaping (String) -> Void) -> Void)?
     @State private var urlText = ""
     @State private var isLoading = false
@@ -51,7 +53,7 @@ struct BrowserTabView: View {
         VStack(spacing: 0) {
             toolbar
             if bookmarksBarState.isVisible {
-                BookmarksBarView()
+                BookmarksBarView(page: page)
                 Divider()
             }
             if isLoading && progress > 0 && progress < 1 {
@@ -99,7 +101,7 @@ struct BrowserTabView: View {
             // 页内查找按内核协议接（WK 报命中与否、CEF 报命中数）
             findCoordinator.attach(page)
             // 新标签页自动聚焦地址栏
-            if page.url == nil || Self.isLocalPlaceholder(page.url) {
+            if autoFocusAddressBar, page.url == nil || Self.isLocalPlaceholder(page.url) {
                 DispatchQueue.main.async { urlFocused = true }
             }
         }

@@ -1918,12 +1918,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 实际执行关闭单个 tab（下载已确认取消或本无下载）。
-    /// - Parameter recordRestore: 是否进 Cmd+Shift+T 恢复栈。换内核时收掉空白页传 false（恢复一张空白页没意义）。
-    private func performCloseTab(session: TabSession, tabId: String, recordRestore: Bool = true) -> LocalToolResult {
+    private func performCloseTab(session: TabSession, tabId: String) -> LocalToolResult {
         let wasActive = activeTabId == tabId
         let hadDownloads = session.hasActiveDownloads
         // 无下载的 tab 才进恢复栈；取消了下载的 tab 恢复无意义（重开会再次触发下载/确认）
-        if recordRestore, !hadDownloads {
+        if !hadDownloads {
             closedStack.append((url: session.page.url, title: session.page.title ?? session.page.url?.host ?? "", artifactID: nil))
         }
         session.cancelLoadWait()
@@ -2114,10 +2113,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
         session.page.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(page: session.page,
-                                                              onSetupErrorBinding: { [weak session] onError in
-                                                                  session?.onNavigationError = onError
-                                                              })),
+                              content: tabContentView(for: session),
                               intoRightPane: intoRight, engine: session.engine)
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
@@ -2281,15 +2277,45 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         session.page.load(url)
     }
 
+    /// 点书签（收藏夹栏）：在当前这页里打开。
+    ///
+    /// 空白页还没有「自己的站点」，点书签就是它的第一次导航，就地加载（引擎由 handleNavigation 复算）；
+    /// 已经有内容的页面仍按惯例开新 tab。
+    /// - Parameter page: 发出点击的那个页面（分屏下别用 `activeTabId` 猜，它可能指着另一窗格）。
+    func openBookmark(_ url: URL, from page: BrowserPage?) {
+        // 非 http(s)（file:/data: 等）跟着 resolveEngine 的规则走（→ compat），别塞进当前空白页
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            openURL(url)
+            return
+        }
+        if let page, let session = sessionOwning(page: page), session.adoptsFirstSiteNavigation {
+            page.load(url)
+            return
+        }
+        openURL(url)
+    }
+
     /// 把 session 挂进右侧栏的 tab 条（openURL 与 CEF 弹窗共用）
     private func presentTab(tabId: String, session: TabSession, title: String,
                             isAgentTab: Bool = false, agentOwner: String? = nil) {
         rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
-                              content: AnyView(BrowserTabView(page: session.page,
-                                                              onSetupErrorBinding: { [weak session] onError in
-                                                                  session?.onNavigationError = onError
-                                                              })), isAgentTab: isAgentTab, agentOwner: agentOwner,
+                              content: tabContentView(for: session), isAgentTab: isAgentTab, agentOwner: agentOwner,
                               engine: session.engine)
+    }
+
+    /// tab 内容视图（新建 tab 与「空白页换引擎」共用）。
+    ///
+    /// `.id(page)` 必须有：地址栏状态 / 页内查找都在 `BrowserTabView.onAppear` 里绑到 page 上，
+    /// 换页时若不重挂，`BrowserWebView.updateNSView` 只会打一条 stale 日志、界面停在旧页面。
+    /// - Parameter autoFocusAddressBar: 换引擎重建的页面传 false —— 新 WK 页在 commit 前 `url` 是 nil，
+    ///   会命中「空白页自动聚焦」分支，把地址栏钉成空的并抢走焦点。
+    private func tabContentView(for session: TabSession, autoFocusAddressBar: Bool = true) -> AnyView {
+        AnyView(BrowserTabView(page: session.page,
+                               autoFocusAddressBar: autoFocusAddressBar,
+                               onSetupErrorBinding: { [weak session] onError in
+                                   session?.onNavigationError = onError
+                               })
+            .id(ObjectIdentifier(session.page)))
     }
 
     /// 按页面反查 session（弹窗回调 / 页面自关窗只拿得到页面）
@@ -2574,15 +2600,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 导航变化：更新 tab host + 记录历史；仅页面就绪（didFinish / .finished）后才提取 favicon。
     /// .provisional 来自 URL KVO，此时 DOM 可能还是上一页，提取会读到上一页的图标并写到新 host（见 docs/bugs/018）。
     private func handleNavigation(session: TabSession, tabId: String, url: URL, phase: URLChangePhase) {
+        // 已经决定要换引擎、Task 还没跑：旧页在销毁前的回调（didFinish / 重定向）一律不记
+        if session.pendingEngineSwap { return }
         // 空白 tab 的第一次 http(s) 导航 = 它的「创建 URL」：先按站点规则复算内核（D15 补充）。
         // 换不换都清标记 —— 之后就是同 tab 内的普通导航，回到引擎粘性。
         if session.adoptsFirstSiteNavigation,
            let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             session.adoptsFirstSiteNavigation = false
             if let target = BrowserEngineRouter.rerouteTarget(
-                current: session.engine, url: url, cefUsable: !isCefUnavailable) {
-                Task { @MainActor in self.rerouteBlankTab(url: url, tabId: tabId, to: target) }
-                return   // 不记历史、不更新 host：这一页交给换出来的新 tab
+                current: session.engine, url: url,
+                // 平台不支持主引擎（iOS）也要算「不可用」，否则会白白重建一次页面
+                cefUsable: Self.cefAvailable && !isCefUnavailable) {
+                session.pendingEngineSwap = true
+                Task { @MainActor in self.swapBlankTabEngine(url: url, tabId: tabId, to: target) }
+                return   // 不记历史、不更新 host：这一页交给换出来的新页面
             }
         }
         let host = url.host ?? ""
@@ -2611,16 +2642,22 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #endif
     }
 
-    /// 空白 tab 落到真实站点、但站点规则要求换内核：开一张对的 tab，静默收掉空白那张。
-    /// 空白页没有滚动 / 表单 / 回退栈可丢，重建代价为零；不进恢复栈（Cmd+Shift+T 不该恢复空白页）。
-    private func rerouteBlankTab(url: URL, tabId: String, to engine: BrowserEngine) {
-        // Task 延迟执行的窗口里用户可能已经把这张空白页关掉：别再多开一张
-        guard let session = tabs[tabId] else { return }
-        // 就地导航已经把请求打到目标站了，先停掉，别白打一次
-        session.page.stopLoading()
-        // 先开新 tab（会切激活），再收旧 tab —— 反过来会先触发一轮"关掉激活页 → 切到别的 tab"
-        openURL(url, engine: engine)
-        _ = performCloseTab(session: session, tabId: tabId, recordRestore: false)
+    /// 空白 tab 落到真实站点、但站点规则要求换内核：在**同一个 tab 里**把页面换成对的引擎。
+    /// 空白页没有滚动 / 表单 / 回退栈可丢，重建代价为零；tabId、tab 位置、分屏窗格、激活态全不动。
+    private func swapBlankTabEngine(url: URL, tabId: String, to engine: BrowserEngine) {
+        // Task 延迟执行的窗口里用户可能已经把这张空白页关掉：别白建一个页面
+        guard let old = tabs[tabId] else { return }
+        old.cancelLoadWait()
+        // 就地导航已经把请求打到目标站了，先停掉（CEF 走 CloseBrowser(force_close)）
+        tearDownWebView(old)
+        let session = TabSession(engine: engine)
+        tabs[tabId] = session
+        bindSessionTitle(session: session, tabId: tabId)
+        bindSessionUI(session: session)
+        session.page.load(url)
+        rightSidebar?.updateTabContent(id: tabId,
+                                       content: tabContentView(for: session, autoFocusAddressBar: false))
+        rightSidebar?.updateTabTitle(id: tabId, title: url.host ?? "新标签页")
     }
 
     /// 提取当前页 favicon href 并交给 FaviconStore 缓存。host / pageURL 在 await 前一起捕获，
@@ -2790,10 +2827,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 否则该 tab 内再点 target=_blank / window.open 会静默失败（createWebViewWith 返回 nil）。
         bindSessionUI(session: newSession)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(page: newSession.page,
-                                                              onSetupErrorBinding: { [weak newSession] onError in
-                                                                  newSession?.onNavigationError = onError
-                                                              })), isAgentTab: isAgentTab, agentOwner: owner, engine: newSession.engine)
+                              content: tabContentView(for: newSession), isAgentTab: isAgentTab, agentOwner: owner, engine: newSession.engine)
         if let targetURL {
             newSession.page.load(targetURL)
         }
@@ -2984,6 +3018,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var isAgentTab = false
         /// 空白页建出来的 tab：还没落到任何真实站点。首次 http(s) 导航要按站点规则复算内核（D15 补充）。
         var adoptsFirstSiteNavigation = false
+        /// 首次导航已判定要换引擎、换页面的 Task 还没跑：期间旧页的导航回调一律忽略
+        var pendingEngineSwap = false
         /// 标签归属（client_tool_call owner 下发）："main:<convID>" / "subagent:<convID>"，nil=用户标签。
         /// 并发子任务共享浏览器实例，close_tab 保护只允许关闭同归属标签（防互相踩踏）。
         var owner: String?

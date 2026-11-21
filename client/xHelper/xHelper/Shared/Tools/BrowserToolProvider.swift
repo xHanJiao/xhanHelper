@@ -2896,6 +2896,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 tilesHTML += """
                   <a href="\(site.url)"><span class="icon">\(emoji)</span><span class="label">\(site.title)</span></a>\n
                 """
+            } else if let uri = FaviconStore.shared.inlineDataURI(forHost: site.host) {
+                // 有本地缓存就内联：站点不可达时远端 favicon 会一直挂住（图空、也没有字母兜底）
+                tilesHTML += """
+                  <a href="\(site.url)"><img class="favicon" src="\(uri)"><span class="label">\(site.title)</span></a>\n
+                """
             } else {
                 let firstChar = String(site.host.prefix(1)).uppercased()
                 tilesHTML += """

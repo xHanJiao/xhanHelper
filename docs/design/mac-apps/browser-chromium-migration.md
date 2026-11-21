@@ -788,6 +788,7 @@ main                       ← 继续每天发版（WK，现状不变）
 | 日期 | 决定 / 变更 | 影响文件 |
 |---|---|---|
 | 2026-11-20 | **空白 tab 首次导航复算内核，且在同一 tab 内换引擎**（bug：新标签页推荐磁贴 / 地址栏输入 / 点书签进小红书落进 CEF，站点记忆失效）。空白 tab 的第一个 http(s) 导航视为「创建 URL」，按 §9.2.2 复算；不一致就换掉这个 tab 的页面（不新开 tab、不动 tabId / 分屏窗格 / 激活态），之后的站内导航仍按 tab 粘性。CEF 起不来时不往 cef 换（防来回换）。同批把「空白页点书签」也改成就地打开（其余页面仍开新 tab） | `Shared/Services/BrowserEngineRouter.swift`、`Shared/Tools/BrowserToolProvider.swift`、`Shared/Views/BookmarksBarView.swift`、`Shared/Views/BrowserTabView.swift`、`Tests/BrowserEngineCoreTests/BrowserEngineRouterTests.swift`、本文档 §9.2.2 |
+| 2026-11-21 | **新标签页磁贴图标改用本地 favicon 缓存内联**（bug：Google / GitHub 磁贴全空、点击也没反应 —— 直连不可达时远端 favicon 请求会挂住，既不 load 也不 error，连字母兜底都不出现）。改为把 `favicons/v<版本>/<host>.png` 原样内联成 `data:` URI，图标不再依赖实时网络；**缓存文件后缀是 `.png` 但存的是原始响应**（GitHub 那份其实是 SVG），按字节嗅探 MIME。没缓存的 host 仍走远端 `<img>` + 首字母兜底。注：磁贴点击能否打开仍取决于该站网络可达性，与图标无关 | `Shared/Services/FaviconStore.swift`、`Shared/Tools/BrowserToolProvider.swift` |
 | 2026-11-13 | **D20**：CEF 的 `window.open` / `target=_blank` 不再拦成兄弟 tab，改成让 CEF 自己建 popup browser 再嵌进我们的 tab（真 `window.opener`）；页面 `window.close()` 自动收 tab。用户拍板「B9 一起解决」 | `xHelperMac/CEF/CefBridge.{h,mm}`、`Shared/Services/BrowserPage.swift`、`Shared/Tools/BrowserToolProvider.swift`、本文档 §9.2.14 / §13.1 |
 | 2026-11-13 | 三层媒体检测第 2 层收窄为「只对像 H.264 的源报」，避免 WebM/VP9 页面误报 | `xHelperMac/CEF/CefDisguise.h`、`Shared/Views/BrowserTabView.swift`、本文档 §9.2.13 |
 | 2026-11-13 | **D18 修订**：兼容 tab 从「只读开放、写操作禁」改为「读写都开放」（用户拍板：视频站也需要 agent 点按钮；用户标签写入仍走既有授权闸门）。改文档不改代码 | 本文档 D18 / §9.1 / §9.2.5 / 第十二章 |

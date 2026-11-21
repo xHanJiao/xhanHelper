@@ -59,7 +59,7 @@ let coldStartPending = true
  *
  * ── 七、输入框收起 ──────────────────────────────────────────────────────────
  *   toggleInput()          → 手机上 ⌄ 按钮收起/展开整张输入卡（收起要同时 blur 退键盘）
- *   watch(inputVisible)    → nextTick + 触发 textarea input 事件（自适应高度）
+ *   watch(inputVisible / voiceBarOpen) → nextTick + autoGrow()（原生 textarea 自增高）
  *   语音连续对话：麦克风按钮开关会话，判停一句自动提交一轮；浮层「打断」只停朗读
  *
  * ── 八、页面卸载 ─────────────────────────────────────────────────────────────
@@ -77,7 +77,6 @@ import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
 import { api } from '@/api/client'
 import {
-  NInput,
   NButton,
   NTooltip,
   useMessage
@@ -351,6 +350,7 @@ onMounted(() => {
   window.addEventListener('keyup', onVoiceKeyUp)
   window.addEventListener('blur', onVoiceWindowBlur)
   nextTick(onLayoutResize)
+  nextTick(autoGrow)
   // 复用已存在会话（从其它 tab 返回，route id 与 store 中 conversationId 相同，
   // 导致 watcher 三分支全跳过）时，主动同步一次：拉取最新消息 + 滚到底，
   // 避免看到陈旧列表且停在旧滚动位置。
@@ -361,6 +361,9 @@ onMounted(() => {
 })
 
 const inputValue = ref('')
+const composerRef = ref(null)
+// 拼音/日文等输入法的「组合输入中」标记：组合期间不量高度、不动消息列表滚动（见 docs/bugs/073）
+const inputComposing = ref(false)
 const messagesEndRef = ref(null)
 const messagesContainerRef = ref(null)
 const messagesColumnRef = ref(null)
@@ -480,6 +483,9 @@ let lastScrollTop = 0
 const STICK_SLACK = 80
 
 function pinToBottom() {
+  // 组合输入期间不碰消息列表的滚动：祖先容器改 scrollTop 会把输入法未上屏的拼音丢掉。
+  // 松手后（compositionend）由 scrollToBottom 补一次，视觉上不会漏内容。
+  if (inputComposing.value) return
   const el = messagesContainerRef.value
   if (!el) return
   el.scrollTop = el.scrollHeight
@@ -487,25 +493,62 @@ function pinToBottom() {
   stickToBottom = true
 }
 
-watch(inputVisible, async (val) => {
-  if (val) {
-    await nextTick()
-    const textarea = document.querySelector('.chat-input textarea')
-    if (textarea) {
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    }
+// 输入框自增高：高度直接写在 textarea 上（不靠隐藏 mirror），1 行起、手机上 4 行 / 桌面 6 行封顶。
+// 组合输入期间量高 = 盒子在拼音还没上屏时先长高，移动端输入法会丢 composition，所以直接跳过。
+function autoGrow() {
+  const el = composerRef.value
+  if (!el || inputComposing.value) return
+  const cs = getComputedStyle(el)
+  const lineHeight = parseFloat(cs.lineHeight) || 24
+  // 全站 border-box：maxHeight 里要含上下 padding，否则 4 行会被裁掉一行
+  const maxHeight = lineHeight * (isMobile.value ? 4 : 6)
+    + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+}
+
+// 组合输入结束（上屏 / 失焦 / 输入框被语音条卸掉）：复位标记 + 补一次量高和贴底。
+// 只认 compositionend 会漏——有的引擎失焦或节点卸载时不发它，标记卡在 true 会让自增高和贴底一起哑掉。
+function endComposing() {
+  if (!inputComposing.value) return
+  inputComposing.value = false
+  nextTick(autoGrow)
+  // 组合期间被 pinToBottom 挡掉的贴底，这里补一次（流式中打字很常见）
+  scrollToBottom()
+}
+
+// Enter 发送、Shift+Enter 换行；组合输入中的 Enter 是「候选上屏」：
+// isComposing 是标准判断，keyCode 229 兜部分安卓输入法（它们上屏的 Enter 不带 isComposing）
+function onComposerKeydown(e) {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  handleSend()
+}
+
+// 输入卡展开 / 语音条关掉后 textarea 会重新挂载，都要重新量一次高（草稿可能有好几行）。
+// 收起或语音条顶替输入框时顺手复位组合标记：节点被卸载不一定还有 compositionend。
+watch([inputVisible, voiceBarOpen], async ([visible, voiceOpen]) => {
+  if (!visible || voiceOpen) {
+    endComposing()
+    return
   }
+  await nextTick()
+  autoGrow()
 })
+
+// 草稿变化（打字 / 语音追加 / 换会话恢复草稿）都重新量高。
+// 组合输入期间 v-model 不更新（Vue 的 vModelText 组合中不写 DOM、也不回调），量高由 compositionend 兜。
+watch(inputValue, () => { nextTick(autoGrow) })
 
 function toggleInput() {
   inputVisible.value = !inputVisible.value
   if (inputVisible.value) {
     nextTick(() => {
-      document.querySelector('.chat-input textarea')?.focus()
+      composerRef.value?.focus()
     })
   } else {
     // 收起要连键盘一起收：只把高度收 0，iOS 上焦点还在，键盘不会退
-    document.querySelector('.chat-input textarea')?.blur()
+    composerRef.value?.blur()
   }
 }
 
@@ -1157,7 +1200,7 @@ async function handleSend() {
   // 放在校验之后：草稿不合格（图还在传/传失败）会 early return，那种情况别把键盘收走。
   if (isMobile.value) {
     inputVisible.value = false
-    document.querySelector('.chat-input textarea')?.blur()
+    composerRef.value?.blur()
   }
 
   // 流式中、队列非空或暂停中：都按先来后到追加，避免插队/丢消息
@@ -1390,7 +1433,7 @@ function handlePushToTalkText(text) {
     // 收起态里追加了草稿：展开，否则用户看不到任何反馈
     if (!inputVisible.value) inputVisible.value = true
     nextTick(() => {
-      const ta = document.querySelector('.chat-input textarea')
+      const ta = composerRef.value
       if (!ta || document.activeElement !== ta) return
       ta.setSelectionRange(ta.value.length, ta.value.length)
     })
@@ -1789,16 +1832,21 @@ function handleContainerClick(e) {
             :level="voiceLevel"
             @interrupt="voiceInterrupt"
           />
-          <NInput
+          <!-- 原生 textarea，自己量高（autoGrow）。别换回 naive NInput 的 autosize：
+               它是「隐藏 mirror div 撑高 + 真 textarea position:absolute; height:100%」，
+               而且组合输入期间照样改 mirror 文字 → 拼音把文本顶到下一行时输入框在组合中长高，
+               iOS 上会连同未上屏的拼音和光标一起丢掉（见 docs/bugs/073）。 -->
+          <textarea
             v-else
-            v-model:value="inputValue"
-            type="textarea"
+            ref="composerRef"
+            v-model="inputValue"
+            class="chat-textarea"
+            rows="1"
             :placeholder="chat.isStreaming ? '继续输入，Enter 加入队列...' : '发消息...'"
-            :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 6 }"
-            class="chat-input"
-            @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
-            :bordered="false"
-            style="background: transparent; flex: 1;"
+            @keydown="onComposerKeydown"
+            @compositionstart="inputComposing = true"
+            @compositionend="endComposing"
+            @blur="endComposing"
           />
           <!-- 按住说话时波线只盖在上面，textarea 不卸载：iOS 一失焦就收键盘、卡片高度跟着变，
                按钮会从手指底下挪走（见 docs/design/voice-ptt-composer） -->
@@ -2129,6 +2177,29 @@ function handleContainerClick(e) {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+/* 原生 textarea：高度由 autoGrow() 直接写在元素上（组合输入期间不量，见 docs/bugs/073）。
+   字号跟着全局规矩走（手机上被 style.css 提到 16px，避免 iOS 聚焦放大）。 */
+.chat-textarea {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  /* 上下 5px + 24px 行高 ≈ 原来 NInput 的 34px，换掉组件不让输入卡高度跳一下 */
+  padding: 5px 6px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.5;
+  resize: none;
+  /* 组合输入期间盒子不长高（拼音可能先把文本顶到下一行），靠内部滚动让输入法把光标行带进视野 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chat-textarea::placeholder {
+  color: var(--color-text-muted);
 }
 .ptt-wave-overlay {
   position: absolute;

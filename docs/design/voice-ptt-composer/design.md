@@ -62,7 +62,7 @@
 
 ### 关键约束
 
-- **textarea 不能卸载**：录音时用绝对定位的波线覆盖层盖住输入框，`NInput` 保持挂载，
+- **textarea 不能卸载**：录音时用绝对定位的波线覆盖层盖住输入框，输入框（原生 `textarea`，见 `docs/bugs/073`）保持挂载，
   否则 iOS 会失焦收键盘、输入卡高度变化把按钮从手指底下抽走。
 - 麦克风 `pointerdown` 必须 `preventDefault()`：既阻止焦点从 textarea 挪到按钮，也阻止 iOS 点外部收键盘。
 - PTT 不依赖语音会话，松手后用一次性短 WS 识别；因此不会出现「进语音条 / 退语音条」的状态切换。
@@ -92,3 +92,7 @@
   `primary 30%` 描边、文字 `primary-hover`（软底上 `primary` 只有约 4.1:1）；麦克风图标 20→24px、
   胶囊文字 12.5→16px/500、＋图标 14→19px，停止键 38→44。展开态那套 40px 控件不动。
   影响文件：`front-end/src/views/ChatView.vue`、`docs/design/voice-ptt-composer/mockup.html`。
+
+- 2026-11-21 · 输入框从 naive `NInput` 换回原生 `<textarea>`（高度自己量、组合输入期间不量高，
+  修「打拼音丢光标」），「录音时 textarea 不卸载」这条约束不变。见 `docs/bugs/073`。
+  影响文件：`front-end/src/views/ChatView.vue`。

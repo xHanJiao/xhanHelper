@@ -3,6 +3,8 @@ import SwiftUI
 /// 浏览器收藏夹栏：地址栏下方一行收藏项。左键打开，右键删除/隐藏。
 /// 文件夹：点击浮层展开子项（可拖出）；拖书签到文件夹上归类；空白处右键新建文件夹。
 struct BookmarksBarView: View {
+    /// 发出点击的页面：空白页点书签就地打开，其余开新 tab（见 `openBookmark`）
+    let page: BrowserPage?
     @ObservedObject private var store = BookmarkStore.shared
     @ObservedObject private var barState = BookmarksBarState.shared
     @ObservedObject private var faviconStore = FaviconStore.shared
@@ -22,6 +24,7 @@ struct BookmarksBarView: View {
                                 FolderBarItem(
                                     folder: bookmark,
                                     children: store.children(of: bookmark.id),
+                                    page: page,
                                     onRename: {
                                         renaming = bookmark
                                         renameText = bookmark.title
@@ -111,7 +114,7 @@ struct BookmarksBarView: View {
     private func bookmarkItem(_ b: BookmarkStore.Bookmark) -> some View {
         Button {
             guard let url = URL(string: b.url) else { return }
-            BrowserToolProvider.shared.openURL(url)
+            BrowserToolProvider.shared.openBookmark(url, from: page)
         } label: {
             HStack(spacing: 4) {
                 favicon(for: b)
@@ -130,7 +133,7 @@ struct BookmarksBarView: View {
         .contextMenu {
             Button("打开") {
                 guard let url = URL(string: b.url) else { return }
-                BrowserToolProvider.shared.openURL(url)
+                BrowserToolProvider.shared.openBookmark(url, from: page)
             }
             Button("重命名") {
                 renaming = b
@@ -166,6 +169,8 @@ struct BookmarksBarView: View {
 private struct FolderBarItem: View {
     let folder: BookmarkStore.Bookmark
     let children: [BookmarkStore.Bookmark]
+    /// 透传发出点击的页面（空白页点书签就地打开）
+    let page: BrowserPage?
     let onRename: () -> Void
     let onRequestDelete: () -> Void
 
@@ -236,7 +241,7 @@ private struct FolderBarItem: View {
                 .draggable(kid.id.uuidString)
                 .onTapGesture {
                     if let url = URL(string: kid.url) {
-                        BrowserToolProvider.shared.openURL(url)
+                        BrowserToolProvider.shared.openBookmark(url, from: page)
                     }
                     isMenuOpen = false
                 }

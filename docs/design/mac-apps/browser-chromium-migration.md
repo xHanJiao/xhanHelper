@@ -286,7 +286,7 @@ CEF 升级分三层，只有中间那层是"必须重编"：
 | 模型 | 做法 | 后果 |
 |---|---|---|
 | A · URL 驱动 | 同一 tab 每次导航重算引擎 | 两个引擎的 history / cookie / 滚动位置 / 表单状态无法移植 → 切一次 = 销毁重建：丢滚动、丢表单、丢 tab 内回退栈；agent 绑定的 tab 语义也崩 |
-| **B · tab 粘性（采用）** | 创建时按 URL 定引擎，**之后不再变**；要换引擎 = 新开一个 tab（原 tab 保留） | 多一个 tab，换来状态一致、agent 绑定稳定、实现简单 |
+| **B · tab 粘性（采用）** | 创建时按 URL 定引擎，**之后不再变**；要换引擎 = 新开一个 tab（原 tab 保留）。空白页例外：创建时没有 URL，引擎延迟到首次导航再定（见 9.2.2 补充条） | 多一个 tab，换来状态一致、agent 绑定稳定、实现简单 |
 
 #### 9.2.2 判定函数（唯一真相来源）
 
@@ -304,7 +304,7 @@ resolveEngine(url, opts) -> .cef | .compat
 - **第 3 条不可省**：跨引擎的 `window.open` 会断 `window.opener` + 断 cookie 域，B站/抖音/谷歌的登录弹窗、支付回调都会挂。宁可在弹窗里看不了视频，也不要登录失败。
 - **第 4 条是"别烦用户"的关键**：用户手动选过一次「用兼容模式打开 bilibili」，以后静默按这个走，不再提示。偏好按 **eTLD+1** 存。
 - **收藏 / 历史 / 会话恢复都不存引擎**，只存 URL，打开时现算；否则白名单以后调整会让老收藏打开在错的引擎里。会话恢复要**连偏好表一起恢复**，否则用户手动选过的站会被打回默认。
-- **空白页的第一次导航要补算一次**（2026-11-20 补）：空白页建 tab 时没有 URL，只能按默认引擎起；之后在新标签页点推荐磁贴 / 地址栏输入才落到真实站点。这一跳若不复算，白名单与域名偏好整条被绕过（复现：小红书落进 CEF，且提示条被 24h 限流后完全静默）。规则：**空白 tab 的第一个 http(s) 导航 = 它的「创建 URL」**，判定不变（仍是 §9.2.2 六条），不一致就开一张对的 tab 并静默收掉空白页（不进 ⌘⇧T 恢复栈）；这一跳之后的站内导航仍按 tab 粘性，不再复算。主引擎确认起不来（`isCefUnavailable`）时不往 cef 换，否则会"换过去又降级"来回换。
+- **空白页的引擎延迟到首次导航再定**（2026-11-20 补）：空白页建 tab 时没有 URL，只能按默认引擎起；之后在新标签页点推荐磁贴 / 地址栏输入 / 点书签才落到真实站点。这一跳若不复算，白名单与域名偏好整条被绕过（复现：小红书落进 CEF，且提示条被 24h 限流后完全静默）。规则：**空白 tab 的第一个 http(s) 导航 = 它的「创建 URL」**，判定不变（仍是 §9.2.2 六条）；引擎不一致时**在同一个 tab 里换掉页面**（tabId / 位置 / 分屏窗格 / 激活态都不动，空白页没有状态可丢），不新开 tab —— 换一次 tab 正是用户抱怨的「点一下多出一页」。这一跳之后的站内导航仍按 tab 粘性，不再复算；书签在已有内容的页面上仍按惯例开新 tab。主引擎确认起不来（`isCefUnavailable`）时不往 cef 换，否则会"换过去又降级"来回换。
 - `VIDEO_HOSTS`：`bilibili.com` / `douyin.com` / `xiaohongshu.com`，**加短链域名** `b23.tv` / `v.douyin.com` / `xhslink.com`（否则短链先落 CEF、302 之后才发现开错）。
 
 #### 9.2.3 提示规则（和判定分开，D16）
@@ -787,7 +787,8 @@ main                       ← 继续每天发版（WK，现状不变）
 
 | 日期 | 决定 / 变更 | 影响文件 |
 |---|---|---|
-| 2026-11-20 | **空白 tab 首次导航复算内核**（bug：新标签页推荐磁贴 / 地址栏输入小红书落进 CEF，站点记忆失效）。空白 tab 的第一个 http(s) 导航视为「创建 URL」，按 §9.2.2 复算；不一致就开新 tab 并静默收掉空白页（不进恢复栈），之后的站内导航仍按 tab 粘性。CEF 起不来时不往 cef 换（防来回换） | `Shared/Services/BrowserEngineRouter.swift`、`Shared/Tools/BrowserToolProvider.swift`、`Tests/BrowserEngineCoreTests/BrowserEngineRouterTests.swift`、本文档 §9.2.2 |
+| 2026-11-20 | **空白 tab 首次导航复算内核，且在同一 tab 内换引擎**（bug：新标签页推荐磁贴 / 地址栏输入 / 点书签进小红书落进 CEF，站点记忆失效）。空白 tab 的第一个 http(s) 导航视为「创建 URL」，按 §9.2.2 复算；不一致就换掉这个 tab 的页面（不新开 tab、不动 tabId / 分屏窗格 / 激活态），之后的站内导航仍按 tab 粘性。CEF 起不来时不往 cef 换（防来回换）。同批把「空白页点书签」也改成就地打开（其余页面仍开新 tab） | `Shared/Services/BrowserEngineRouter.swift`、`Shared/Tools/BrowserToolProvider.swift`、`Shared/Views/BookmarksBarView.swift`、`Shared/Views/BrowserTabView.swift`、`Tests/BrowserEngineCoreTests/BrowserEngineRouterTests.swift`、本文档 §9.2.2 |
+| 2026-11-21 | **新标签页磁贴图标改用本地 favicon 缓存内联**（bug：Google / GitHub 磁贴全空、点击也没反应 —— 直连不可达时远端 favicon 请求会挂住，既不 load 也不 error，连字母兜底都不出现）。改为把 `favicons/v<版本>/<host>.png` 原样内联成 `data:` URI，图标不再依赖实时网络；**缓存文件后缀是 `.png` 但存的是原始响应**（GitHub 那份其实是 SVG），按字节嗅探 MIME。没缓存的 host 仍走远端 `<img>` + 首字母兜底。注：磁贴点击能否打开仍取决于该站网络可达性，与图标无关 | `Shared/Services/FaviconStore.swift`、`Shared/Tools/BrowserToolProvider.swift` |
 | 2026-11-13 | **D20**：CEF 的 `window.open` / `target=_blank` 不再拦成兄弟 tab，改成让 CEF 自己建 popup browser 再嵌进我们的 tab（真 `window.opener`）；页面 `window.close()` 自动收 tab。用户拍板「B9 一起解决」 | `xHelperMac/CEF/CefBridge.{h,mm}`、`Shared/Services/BrowserPage.swift`、`Shared/Tools/BrowserToolProvider.swift`、本文档 §9.2.14 / §13.1 |
 | 2026-11-13 | 三层媒体检测第 2 层收窄为「只对像 H.264 的源报」，避免 WebM/VP9 页面误报 | `xHelperMac/CEF/CefDisguise.h`、`Shared/Views/BrowserTabView.swift`、本文档 §9.2.13 |
 | 2026-11-13 | **D18 修订**：兼容 tab 从「只读开放、写操作禁」改为「读写都开放」（用户拍板：视频站也需要 agent 点按钮；用户标签写入仍走既有授权闸门）。改文档不改代码 | 本文档 D18 / §9.1 / §9.2.5 / 第十二章 |

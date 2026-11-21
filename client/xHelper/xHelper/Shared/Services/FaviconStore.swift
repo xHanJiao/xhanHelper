@@ -80,6 +80,44 @@ final class FaviconStore: ObservableObject {
         images[host.lowercased()]
     }
 
+    /// 新标签页磁贴用：把磁盘缓存里的图标原样内联成 `data:` URI（图标不再依赖实时网络）。
+    ///
+    /// 磁贴原来直接拉 `https://<host>/favicon.ico`：站点不可达时请求会挂住（既不 load 也不 error，
+    /// 连字母兜底都不出现）。**不重新编码** —— 缓存里可能是 SVG（GitHub 就是），
+    /// AppKit 解不出来，但 Chromium 的 `<img>` 能直接画。
+    func inlineDataURI(forHost host: String, maxBytes: Int = 96 * 1024) -> String? {
+        let key = host.lowercased()
+        guard !key.isEmpty else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: cacheDir.appendingPathComponent("\(key).png"))
+        } catch {
+            let ns = error as NSError
+            if !(ns.domain == NSCocoaErrorDomain && ns.code == NSFileReadNoSuchFileError) {
+                LogBuffer.shared.warning("[Favicon] 读缓存失败 \(key): \(error.localizedDescription)")
+            }
+            return nil
+        }
+        guard !data.isEmpty, data.count <= maxBytes,
+              let mime = Self.sniffImageMIME(data) else { return nil }
+        return "data:\(mime);base64,\(data.base64EncodedString())"
+    }
+
+    /// 缓存文件按 host 命名成 `.png`，但存的其实是原始响应字节（可能是 SVG/ICO/WebP）。
+    private static func sniffImageMIME(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(64))
+        func starts(_ sig: [UInt8]) -> Bool { bytes.count >= sig.count && bytes.starts(with: sig) }
+        if starts([0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if starts([0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if starts([0x47, 0x49, 0x46, 0x38]) { return "image/gif" }
+        if starts([0x00, 0x00, 0x01, 0x00]) { return "image/x-icon" }
+        if starts([0x52, 0x49, 0x46, 0x46]), bytes.count >= 12,
+           Array(bytes[8..<12]) == [0x57, 0x45, 0x42, 0x50] { return "image/webp" }
+        if let text = String(data: data.prefix(600), encoding: .utf8)?.lowercased(),
+           text.contains("<svg") { return "image/svg+xml" }
+        return nil
+    }
+
     /// 启动时把磁盘缓存读回内存（host 为文件名，天然去重幂等）。
     private func loadDiskCache() {
         let fm = FileManager.default
